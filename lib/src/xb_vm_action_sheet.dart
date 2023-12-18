@@ -59,7 +59,8 @@ class XBActionSheetCell extends XBWidget {
       effect: XBButtonTapEffect.cover,
       onTap: onTap,
       child: Padding(
-        padding: EdgeInsets.only(left: app.spaces.left, right: app.spaces.left),
+        padding: EdgeInsets.only(
+            left: app.spaces.leftGap, right: app.spaces.leftGap),
         child: Container(
           height: 50,
           alignment: Alignment.center,

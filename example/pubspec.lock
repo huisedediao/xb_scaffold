@@ -411,11 +411,9 @@ packages:
   xb_scaffold:
     dependency: "direct main"
     description:
-      path: "."
-      ref: main
-      resolved-ref: d28c9c5ff7b0edd9aef8680ce17283f956a74471
-      url: "git@github.com:huisedediao/xb_scaffold.git"
-    source: git
+      path: ".."
+      relative: true
+    source: path
     version: "0.0.1"
   xdg_directories:
     dependency: transitive

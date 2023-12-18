@@ -21,7 +21,8 @@ extension XBVMDialog on XBVM {
       required List<String> btnTitles,
       required ValueChanged<int> onSelected}) {
     dialogWidget(Padding(
-      padding: EdgeInsets.only(left: app.spaces.left, right: app.spaces.left),
+      padding:
+          EdgeInsets.only(left: app.spaces.leftGap, right: app.spaces.leftGap),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -30,7 +31,7 @@ extension XBVMDialog on XBVM {
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                height: app.spaces.left,
+                height: app.spaces.leftGap,
               ),
               Text(
                 title,
@@ -40,10 +41,10 @@ extension XBVMDialog on XBVM {
               ),
               Padding(
                 padding: EdgeInsets.only(
-                    left: app.spaces.left,
-                    right: app.spaces.left,
-                    top: app.spaces.leftLess,
-                    bottom: app.spaces.left),
+                    left: app.spaces.leftGap,
+                    right: app.spaces.leftGap,
+                    top: app.spaces.leftGapLess,
+                    bottom: app.spaces.leftGap),
                 child: Text(msg),
               ),
               Container(

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_state.dart';
+
+import '../xb_state.dart';
+
+/// 使用cover的时候，会覆盖掉child上的点击事件
+/// 如果需要响应child上的点击事件，使用opacity
 
 enum XBButtonTapEffect {
   cover, //覆盖一层半透明黑色的Container
@@ -13,21 +17,15 @@ class XBButton extends StatefulWidget {
 
   final XBButtonTapEffect effect;
 
-  /*
-   * 选择opacity效果的时候，按下的不透明度
-   * */
+  /// 选择opacity效果的时候，按下的不透明度
   final double? opacityOnTap;
 
   final Color? coverEffectColor;
 
-  /*
-   * 选择cover的时候，效果的圆角
-   * */
+  /// 选择cover的时候，效果的圆角
   final double? coverEffectRadius;
 
-  /*
-   * 是否需要点击效果，默认为true
-   * */
+  /// 是否需要点击效果，默认为true
   final bool needTapEffect;
 
   const XBButton(
@@ -84,9 +82,7 @@ class _XBButtonState extends XBState<XBButton> {
 
   Widget _child() {
     if (widget.effect == XBButtonTapEffect.opacity) {
-      return Opacity(
-          opacity: _onTapDown ? (widget.opacityOnTap ?? 0.5) : 1.0,
-          child: widget.child);
+      return Opacity(opacity: _opacityEffectOpacity(), child: widget.child);
     } else {
       return ClipRRect(
         borderRadius: BorderRadius.circular(widget.coverEffectRadius ?? 0),
@@ -95,7 +91,7 @@ class _XBButtonState extends XBState<XBButton> {
           children: [
             widget.child,
             Opacity(
-                opacity: _coverOpacity(),
+                opacity: _coverEffectOpacity(),
                 child: Container(
                   color: widget.coverEffectColor ?? Colors.black.withAlpha(15),
                   child: Visibility(
@@ -111,7 +107,14 @@ class _XBButtonState extends XBState<XBButton> {
     }
   }
 
-  double _coverOpacity() {
+  /// 点击的时候才需要透明，所以点击的时候设置透明度
+  double _opacityEffectOpacity() {
+    if (widget.needTapEffect == false) return 1;
+    return _onTapDown ? (widget.opacityOnTap ?? 0.5) : 1.0;
+  }
+
+  /// 点击的时候才展示cover，所以点击的时候不透明度为1
+  double _coverEffectOpacity() {
     if (widget.needTapEffect == false) return 0.0;
     // return 1.0;
     return _onTapDown ? 1.0 : 0.0;

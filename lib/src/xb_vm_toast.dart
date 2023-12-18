@@ -16,10 +16,10 @@ extension XBVMToast on XBVM {
             width: MediaQuery.of(context).size.width,
             child: Padding(
               padding: EdgeInsets.only(
-                  left: app.spaces.leftLess,
-                  right: app.spaces.leftLess,
-                  top: app.spaces.j6,
-                  bottom: app.spaces.j6),
+                  left: app.spaces.leftGapLess,
+                  right: app.spaces.leftGapLess,
+                  top: app.spaces.leftGapLess * 0.5,
+                  bottom: app.spaces.leftGapLess * 0.5),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -44,10 +44,10 @@ extension XBVMToast on XBVM {
   toast(String msg, {int duration = 2}) {
     toastWidget(Padding(
       padding: EdgeInsets.only(
-          left: app.spaces.leftLess,
-          right: app.spaces.leftLess,
-          top: app.spaces.j6,
-          bottom: app.spaces.j6),
+          left: app.spaces.leftGapLess,
+          right: app.spaces.leftGapLess,
+          top: app.spaces.leftGapLess * 0.5,
+          bottom: app.spaces.leftGapLess * 0.5),
       child: Text(
         msg,
         style: const TextStyle(color: Colors.white),
