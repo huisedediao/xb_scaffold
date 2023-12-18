@@ -1,7 +1,7 @@
 name: xb_scaffold
 description: 基于provider封装的脚手架.
 version: 0.0.1
-homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_scaffold
+homepage: https://github.com/huisedediao/xb_scaffold.git
 
 environment:
   sdk: '>=2.17.0 <4.0.0'
@@ -11,7 +11,6 @@ dependencies:
   cached_network_image: ^3.3.0
   flutter:
     sdk: flutter
-  fluttertoast: ^8.2.4
   provider: ^6.1.1
 
 dev_dependencies:

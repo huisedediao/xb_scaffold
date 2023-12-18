@@ -91,6 +91,7 @@ extension XBVMDialog on XBVM {
   Widget _buildBtn(String title, Color color, VoidCallback onTap) {
     return Expanded(
         child: XBButton(
+            effect: XBButtonTapEffect.cover,
             onTap: onTap,
             child: Container(
               height: 50,

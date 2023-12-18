@@ -32,6 +32,10 @@ dependencies:
     sdk: flutter
   xb_scaffold:
     path: ../
+    # git:
+    #   url: https://github.com/huisedediao/xb_scaffold.git
+      # url: http://10.2.5.201/MobileApps/bcsdk_flutter.git
+      # ref: dev/1.0.0/dev
 
 
   # The following adds the Cupertino Icons font to your application.
