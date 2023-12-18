@@ -8,5 +8,6 @@ export './src/xb_vm.dart';
 export './src/xb_theme/xb_theme_vm.dart';
 export './src/common/xb_image.dart';
 export './src/common/xb_button.dart';
+export './src/common/xb_navigator_back_btn.dart';
 
 void initXBScaffold() {}

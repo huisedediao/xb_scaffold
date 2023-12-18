@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_stateless_widget.dart';
-import 'xb_button.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBNavigatorBackBtn extends XBStatelessWidget {
   final VoidCallback onTap;
   final String? img;
+  final Size? imgSize;
 
-  const XBNavigatorBackBtn({required this.onTap, this.img, Key? key})
+  const XBNavigatorBackBtn(
+      {required this.onTap, this.img, this.imgSize, Key? key})
       : super(key: key);
 
   @override
@@ -16,7 +17,16 @@ class XBNavigatorBackBtn extends XBStatelessWidget {
         child: Container(
           color: Colors.transparent,
           alignment: Alignment.center,
-          child: const Icon(Icons.arrow_back),
+          child: (img != null)
+              ? XBImage(
+                  img,
+                  width: imgSize != null ? imgSize!.width : 25,
+                  height: imgSize != null ? imgSize!.height : 23,
+                )
+              : const Icon(
+                  Icons.arrow_back,
+                  color: Colors.black,
+                ),
         ));
   }
 }

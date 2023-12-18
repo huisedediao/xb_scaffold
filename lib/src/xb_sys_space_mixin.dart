@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import '../src/xb_vm.dart';
 
-extension XBVMSysSpace on XBVM {
+mixin XBSysSpaceMixin {
   static double _lastSafeAreaBottom = 0;
   static double _lastStateBarH = 0;
+
+  BuildContext get context;
 
   get queryData {
     return MediaQuery.of(context);

@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
-
-import 'common/xb_navigator_back_btn.dart';
 import 'common/xb_empty_app_bar.dart';
 import 'configs/color_config.dart';
 
@@ -146,16 +144,11 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
       centerTitle: true,
       actions: actions(vm),
       leading: leading(vm),
-      title: buildTitle(vm) ??
-          Text(setTitle(vm),
-              style: TextStyle(
-                  color: naviBarTitle,
-                  fontWeight: app.fontWeights.bold,
-                  fontSize: 16)),
+      title: buildTitle(vm) ?? _defaultTitle(vm),
     );
   }
 
-  Widget leading(T vm) {
+  Widget? leading(T vm) {
     return XBNavigatorBackBtn(
       onTap: () {
         vm.pop();
@@ -165,6 +158,14 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
 
   Widget? buildTitle(T vm) {
     return null;
+  }
+
+  Widget _defaultTitle(T vm) {
+    return Text(setTitle(vm),
+        style: TextStyle(
+            color: naviBarTitle,
+            fontWeight: app.fontWeights.bold,
+            fontSize: 16));
   }
 
   List<Widget>? actions(T vm) {

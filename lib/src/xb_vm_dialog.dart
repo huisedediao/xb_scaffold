@@ -8,9 +8,17 @@ extension XBVMDialog on XBVM {
       barrierDismissible: false,
       context: context,
       builder: (BuildContext context) {
-        return Material(
-            type: MaterialType.transparency,
-            child: Container(alignment: Alignment.center, child: widget));
+        return WillPopScope(
+          onWillPop: () async {
+            return false;
+          },
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 50),
+            child: Material(
+                type: MaterialType.transparency,
+                child: Container(alignment: Alignment.center, child: widget)),
+          ),
+        );
       },
     );
   }
