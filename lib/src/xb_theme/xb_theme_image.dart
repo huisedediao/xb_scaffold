@@ -3,7 +3,7 @@ class XBThemeImage {
 
   XBThemeImage({String? prefix}) : prefix = prefix ?? "assets/images/default/";
 
-  String imgPath(name, {String type = 'png'}) {
-    return "$prefix$name.$type";
+  String imgPath(name) {
+    return "$prefix$name";
   }
 }
