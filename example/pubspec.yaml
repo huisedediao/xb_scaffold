@@ -31,9 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
   xb_scaffold:
-    path: ../
-    # git:
-    #   url: https://github.com/huisedediao/xb_scaffold.git
+    # path: ../
+    git:
+      url: git@github.com:huisedediao/xb_scaffold.git
+      ref: main
       # url: http://10.2.5.201/MobileApps/bcsdk_flutter.git
       # ref: dev/1.0.0/dev
 
