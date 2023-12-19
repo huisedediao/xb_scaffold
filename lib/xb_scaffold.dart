@@ -4,6 +4,7 @@ export './src/xb_page.dart';
 export './src/xb_state.dart';
 export './src/xb_stateless_widget.dart';
 export './src/xb_widget.dart';
+export './src/xb_vmless_widget.dart';
 export './src/xb_vm.dart';
 export './src/xb_theme/xb_theme_vm.dart';
 export './src/common/xb_image.dart';
