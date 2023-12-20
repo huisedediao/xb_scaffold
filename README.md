@@ -14,7 +14,13 @@ and the Flutter guide for
 基于provider封装的脚手架，集成主题、dialog、toast、actionSheet等功能
 
 ## 引入
-在pubspec.yaml中添加引用（https://github.com/huisedediao/xb_scaffold.git）：
+在pubspec.yaml中添加引用：
+```
+  xb_scaffold:
+    git:
+      url: https://github.com/huisedediao/xb_scaffold.git
+      ref: main
+```
 ![Alt text](import.png)
 
 ## 初始化
