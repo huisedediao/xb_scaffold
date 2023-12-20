@@ -37,13 +37,8 @@ void main() async {
 
 ### 主题切换
 ```
-/// 设置主题
-/// theme：主题
-/// themeIndex：主题编号
-setThemeForIndex(XBTheme theme, int themeIndex) {
-   _themeMap[themeIndex] = theme;
-   notifyListeners();
-}
+/// 这里的序号，对应initXBScaffold传入的图片路径的序号
+XBThemeVM().changeTheme(1);
 ```
 
 ### mixin
