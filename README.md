@@ -65,7 +65,7 @@ tabbar高度、一个像素的高度等等
 ```
 和StatelessWidget一样使用
 
-在StatelessWidget的基础上，XBThemeMixin
+在StatelessWidget的基础上，增加了XBThemeMixin
 ```
 
 ### XBState
@@ -87,8 +87,12 @@ tabbar高度、一个像素的高度等等
 
 ### XBWidget
 ```
-基于provider和XBVM封装的widget，简化provider的使用，
+基于provider和XBVM封装的widget，简化provider的使用
+
 抽象类，重写buildWidget进行UI的编写
+
+
+示例：
 
 class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
   const XBWidgetTest({super.key});
@@ -117,6 +121,9 @@ class XBWidgetTestVM extends XBVM<XBWidgetTest> {
 背景颜色、navigationBar背景颜色等等
 
 提供是否屏幕方向改变后重新build、是否启动安卓物理返回、是否需要输入框跟随键盘移动、是否启动iOS侧滑返回等功能选择
+
+
+示例：
 
 class XBPageTest extends XBPage<XBPageTestVM> {
   const XBPageTest({super.key});
