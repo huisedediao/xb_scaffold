@@ -1,5 +1,5 @@
 class XBThemeSpace {
-  double get leftGap => 17.5;
-  double get leftGapLess => 13.5;
-  double get leftGapLarge => 35;
+  double get gapDef => 17.5;
+  double get gapLess => 13.5;
+  double get gapLarge => 35;
 }

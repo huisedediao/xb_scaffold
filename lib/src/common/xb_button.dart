@@ -15,11 +15,13 @@ class XBButton extends StatefulWidget {
   final Widget child;
   final VoidCallback? onTap;
 
+  /// 点击效果
   final XBButtonTapEffect effect;
 
   /// 选择opacity效果的时候，按下的不透明度
   final double? opacityOnTap;
 
+  /// 选择cover的时候,覆盖层的颜色
   final Color? coverEffectColor;
 
   /// 选择cover的时候，效果的圆角

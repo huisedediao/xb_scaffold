@@ -6,6 +6,7 @@ import 'xb_vm.dart';
 abstract class XBWidget<T extends XBVM> extends XBStatelessWidget {
   const XBWidget({super.key});
 
+  /// 生成vm
   T generateVM(BuildContext context);
 
   @override
@@ -22,5 +23,6 @@ abstract class XBWidget<T extends XBVM> extends XBStatelessWidget {
     );
   }
 
+  /// 构建主体
   Widget buildWidget(T vm, BuildContext context);
 }

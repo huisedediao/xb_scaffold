@@ -1,5 +1,4 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
@@ -18,25 +17,27 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
     return false;
   }
 
+  /// 是否需要安全区域
   bool needSafeArea() {
     return false;
   }
 
-  //是否启动安卓物理返回
+  /// 是否启动安卓物理返回
   bool onAndroidPhysicalBack() {
     return true;
   }
 
-  //屏幕方向改变后，是否需要重新build
+  /// 屏幕方向改变后，是否需要重新build
   bool needRebuildWhileOrientationChanged() {
     return false;
   }
 
-  //是否需要监听主题变化，默认否
+  /// 是否需要监听主题变化，默认否
   bool needRebuildWhileAppThemeChanged() {
     return false;
   }
 
+  /// 是否需要输入框跟随键盘移动
   bool needAdaptKeyboard() {
     return false;
   }
@@ -50,7 +51,7 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
     return false;
   }
 
-  //是否启动iOS侧滑返回
+  /// 是否启动iOS侧滑返回
   bool needIosGestureBack() {
     return true;
   }
@@ -59,18 +60,23 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
 
   /// -------------------- build params --------------------
 
+  /// 页面背景颜色
   Color? get backgroundColor {
     return viewBG;
   }
 
+  /// tabbar的高度
   tabbarHeight(T vm) {
     return vm.tabbarH;
   }
 
+  /// navigationBar的颜色
   Color? get navigationBarBGColor {
     return naviBarBG;
   }
 
+  /// 页面的标题
+  /// 如果重写了buildTitle，则不生效
   String setTitle(T vm) {
     return "";
   }
@@ -134,6 +140,7 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
     return Container(color: backgroundColor, child: content);
   }
 
+  /// 构建主体
   @protected
   Widget buildPage(T vm, BuildContext context);
 
@@ -148,6 +155,7 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
     );
   }
 
+  /// 构建navigationBar左侧widget
   Widget? leading(T vm) {
     return XBNavigatorBackBtn(
       onTap: () {
@@ -156,6 +164,7 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
     );
   }
 
+  /// 构建navigationBar标题
   Widget? buildTitle(T vm) {
     return null;
   }
@@ -168,12 +177,13 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
             fontSize: 16));
   }
 
+  /// 构建navigationBar右侧widget
   List<Widget>? actions(T vm) {
     return null;
   }
 
   /// -------------------- function --------------------
-
+  /// 即将pop
   _onWillPop() {
     if (Platform.isAndroid) {
       return _androidOnWillPop;

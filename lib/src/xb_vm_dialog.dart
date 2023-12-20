@@ -3,6 +3,7 @@ import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 extension XBVMDialog on XBVM {
+  /// dialog的形式展示一个widget
   dialogWidget(Widget widget) {
     showDialog(
       barrierDismissible: false,
@@ -23,14 +24,15 @@ extension XBVMDialog on XBVM {
     );
   }
 
+  /// 展示一个Dialog
   dialog(
       {required String title,
       required String msg,
       required List<String> btnTitles,
       required ValueChanged<int> onSelected}) {
     dialogWidget(Padding(
-      padding:
-          EdgeInsets.only(left: app.spaces.leftGap, right: app.spaces.leftGap),
+      padding: EdgeInsets.only(
+          left: app.spaces.gapLarge, right: app.spaces.gapLarge),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -39,7 +41,7 @@ extension XBVMDialog on XBVM {
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                height: app.spaces.leftGap,
+                height: app.spaces.gapDef,
               ),
               Text(
                 title,
@@ -49,10 +51,10 @@ extension XBVMDialog on XBVM {
               ),
               Padding(
                 padding: EdgeInsets.only(
-                    left: app.spaces.leftGap,
-                    right: app.spaces.leftGap,
-                    top: app.spaces.leftGapLess,
-                    bottom: app.spaces.leftGap),
+                    left: app.spaces.gapDef,
+                    right: app.spaces.gapDef,
+                    top: app.spaces.gapLess,
+                    bottom: app.spaces.gapDef),
                 child: Text(msg),
               ),
               Container(

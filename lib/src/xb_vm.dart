@@ -16,6 +16,7 @@ class XBVM<T> extends ChangeNotifier
 
   XBVM({required this.context});
 
+  /// 通知刷新
   notify() {
     try {
       notifyListeners();

@@ -7,5 +7,6 @@ mixin XBOperaMixin {
     Navigator.of(context, rootNavigator: false).pop(result);
   }
 
+  /// 结束编辑
   get endEditing => FocusScope.of(context).requestFocus(FocusNode());
 }

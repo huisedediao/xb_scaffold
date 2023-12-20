@@ -1,28 +1,22 @@
 import 'dart:io';
-
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
+import 'package:xb_scaffold/src/xb_stateless_widget.dart';
+import '../configs/color_config.dart';
 
 /*
  * 自动适配网络图片或者本地图片的image
  * */
-import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_stateless_widget.dart';
-
-import '../configs/color_config.dart';
-
-// ignore: must_be_immutable
 class XBImage extends XBStatelessWidget {
-  dynamic img;
+  /// 图片，可以是文件、url、asset路径
+  final dynamic img;
   final double? height;
   final double? width;
   final BoxFit? fit;
   final Widget? placeholderWidget;
 
-  XBImage(this.img,
-      {super.key, this.height, this.width, this.placeholderWidget, this.fit})
-  // : assert(img != null && (img is File || img is String),
-  //       "img must be File or String")
-  ;
+  const XBImage(this.img,
+      {super.key, this.height, this.width, this.placeholderWidget, this.fit});
 
   @override
   Widget build(BuildContext context) {

@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 void main() async {
-  await XBThemeVM()
-      .setThemeForIndex(XBTheme(imagesPath: "assets/images/default/"), 0);
-  await XBThemeVM()
-      .setThemeForIndex(XBTheme(imagesPath: "assets/images/custom/"), 1);
+  await initXBScaffold(
+      imgPrefixs: ["assets/images/default/", "assets/images/custom/"]);
   runApp(const MyApp());
 }
 

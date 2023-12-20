@@ -3,6 +3,7 @@ import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 extension XBVMActionSheet on XBVM {
+  /// 底部抽屉的形式弹出一个widget
   actionSheetWidget(Widget widget) {
     showModalBottomSheet(
       context: context,
@@ -12,6 +13,7 @@ extension XBVMActionSheet on XBVM {
     );
   }
 
+  /// 展示一个底部选择框
   actionSheet(
       {required List<String> titles, required ValueChanged<int> onSelected}) {
     actionSheetWidget(ClipRRect(
@@ -59,8 +61,8 @@ class XBActionSheetCell extends XBWidget {
       effect: XBButtonTapEffect.cover,
       onTap: onTap,
       child: Padding(
-        padding: EdgeInsets.only(
-            left: app.spaces.leftGap, right: app.spaces.leftGap),
+        padding:
+            EdgeInsets.only(left: app.spaces.gapDef, right: app.spaces.gapDef),
         child: Container(
           height: 50,
           alignment: Alignment.center,
