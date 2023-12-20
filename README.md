@@ -11,29 +11,129 @@ and the Flutter guide for
 [developing packages and plugins](https://flutter.dev/developing-packages).
 -->
 
-TODO: Put a short description of the package here that helps potential users
-know whether this package might be useful for them.
+基于provider封装的脚手架，集成主题、dialog、toast、actionSheet等功能
 
-## Features
+## 引入
+在pubspec.yaml中添加引用（https://github.com/huisedediao/xb_scaffold.git）：
+![Alt text](import.png)
 
-TODO: List what your package can do. Maybe include images, gifs, or videos.
-
-## Getting started
-
-TODO: List prerequisites and provide or point to information on how to
-start using the package.
+## 初始化
+```
+void main() async {
+  /// 传入不同主题的图片路径
+  await initXBScaffold(
+      imgPrefixs: ["assets/images/default/", "assets/images/custom/"]);
+  runApp(const MyApp());
+}
+```
 
 ## Usage
 
-TODO: Include short and useful examples for package users. Add longer examples
-to `/example` folder.
-
-```dart
-const like = 'sample';
+### 主题切换
+```
+/// 设置主题
+/// theme：主题
+/// themeIndex：主题编号
+setThemeForIndex(XBTheme theme, int themeIndex) {
+   _themeMap[themeIndex] = theme;
+   notifyListeners();
+}
 ```
 
-## Additional information
+### mixin
+##### XBSysSpaceMixin
+```
+一些系统的参数，比如屏幕宽高、状态栏高度、navigationBar高度、
+tabbar高度、一个像素的高度等等
+```
+##### XBOperaMixin
+```
+一些页面操作，比如pop，比如结束输入框编辑
+```
+##### XBThemeMixin
+```
+和主题相关的参数，包括颜色、字体、字重、图片、间距
+```
 
-TODO: Tell users more about the package: where to find more information, how to
-contribute to the package, how to file issues, what response they can expect
-from the package authors, and more.
+### XBStatelessWidget
+```
+和StatelessWidget一样使用
+
+在StatelessWidget的基础上，XBThemeMixin
+```
+
+### XBState
+```
+和State一样使用
+
+在State的基础上，增加了XBSysSpaceMixin，XBThemeMixin，XBOperaMixin三个mixin
+```
+### XBVM
+```
+继承自ChangeNotifier
+
+增加了XBSysSpaceMixin，XBThemeMixin，XBOperaMixin三个mixin
+
+用于页面状态的管理
+
+构造时需传入其管理的页面的context，用于在vm中处理业务
+
+
+```
+
+### XBWidget
+```
+基于provider和XBVM封装的widget，简化provider的使用，
+抽象类，重写buildWidget进行UI的编写
+
+class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
+  const XBWidgetTest({super.key});
+
+  @override
+  XBWidgetTestVM generateVM(BuildContext context) {
+    return XBWidgetTestVM(context: context);
+  }
+
+  @override
+  Widget buildWidget(XBWidgetTestVM vm, BuildContext context) {
+    return Container();
+  }
+}
+
+class XBWidgetTestVM extends XBVM<XBWidgetTest> {
+  XBWidgetTestVM({required super.context});
+}
+```
+
+### XBPage
+```
+抽象类，继承自XBWidget
+
+封装了navigationBar（可隐藏）的页面，可定制标题、返回按钮、右上角按钮、
+背景颜色、navigationBar背景颜色等等
+
+提供是否屏幕方向改变后重新build、是否启动安卓物理返回、是否需要输入框跟随键盘移动、是否启动iOS侧滑返回等功能选择
+
+class XBPageTest extends XBPage<XBPageTestVM> {
+  const XBPageTest({super.key});
+
+  @override
+  XBPageTestVM generateVM(BuildContext context) {
+    return XBPageTestVM(context: context);
+  }
+
+  @override
+  Widget buildPage(XBPageTestVM vm, BuildContext context) {
+    return Container();
+  }
+}
+
+class XBPageTestVM extends XBVM<XBPageTest> {
+  XBPageTestVM({required super.context});
+}
+```
+
+### XBVMToast\XBVMDialog\XBVMActionSheet
+```
+为XBVM增加toast、dialog、actionSheet
+```
