@@ -66,7 +66,7 @@ tabbar高度、一个像素的高度等等
 在vm中和XBState子类中使用：
 push(const NewPage());
 
-在widget中使用：
+在XBWidget子类中使用：
 vm.push(const NewPage());
 ```
 
