@@ -59,7 +59,7 @@ tabbar高度、一个像素的高度等等
 
 ### 路由
 ```
-使用VM中mixin的的push、replace、pop
+使用VM中mixin的push、replace、pop
 
 示例：
 
