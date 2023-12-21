@@ -57,21 +57,6 @@ tabbar高度、一个像素的高度等等
 和主题相关的参数，包括颜色、字体、字重、图片、间距
 ```
 
-### 路由
-```
-使用VM中mixin的push、replace、pop
-
-示例：
-
-要跳转到NewPage，
-
-在VM子类中和XBState子类中使用：
-push(const NewPage());
-
-在XBWidget子类中使用：
-vm.push(const NewPage());
-```
-
 ### XBStatelessWidget
 ```
 和StatelessWidget一样使用
@@ -160,6 +145,21 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 class XBPageTestVM extends XBVM<XBPageTest> {
   XBPageTestVM({required super.context});
 }
+```
+
+### 路由
+```
+使用VM中mixin的push、replace、pop
+
+示例：
+
+要跳转到NewPage，
+
+在VM子类中和XBState子类中使用：
+push(const NewPage());
+
+在XBWidget子类中使用：
+vm.push(const NewPage());
 ```
 
 ### XBVMToast\XBVMDialog\XBVMActionSheet
