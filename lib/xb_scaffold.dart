@@ -15,6 +15,8 @@ export './src/common/xb_navigator_back_btn.dart';
 export './src/xb_theme/xb_theme_mixin.dart';
 export './src/xb_opera_mixin.dart';
 
+export './src/utils/xb_unique_list.dart';
+
 /// 初始化
 /// imgPrefixs图片的前缀，每个主题使用的图片不同，如果没有设置，则使用"assets/images/default/"
 initXBScaffold({required List<String> imgPrefixs}) async {
