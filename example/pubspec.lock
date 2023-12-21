@@ -414,7 +414,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "0.0.1"
+    version: "0.0.5"
   xdg_directories:
     dependency: transitive
     description:

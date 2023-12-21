@@ -49,11 +49,25 @@ tabbar高度、一个像素的高度等等
 ```
 ##### XBOperaMixin
 ```
-一些页面操作，比如pop，比如结束输入框编辑
+一些页面操作，比如push、pop，比如结束输入框编辑
 ```
+
 ##### XBThemeMixin
 ```
 和主题相关的参数，包括颜色、字体、字重、图片、间距
+```
+
+### 路由
+```
+使用VM中mixin的的push、replace、pop
+
+示例：
+
+在vm中使用：
+push(const NewPage());
+
+在widget中使用：
+vm.push(const NewPage());
 ```
 
 ### XBStatelessWidget
@@ -108,6 +122,13 @@ class XBWidgetTestVM extends XBVM<XBWidgetTest> {
 }
 ```
 
+### XBVMLessWidget
+```
+继承自XBWidget，使用XBVM作为默认vm
+
+不需要自己写vm，适合不需要处理业务逻辑只需要UI的情况
+```
+
 ### XBPage
 ```
 抽象类，继承自XBWidget
@@ -143,3 +164,17 @@ class XBPageTestVM extends XBVM<XBPageTest> {
 ```
 为XBVM增加toast、dialog、actionSheet
 ```
+
+### 拓展主题中没有的内容
+
+```
+使用extension向对应的类中添加即可。
+
+
+例如，要添加颜色：
+
+extension AppThemeColor on XBThemeColor {
+  Color get orange => Colors.orange;
+}
+```
+

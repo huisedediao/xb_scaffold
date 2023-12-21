@@ -1,5 +1,6 @@
 import 'package:example/theme/app_extension.dart';
 import 'package:example/xb_page_test_vm.dart';
+import 'package:example/xb_push_page.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -31,7 +32,11 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
                 btnTitles: ["取消", "确定"],
                 onSelected: (index) {
-                  print(index);
+                  if (index == 0) {
+                    vm.replace(const XBPushPage());
+                  } else if (index == 1) {
+                    vm.push(const XBPushPage());
+                  }
                 });
           }),
           _buildWidget(vm, 'show action sheet', () {

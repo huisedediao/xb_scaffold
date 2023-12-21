@@ -38,9 +38,7 @@ class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
             )),
         XBButton(
             onTap: () {
-              Navigator.of(vm.context).push(MaterialPageRoute<void>(
-                builder: (BuildContext context) => const XBPageTest(),
-              ));
+              vm.push(const XBPageTest());
             },
             child: const Padding(
               padding: EdgeInsets.all(8.0),
