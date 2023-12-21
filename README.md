@@ -11,7 +11,7 @@ and the Flutter guide for
 [developing packages and plugins](https://flutter.dev/developing-packages).
 -->
 
-基于provider封装的脚手架，集成主题、dialog、toast、actionSheet等功能
+基于provider封装的脚手架，集成路由、主题、dialog、toast、actionSheet等功能
 
 ## 引入
 在pubspec.yaml中添加引用：
