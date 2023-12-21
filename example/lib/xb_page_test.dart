@@ -19,6 +19,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   Widget buildPage(XBPageTestVM vm, BuildContext context) {
+    print('XBPageTest refresh');
     return Container(
       color: app.colors.orange,
       height: vm.screenH,

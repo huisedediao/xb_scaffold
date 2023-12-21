@@ -156,10 +156,10 @@ class XBPageTestVM extends XBVM<XBPageTest> {
 要跳转到NewPage，
 
 在VM子类中和XBState子类中使用：
-push(const NewPage());
+push(NewPage());
 
 在XBWidget子类中使用：
-vm.push(const NewPage());
+vm.push(NewPage());
 ```
 
 ### XBVMToast\XBVMDialog\XBVMActionSheet
