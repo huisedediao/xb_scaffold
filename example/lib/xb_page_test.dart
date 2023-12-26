@@ -24,43 +24,48 @@ class XBPageTest extends XBPage<XBPageTestVM> {
       color: app.colors.orange,
       height: vm.screenH,
       width: vm.screenW,
-      child: Wrap(
+      child: Column(
         children: [
-          _buildWidget(vm, 'show dialog', () {
-            vm.dialog(
-                title: "title",
-                msg:
+          Wrap(
+            children: [
+              _buildWidget(vm, 'show dialog', () {
+                vm.dialog(
+                    title: "title",
+                    msg:
+                        "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                    btnTitles: ["取消", "确定"],
+                    onSelected: (index) {
+                      if (index == 0) {
+                        vm.replace(const XBPushPage());
+                      } else if (index == 1) {
+                        vm.push(const XBPushPage());
+                      }
+                    });
+              }),
+              _buildWidget(vm, 'show action sheet', () {
+                vm.actionSheet(
+                    titles: ["1", "2"],
+                    onSelected: (index) {
+                      print(index);
+                    });
+                // vm.actionSheetWidget(Container(
+                //   height: 200,
+                //   color: app.colors.randColor,
+                // ));
+              }),
+              _buildWidget(vm, 'show toast', () {
+                vm.toast(
                     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                btnTitles: ["取消", "确定"],
-                onSelected: (index) {
-                  if (index == 0) {
-                    vm.replace(const XBPushPage());
-                  } else if (index == 1) {
-                    vm.push(const XBPushPage());
-                  }
-                });
-          }),
-          _buildWidget(vm, 'show action sheet', () {
-            vm.actionSheet(
-                titles: ["1", "2"],
-                onSelected: (index) {
-                  print(index);
-                });
-            // vm.actionSheetWidget(Container(
-            //   height: 200,
-            //   color: app.colors.randColor,
-            // ));
-          }),
-          _buildWidget(vm, 'show toast', () {
-            vm.toast(
-                "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                duration: 5);
-            // vm.toastWidget(Container(
-            //   height: 100,
-            //   width: 100,
-            //   color: app.colors.randColor,
-            // ));
-          })
+                    duration: 5);
+                // vm.toastWidget(Container(
+                //   height: 100,
+                //   width: 100,
+                //   color: app.colors.randColor,
+                // ));
+              })
+            ],
+          ),
+          TextField()
         ],
       ),
     );

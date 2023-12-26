@@ -9,8 +9,6 @@ environment:
 
 dependencies:
   cached_network_image: ^3.3.0
-  connectivity_plus: ^5.0.2
-  event_bus: ^2.0.0
   flutter:
     sdk: flutter
   provider: ^6.1.1
