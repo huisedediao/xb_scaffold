@@ -31,18 +31,18 @@ class XBUniqueList<T> {
   }
 
   replaceOrAddAll(
-      {required List<T> list, required bool equal(T obj1, T obj2)}) {
-    list.forEach((element) {
+      {required List<T> list, required bool Function(T obj1, T obj2) equal}) {
+    for (var element in list) {
       replaceOrAdd(obj: element, equal: equal);
-    });
+    }
   }
 
-  Iterable<E> map<E>(E toElement(T e)) {
+  Iterable<E> map<E>(E Function(T e) toElement) {
     return _list.map(toElement);
   }
 
   /// 如果返回true，则停止遍历
-  forEach(bool element(T e)) {
+  forEach(bool Function(T e) element) {
     for (int i = 0; i < _list.length; i++) {
       bool end = element(_list[i]);
       if (end) {
@@ -74,6 +74,10 @@ class XBUniqueList<T> {
   T operator [](int index) {
     return _list[index];
   }
+
+  bool get isEmpty => _list.isEmpty;
+
+  bool get isNotEmpty => _list.isNotEmpty;
 
   void operator []=(int index, T value) {
     if (index < 0 || index >= _list.length) {
