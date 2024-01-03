@@ -3,12 +3,19 @@
 class XBUniqueList<T> {
   final List<T> _list = [];
 
+  XBUniqueList();
+
+  XBUniqueList.fromList(List<T> initialList) {
+    _list.addAll(initialList);
+  }
+
   add({required T obj}) {
     _list.add(obj);
   }
 
   /// 返回1 ：替换；返回0：添加
-  int replaceOrAdd({required T obj, required bool equal(T obj1, T obj2)}) {
+  int replaceOrAdd(
+      {required T obj, required bool Function(T obj1, T obj2) equal}) {
     int index = -1;
     for (int i = 0; i < _list.length; i++) {
       T temp = _list[i];

@@ -3,8 +3,10 @@ import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 extension XBVMActionSheet on XBVM {
-  /// 底部抽屉的形式弹出一个widget
-  actionSheetWidget(Widget widget) {
+  static actionSheetWidgetStatic({
+    required BuildContext context,
+    required Widget widget,
+  }) {
     showModalBottomSheet(
       context: context,
       builder: (BuildContext context) {
@@ -13,33 +15,50 @@ extension XBVMActionSheet on XBVM {
     );
   }
 
+  /// 底部抽屉的形式弹出一个widget
+  actionSheetWidget({required Widget widget}) {
+    actionSheetWidgetStatic(context: context, widget: widget);
+  }
+
+  static actionSheetStatic(
+      {required BuildContext context,
+      required List<String> titles,
+      required ValueChanged<int> onSelected}) {
+    actionSheetWidgetStatic(
+        context: context,
+        widget: ClipRRect(
+          borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(10), topRight: Radius.circular(10)),
+          child: Container(
+            color: Colors.white,
+            child: SingleChildScrollView(
+                child: Column(
+              children: List.generate(titles.length, (index) {
+                bool isLast = index == titles.length - 1;
+                return Padding(
+                  padding: EdgeInsets.only(
+                      bottom: isLast
+                          ? XBSysSpaceMixin.getSafeAreaBottom(context)
+                          : 0),
+                  child: XBActionSheetCell(
+                    title: titles[index],
+                    showLine: !isLast,
+                    onTap: () {
+                      XBOperaMixin.popStatic(context);
+                      onSelected(index);
+                    },
+                  ),
+                );
+              }),
+            )),
+          ),
+        ));
+  }
+
   /// 展示一个底部选择框
   actionSheet(
       {required List<String> titles, required ValueChanged<int> onSelected}) {
-    actionSheetWidget(ClipRRect(
-      borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(10), topRight: Radius.circular(10)),
-      child: Container(
-        color: Colors.white,
-        child: SingleChildScrollView(
-            child: Column(
-          children: List.generate(titles.length, (index) {
-            bool isLast = index == titles.length - 1;
-            return Padding(
-              padding: EdgeInsets.only(bottom: isLast ? safeAreaBottom : 0),
-              child: XBActionSheetCell(
-                title: titles[index],
-                showLine: !isLast,
-                onTap: () {
-                  pop();
-                  onSelected(index);
-                },
-              ),
-            );
-          }),
-        )),
-      ),
-    ));
+    actionSheetStatic(context: context, titles: titles, onSelected: onSelected);
   }
 }
 

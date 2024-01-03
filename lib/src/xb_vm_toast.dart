@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 
+import 'xb_theme/xb_theme_mixin.dart';
 import 'xb_vm.dart';
 
 extension XBVMToast on XBVM {
-  /// toast的形式展示一个widget
-  toastWidget(Widget widget, {int duration = 2}) {
+  static toastWidgetStatic(
+      {required BuildContext context,
+      required Widget widget,
+      int duration = 3,
+      double bottom = 100}) {
     final overlay = Overlay.of(context);
     final overlayEntry = OverlayEntry(
       builder: (context) => Positioned(
-        bottom: 50.0 + safeAreaBottom,
+        bottom: bottom,
         child: Material(
           color: Colors.transparent,
           child: Container(
@@ -17,10 +21,10 @@ extension XBVMToast on XBVM {
             width: MediaQuery.of(context).size.width,
             child: Padding(
               padding: EdgeInsets.only(
-                  left: app.spaces.gapLess,
-                  right: app.spaces.gapLess,
-                  top: app.spaces.gapLess * 0.5,
-                  bottom: app.spaces.gapLess * 0.5),
+                  left: XBThemeMixin.appStatic.spaces.gapLess,
+                  right: XBThemeMixin.appStatic.spaces.gapLess,
+                  top: XBThemeMixin.appStatic.spaces.gapLess * 0.5,
+                  bottom: XBThemeMixin.appStatic.spaces.gapLess * 0.5),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -41,19 +45,31 @@ extension XBVMToast on XBVM {
     });
   }
 
+  /// toast的形式展示一个widget
+  toastWidget({required Widget widget, int duration = 3}) {
+    toastWidgetStatic(context: context, widget: widget);
+  }
+
+  static toastStatic(String msg, BuildContext context, {int duration = 3}) {
+    toastWidgetStatic(
+      context: context,
+      widget: Padding(
+        padding: EdgeInsets.only(
+            left: XBThemeMixin.appStatic.spaces.gapLess,
+            right: XBThemeMixin.appStatic.spaces.gapLess,
+            top: XBThemeMixin.appStatic.spaces.gapLess * 0.5,
+            bottom: XBThemeMixin.appStatic.spaces.gapLess * 0.5),
+        child: Text(
+          msg,
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+    );
+  }
+
   /// 展示一个toast
   /// time,秒
-  toast(String msg, {int duration = 2}) {
-    toastWidget(Padding(
-      padding: EdgeInsets.only(
-          left: app.spaces.gapLess,
-          right: app.spaces.gapLess,
-          top: app.spaces.gapLess * 0.5,
-          bottom: app.spaces.gapLess * 0.5),
-      child: Text(
-        msg,
-        style: const TextStyle(color: Colors.white),
-      ),
-    ));
+  toast(String msg, {int duration = 3}) {
+    toastStatic(msg, context);
   }
 }

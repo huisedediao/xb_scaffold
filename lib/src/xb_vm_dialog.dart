@@ -3,8 +3,10 @@ import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 extension XBVMDialog on XBVM {
-  /// dialog的形式展示一个widget
-  dialogWidget(Widget widget) {
+  static dialogWidgetStatic({
+    required BuildContext context,
+    required Widget widget,
+  }) {
     showDialog(
       barrierDismissible: false,
       context: context,
@@ -24,82 +26,107 @@ extension XBVMDialog on XBVM {
     );
   }
 
+  /// dialog的形式展示一个widget
+  dialogWidget({required Widget widget}) {
+    dialogWidgetStatic(
+      context: context,
+      widget: widget,
+    );
+  }
+
+  static dialogStatic(
+      {required BuildContext context,
+      required String title,
+      required String msg,
+      required List<String> btnTitles,
+      required ValueChanged<int> onSelected}) {
+    dialogWidgetStatic(
+        context: context,
+        widget: Padding(
+          padding: EdgeInsets.only(
+              left: XBThemeMixin.appStatic.spaces.gapLarge,
+              right: XBThemeMixin.appStatic.spaces.gapLarge),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              color: Colors.white,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: XBThemeMixin.appStatic.spaces.gapDef,
+                  ),
+                  Text(
+                    title,
+                    style: TextStyle(
+                        fontSize: XBThemeMixin.appStatic.fontSizes.s18,
+                        fontWeight: XBThemeMixin.appStatic.fontWeights.medium),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(
+                        left: XBThemeMixin.appStatic.spaces.gapDef,
+                        right: XBThemeMixin.appStatic.spaces.gapDef,
+                        top: XBThemeMixin.appStatic.spaces.gapLess,
+                        bottom: XBThemeMixin.appStatic.spaces.gapDef),
+                    child: Text(msg),
+                  ),
+                  Container(
+                    height: XBSysSpaceMixin.getOnePixel(context),
+                    color: lineColor,
+                  ),
+                  Row(
+                    children: _setupBtns(context, btnTitles, onSelected),
+                  )
+                ],
+              ),
+            ),
+          ),
+        ));
+  }
+
   /// 展示一个Dialog
   dialog(
       {required String title,
       required String msg,
       required List<String> btnTitles,
       required ValueChanged<int> onSelected}) {
-    dialogWidget(Padding(
-      padding: EdgeInsets.only(
-          left: app.spaces.gapLarge, right: app.spaces.gapLarge),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          color: Colors.white,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                height: app.spaces.gapDef,
-              ),
-              Text(
-                title,
-                style: TextStyle(
-                    fontSize: app.fontSizes.s18,
-                    fontWeight: app.fontWeights.medium),
-              ),
-              Padding(
-                padding: EdgeInsets.only(
-                    left: app.spaces.gapDef,
-                    right: app.spaces.gapDef,
-                    top: app.spaces.gapLess,
-                    bottom: app.spaces.gapDef),
-                child: Text(msg),
-              ),
-              Container(
-                height: onePixel,
-                color: lineColor,
-              ),
-              Row(
-                children: _setupBtns(btnTitles, onSelected),
-              )
-            ],
-          ),
-        ),
-      ),
-    ));
+    dialogStatic(
+        context: context,
+        title: title,
+        msg: msg,
+        btnTitles: btnTitles,
+        onSelected: onSelected);
   }
 
-  List<Widget> _setupBtns(
-      List<String> btnTitles, ValueChanged<int> onSelected) {
+  static List<Widget> _setupBtns(BuildContext context, List<String> btnTitles,
+      ValueChanged<int> onSelected) {
     if (btnTitles.length == 1) {
       return [
         _buildBtn(btnTitles[0], Colors.blue, () {
-          pop();
+          XBOperaMixin.popStatic(context);
           onSelected(0);
         })
       ];
     } else {
       return [
         _buildBtn(btnTitles[0], Colors.black, () {
-          pop();
+          XBOperaMixin.popStatic(context);
           onSelected(0);
         }),
         Container(
           height: 50,
-          width: onePixel,
+          width: XBSysSpaceMixin.getOnePixel(context),
           color: lineColor,
         ),
         _buildBtn(btnTitles[1], Colors.blue, () {
-          pop();
+          XBOperaMixin.popStatic(context);
           onSelected(1);
         })
       ];
     }
   }
 
-  Widget _buildBtn(String title, Color color, VoidCallback onTap) {
+  static Widget _buildBtn(String title, Color color, VoidCallback onTap) {
     return Expanded(
         child: XBButton(
             effect: XBButtonTapEffect.cover,
