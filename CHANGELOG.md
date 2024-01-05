@@ -33,3 +33,7 @@
 ## 0.0.9
 
 - optimize
+
+## 0.0.10
+
+- 去除actionSheet白色背景
