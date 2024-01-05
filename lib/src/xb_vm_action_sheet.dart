@@ -9,6 +9,7 @@ extension XBVMActionSheet on XBVM {
   }) {
     showModalBottomSheet(
       context: context,
+      backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
         return widget;
       },
