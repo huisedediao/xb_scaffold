@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/xb_stateless_widget.dart';
@@ -41,6 +42,17 @@ class XBImage extends XBStatelessWidget {
         gaplessPlayback: true,
       );
     }
+
+    if (img is Uint8List) {
+      return Image.memory(
+        img,
+        width: width,
+        height: height,
+        fit: fit,
+        gaplessPlayback: true,
+      );
+    }
+
     if (img.startsWith("http")) {
       return CachedNetworkImage(
         fadeInDuration: const Duration(milliseconds: 0),

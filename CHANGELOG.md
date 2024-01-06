@@ -37,3 +37,7 @@
 ## 0.0.10
 
 - 去除actionSheet白色背景
+
+## 0.0.11
+
+- XBImage增加Uint8List数据显示
