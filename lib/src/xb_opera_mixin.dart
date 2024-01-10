@@ -38,6 +38,16 @@ mixin XBOperaMixin {
     Navigator.of(context, rootNavigator: false).pop(result);
   }
 
+  ///回到根页面
+  static void popToRootStatic(BuildContext context) {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  ///回到根页面
+  void popToRoot() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   /// 结束编辑
   static endEditingStatic(BuildContext context) =>
       FocusScope.of(context).requestFocus(FocusNode());

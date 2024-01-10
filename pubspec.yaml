@@ -1,6 +1,6 @@
 name: xb_scaffold
 description: 基于provider封装的脚手架.
-version: 0.0.11
+version: 0.0.12
 homepage: https://github.com/huisedediao/xb_scaffold.git
 
 environment:
