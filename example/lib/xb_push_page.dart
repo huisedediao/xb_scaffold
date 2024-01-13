@@ -22,6 +22,6 @@ class XBPushPage extends XBPage<XBPushPageVM> {
   }
 }
 
-class XBPushPageVM extends XBVM<XBPushPage> {
+class XBPushPageVM extends XBPageVM<XBPushPage> {
   XBPushPageVM({required super.context});
 }

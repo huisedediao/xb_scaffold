@@ -43,7 +43,7 @@ mixin XBOperaMixin {
   }
 
   /// 回到最后一个Type类型的页面
-  /// 如果找不到，则回到跟页面
+  /// 如果找不到，则回到根页面
   static void popPageUntilTypeStatic(BuildContext context, Type type) {
     while (true) {
       popPageStatic(context);

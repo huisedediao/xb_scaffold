@@ -66,6 +66,12 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 //   width: 100,
                 //   color: app.colors.randColor,
                 // ));
+              }),
+              _buildWidget(vm, 'show loading', () {
+                vm.showLoading();
+                Future.delayed(const Duration(seconds: 3), () {
+                  vm.hideLoading();
+                });
               })
             ],
           ),
@@ -76,11 +82,14 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   }
 
   Widget _buildWidget(XBPageTestVM vm, String title, VoidCallback onTap) {
-    return Container(
-      height: vm.screenH * 0.33,
-      width: vm.screenW * 0.33,
-      color: app.colors.randColor,
-      child: XBButton(onTap: onTap, child: Center(child: Text(title))),
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Container(
+        height: vm.screenH * 0.33,
+        width: vm.screenW * 0.33,
+        color: Colors.blue,
+        child: XBButton(onTap: onTap, child: Center(child: Text(title))),
+      ),
     );
   }
 }

@@ -1,11 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:xb_scaffold/src/common/xb_loading_widget.dart';
 import '../xb_scaffold.dart';
 import 'common/xb_empty_app_bar.dart';
 import 'configs/color_config.dart';
 
-abstract class XBPage<T extends XBVM> extends XBWidget<T> {
+abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   const XBPage({super.key});
 
   /// -------------------- build condition --------------------
@@ -116,17 +117,33 @@ abstract class XBPage<T extends XBVM> extends XBWidget<T> {
   Widget _rootWidget(T vm) {
     return WillPopScope(
       onWillPop: _onWillPop(),
-      child: Scaffold(
-        primary: _primary,
-        backgroundColor: backgroundColor,
-        resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
-        appBar: _primary == false ? const XBEmptyAppBar() : buildAppBar(vm),
-        body: _buildBodyContent(vm),
-      ),
+      child: _buildLoadingContent(vm),
     );
   }
 
-  _buildBodyContent(T vm) {
+  Widget _buildLoadingContent(vm) {
+    return Stack(
+      children: [
+        Scaffold(
+          primary: _primary,
+          backgroundColor: backgroundColor,
+          resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
+          appBar: _primary == false ? const XBEmptyAppBar() : buildAppBar(vm),
+          body: _buildBodyContent(vm),
+        ),
+        Visibility(
+            visible: vm.isLoading,
+            child: Opacity(opacity: vm.opacity, child: buildLoading(vm)))
+      ],
+    );
+  }
+
+  /// 如果需要不同loading，重写此方法
+  Widget buildLoading(vm) {
+    return const XBLoadingWidget();
+  }
+
+  Widget _buildBodyContent(T vm) {
     Widget content = buildPage(vm, vm.context);
     if (needPageContentAdaptTabbar()) {
       content = Padding(

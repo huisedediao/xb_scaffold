@@ -3,6 +3,7 @@ library xb_scaffold;
 import 'src/xb_theme/xb_theme_vm.dart';
 
 export './src/xb_page.dart';
+export './src/xb_page_vm.dart';
 export './src/xb_state.dart';
 export './src/xb_stateless_widget.dart';
 export './src/xb_widget.dart';
