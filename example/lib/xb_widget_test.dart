@@ -14,7 +14,6 @@ class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
 
   @override
   Widget buildWidget(XBWidgetTestVM vm, BuildContext context) {
-    print('XBWidgetTest refresh');
     return Column(
       children: [
         Container(
@@ -39,7 +38,7 @@ class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
             )),
         XBButton(
             onTap: () {
-              vm.push(const XBPageTest());
+              vm.pushPage(const XBPageTest());
             },
             child: const Padding(
               padding: EdgeInsets.all(8.0),

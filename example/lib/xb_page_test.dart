@@ -19,7 +19,6 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   Widget buildPage(XBPageTestVM vm, BuildContext context) {
-    print('XBPageTest refresh');
     return Container(
       color: app.colors.orange,
       height: vm.screenH,
@@ -36,9 +35,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     btnTitles: ["取消", "确定"],
                     onSelected: (index) {
                       if (index == 0) {
-                        vm.replace(const XBPushPage());
+                        vm.replacePage(const XBPushPage());
                       } else if (index == 1) {
-                        vm.push(const XBPushPage());
+                        vm.pushPage(const XBPushPage());
                       }
                     });
               }),
@@ -58,9 +57,10 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 ));
               }),
               _buildWidget(vm, 'show toast', () {
-                vm.toast(
-                    "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                    duration: 5);
+                vm.toast("isTop:${vm.pageIsTop(this)}");
+                // vm.toast(
+                //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                //     duration: 5);
                 // vm.toastWidget(Container(
                 //   height: 100,
                 //   width: 100,

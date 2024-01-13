@@ -45,7 +45,7 @@ extension XBVMActionSheet on XBVM {
                     title: titles[index],
                     showLine: !isLast,
                     onTap: () {
-                      XBOperaMixin.popStatic(context);
+                      Navigator.of(context, rootNavigator: false).pop();
                       onSelected(index);
                     },
                   ),

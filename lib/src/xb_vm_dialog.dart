@@ -103,14 +103,14 @@ extension XBVMDialog on XBVM {
     if (btnTitles.length == 1) {
       return [
         _buildBtn(btnTitles[0], Colors.blue, () {
-          XBOperaMixin.popStatic(context);
+          Navigator.of(context, rootNavigator: false).pop();
           onSelected(0);
         })
       ];
     } else {
       return [
         _buildBtn(btnTitles[0], Colors.black, () {
-          XBOperaMixin.popStatic(context);
+          Navigator.of(context, rootNavigator: false).pop();
           onSelected(0);
         }),
         Container(
@@ -119,7 +119,7 @@ extension XBVMDialog on XBVM {
           color: lineColor,
         ),
         _buildBtn(btnTitles[1], Colors.blue, () {
-          XBOperaMixin.popStatic(context);
+          Navigator.of(context, rootNavigator: false).pop();
           onSelected(1);
         })
       ];
