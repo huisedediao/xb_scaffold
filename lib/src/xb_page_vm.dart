@@ -4,62 +4,64 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 abstract class XBPageVM<T> extends XBVM<T> {
   XBPageVM({required super.context, bool initLoading = false})
-      : _opicity = initLoading ? 1 : 0;
+      : _loadingOpicity = initLoading ? 1 : 0;
 
-  bool get isLoading => _opicity > 0;
+  bool get isLoading => _loadingOpicity > 0;
 
-  double _opicity = 0;
+  double _loadingOpicity = 0;
 
-  double get opacity => _opicity;
+  double get loadingOpacity => _loadingOpicity;
 
-  Timer? _timer;
+  Timer? _loadingAnimationTimer;
 
   showLoading() {
-    _startShowTimer();
+    _startShowLoadingTimer();
     notify();
   }
 
   hideLoading() {
-    _startHideTimer();
+    _startHideLoadingTimer();
     notify();
   }
 
-  int get _animationTime => 33;
+  int get _loadingAnimationTime => 33;
 
-  double get _animationStep => 0.25;
+  double get _loadingAnimationStep => 0.25;
 
-  _startShowTimer() {
-    _stopTimer();
-    _timer = Timer.periodic(Duration(milliseconds: _animationTime), (timer) {
-      _opicity += _animationStep;
-      if (_opicity >= 1) {
-        _opicity = 1;
-        _stopTimer();
+  _startShowLoadingTimer() {
+    _stopLoadingTimer();
+    _loadingAnimationTimer =
+        Timer.periodic(Duration(milliseconds: _loadingAnimationTime), (timer) {
+      _loadingOpicity += _loadingAnimationStep;
+      if (_loadingOpicity >= 1) {
+        _loadingOpicity = 1;
+        _stopLoadingTimer();
       }
       notify();
     });
   }
 
-  _startHideTimer() {
-    _stopTimer();
-    _timer = Timer.periodic(Duration(milliseconds: _animationTime), (timer) {
-      _opicity -= _animationStep;
-      if (_opicity <= 0) {
-        _opicity = 0;
-        _stopTimer();
+  _startHideLoadingTimer() {
+    _stopLoadingTimer();
+    _loadingAnimationTimer =
+        Timer.periodic(Duration(milliseconds: _loadingAnimationTime), (timer) {
+      _loadingOpicity -= _loadingAnimationStep;
+      if (_loadingOpicity <= 0) {
+        _loadingOpicity = 0;
+        _stopLoadingTimer();
       }
       notify();
     });
   }
 
-  _stopTimer() {
-    _timer?.cancel();
-    _timer = null;
+  _stopLoadingTimer() {
+    _loadingAnimationTimer?.cancel();
+    _loadingAnimationTimer = null;
   }
 
   @override
   void dispose() {
-    _stopTimer();
+    _stopLoadingTimer();
     super.dispose();
   }
 }

@@ -57,6 +57,21 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return true;
   }
 
+  /// 在展示loading的时候，是否需要相应navigationBar的左侧部分
+  bool needResponseNavigationBarLeftWhileLoading() {
+    return true;
+  }
+
+  /// 在展示loading的时候，是否需要相应navigationBar的中间部分
+  bool needResponseNavigationBarCenterWhileLoading() {
+    return false;
+  }
+
+  /// 在展示loading的时候，是否需要相应navigationBar的右侧部分
+  bool needResponseNavigationBarRightWhileLoading() {
+    return false;
+  }
+
   bool get _primary => !needShowContentFromScreenTop();
 
   /// -------------------- build params --------------------
@@ -116,12 +131,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _rootWidget(T vm) {
     return WillPopScope(
-      onWillPop: _onWillPop(),
+      onWillPop: _onWillPop(vm),
       child: _buildLoadingContent(vm),
     );
   }
 
-  Widget _buildLoadingContent(vm) {
+  Widget _buildLoadingContent(T vm) {
     return Stack(
       children: [
         Scaffold(
@@ -133,13 +148,55 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
         ),
         Visibility(
             visible: vm.isLoading,
-            child: Opacity(opacity: vm.opacity, child: buildLoading(vm)))
+            child: Opacity(
+                opacity: vm.loadingOpacity,
+                child: Stack(
+                  children: [
+                    Column(
+                      children: [
+                        SizedBox(
+                          height: vm.topBarH,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                  child: Container(
+                                color:
+                                    needResponseNavigationBarLeftWhileLoading()
+                                        ? null
+                                        : Colors.transparent,
+                              )),
+                              Expanded(
+                                  child: Container(
+                                color:
+                                    needResponseNavigationBarCenterWhileLoading()
+                                        ? null
+                                        : Colors.transparent,
+                              )),
+                              Expanded(
+                                  child: Container(
+                                color:
+                                    needResponseNavigationBarRightWhileLoading()
+                                        ? null
+                                        : Colors.transparent,
+                              ))
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                            child: Container(
+                          color: Colors.transparent,
+                        ))
+                      ],
+                    ),
+                    buildLoading(vm),
+                  ],
+                )))
       ],
     );
   }
 
   /// 如果需要不同loading，重写此方法
-  Widget buildLoading(vm) {
+  Widget buildLoading(T vm) {
     return const XBLoadingWidget();
   }
 
@@ -201,11 +258,11 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// -------------------- function --------------------
   /// 即将pop
-  _onWillPop() {
+  _onWillPop(T vm) {
     if (Platform.isAndroid) {
       return _androidOnWillPop;
     } else {
-      if (needIosGestureBack()) {
+      if (needIosGestureBack() && _canLoadingPop(vm)) {
         return null;
       } else {
         return _iosOnWillPop;
@@ -223,7 +280,11 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
    * 只有 安卓 的 手势返回 操作，这个方法才生效
    * 如果需要控制iOS的滑动返回，在NeedIosGestureUtil中配置
    * */
-  Future<bool> _androidOnWillPop() async {
-    return onAndroidPhysicalBack();
+  Future<bool> _androidOnWillPop(T vm) async {
+    return onAndroidPhysicalBack() && _canLoadingPop(vm);
   }
+
+  /// loading是否允许返回
+  bool _canLoadingPop(T vm) =>
+      vm.isLoading == false || needResponseNavigationBarLeftWhileLoading();
 }

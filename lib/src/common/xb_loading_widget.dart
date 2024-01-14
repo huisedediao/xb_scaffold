@@ -3,16 +3,16 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_animation_rotate.dart';
 import 'package:xb_scaffold/src/common/xb_shadow_container.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBLoadingWidget extends StatelessWidget {
+class XBLoadingWidget extends XBVMLessWidget {
   const XBLoadingWidget({super.key});
 
   final double w = 70;
 
   @override
-  Widget build(BuildContext context) {
+  Widget buildWidget(XBVM vm, BuildContext context) {
     return Container(
-        color: Colors.transparent,
         alignment: Alignment.center,
         child: XBShadowContainer(
           child: ClipRRect(
@@ -24,7 +24,7 @@ class XBLoadingWidget extends StatelessWidget {
               alignment: Alignment.center,
               child: XBAnimationRotate(
                 repeat: true,
-                duration: const Duration(milliseconds: 1500),
+                duration: const Duration(milliseconds: 1000),
                 child:
                     CustomPaint(size: Size(w, w), painter: XBLoadingPainter()),
               ),

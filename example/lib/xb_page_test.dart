@@ -18,6 +18,21 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   }
 
   @override
+  bool needResponseNavigationBarLeftWhileLoading() {
+    return true;
+  }
+
+  @override
+  bool needResponseNavigationBarCenterWhileLoading() {
+    return false;
+  }
+
+  @override
+  bool needResponseNavigationBarRightWhileLoading() {
+    return false;
+  }
+
+  @override
   Widget buildPage(XBPageTestVM vm, BuildContext context) {
     return Container(
       color: app.colors.orange,
