@@ -18,6 +18,16 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   }
 
   @override
+  bool needInitLoading() {
+    return true;
+  }
+
+  @override
+  bool needLoading() {
+    return false;
+  }
+
+  @override
   bool needResponseNavigationBarLeftWhileLoading() {
     return true;
   }

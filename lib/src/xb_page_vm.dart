@@ -1,67 +1,42 @@
-import 'dart:async';
-
+import 'package:flutter/material.dart';
+import 'package:xb_scaffold/src/common/xb_fade_widget.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 abstract class XBPageVM<T> extends XBVM<T> {
-  XBPageVM({required super.context, bool initLoading = false})
-      : _loadingOpicity = initLoading ? 1 : 0;
+  XBPageVM({required super.context}) {
+    if ((widget as XBPage).needInitLoading()) {
+      _isLoading = true;
+    }
+  }
 
-  bool get isLoading => _loadingOpicity > 0;
+  bool _isLoading = false;
 
-  double _loadingOpicity = 0;
+  bool get isLoading => _isLoading;
 
-  double get loadingOpacity => _loadingOpicity;
+  GlobalKey<XBFadeWidgetState>? _fadeKey;
 
-  Timer? _loadingAnimationTimer;
+  GlobalKey<XBFadeWidgetState> get fadeKey {
+    _fadeKey ??= GlobalKey();
+    return _fadeKey!;
+  }
+
+  bool get needLoading => (widget as XBPage).needLoading();
 
   showLoading() {
-    _startShowLoadingTimer();
-    notify();
+    if (needLoading) {
+      _isLoading = true;
+      notify();
+
+      fadeKey.currentState?.show();
+    }
   }
 
   hideLoading() {
-    _startHideLoadingTimer();
-    notify();
-  }
-
-  int get _loadingAnimationTime => 33;
-
-  double get _loadingAnimationStep => 0.25;
-
-  _startShowLoadingTimer() {
-    _stopLoadingTimer();
-    _loadingAnimationTimer =
-        Timer.periodic(Duration(milliseconds: _loadingAnimationTime), (timer) {
-      _loadingOpicity += _loadingAnimationStep;
-      if (_loadingOpicity >= 1) {
-        _loadingOpicity = 1;
-        _stopLoadingTimer();
-      }
-      notify();
-    });
-  }
-
-  _startHideLoadingTimer() {
-    _stopLoadingTimer();
-    _loadingAnimationTimer =
-        Timer.periodic(Duration(milliseconds: _loadingAnimationTime), (timer) {
-      _loadingOpicity -= _loadingAnimationStep;
-      if (_loadingOpicity <= 0) {
-        _loadingOpicity = 0;
-        _stopLoadingTimer();
-      }
-      notify();
-    });
-  }
-
-  _stopLoadingTimer() {
-    _loadingAnimationTimer?.cancel();
-    _loadingAnimationTimer = null;
-  }
-
-  @override
-  void dispose() {
-    _stopLoadingTimer();
-    super.dispose();
+    if (needLoading) {
+      fadeKey.currentState?.hide(() {
+        _isLoading = false;
+        notify();
+      });
+    }
   }
 }

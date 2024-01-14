@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:xb_scaffold/src/common/xb_fade_widget.dart';
 import 'package:xb_scaffold/src/common/xb_loading_widget.dart';
 import '../xb_scaffold.dart';
 import 'common/xb_empty_app_bar.dart';
@@ -72,6 +73,16 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return false;
   }
 
+  /// 是否需要在刚展示页面就展示loading
+  bool needInitLoading() {
+    return false;
+  }
+
+  /// 是否需要loading
+  bool needLoading() {
+    return false;
+  }
+
   bool get _primary => !needShowContentFromScreenTop();
 
   /// -------------------- build params --------------------
@@ -137,60 +148,62 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _buildLoadingContent(T vm) {
+    Widget scaffold = Scaffold(
+      primary: _primary,
+      backgroundColor: backgroundColor,
+      resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
+      appBar: _primary == false ? const XBEmptyAppBar() : buildAppBar(vm),
+      body: _buildBodyContent(vm),
+    );
+    if (!needLoading()) {
+      return scaffold;
+    }
     return Stack(
       children: [
-        Scaffold(
-          primary: _primary,
-          backgroundColor: backgroundColor,
-          resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
-          appBar: _primary == false ? const XBEmptyAppBar() : buildAppBar(vm),
-          body: _buildBodyContent(vm),
-        ),
-        Visibility(
+        scaffold,
+        XBFadeWidget(
+          key: vm.fadeKey,
+          initShow: needInitLoading(),
+          child: Visibility(
             visible: vm.isLoading,
-            child: Opacity(
-                opacity: vm.loadingOpacity,
-                child: Stack(
-                  children: [
-                    Column(
+            child: Stack(children: [
+              Column(
+                children: [
+                  SizedBox(
+                    height: vm.topBarH,
+                    child: Row(
                       children: [
-                        SizedBox(
-                          height: vm.topBarH,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                  child: Container(
-                                color:
-                                    needResponseNavigationBarLeftWhileLoading()
-                                        ? null
-                                        : Colors.transparent,
-                              )),
-                              Expanded(
-                                  child: Container(
-                                color:
-                                    needResponseNavigationBarCenterWhileLoading()
-                                        ? null
-                                        : Colors.transparent,
-                              )),
-                              Expanded(
-                                  child: Container(
-                                color:
-                                    needResponseNavigationBarRightWhileLoading()
-                                        ? null
-                                        : Colors.transparent,
-                              ))
-                            ],
-                          ),
-                        ),
                         Expanded(
                             child: Container(
-                          color: Colors.transparent,
+                          color: needResponseNavigationBarLeftWhileLoading()
+                              ? null
+                              : Colors.transparent,
+                        )),
+                        Expanded(
+                            child: Container(
+                          color: needResponseNavigationBarCenterWhileLoading()
+                              ? null
+                              : Colors.transparent,
+                        )),
+                        Expanded(
+                            child: Container(
+                          color: needResponseNavigationBarRightWhileLoading()
+                              ? null
+                              : Colors.transparent,
                         ))
                       ],
                     ),
-                    buildLoading(vm),
-                  ],
-                )))
+                  ),
+                  Expanded(
+                      child: Container(
+                    color: Colors.transparent,
+                  ))
+                ],
+              ),
+              buildLoading(vm),
+            ]),
+          ),
+        )
       ],
     );
   }
