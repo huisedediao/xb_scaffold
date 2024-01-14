@@ -5,7 +5,6 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
   XBPageTestVM({required super.context}) {
     Future.delayed(Duration(seconds: 3), () {
       hideLoading();
-      showLoading();
     });
   }
 }

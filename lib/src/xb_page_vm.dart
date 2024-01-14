@@ -32,11 +32,15 @@ abstract class XBPageVM<T> extends XBVM<T> {
   }
 
   hideLoading() {
-    if (needLoading) {
-      fadeKey.currentState?.hide(() {
-        _isLoading = false;
-        notify();
-      });
-    }
+    try {
+      if (needLoading) {
+        fadeKey.currentState?.hide(() {
+          try {
+            _isLoading = false;
+            notify();
+          } catch (e) {}
+        });
+      }
+    } catch (e) {}
   }
 }

@@ -14,11 +14,15 @@ class XBFadeWidget extends StatefulWidget {
   /// 动画帧率
   final int fps;
 
+  /// 自动开始展示动画，默认false
+  final bool autoShowAnimation;
+
   const XBFadeWidget(
       {required this.child,
       this.milliseconds = 200,
       this.initShow = false,
       this.fps = 30,
+      this.autoShowAnimation = false,
       super.key});
 
   @override
@@ -36,6 +40,11 @@ class XBFadeWidgetState extends State<XBFadeWidget> {
     if (widget.initShow) {
       _opacity = 1;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.autoShowAnimation) {
+        show();
+      }
+    });
   }
 
   @override

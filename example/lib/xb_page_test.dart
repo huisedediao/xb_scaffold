@@ -24,7 +24,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   bool needLoading() {
-    return false;
+    return true;
   }
 
   @override
