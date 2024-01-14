@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 mixin XBOperaMixin {
@@ -17,11 +18,18 @@ mixin XBOperaMixin {
   }
 
   /// 进入新页面
+  /// style：0 iOS风格；1 material风格
   static Future<T?> pushPageStatic<T extends Object?>(
-      BuildContext context, Widget newPage) {
+      BuildContext context, Widget newPage,
+      [int style = 0]) {
     _stack.add(newPage);
-    return Navigator.push(
-        context, MaterialPageRoute<T>(builder: (context) => newPage));
+    if (style == 0) {
+      return Navigator.push(
+          context, CupertinoPageRoute<T>(builder: (ctx) => newPage));
+    } else {
+      return Navigator.push(
+          context, MaterialPageRoute<T>(builder: (context) => newPage));
+    }
   }
 
   /// 回到上一页

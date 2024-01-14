@@ -14,14 +14,9 @@ and the Flutter guide for
 基于provider封装的脚手架，集成路由、主题、dialog、toast、actionSheet等功能
 
 ## 引入
-在pubspec.yaml中添加引用：
 ```
-  xb_scaffold:
-    git:
-      url: https://github.com/huisedediao/xb_scaffold.git
-      ref: main
+flutter pub add xb_scaffold
 ```
-![Alt text](import.png)
 
 ## 初始化
 ```
@@ -49,7 +44,7 @@ tabbar高度、一个像素的高度等等
 ```
 ##### XBOperaMixin
 ```
-一些页面操作，比如push、pop，比如结束输入框编辑
+一些页面操作，比如pushPage、popPage，比如结束输入框编辑
 ```
 
 ##### XBThemeMixin
@@ -149,17 +144,23 @@ class XBPageTestVM extends XBVM<XBPageTest> {
 
 ### 路由
 ```
-使用VM中mixin的push、replace、pop
+使用VM中mixin的:
 
-示例：
+/// push到新页面
+pushPage
 
-要跳转到NewPage，
+/// 用新页面替换当前页
+replacePage
 
-在VM子类中和XBState子类中使用：
-push(NewPage());
+/// 回到上一页
+popPage
 
-在XBWidget子类中使用：
-vm.push(NewPage());
+/// 回到根页面
+popToRootPage
+
+/// 回到指定页面
+popPageUtilType
+
 ```
 
 ### XBVMToast\XBVMDialog\XBVMActionSheet
