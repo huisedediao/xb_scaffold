@@ -77,6 +77,7 @@ class XBFadeWidgetState extends State<XBFadeWidget> {
   _refresh() {
     try {
       setState(() {});
+      // ignore: empty_catches
     } catch (e) {}
   }
 
