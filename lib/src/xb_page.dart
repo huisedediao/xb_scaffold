@@ -22,7 +22,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   /// 是否启动安卓物理返回
-  bool onAndroidPhysicalBack() {
+  bool onAndroidPhysicalBack(T vm) {
     return true;
   }
 

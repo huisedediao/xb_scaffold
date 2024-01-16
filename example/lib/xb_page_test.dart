@@ -67,19 +67,19 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     });
               }),
               _buildWidget(vm, 'show action sheet', () {
-                // vm.actionSheet(
-                //     titles: ["1", "2"],
-                //     onSelected: (index) {
-                //       print(index);
-                //     });
-                vm.actionSheetWidget(
-                    widget: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    height: 200,
-                    color: app.colors.randColor,
-                  ),
-                ));
+                vm.actionSheet(
+                    titles: ["1", "2"],
+                    onSelected: (index) {
+                      print(index);
+                    });
+                // vm.actionSheetWidget(
+                //     widget: ClipRRect(
+                //   borderRadius: BorderRadius.circular(10),
+                //   child: Container(
+                //     height: 200,
+                //     color: app.colors.randColor,
+                //   ),
+                // ));
               }),
               _buildWidget(vm, 'show toast', () {
                 vm.toast("isTop:${vm.pageIsTop(this)}");

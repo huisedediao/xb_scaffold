@@ -8,6 +8,11 @@ bool isTop(Widget page) {
   return _stack.last == page;
 }
 
+/// 栈顶是否是type类型
+bool topIsType(Type type) {
+  return _stack.last.runtimeType == type;
+}
+
 /// 页面是否在栈里
 bool isInStack(Widget page) {
   return _stack.contains(page);

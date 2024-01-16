@@ -18,7 +18,7 @@ class XBLoadingWidget extends XBVMLessWidget {
             child: Container(
               height: w,
               width: w,
-              color: const Color.fromARGB(255, 242, 241, 241),
+              color: Colors.white,
               alignment: Alignment.center,
               child: XBAnimationRotate(
                 repeat: true,
