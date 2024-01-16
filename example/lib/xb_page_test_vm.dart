@@ -3,7 +3,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageTestVM extends XBPageVM<XBPageTest> {
   XBPageTestVM({required super.context}) {
-    Future.delayed(Duration(seconds: 3), () {
+    Future.delayed(const Duration(seconds: 3), () {
       hideLoading();
     });
   }
