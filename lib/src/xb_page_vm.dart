@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-abstract class XBPageVM<T> extends XBVM<T> {
+class XBPageVM<T> extends XBVM<T> {
   XBPageVM({required super.context}) {
     if ((widget as XBPage).needInitLoading()) {
       _isLoading = true;
