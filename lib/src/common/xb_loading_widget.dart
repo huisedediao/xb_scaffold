@@ -1,8 +1,6 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/common/xb_animation_rotate.dart';
-import 'package:xb_scaffold/src/common/xb_shadow_container.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBLoadingWidget extends XBVMLessWidget {

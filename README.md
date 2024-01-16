@@ -42,7 +42,7 @@ XBThemeVM().changeTheme(1);
 一些系统的参数，比如屏幕宽高、状态栏高度、navigationBar高度、
 tabbar高度、一个像素的高度等等
 ```
-##### XBOperaMixin
+##### XBRouteMixin
 ```
 一些页面操作，比如pushPage、popPage，比如结束输入框编辑
 ```
@@ -63,13 +63,13 @@ tabbar高度、一个像素的高度等等
 ```
 和State一样使用
 
-在State的基础上，增加了XBSysSpaceMixin，XBThemeMixin，XBOperaMixin三个mixin
+在State的基础上，增加了XBSysSpaceMixin，XBThemeMixin，XBRouteMixin三个mixin
 ```
 ### XBVM
 ```
 继承自ChangeNotifier
 
-增加了XBSysSpaceMixin，XBThemeMixin，XBOperaMixin三个mixin
+增加了XBSysSpaceMixin，XBThemeMixin，XBRouteMixin三个mixin
 
 用于页面状态的管理
 

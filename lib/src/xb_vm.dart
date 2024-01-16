@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_opera_mixin.dart';
+import 'package:xb_scaffold/src/xb_route_mixin.dart';
 import 'xb_sys_space_mixin.dart';
 import 'xb_theme/xb_theme_mixin.dart';
 export 'xb_sys_space_mixin.dart';
@@ -8,7 +8,7 @@ export 'xb_vm_action_sheet.dart';
 export 'xb_vm_toast.dart';
 
 class XBVM<T> extends ChangeNotifier
-    with XBSysSpaceMixin, XBThemeMixin, XBOperaMixin {
+    with XBSysSpaceMixin, XBThemeMixin, XBRouteMixin {
   @override
   final BuildContext context;
 

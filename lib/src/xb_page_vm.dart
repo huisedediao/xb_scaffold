@@ -3,7 +3,6 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/common/xb_fade_widget.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 abstract class XBPageVM<T> extends XBVM<T> {

@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-mixin XBOperaMixin {
+mixin XBRouteMixin {
   BuildContext get context;
 
   static final List<Widget> _stack = [];
@@ -9,6 +9,11 @@ mixin XBOperaMixin {
   /// 页面是否在栈顶
   static bool pageIsTopStatic(Widget page) {
     return _stack.last == page;
+  }
+
+  /// 页面是否在栈里
+  static bool pageInStackStatic(Widget page) {
+    return _stack.contains(page);
   }
 
   /// 用新页面替换当前页
@@ -67,7 +72,12 @@ mixin XBOperaMixin {
 
   /// 页面是否在栈顶
   bool pageIsTop(Widget page) {
-    return _stack.last == page;
+    return pageIsTopStatic(page);
+  }
+
+  /// 页面是否在栈里
+  static bool pageInStack(Widget page) {
+    return pageInStackStatic(page);
   }
 
   /// 用新页面替换当前页

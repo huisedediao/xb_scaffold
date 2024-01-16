@@ -10,11 +10,15 @@ export './src/xb_widget.dart';
 export './src/xb_vmless_widget.dart';
 export './src/xb_vm.dart';
 export './src/xb_theme/xb_theme_vm.dart';
-export './src/common/xb_image.dart';
+export './src/common/xb_animation_rotate.dart';
 export './src/common/xb_button.dart';
+export './src/common/xb_empty_app_bar.dart';
+export './src/common/xb_fade_widget.dart';
+export './src/common/xb_image.dart';
+export './src/common/xb_shadow_container.dart';
 export './src/common/xb_navigator_back_btn.dart';
 export './src/xb_theme/xb_theme_mixin.dart';
-export './src/xb_opera_mixin.dart';
+export './src/xb_route_mixin.dart';
 
 export './src/utils/xb_unique_list.dart';
 
