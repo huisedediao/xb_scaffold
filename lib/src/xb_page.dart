@@ -242,7 +242,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget? leading(T vm) {
     return XBNavigatorBackBtn(
       onTap: () {
-        pop();
+        vm.back();
       },
     );
   }
