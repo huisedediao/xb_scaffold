@@ -20,11 +20,22 @@ flutter pub add xb_scaffold
 
 ## 初始化
 ```
-void main() async {
-  /// 传入不同主题的图片路径
-  await initXBScaffold(
-      imgPrefixs: ["assets/images/default/", "assets/images/custom/"]);
-  runApp(const MyApp());
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      home: const XBScaffold(
+          imgPrefixs: ["assets/images/default/", "assets/images/custom/"],
+          child: MyHomePage(title: 'Flutter Demo Home Page')),
+    );
+  }
 }
 ```
 
@@ -128,11 +139,6 @@ popToRoot
 /// 回到指定页面
 popUtilType
 
-```
-
-### XBVMToast\XBVMDialog\XBVMActionSheet
-```
-为XBVM增加toast、dialog、actionSheet
 ```
 
 ### 拓展主题中没有的内容

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:xb_scaffold/src/common/xb_loading_widget.dart';
 import '../xb_scaffold.dart';
 import 'configs/color_config.dart';
 
