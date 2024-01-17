@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 final List<Widget> _stack = [];
+
+StreamController _stackStreamController = StreamController.broadcast();
+
+Stream get stackStream => _stackStreamController.stream;
 
 /// 页面是否在栈顶
 bool isTop(Widget page) {
@@ -23,6 +29,7 @@ bool isInStack(Widget page) {
 /// style：0 iOS风格；1 material风格
 Future<T?> push<T extends Object?>(Widget newPage, [int style = 0]) {
   _stack.add(newPage);
+  _stackStreamController.add(null);
   debugPrint('push ${newPage.runtimeType}');
   if (style == 0) {
     return Navigator.push(
@@ -38,6 +45,7 @@ Widget? pop<O extends Object?>([O? result]) {
   if (_stack.isNotEmpty) {
     Navigator.of(xbGlobalContext, rootNavigator: false).pop(result);
     final ret = _stack.removeLast();
+    _stackStreamController.add(null);
     debugPrint('pop ${ret.runtimeType}');
     return ret;
   }
@@ -55,6 +63,7 @@ void popToRoot() {
   if (_stack.isNotEmpty) {
     Navigator.of(xbGlobalContext).popUntil((route) => route.isFirst);
     _stack.clear();
+    _stackStreamController.add(null);
   }
 }
 
