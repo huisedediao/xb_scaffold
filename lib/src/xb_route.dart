@@ -7,88 +7,57 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 String xbCategoryNameKey = "xb_category";
 String xbCategoryName = "xb_route";
 
-final List<Widget> _stack = [];
-
-StreamController _stackStreamController = StreamController.broadcast();
-
-Stream get stackStream => _stackStreamController.stream;
-
 /// 页面是否在栈顶
 bool isTop(Widget page) {
-  return _stack.last == page;
+  return navigatorObserver.isTop(page);
 }
 
 /// 栈顶是否是type类型
 bool topIsType(Type type) {
-  return _stack.last.runtimeType == type;
+  return navigatorObserver.topIsType(type);
 }
 
-/// 页面是否在栈里
-bool isInStack(Widget page) {
-  return _stack.contains(page);
+/// 页面是否在栈里，如果是根节点，没办法判断是否在栈里
+bool isInStack(Type type) {
+  return navigatorObserver.isInStack(type);
 }
 
 /// 进入新页面
 /// style：0 iOS风格；1 material风格
 Future<T?> push<T extends Object?>(Widget newPage, [int style = 0]) {
-  _stack.add(newPage);
-  _stackStreamController.add(null);
-  debugPrint('push ${newPage.runtimeType}');
   if (style == 0) {
     return Navigator.push(
         xbGlobalContext,
         CupertinoPageRoute<T>(
-            settings:
-                RouteSettings(arguments: {xbCategoryNameKey: xbCategoryName}),
+            settings: RouteSettings(
+                name: "${newPage.runtimeType}",
+                arguments: {xbCategoryNameKey: xbCategoryName}),
             builder: (ctx) => newPage));
   } else {
     return Navigator.push(
         xbGlobalContext,
         MaterialPageRoute<T>(
-            settings:
-                RouteSettings(arguments: {xbCategoryNameKey: xbCategoryName}),
+            settings: RouteSettings(
+                name: "${newPage.runtimeType}",
+                arguments: {xbCategoryNameKey: xbCategoryName}),
             builder: (context) => newPage));
   }
 }
 
 /// 回到上一页
-Widget? pop<O extends Object?>([O? result]) {
-  if (navigatorObserver != null) {
-    if (navigatorObserver!.topIsXBRoute) {
-      return _pop(result);
-    } else {
-      Navigator.of(xbGlobalContext).pop(result);
-      return null;
-    }
-  } else {
-    return _pop(result);
-  }
-}
-
-Widget? _pop<O extends Object?>([O? result]) {
-  if (_stack.isNotEmpty) {
-    Navigator.of(xbGlobalContext, rootNavigator: false).pop(result);
-    final ret = _stack.removeLast();
-    _stackStreamController.add(null);
-    debugPrint('pop ${ret.runtimeType}');
-    return ret;
-  }
-  return null;
+void pop<O extends Object?>([O? result]) {
+  Navigator.of(xbGlobalContext, rootNavigator: false).pop(result);
 }
 
 /// 用新页面替换当前页
-Future<T?> replace<T extends Object?>(Widget newPage) {
+Future<T?> replace<T extends Object?>(Widget newPage, [int style = 0]) {
   pop();
-  return push(newPage);
+  return push(newPage, style);
 }
 
 /// 回到根页面
 void popToRoot() {
-  if (_stack.isNotEmpty) {
-    Navigator.of(xbGlobalContext).popUntil((route) => route.isFirst);
-    _stack.clear();
-    _stackStreamController.add(null);
-  }
+  Navigator.of(xbGlobalContext).popUntil((route) => route.isFirst);
 }
 
 /// 进入新页面，并且清除栈中的页面
@@ -96,16 +65,20 @@ void popToRoot() {
 Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
     [int style = 0]) {
   popToRoot();
-  return push(newPage);
+  return push(newPage, style);
 }
 
 /// 回到最后一个Type类型的页面
 /// 如果找不到，则回到根页面
 void popUntilType(Type type) {
-  while (true) {
-    pop();
-    if (_stack.isEmpty || type == _stack.last.runtimeType) {
-      break;
+  Navigator.of(xbGlobalContext).popUntil((route) {
+    if (route.isFirst) {
+      return true;
     }
-  }
+    if (navigatorObserver.topIsType(type)) {
+      return true;
+    } else {
+      return false;
+    }
+  });
 }

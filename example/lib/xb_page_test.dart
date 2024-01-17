@@ -1,5 +1,7 @@
 import 'package:example/theme/app_extension.dart';
 import 'package:example/xb_page_test_vm.dart';
+import 'package:example/xb_push_page.dart';
+import 'package:example/xb_widget_test.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -59,12 +61,12 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                           "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
                       btnTitles: ["取消", "确定"],
                       onSelected: (index) {
-                        // if (index == 0) {
-                        //   replace(const XBPushPage());
-                        // } else if (index == 1) {
-                        //   push(const XBPushPage());
-                        // }
-                        toast("isTop:${isTop(this)}");
+                        if (index == 0) {
+                          // replace(const XBPushPage());
+                          pushAndClearStack(const XBPushPage());
+                        } else if (index == 1) {
+                          push(const XBPushPage());
+                        }
                       });
                 }),
                 _buildWidget(vm, 'show action sheet', () {
@@ -84,6 +86,10 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 }),
                 _buildWidget(vm, 'show toast', () {
                   toast("isTop:${isTop(this)}");
+
+                  Future.delayed(const Duration(seconds: 2), () {
+                    toast("isInStack:${isInStack(XBWidgetTest)}");
+                  });
 
                   // vm.toast(
                   //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",

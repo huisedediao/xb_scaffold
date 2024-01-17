@@ -1,3 +1,4 @@
+import 'package:example/xb_page_test.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -24,4 +25,11 @@ class XBPushPage extends XBPage<XBPushPageVM> {
 
 class XBPushPageVM extends XBPageVM<XBPushPage> {
   XBPushPageVM({required super.context});
+
+  @override
+  void back<O extends Object?>([O? result]) {
+    // popToRoot();
+    toast("XBPageTest is inStack:${isInStack(XBPageTest)}");
+    popUntilType(XBPageTest);
+  }
 }

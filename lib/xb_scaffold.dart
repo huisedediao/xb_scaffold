@@ -1,5 +1,7 @@
 library xb_scaffold;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/xb_navigator_observer.dart';
 
@@ -24,14 +26,13 @@ export './src/xb_route.dart';
 
 export './src/utils/xb_unique_list.dart';
 
-XBNavigatorObserver buildNavigatorObserver() {
-  _navigatorObserver = XBNavigatorObserver();
-  return _navigatorObserver!;
-}
+final StreamController _stackStreamController = StreamController.broadcast();
 
-XBNavigatorObserver? get navigatorObserver => _navigatorObserver;
+StreamController get stackStreamController => _stackStreamController;
 
-XBNavigatorObserver? _navigatorObserver;
+Stream get stackStream => _stackStreamController.stream;
+
+XBNavigatorObserver navigatorObserver = XBNavigatorObserver();
 
 late BuildContext xbGlobalContext;
 

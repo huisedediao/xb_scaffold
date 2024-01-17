@@ -23,8 +23,8 @@ class XBPageVM<T> extends XBVM<T> {
     return _fadeKey!;
   }
 
-  Widget? back<O extends Object?>([O? result]) {
-    return pop(result);
+  void back<O extends Object?>([O? result]) {
+    pop(result);
   }
 
   bool get needLoading => (widget as XBPage).needLoading();

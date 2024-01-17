@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      navigatorObservers: [buildNavigatorObserver()],
+      navigatorObservers: [navigatorObserver],
       home: const XBScaffold(
           imgPrefixs: ["assets/images/default/", "assets/images/custom/"],
           child: MyHomePage(title: 'Flutter Demo Home Page')),

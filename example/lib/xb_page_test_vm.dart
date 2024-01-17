@@ -22,8 +22,8 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
   }
 
   @override
-  Widget? back<O extends Object?>([O? result]) {
+  void back<O extends Object?>([O? result]) {
     hideLoadingGlobal();
-    return super.back(result);
+    super.back(result);
   }
 }
