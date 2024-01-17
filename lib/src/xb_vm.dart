@@ -1,15 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_route_mixin.dart';
-import 'xb_sys_space_mixin.dart';
-import 'xb_theme/xb_theme_mixin.dart';
-export 'xb_sys_space_mixin.dart';
-export 'xb_vm_dialog.dart';
-export 'xb_vm_action_sheet.dart';
-export 'xb_vm_toast.dart';
+export 'xb_sys_space.dart';
+export 'xb_dialog.dart';
+export 'xb_action_sheet.dart';
+export 'xb_toast.dart';
 
-class XBVM<T> extends ChangeNotifier
-    with XBSysSpaceMixin, XBThemeMixin, XBRouteMixin {
-  @override
+class XBVM<T> extends ChangeNotifier {
   final BuildContext context;
 
   T get widget => context.widget as T;

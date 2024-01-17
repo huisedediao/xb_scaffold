@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBNavigatorBackBtn extends XBStatelessWidget {
+class XBNavigatorBackBtn extends StatelessWidget {
   final VoidCallback onTap;
   final String? img;
   final Size? imgSize;

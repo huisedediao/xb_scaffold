@@ -36,40 +36,9 @@ void main() async {
 XBThemeVM().changeTheme(1);
 ```
 
-### mixin
-##### XBSysSpaceMixin
-```
-一些系统的参数，比如屏幕宽高、状态栏高度、navigationBar高度、
-tabbar高度、一个像素的高度等等
-```
-##### XBRouteMixin
-```
-一些页面操作，比如pushPage、popPage，比如结束输入框编辑
-```
-
-##### XBThemeMixin
-```
-和主题相关的参数，包括颜色、字体、字重、图片、间距
-```
-
-### XBStatelessWidget
-```
-和StatelessWidget一样使用
-
-在StatelessWidget的基础上，增加了XBThemeMixin
-```
-
-### XBState
-```
-和State一样使用
-
-在State的基础上，增加了XBSysSpaceMixin，XBThemeMixin，XBRouteMixin三个mixin
-```
 ### XBVM
 ```
 继承自ChangeNotifier
-
-增加了XBSysSpaceMixin，XBThemeMixin，XBRouteMixin三个mixin
 
 用于页面状态的管理
 
@@ -144,22 +113,20 @@ class XBPageTestVM extends XBVM<XBPageTest> {
 
 ### 路由
 ```
-使用VM中mixin的:
-
 /// push到新页面
-pushPage
+push
 
 /// 用新页面替换当前页
-replacePage
+replace
 
 /// 回到上一页
-popPage
+pop
 
 /// 回到根页面
-popToRootPage
+popToRoot
 
 /// 回到指定页面
-popPageUtilType
+popUtilType
 
 ```
 

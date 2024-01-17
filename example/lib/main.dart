@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 void main() async {
-  await initXBScaffold(
-      imgPrefixs: ["assets/images/default/", "assets/images/custom/"]);
   runApp(const MyApp());
 }
 
@@ -19,7 +17,9 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const XBScaffold(
+          imgPrefixs: ["assets/images/default/", "assets/images/custom/"],
+          child: MyHomePage(title: 'Flutter Demo Home Page')),
     );
   }
 }

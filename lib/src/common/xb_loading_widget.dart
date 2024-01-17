@@ -3,6 +3,102 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+OverlayEntry? loadingOverlayEntry;
+
+final GlobalKey<XBFadeWidgetState> key = GlobalKey();
+final GlobalKey<ColorfulContainerState> colorContainerKey = GlobalKey();
+
+showLoadingGlobal({bool needBack = true}) {
+  if (loadingOverlayEntry != null) {
+    colorContainerKey.currentState?.updateColor(needBack);
+    return;
+  }
+  final overlay = Overlay.of(xbGlobalContext);
+  loadingOverlayEntry = OverlayEntry(
+    builder: (context) => XBFadeWidget(
+      key: key,
+      autoShowAnimation: true,
+      child: Stack(children: [
+        Column(
+          children: [
+            SizedBox(
+              height: topBarH,
+              child: Row(
+                children: [
+                  Expanded(
+                      child: ColorfulContainer(
+                    key: colorContainerKey,
+                    needBack: needBack,
+                  )),
+                  Expanded(
+                      child: Container(
+                    color: Colors.transparent,
+                  )),
+                  Expanded(
+                      child: Container(
+                    color: Colors.transparent,
+                  ))
+                ],
+              ),
+            ),
+            Expanded(
+                child: Container(
+              color: Colors.transparent,
+            ))
+          ],
+        ),
+        const XBLoadingWidget(),
+      ]),
+    ),
+  );
+
+  overlay.insert(loadingOverlayEntry!);
+}
+
+hideLoadingGlobal() {
+  key.currentState?.hide(() {
+    loadingOverlayEntry?.remove();
+    loadingOverlayEntry = null;
+  });
+}
+
+class ColorfulContainer extends StatefulWidget {
+  final bool needBack;
+
+  const ColorfulContainer({super.key, required this.needBack});
+
+  @override
+  State createState() => ColorfulContainerState();
+}
+
+class ColorfulContainerState extends State<ColorfulContainer> {
+  Color? color;
+
+  @override
+  void initState() {
+    super.initState();
+    _setColor(widget.needBack);
+  }
+
+  void updateColor(bool needBack) {
+    setState(() {
+      _setColor(needBack);
+    });
+  }
+
+  void _setColor(bool needBack) {
+    print("_setColor,needBack:$needBack");
+    color = needBack ? null : Colors.transparent;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: color,
+    );
+  }
+}
+
 class XBLoadingWidget extends XBVMLessWidget {
   const XBLoadingWidget({super.key});
 

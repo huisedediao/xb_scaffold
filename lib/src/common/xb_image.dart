@@ -2,13 +2,12 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_stateless_widget.dart';
 import '../configs/color_config.dart';
 
 /*
  * 自动适配网络图片或者本地图片的image
  * */
-class XBImage extends XBStatelessWidget {
+class XBImage extends StatelessWidget {
   /// 图片，可以是文件、url、asset路径
   final dynamic img;
   final double? height;

@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/xb_scaffold.dart';
 
 enum XBAnimationRotateAxis { x, y, z }
 
@@ -37,10 +36,10 @@ class XBAnimationRotate extends StatefulWidget {
         super(key: key);
 
   @override
-  XBState createState() => _XBAnimationRotateState();
+  State createState() => _XBAnimationRotateState();
 }
 
-class _XBAnimationRotateState extends XBState<XBAnimationRotate>
+class _XBAnimationRotateState extends State<XBAnimationRotate>
     with SingleTickerProviderStateMixin {
   AnimationController? _animationController;
   Animation? _rotateAnimation;

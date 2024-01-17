@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:xb_scaffold/src/xb_stateless_widget.dart';
 import 'xb_vm.dart';
 
-abstract class XBWidget<T extends XBVM> extends XBStatelessWidget {
+abstract class XBWidget<T extends XBVM> extends StatelessWidget {
   const XBWidget({super.key});
 
   /// 生成vm

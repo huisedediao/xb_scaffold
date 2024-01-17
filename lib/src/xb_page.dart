@@ -91,7 +91,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// tabbar的高度
   tabbarHeight(T vm) {
-    return vm.tabbarH;
+    return tabbarH;
   }
 
   /// navigationBar的颜色
@@ -112,7 +112,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
-          vm.endEditing;
+          endEditing;
         },
         child: _themeConsumerWidget(vm));
   }
@@ -167,7 +167,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
               Column(
                 children: [
                   SizedBox(
-                    height: vm.topBarH,
+                    height: topBarH,
                     child: Row(
                       children: [
                         Expanded(
@@ -214,7 +214,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     Widget content = buildPage(vm, vm.context);
     if (needPageContentAdaptTabbar()) {
       content = Padding(
-        padding: EdgeInsets.only(bottom: tabbarHeight(vm) + vm.safeAreaBottom),
+        padding: EdgeInsets.only(bottom: tabbarHeight(vm) + safeAreaBottom),
         child: content,
       );
     }
@@ -243,7 +243,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget? leading(T vm) {
     return XBNavigatorBackBtn(
       onTap: () {
-        vm.popPage();
+        pop();
       },
     );
   }

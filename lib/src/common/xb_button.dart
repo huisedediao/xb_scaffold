@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../xb_state.dart';
-
 /// 使用cover的时候，会覆盖掉child上的点击事件
 /// 如果需要响应child上的点击事件，使用opacity
 
@@ -42,10 +40,10 @@ class XBButton extends StatefulWidget {
       : super(key: key);
 
   @override
-  XBState<XBButton> createState() => _XBButtonState();
+  State<XBButton> createState() => _XBButtonState();
 }
 
-class _XBButtonState extends XBState<XBButton> {
+class _XBButtonState extends State<XBButton> {
   bool _onTapDown = false;
 
   _setStateIfMounted() {

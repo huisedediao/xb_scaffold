@@ -24,7 +24,7 @@ class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
           child: Container(
             color: app.colors.white,
             child: XBImage(
-              vm.app.images.arrow_down,
+              images.arrow_down,
               width: 30,
               height: 40,
             ),
@@ -38,7 +38,7 @@ class XBWidgetTest extends XBWidget<XBWidgetTestVM> {
             )),
         XBButton(
             onTap: () {
-              vm.pushPage(const XBPageTest());
+              push(const XBPageTest());
             },
             child: const Padding(
               padding: EdgeInsets.all(8.0),

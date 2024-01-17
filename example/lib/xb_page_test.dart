@@ -46,62 +46,73 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   Widget buildPage(XBPageTestVM vm, BuildContext context) {
     return Container(
       color: app.colors.orange,
-      height: vm.screenH,
-      width: vm.screenW,
-      child: Column(
-        children: [
-          Wrap(
-            children: [
-              _buildWidget(vm, 'show dialog', () {
-                vm.dialog(
-                    title: "title",
-                    msg:
-                        "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                    btnTitles: ["取消", "确定"],
-                    onSelected: (index) {
-                      if (index == 0) {
-                        vm.replacePage(const XBPushPage());
-                      } else if (index == 1) {
-                        vm.pushPage(const XBPushPage());
-                      }
+      height: screenH,
+      width: screenW,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            Wrap(
+              children: [
+                _buildWidget(vm, 'show dialog', () {
+                  dialog(
+                      title: "title",
+                      msg:
+                          "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                      btnTitles: ["取消", "确定"],
+                      onSelected: (index) {
+                        if (index == 0) {
+                          replace(const XBPushPage());
+                        } else if (index == 1) {
+                          push(const XBPushPage());
+                        }
+                      });
+                }),
+                _buildWidget(vm, 'show action sheet', () {
+                  actionSheet(
+                      titles: ["1", "2"],
+                      onSelected: (index) {
+                        print(index);
+                      });
+                  // vm.actionSheetWidget(
+                  //     widget: ClipRRect(
+                  //   borderRadius: BorderRadius.circular(10),
+                  //   child: Container(
+                  //     height: 200,
+                  //     color: app.colors.randColor,
+                  //   ),
+                  // ));
+                }),
+                _buildWidget(vm, 'show toast', () {
+                  toast("isTop:${isTop(this)}");
+                  // vm.toast(
+                  //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                  //     duration: 5);
+                  // vm.toastWidget(Container(
+                  //   height: 100,
+                  //   width: 100,
+                  //   color: app.colors.randColor,
+                  // ));
+                }),
+                _buildWidget(vm, 'show loading', () {
+                  vm.showLoading();
+                  Future.delayed(const Duration(seconds: 3), () {
+                    vm.hideLoading();
+                  });
+                }),
+                _buildWidget(vm, 'show global loading', () {
+                  showLoadingGlobal();
+                  Future.delayed(const Duration(seconds: 3), () {
+                    showLoadingGlobal(needBack: false);
+                    Future.delayed(const Duration(seconds: 3), () {
+                      hideLoadingGlobal();
                     });
-              }),
-              _buildWidget(vm, 'show action sheet', () {
-                vm.actionSheet(
-                    titles: ["1", "2"],
-                    onSelected: (index) {
-                      print(index);
-                    });
-                // vm.actionSheetWidget(
-                //     widget: ClipRRect(
-                //   borderRadius: BorderRadius.circular(10),
-                //   child: Container(
-                //     height: 200,
-                //     color: app.colors.randColor,
-                //   ),
-                // ));
-              }),
-              _buildWidget(vm, 'show toast', () {
-                vm.toast("isTop:${vm.pageIsTop(this)}");
-                // vm.toast(
-                //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                //     duration: 5);
-                // vm.toastWidget(Container(
-                //   height: 100,
-                //   width: 100,
-                //   color: app.colors.randColor,
-                // ));
-              }),
-              _buildWidget(vm, 'show loading', () {
-                vm.showLoading();
-                Future.delayed(const Duration(seconds: 3), () {
-                  vm.hideLoading();
-                });
-              })
-            ],
-          ),
-          TextField()
-        ],
+                  });
+                })
+              ],
+            ),
+            TextField()
+          ],
+        ),
       ),
     );
   }
@@ -110,8 +121,8 @@ class XBPageTest extends XBPage<XBPageTestVM> {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Container(
-        height: vm.screenH * 0.33,
-        width: vm.screenW * 0.33,
+        height: screenH * 0.33,
+        width: screenW * 0.33,
         color: Colors.blue,
         child: XBButton(onTap: onTap, child: Center(child: Text(title))),
       ),
