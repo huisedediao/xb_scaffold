@@ -86,7 +86,9 @@ class XBPageVM<T> extends XBVM<T> {
    * 如果需要控制iOS的滑动返回，在NeedIosGestureUtil中配置
    * */
   Future<bool> _androidOnWillPop() async {
-    return (widget as XBPage).onAndroidPhysicalBack(this) && _canLoadingPop();
+    return !isShowGoabolLoading &&
+        (widget as XBPage).onAndroidPhysicalBack(this) &&
+        _canLoadingPop();
   }
 
   /// loading是否允许返回

@@ -13,6 +13,7 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
     //   hideLoading();
     // });
     showLoadingGlobal(contentEnable: true);
+    hideLoadingGlobal();
     Future.delayed(Duration(milliseconds: 30), () {
       // showLoadingGlobal();
       // hideLoadingGlobal();

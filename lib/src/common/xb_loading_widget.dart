@@ -19,6 +19,8 @@ showLoadingGlobal(
   _exeTask();
 }
 
+bool get isShowGoabolLoading => _items.isNotEmpty;
+
 hideLoadingGlobal() {
   _taskQueue.add(XBLoadingTask(_taskHide));
   _exeTask();
