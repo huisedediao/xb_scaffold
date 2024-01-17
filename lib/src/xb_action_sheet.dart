@@ -5,6 +5,18 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 actionSheetWidget({
   required Widget widget,
 }) {
+  try {
+    _actionSheetWidget(widget: widget);
+  } catch (e) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _actionSheetWidget(widget: widget);
+    });
+  }
+}
+
+_actionSheetWidget({
+  required Widget widget,
+}) {
   showModalBottomSheet(
     context: xbGlobalContext,
     backgroundColor: Colors.transparent,

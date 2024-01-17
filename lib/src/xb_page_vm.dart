@@ -30,14 +30,22 @@ class XBPageVM<T> extends XBVM<T> {
   bool get needLoading => (widget as XBPage).needLoading();
 
   showLoading() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (needLoading) {
-        _isLoading = true;
-        notify();
+    try {
+      _showLoading();
+    } catch (e) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showLoading();
+      });
+    }
+  }
 
-        fadeKey.currentState?.show();
-      }
-    });
+  _showLoading() {
+    if (needLoading) {
+      _isLoading = true;
+      notify();
+
+      fadeKey.currentState?.show();
+    }
   }
 
   hideLoading() {
