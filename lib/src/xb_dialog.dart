@@ -5,23 +5,25 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 dialogWidget({
   required Widget widget,
 }) {
-  showDialog(
-    barrierDismissible: false,
-    context: xbGlobalContext,
-    builder: (BuildContext context) {
-      return WillPopScope(
-        onWillPop: () async {
-          return false;
-        },
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 50),
-          child: Material(
-              type: MaterialType.transparency,
-              child: Container(alignment: Alignment.center, child: widget)),
-        ),
-      );
-    },
-  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    showDialog(
+      barrierDismissible: false,
+      context: xbGlobalContext,
+      builder: (BuildContext context) {
+        return WillPopScope(
+          onWillPop: () async {
+            return false;
+          },
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 50),
+            child: Material(
+                type: MaterialType.transparency,
+                child: Container(alignment: Alignment.center, child: widget)),
+          ),
+        );
+      },
+    );
+  });
 }
 
 dialog(

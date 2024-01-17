@@ -9,50 +9,53 @@ final GlobalKey<XBFadeWidgetState> key = GlobalKey();
 final GlobalKey<ColorfulContainerState> colorContainerKey = GlobalKey();
 
 showLoadingGlobal({bool needBack = true}) {
-  if (loadingOverlayEntry != null) {
-    colorContainerKey.currentState?.updateColor(needBack);
-    return;
-  }
-  final overlay = Overlay.of(xbGlobalContext);
-  loadingOverlayEntry = OverlayEntry(
-    builder: (context) => XBFadeWidget(
-      key: key,
-      autoShowAnimation: true,
-      child: Stack(children: [
-        Column(
-          children: [
-            SizedBox(
-              height: topBarH,
-              child: Row(
-                children: [
-                  Expanded(
-                      child: ColorfulContainer(
-                    key: colorContainerKey,
-                    needBack: needBack,
-                  )),
-                  Expanded(
-                      child: Container(
-                    color: Colors.transparent,
-                  )),
-                  Expanded(
-                      child: Container(
-                    color: Colors.transparent,
-                  ))
-                ],
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Your setState function here
+    if (loadingOverlayEntry != null) {
+      colorContainerKey.currentState?.updateColor(needBack);
+      return;
+    }
+    final overlay = Overlay.of(xbGlobalContext);
+    loadingOverlayEntry = OverlayEntry(
+      builder: (context) => XBFadeWidget(
+        key: key,
+        autoShowAnimation: true,
+        child: Stack(children: [
+          Column(
+            children: [
+              SizedBox(
+                height: topBarH,
+                child: Row(
+                  children: [
+                    Expanded(
+                        child: ColorfulContainer(
+                      key: colorContainerKey,
+                      needBack: needBack,
+                    )),
+                    Expanded(
+                        child: Container(
+                      color: Colors.transparent,
+                    )),
+                    Expanded(
+                        child: Container(
+                      color: Colors.transparent,
+                    ))
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-                child: Container(
-              color: Colors.transparent,
-            ))
-          ],
-        ),
-        const XBLoadingWidget(),
-      ]),
-    ),
-  );
+              Expanded(
+                  child: Container(
+                color: Colors.transparent,
+              ))
+            ],
+          ),
+          const XBLoadingWidget(),
+        ]),
+      ),
+    );
 
-  overlay.insert(loadingOverlayEntry!);
+    overlay.insert(loadingOverlayEntry!);
+  });
 }
 
 hideLoadingGlobal() {
