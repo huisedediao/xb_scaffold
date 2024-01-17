@@ -8,7 +8,7 @@ showLoadingGlobal(
     {bool topLeftEnable = true,
     bool topCenterEnable = false,
     bool topRightEnable = false,
-    bool contentEnable = false,
+    bool contentEnable = true,
     Widget? widget}) {
   _taskQueue.add(XBLoadingTask(_taskShow,
       topLeftEnable: topLeftEnable,
