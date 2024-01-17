@@ -12,9 +12,13 @@ final List<XBToastItem> _items = [];
 _hideLast() {
   if (_items.isNotEmpty) {
     final lastItem = _items.removeLast();
-    lastItem.key.currentState?.hide(() {
+    if (lastItem.key.currentState != null) {
+      lastItem.key.currentState?.hide(() {
+        lastItem.entry.remove();
+      });
+    } else {
       lastItem.entry.remove();
-    });
+    }
   }
 }
 
