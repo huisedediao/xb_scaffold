@@ -102,7 +102,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 _buildWidget(vm, 'show global loading', () {
                   showLoadingGlobal();
                   Future.delayed(const Duration(seconds: 3), () {
-                    showLoadingGlobal(needBack: false);
+                    showLoadingGlobal();
                     Future.delayed(const Duration(seconds: 3), () {
                       hideLoadingGlobal();
                     });

@@ -1,30 +1,81 @@
+import 'dart:collection';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-OverlayEntry? loadingOverlayEntry;
+showLoadingGlobal(
+    {bool topLeftEnable = true,
+    bool topCenterEnable = false,
+    bool topRightEnable = false,
+    bool contentEnable = false,
+    Widget? widget}) {
+  _taskQueue.add(XBLoadingTask(_taskShow,
+      topLeftEnable: topLeftEnable,
+      topCenterEnable: topCenterEnable,
+      topRightEnable: topRightEnable,
+      contentEnable: contentEnable,
+      widget: widget));
+  _exeTask();
+}
 
-final GlobalKey<XBFadeWidgetState> key = GlobalKey();
-final GlobalKey<ColorfulContainerState> colorContainerKey = GlobalKey();
+hideLoadingGlobal() {
+  _taskQueue.add(XBLoadingTask(_taskHide));
+  _exeTask();
+}
 
-showLoadingGlobal({bool needBack = true}) {
-  try {
-    _showLoadingGlobal(needBack: needBack);
-  } catch (e) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showLoadingGlobal(needBack: needBack);
-    });
+class XBLoadingItem {
+  OverlayEntry entry;
+  GlobalKey<XBFadeWidgetState> key;
+  XBLoadingItem({required this.entry, required this.key});
+}
+
+const String _taskShow = "_taskShow";
+const String _taskHide = "_taskHide";
+
+class XBLoadingTask {
+  String name;
+  bool topLeftEnable;
+  bool topCenterEnable;
+  bool topRightEnable;
+  bool contentEnable;
+  Widget? widget;
+  XBLoadingTask(this.name,
+      {this.topLeftEnable = true,
+      this.topCenterEnable = false,
+      this.topRightEnable = false,
+      this.contentEnable = false,
+      this.widget});
+}
+
+Queue<XBLoadingTask> _taskQueue = Queue();
+
+final List<XBLoadingItem> _items = [];
+
+_hideLast() {
+  if (_items.isNotEmpty) {
+    final lastItem = _items.removeLast();
+    if (lastItem.key.currentState != null) {
+      lastItem.key.currentState?.hide(() {
+        lastItem.entry.remove();
+      });
+    } else {
+      lastItem.entry.remove();
+    }
   }
 }
 
-_showLoadingGlobal({bool needBack = true}) {
-  if (loadingOverlayEntry != null) {
-    colorContainerKey.currentState?.updateColor(needBack);
-    return;
-  }
+_showLoadingGlobal({
+  required Widget widget,
+  required bool topLeftEnable,
+  required bool topCenterEnable,
+  required bool topRightEnable,
+  required bool contentEnable,
+}) {
+  _hideLast();
   final overlay = Overlay.of(xbGlobalContext);
-  loadingOverlayEntry = OverlayEntry(
+  final GlobalKey<XBFadeWidgetState> key = GlobalKey();
+  final overlayEntry = OverlayEntry(
     builder: (context) => XBFadeWidget(
       key: key,
       autoShowAnimation: true,
@@ -36,76 +87,58 @@ _showLoadingGlobal({bool needBack = true}) {
               child: Row(
                 children: [
                   Expanded(
-                      child: ColorfulContainer(
-                    key: colorContainerKey,
-                    needBack: needBack,
+                      child: Container(
+                    color: topLeftEnable ? null : Colors.transparent,
                   )),
                   Expanded(
                       child: Container(
-                    color: Colors.transparent,
+                    color: topCenterEnable ? null : Colors.transparent,
                   )),
                   Expanded(
                       child: Container(
-                    color: Colors.transparent,
+                    color: topRightEnable ? null : Colors.transparent,
                   ))
                 ],
               ),
             ),
             Expanded(
                 child: Container(
-              color: Colors.transparent,
+              color: contentEnable ? null : Colors.transparent,
             ))
           ],
         ),
-        const XBLoadingWidget(),
+        widget,
       ]),
     ),
   );
 
-  overlay.insert(loadingOverlayEntry!);
+  _items.add(XBLoadingItem(entry: overlayEntry, key: key));
+  overlay.insert(overlayEntry);
 }
 
-hideLoadingGlobal() {
-  key.currentState?.hide(() {
-    loadingOverlayEntry?.remove();
-    loadingOverlayEntry = null;
-  });
-}
-
-class ColorfulContainer extends StatefulWidget {
-  final bool needBack;
-
-  const ColorfulContainer({super.key, required this.needBack});
-
-  @override
-  State createState() => ColorfulContainerState();
-}
-
-class ColorfulContainerState extends State<ColorfulContainer> {
-  Color? color;
-
-  @override
-  void initState() {
-    super.initState();
-    _setColor(widget.needBack);
+_exeTask() {
+  if (_taskQueue.isEmpty) {
+    return;
   }
-
-  void updateColor(bool needBack) {
-    setState(() {
-      _setColor(needBack);
+  try {
+    final task = _taskQueue.first;
+    if (task.name == _taskShow) {
+      _showLoadingGlobal(
+          widget: task.widget ?? const XBLoadingWidget(),
+          topLeftEnable: task.topLeftEnable,
+          topCenterEnable: task.topCenterEnable,
+          topRightEnable: task.topRightEnable,
+          contentEnable: task.contentEnable);
+    } else {
+      _hideLast();
+    }
+    _taskQueue.remove(task);
+    _exeTask();
+  } catch (e) {
+    _hideLast();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _exeTask();
     });
-  }
-
-  void _setColor(bool needBack) {
-    print("_setColor,needBack:$needBack");
-    color = needBack ? null : Colors.transparent;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: color,
-    );
   }
 }
 
@@ -117,6 +150,7 @@ class XBLoadingWidget extends XBVMLessWidget {
   @override
   Widget buildWidget(XBVM vm, BuildContext context) {
     return Container(
+        // color: Colors.orange,
         alignment: Alignment.center,
         child: XBShadowContainer(
           child: ClipRRect(

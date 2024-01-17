@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBVMToastItem {
+class XBToastItem {
   OverlayEntry entry;
   GlobalKey<XBFadeWidgetState> key;
-  XBVMToastItem({required this.entry, required this.key});
+  XBToastItem({required this.entry, required this.key});
 }
 
-final List<XBVMToastItem> _items = [];
+final List<XBToastItem> _items = [];
 
 _hideLast() {
   if (_items.isNotEmpty) {
@@ -65,7 +65,7 @@ _toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
   );
 
   overlay.insert(overlayEntry);
-  _items.add(XBVMToastItem(entry: overlayEntry, key: key));
+  _items.add(XBToastItem(entry: overlayEntry, key: key));
 
   Future.delayed(Duration(seconds: duration)).then((value) {
     if (overlayEntry == _items.last.entry) {
