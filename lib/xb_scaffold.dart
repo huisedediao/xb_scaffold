@@ -1,6 +1,7 @@
 library xb_scaffold;
 
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/src/xb_navigator_observer.dart';
 
 import 'src/xb_theme/xb_theme_vm.dart';
 
@@ -22,6 +23,15 @@ export './src/xb_theme/xb_theme_mixin.dart';
 export './src/xb_route.dart';
 
 export './src/utils/xb_unique_list.dart';
+
+XBNavigatorObserver buildNavigatorObserver() {
+  _navigatorObserver = XBNavigatorObserver();
+  return _navigatorObserver!;
+}
+
+XBNavigatorObserver? get navigatorObserver => _navigatorObserver;
+
+XBNavigatorObserver? _navigatorObserver;
 
 late BuildContext xbGlobalContext;
 

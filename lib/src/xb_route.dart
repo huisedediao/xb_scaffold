@@ -4,6 +4,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+String xbCategoryNameKey = "xb_category";
+String xbCategoryName = "xb_route";
+
 final List<Widget> _stack = [];
 
 StreamController _stackStreamController = StreamController.broadcast();
@@ -33,15 +36,36 @@ Future<T?> push<T extends Object?>(Widget newPage, [int style = 0]) {
   debugPrint('push ${newPage.runtimeType}');
   if (style == 0) {
     return Navigator.push(
-        xbGlobalContext, CupertinoPageRoute<T>(builder: (ctx) => newPage));
+        xbGlobalContext,
+        CupertinoPageRoute<T>(
+            settings:
+                RouteSettings(arguments: {xbCategoryNameKey: xbCategoryName}),
+            builder: (ctx) => newPage));
   } else {
     return Navigator.push(
-        xbGlobalContext, MaterialPageRoute<T>(builder: (context) => newPage));
+        xbGlobalContext,
+        MaterialPageRoute<T>(
+            settings:
+                RouteSettings(arguments: {xbCategoryNameKey: xbCategoryName}),
+            builder: (context) => newPage));
   }
 }
 
 /// 回到上一页
 Widget? pop<O extends Object?>([O? result]) {
+  if (navigatorObserver != null) {
+    if (navigatorObserver!.topIsXBRoute) {
+      return _pop(result);
+    } else {
+      Navigator.of(xbGlobalContext).pop(result);
+      return null;
+    }
+  } else {
+    return _pop(result);
+  }
+}
+
+Widget? _pop<O extends Object?>([O? result]) {
   if (_stack.isNotEmpty) {
     Navigator.of(xbGlobalContext, rootNavigator: false).pop(result);
     final ret = _stack.removeLast();
