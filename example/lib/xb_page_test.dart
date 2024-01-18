@@ -1,4 +1,5 @@
 import 'package:example/theme/app_extension.dart';
+import 'package:example/xb_hovering_test.dart';
 import 'package:example/xb_page_test_vm.dart';
 import 'package:example/xb_push_page.dart';
 import 'package:example/xb_widget_test.dart';
@@ -135,6 +136,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                       hideLoadingGlobal();
                     });
                   });
+                }),
+                _buildWidget(vm, '进入 悬浮段头列表页面', () {
+                  push(XBHoveringTest());
                 })
               ],
             ),

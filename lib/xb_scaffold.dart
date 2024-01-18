@@ -21,6 +21,7 @@ export './src/common/xb_image.dart';
 export './src/common/xb_shadow_container.dart';
 export './src/common/xb_loading_widget.dart';
 export './src/common/xb_navigator_back_btn.dart';
+export './src/common/xb_hovering_header_list/xb_hovering_header_list.dart';
 export './src/xb_theme/xb_theme_mixin.dart';
 export './src/xb_route.dart';
 

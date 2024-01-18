@@ -11,7 +11,7 @@ and the Flutter guide for
 [developing packages and plugins](https://flutter.dev/developing-packages).
 -->
 
-基于provider封装的脚手架，集成路由、主题、dialog、toast、actionSheet等功能
+基于provider封装的脚手架，集成路由、主题、dialog、toast、actionSheet等常用控件，集成分组头部悬浮的ListView
 
 ## 引入
 ```
@@ -31,6 +31,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
+      navigatorObservers: [navigatorObserver],
       home: const XBScaffold(
           imgPrefixs: ["assets/images/default/", "assets/images/custom/"],
           child: MyHomePage(title: 'Flutter Demo Home Page')),
@@ -139,6 +140,16 @@ popToRoot
 /// 回到指定页面
 popUtilType
 
+```
+
+### ListView分组头部悬浮
+
+```
+XBHoveringHeaderList
+
+实现ListView分组头部悬浮，支持混搭多种header、item、separator，支持indexPath跳转
+
+使用参考demo
 ```
 
 ### 拓展主题中没有的内容

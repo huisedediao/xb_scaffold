@@ -110,3 +110,7 @@
 
 - 优化actionSheet
 
+## 0.0.29
+
+- 新增 分组头部悬浮列表 XBHoveringHeaderList
+
