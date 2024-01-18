@@ -54,12 +54,14 @@ actionSheet({
       ),
     );
   });
+  double dismissWidgetHeight = 0;
+  List<Widget> dismissWidgets = [];
   if (dismissTitle != null) {
-    children.add(Container(
+    dismissWidgets.add(Container(
       color: lineColor.withAlpha(100),
       height: 8,
     ));
-    children.add(Padding(
+    dismissWidgets.add(Padding(
       padding: EdgeInsets.only(bottom: safeAreaBottom),
       child: XBActionSheetCell(
         title: dismissTitle,
@@ -74,6 +76,7 @@ actionSheet({
         },
       ),
     ));
+    dismissWidgetHeight = (50 + 8 + onePixel).toDouble();
   }
   actionSheetWidget(
       widget: ClipRRect(
@@ -81,10 +84,30 @@ actionSheet({
         topLeft: Radius.circular(10), topRight: Radius.circular(10)),
     child: Container(
       color: Colors.white,
-      child: SingleChildScrollView(
-          child: Column(
-        children: children,
-      )),
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+              child: Padding(
+            padding: EdgeInsets.only(bottom: dismissWidgetHeight),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: children,
+            ),
+          )),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              color: Colors.white,
+              child: Column(
+                children: List.generate(
+                    dismissWidgets.length, (index) => dismissWidgets[index]),
+              ),
+            ),
+          )
+        ],
+      ),
     ),
   ));
 }

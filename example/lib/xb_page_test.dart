@@ -71,7 +71,20 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 }),
                 _buildWidget(vm, 'show action sheet', () {
                   actionSheet(
-                      titles: ["1", "2"],
+                      titles: [
+                        "1",
+                        "2",
+                        "1",
+                        "2",
+                        "1",
+                        "2",
+                        "1",
+                        "2",
+                        "1",
+                        "2",
+                        "1",
+                        "2"
+                      ],
                       dismissTitle: "取消",
                       onTapDismiss: () {
                         print("点击了取消");
