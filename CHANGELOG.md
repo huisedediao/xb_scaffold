@@ -114,3 +114,7 @@
 
 - 新增 分组头部悬浮列表 XBHoveringHeaderList
 
+## 0.0.30
+
+- 优化
+

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+double _cellHeight = 50;
+double _gap = 8;
+
 actionSheetWidget({
   required Widget widget,
 }) {
@@ -59,7 +62,7 @@ actionSheet({
   if (dismissTitle != null) {
     dismissWidgets.add(Container(
       color: lineColor.withAlpha(100),
-      height: 8,
+      height: _gap,
     ));
     dismissWidgets.add(Padding(
       padding: EdgeInsets.only(bottom: safeAreaBottom),
@@ -76,7 +79,8 @@ actionSheet({
         },
       ),
     ));
-    dismissWidgetHeight = (50 + 8 + onePixel).toDouble();
+    dismissWidgetHeight =
+        (_cellHeight + _gap + onePixel + safeAreaBottom).toDouble();
   }
   actionSheetWidget(
       widget: ClipRRect(
@@ -135,7 +139,7 @@ class XBActionSheetCell extends XBWidget {
         padding:
             EdgeInsets.only(left: app.spaces.gapDef, right: app.spaces.gapDef),
         child: Container(
-          height: 50,
+          height: _cellHeight,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             border: Border(
