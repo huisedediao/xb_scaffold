@@ -59,6 +59,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     super.didPush(route, previousRoute);
     debugPrint("didPush:$route");
     _stack.add(route);
+    debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
   }
 
@@ -67,6 +68,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     super.didPop(route, previousRoute);
     debugPrint("didPop:$route");
     _stack.removeLast();
+    debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
   }
 }

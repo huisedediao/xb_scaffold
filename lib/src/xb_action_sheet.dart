@@ -26,8 +26,55 @@ _actionSheetWidget({
   );
 }
 
-actionSheet(
-    {required List<String> titles, required ValueChanged<int> onSelected}) {
+actionSheet({
+  required List<String> titles,
+  required ValueChanged<int> onSelected,
+  int? selectedIndex,
+  Color? selectedColor,
+  String? dismissTitle,
+  Color? dismissTitleColor,
+  double? dismissTitleFontSize,
+  VoidCallback? onTapDismiss,
+}) {
+  List<Widget> children = List.generate(titles.length, (index) {
+    bool isLast = index == titles.length - 1;
+    return Padding(
+      padding: EdgeInsets.only(
+          bottom: dismissTitle != null ? 0 : (isLast ? safeAreaBottom : 0)),
+      child: XBActionSheetCell(
+        title: titles[index],
+        titleColor: selectedIndex == index
+            ? (selectedColor ?? Colors.blue)
+            : Colors.black,
+        showLine: !isLast,
+        onTap: () {
+          Navigator.of(xbGlobalContext, rootNavigator: false).pop();
+          onSelected(index);
+        },
+      ),
+    );
+  });
+  if (dismissTitle != null) {
+    children.add(Container(
+      color: lineColor.withAlpha(100),
+      height: 8,
+    ));
+    children.add(Padding(
+      padding: EdgeInsets.only(bottom: safeAreaBottom),
+      child: XBActionSheetCell(
+        title: dismissTitle,
+        titleColor: dismissTitleColor ?? Colors.black,
+        titleFontSize: dismissTitleFontSize ?? 16,
+        showLine: false,
+        onTap: () {
+          Navigator.of(xbGlobalContext, rootNavigator: false).pop();
+          if (onTapDismiss != null) {
+            onTapDismiss();
+          }
+        },
+      ),
+    ));
+  }
   actionSheetWidget(
       widget: ClipRRect(
     borderRadius: const BorderRadius.only(
@@ -36,20 +83,7 @@ actionSheet(
       color: Colors.white,
       child: SingleChildScrollView(
           child: Column(
-        children: List.generate(titles.length, (index) {
-          bool isLast = index == titles.length - 1;
-          return Padding(
-            padding: EdgeInsets.only(bottom: isLast ? safeAreaBottom : 0),
-            child: XBActionSheetCell(
-              title: titles[index],
-              showLine: !isLast,
-              onTap: () {
-                Navigator.of(xbGlobalContext, rootNavigator: false).pop();
-                onSelected(index);
-              },
-            ),
-          );
-        }),
+        children: children,
       )),
     ),
   ));
@@ -57,6 +91,7 @@ actionSheet(
 
 class XBActionSheetCell extends XBWidget {
   final String title;
+  final double? titleFontSize;
   final Color titleColor;
   final VoidCallback? onTap;
   final bool showLine;
@@ -65,6 +100,7 @@ class XBActionSheetCell extends XBWidget {
       required this.title,
       this.titleColor = Colors.black,
       this.showLine = true,
+      this.titleFontSize,
       this.onTap});
 
   @override
@@ -88,7 +124,7 @@ class XBActionSheetCell extends XBWidget {
           ),
           child: Text(
             title,
-            style: TextStyle(color: titleColor),
+            style: TextStyle(color: titleColor, fontSize: titleFontSize ?? 14),
           ),
         ),
       ),

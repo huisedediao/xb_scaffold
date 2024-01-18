@@ -72,6 +72,14 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 _buildWidget(vm, 'show action sheet', () {
                   actionSheet(
                       titles: ["1", "2"],
+                      dismissTitle: "取消",
+                      onTapDismiss: () {
+                        print("点击了取消");
+                      },
+                      selectedIndex: 0,
+                      selectedColor: Colors.red,
+                      // dismissTitleColor: Colors.amber,
+                      // dismissTitleFontSize: 30,
                       onSelected: (index) {
                         print(index);
                       });
