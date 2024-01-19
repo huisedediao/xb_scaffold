@@ -33,6 +33,14 @@ class XBUniqueList<T> {
     }
   }
 
+  int indexOf(T element, [int start = 0]) {
+    return _list.indexOf(element, start);
+  }
+
+  bool contains(Object? element) {
+    return _list.contains(element);
+  }
+
   addAll(List<T> list) {
     _list.addAll(list);
   }
