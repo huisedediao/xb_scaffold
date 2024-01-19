@@ -54,10 +54,17 @@ class XBNavigatorObserver extends NavigatorObserver {
     return isXBRoute(_stack.last);
   }
 
+  void showStack() {
+    for (int i = _stack.length - 1; i >= 0; i--) {
+      Route temp = _stack[i];
+      debugPrint("index:$i,route:$temp");
+    }
+  }
+
   @override
   void didPush(Route route, Route? previousRoute) {
     super.didPush(route, previousRoute);
-    debugPrint("didPush:$route");
+    debugPrint("didPush:$route,previousRoute:$previousRoute");
     _stack.add(route);
     debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
@@ -66,7 +73,7 @@ class XBNavigatorObserver extends NavigatorObserver {
   @override
   void didPop(Route route, Route? previousRoute) {
     super.didPop(route, previousRoute);
-    debugPrint("didPop:$route");
+    debugPrint("didPop:$route,previousRoute:$previousRoute");
     _stack.removeLast();
     debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
