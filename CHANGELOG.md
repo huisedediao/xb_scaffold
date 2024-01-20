@@ -146,3 +146,7 @@
 
 - 优化
 
+## 0.0.39
+
+- 为indexPath添加compareTo方法
+

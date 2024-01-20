@@ -15,6 +15,14 @@ class XBSectionIndexPath {
   @override
   int get hashCode => section.hashCode ^ index.hashCode;
 
+  int compareTo(XBSectionIndexPath other) {
+    if (section != other.section) {
+      return section.compareTo(other.section);
+    } else {
+      return index.compareTo(other.index);
+    }
+  }
+
   @override
   String toString() {
     return '{section: $section, index: $index}';
