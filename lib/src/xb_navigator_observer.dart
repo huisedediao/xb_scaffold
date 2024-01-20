@@ -4,8 +4,9 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBNavigatorObserver extends NavigatorObserver {
   final List<Route> _stack = [];
 
-  bool isTop(Widget widget) {
-    return topIsType(widget.runtimeType);
+  /// ignore: 是否忽略XBRoute以外的路由
+  bool isTop(Widget widget, [bool ignore = true]) {
+    return topIsType(widget.runtimeType, ignore);
   }
 
   bool isInStack(Type type) {
@@ -21,12 +22,17 @@ class XBNavigatorObserver extends NavigatorObserver {
     return false;
   }
 
-  bool topIsType(Type type) {
+  /// ignore: 是否忽略XBRoute以外的路由
+  bool topIsType(Type type, [bool ignore = true]) {
     if (_stack.isEmpty) return false;
+    String typeStr = '$type';
+    if (ignore == false) {
+      return isXBRoute(_stack.last) && _stack.last.settings.name == typeStr;
+    }
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
       if (isXBRoute(tempRoute)) {
-        if (tempRoute.settings.name == '$type') {
+        if (tempRoute.settings.name == typeStr) {
           return true;
         } else {
           return false;
