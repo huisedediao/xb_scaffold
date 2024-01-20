@@ -8,21 +8,6 @@ class XBNavigatorObserver extends NavigatorObserver {
     return topIsType(widget.runtimeType);
   }
 
-  bool topIsType(Type type) {
-    if (_stack.isEmpty) return false;
-    for (int i = _stack.length - 1; i >= 0; i--) {
-      Route tempRoute = _stack[i];
-      if (isXBRoute(tempRoute)) {
-        if (tempRoute.settings.name == '$type') {
-          return true;
-        } else {
-          return false;
-        }
-      }
-    }
-    return false;
-  }
-
   bool isInStack(Type type) {
     if (_stack.isEmpty) return false;
     for (int i = _stack.length - 1; i >= 0; i--) {
@@ -36,8 +21,19 @@ class XBNavigatorObserver extends NavigatorObserver {
     return false;
   }
 
-  Map xbRouteArg(Route route) {
-    return route.settings.arguments as Map;
+  bool topIsType(Type type) {
+    if (_stack.isEmpty) return false;
+    for (int i = _stack.length - 1; i >= 0; i--) {
+      Route tempRoute = _stack[i];
+      if (isXBRoute(tempRoute)) {
+        if (tempRoute.settings.name == '$type') {
+          return true;
+        } else {
+          return false;
+        }
+      }
+    }
+    return false;
   }
 
   bool isXBRoute(Route route) {
@@ -57,14 +53,14 @@ class XBNavigatorObserver extends NavigatorObserver {
   void showStack() {
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route temp = _stack[i];
-      debugPrint("index:$i,route:$temp");
+      debugPrint("index:$i,route:${_routeInfo(temp)}");
     }
   }
 
   @override
   void didPush(Route route, Route? previousRoute) {
     super.didPush(route, previousRoute);
-    debugPrint("didPush:$route,previousRoute:$previousRoute");
+    _logRouteInfo(route, previousRoute);
     _stack.add(route);
     debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
@@ -73,9 +69,28 @@ class XBNavigatorObserver extends NavigatorObserver {
   @override
   void didPop(Route route, Route? previousRoute) {
     super.didPop(route, previousRoute);
-    debugPrint("didPop:$route,previousRoute:$previousRoute");
+    _logRouteInfo(route, previousRoute, 1);
     _stack.removeLast();
     debugPrint("_stack len:${_stack.length}");
     stackStreamController.add(null);
+  }
+
+  String _routeInfo(Route? route) {
+    String ret;
+    if (route == null) {
+      ret = "null";
+    } else if (isXBRoute(route)) {
+      ret = route.settings.name!;
+    } else {
+      ret = route.toString();
+    }
+    return ret;
+  }
+
+  /// type: 0 push；1 pop
+  _logRouteInfo(Route route, Route? previousRoute, [int type = 0]) {
+    String opera = type == 0 ? "didPush" : "didPop";
+    debugPrint(
+        "$opera:${_routeInfo(route)},previous:${_routeInfo(previousRoute)}");
   }
 }
