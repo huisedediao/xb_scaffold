@@ -6,6 +6,7 @@ class XBSectionIndexPath {
 
   @override
   bool operator ==(other) {
+    if (other == this) return true;
     if (other is XBSectionIndexPath) {
       return section == other.section && index == other.index;
     }
