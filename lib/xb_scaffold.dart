@@ -26,6 +26,7 @@ export './src/xb_theme/xb_theme_mixin.dart';
 export './src/xb_route.dart';
 
 export './src/utils/xb_unique_list.dart';
+export './src/utils/xb_stack_list.dart';
 
 final StreamController _stackStreamController = StreamController.broadcast();
 
