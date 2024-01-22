@@ -1,4 +1,5 @@
 import 'package:example/theme/app_extension.dart';
+import 'package:example/xb_button_test.dart';
 import 'package:example/xb_hovering_test.dart';
 import 'package:example/xb_page_test_vm.dart';
 import 'package:example/xb_push_page.dart';
@@ -139,6 +140,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 }),
                 _buildWidget(vm, '进入 悬浮段头列表页面', () {
                   push(XBHoveringTest());
+                }),
+                _buildWidget(vm, '进入 XBButton测试页面', () {
+                  push(XBButtonTest());
                 })
               ],
             ),
@@ -153,7 +157,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Container(
-        height: screenH * 0.33,
+        height: 50,
         width: screenW * 0.33,
         color: Colors.blue,
         child: XBButton(onTap: onTap, child: Center(child: Text(title))),

@@ -150,3 +150,11 @@
 
 - 为indexPath添加compareTo方法
 
+## 0.0.40
+
+- 优化XBButton点击效果
+
+## 0.0.41
+
+- 优化XBButton点击效果
+
