@@ -158,3 +158,7 @@
 
 - 优化XBButton点击效果
 
+## 0.0.42
+
+- 修改actionSheet的dismiss文字的默认大小
+

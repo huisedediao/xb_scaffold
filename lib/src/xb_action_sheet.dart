@@ -69,7 +69,7 @@ actionSheet({
       child: XBActionSheetCell(
         title: dismissTitle,
         titleColor: dismissTitleColor ?? Colors.black,
-        titleFontSize: dismissTitleFontSize ?? 16,
+        titleFontSize: dismissTitleFontSize ?? 14,
         showLine: false,
         onTap: () {
           Navigator.of(xbGlobalContext, rootNavigator: false).pop();
