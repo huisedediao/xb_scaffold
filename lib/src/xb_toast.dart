@@ -39,26 +39,29 @@ _toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
   final overlayEntry = OverlayEntry(
     builder: (context) => Positioned(
       bottom: bottom,
-      child: Material(
-        color: Colors.transparent,
-        child: XBFadeWidget(
-          key: key,
-          autoShowAnimation: true,
-          child: Container(
-            // color: Colors.green,
-            alignment: Alignment.center,
-            width: MediaQuery.of(context).size.width,
-            child: Padding(
-              padding: EdgeInsets.only(
-                  left: spaces.gapLess,
-                  right: spaces.gapLess,
-                  top: spaces.gapLess * 0.5,
-                  bottom: spaces.gapLess * 0.5),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  color: Colors.black87,
-                  child: widget,
+      child: IgnorePointer(
+        ignoring: true,
+        child: Material(
+          color: Colors.transparent,
+          child: XBFadeWidget(
+            key: key,
+            autoShowAnimation: true,
+            child: Container(
+              // color: Colors.green,
+              alignment: Alignment.center,
+              width: MediaQuery.of(context).size.width,
+              child: Padding(
+                padding: EdgeInsets.only(
+                    left: spaces.gapLess,
+                    right: spaces.gapLess,
+                    top: spaces.gapLess * 0.5,
+                    bottom: spaces.gapLess * 0.5),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    color: Colors.black87,
+                    child: widget,
+                  ),
                 ),
               ),
             ),

@@ -47,107 +47,112 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   Widget buildPage(XBPageTestVM vm, BuildContext context) {
-    return Container(
-      color: app.colors.orange,
-      height: screenH,
-      width: screenW,
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            Wrap(
-              children: [
-                _buildWidget(vm, 'show dialog', () {
-                  dialog(
-                      title: "title",
-                      msg:
-                          "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                      btnTitles: ["取消", "确定"],
-                      onSelected: (index) {
-                        if (index == 0) {
-                          // replace(const XBPushPage());
-                          pushAndClearStack(const XBPushPage());
-                        } else if (index == 1) {
-                          push(const XBPushPage());
-                        }
-                      });
-                }),
-                _buildWidget(vm, 'show action sheet', () {
-                  actionSheet(
-                      titles: [
-                        "1",
-                        "2",
-                        "1",
-                        "2",
-                        "1",
-                        "2",
-                        "1",
-                        "2",
-                        "1",
-                        "2",
-                        "1",
-                        "2"
-                      ],
-                      dismissTitle: "取消",
-                      onTapDismiss: () {
-                        print("点击了取消");
-                      },
-                      selectedIndex: 0,
-                      selectedColor: Colors.red,
-                      // dismissTitleColor: Colors.amber,
-                      // dismissTitleFontSize: 30,
-                      onSelected: (index) {
-                        print(index);
-                      });
-                  // vm.actionSheetWidget(
-                  //     widget: ClipRRect(
-                  //   borderRadius: BorderRadius.circular(10),
-                  //   child: Container(
-                  //     height: 200,
-                  //     color: app.colors.randColor,
-                  //   ),
-                  // ));
-                }),
-                _buildWidget(vm, 'show toast', () {
-                  toast("isTop:${isTop(this)}");
+    return GestureDetector(
+      onTap: () {
+        actionSheet(titles: ["测试toast其他区域点击"], onSelected: (asIndex) {});
+      },
+      child: Container(
+        color: app.colors.orange,
+        height: screenH,
+        width: screenW,
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              Wrap(
+                children: [
+                  _buildWidget(vm, 'show dialog', () {
+                    dialog(
+                        title: "title",
+                        msg:
+                            "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                        btnTitles: ["取消", "确定"],
+                        onSelected: (index) {
+                          if (index == 0) {
+                            // replace(const XBPushPage());
+                            pushAndClearStack(const XBPushPage());
+                          } else if (index == 1) {
+                            push(const XBPushPage());
+                          }
+                        });
+                  }),
+                  _buildWidget(vm, 'show action sheet', () {
+                    actionSheet(
+                        titles: [
+                          "1",
+                          "2",
+                          "1",
+                          "2",
+                          "1",
+                          "2",
+                          "1",
+                          "2",
+                          "1",
+                          "2",
+                          "1",
+                          "2"
+                        ],
+                        dismissTitle: "取消",
+                        onTapDismiss: () {
+                          print("点击了取消");
+                        },
+                        selectedIndex: 0,
+                        selectedColor: Colors.red,
+                        // dismissTitleColor: Colors.amber,
+                        // dismissTitleFontSize: 30,
+                        onSelected: (index) {
+                          print(index);
+                        });
+                    // vm.actionSheetWidget(
+                    //     widget: ClipRRect(
+                    //   borderRadius: BorderRadius.circular(10),
+                    //   child: Container(
+                    //     height: 200,
+                    //     color: app.colors.randColor,
+                    //   ),
+                    // ));
+                  }),
+                  _buildWidget(vm, 'show toast', () {
+                    toast("isTop:${isTop(this)}");
 
-                  Future.delayed(const Duration(seconds: 2), () {
-                    toast("isInStack:${isInStack(XBWidgetTest)}");
-                  });
+                    Future.delayed(const Duration(seconds: 2), () {
+                      toast("isInStack:${isInStack(XBWidgetTest)}");
+                    });
 
-                  // vm.toast(
-                  //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
-                  //     duration: 5);
-                  // vm.toastWidget(Container(
-                  //   height: 100,
-                  //   width: 100,
-                  //   color: app.colors.randColor,
-                  // ));
-                }),
-                _buildWidget(vm, 'show loading', () {
-                  vm.showLoading();
-                  Future.delayed(const Duration(seconds: 3), () {
-                    vm.hideLoading();
-                  });
-                }),
-                _buildWidget(vm, 'show global loading', () {
-                  showLoadingGlobal();
-                  Future.delayed(const Duration(seconds: 3), () {
+                    // vm.toast(
+                    //     "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
+                    //     duration: 5);
+                    // vm.toastWidget(Container(
+                    //   height: 100,
+                    //   width: 100,
+                    //   color: app.colors.randColor,
+                    // ));
+                  }),
+                  _buildWidget(vm, 'show loading', () {
+                    vm.showLoading();
+                    Future.delayed(const Duration(seconds: 3), () {
+                      vm.hideLoading();
+                    });
+                  }),
+                  _buildWidget(vm, 'show global loading', () {
                     showLoadingGlobal();
                     Future.delayed(const Duration(seconds: 3), () {
-                      hideLoadingGlobal();
+                      showLoadingGlobal();
+                      Future.delayed(const Duration(seconds: 3), () {
+                        hideLoadingGlobal();
+                      });
                     });
-                  });
-                }),
-                _buildWidget(vm, '进入 悬浮段头列表页面', () {
-                  push(XBHoveringTest());
-                }),
-                _buildWidget(vm, '进入 XBButton测试页面', () {
-                  push(XBButtonTest());
-                })
-              ],
-            ),
-            TextField()
-          ],
+                  }),
+                  _buildWidget(vm, '进入 悬浮段头列表页面', () {
+                    push(XBHoveringTest());
+                  }),
+                  _buildWidget(vm, '进入 XBButton测试页面', () {
+                    push(XBButtonTest());
+                  })
+                ],
+              ),
+              TextField()
+            ],
+          ),
         ),
       ),
     );
