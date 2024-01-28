@@ -149,8 +149,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     push(XBButtonTest());
                   })
                 ],
-              ),
-              TextField()
+              )
             ],
           ),
         ),

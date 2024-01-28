@@ -11,6 +11,14 @@ enum XBButtonTapEffect {
 
 class XBButton extends StatefulWidget {
   final Widget child;
+
+  /// 是否可点击
+  final bool enable;
+
+  /// 不可点击时，child上覆盖的颜色，默认为0.24透明度的白色（外部传入半透明颜色）
+  final Color? disableColor;
+
+  /// 点击事件
   final VoidCallback? onTap;
 
   /// 点击效果
@@ -30,6 +38,8 @@ class XBButton extends StatefulWidget {
 
   const XBButton(
       {required this.child,
+      this.enable = true,
+      this.disableColor,
       this.onTap,
       this.needTapEffect = true,
       this.opacityOnTap,
@@ -54,6 +64,24 @@ class _XBButtonState extends State<XBButton> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enable) {
+      return Stack(
+        alignment: Alignment.center,
+        children: [
+          widget.child,
+          Container(
+            color: widget.disableColor ?? Colors.white24,
+            child: Visibility(
+                visible: false,
+                maintainState: true,
+                maintainSize: true,
+                maintainAnimation: true,
+                child: widget.child),
+          )
+        ],
+      );
+    }
+
     final tapChild = GestureDetector(
       onTap: widget.onTap,
       behavior: HitTestBehavior.opaque,

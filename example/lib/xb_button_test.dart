@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -12,39 +11,35 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
 
   @override
   Widget buildPage(vm, BuildContext context) {
-    return XBButton(
-      effect: XBButtonTapEffect.none,
-      onTap: () {
-        debugPrint("XBButton 1 clicked");
-      },
-      child: Container(
-        color: Colors.orange,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              height: 80,
-              color: Colors.green,
-            ),
-            XBButton(
-              // effect: XBButtonTapEffect.none,
-              onTap: () {
-                debugPrint("XBButton 2 clicked");
-              },
-              child: GestureDetector(
-                onTap: () {
-                  debugPrint("GestureDetector clicked");
-                },
-                child: CupertinoSwitch(
-                    value: true,
-                    onChanged: (newValue) {
-                      debugPrint("改变状态");
-                    }),
+    return Column(
+      children: [
+        XBButton(
+            enable: false,
+            // disableColor: Colors.black38,
+            onTap: () {
+              debugPrint("XBButton 1 clicked");
+            },
+            child: Container(
+              height: 50,
+              color: Colors.blue,
+              alignment: Alignment.center,
+              child: const Text(
+                "enable test",
+                style: TextStyle(color: Colors.white),
               ),
-            ),
-          ],
-        ),
-      ),
+            )),
+        XBButton(
+            enable: true,
+            onTap: () {
+              debugPrint("XBButton 2 clicked");
+            },
+            child: Container(
+              height: 50,
+              color: Colors.blue,
+              alignment: Alignment.center,
+              child: Text("enable test"),
+            )),
+      ],
     );
   }
 }
