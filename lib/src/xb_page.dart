@@ -45,12 +45,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
    * 如果返回true，则buildAppBar不可以重写
    * 返回true，没有appbar
    * */
-  bool needShowContentFromScreenTop(vm) {
+  bool needShowContentFromScreenTop(T vm) {
     return false;
   }
 
   /// 是否启动iOS侧滑返回
-  bool needIosGestureBack(vm) {
+  bool needIosGestureBack(T vm) {
     return true;
   }
 
@@ -79,7 +79,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return false;
   }
 
-  bool _primary(vm) => !needShowContentFromScreenTop(vm);
+  bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
 
