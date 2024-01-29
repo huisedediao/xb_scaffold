@@ -174,3 +174,7 @@
 
 - actionSheetWidget增加isScrollControlled属性
 
+## 0.0.46
+
+- 安卓和iOS返回控制方法增加vm参数
+

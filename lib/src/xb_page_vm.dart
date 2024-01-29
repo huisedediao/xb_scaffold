@@ -67,7 +67,7 @@ class XBPageVM<T> extends XBVM<T> {
     if (Platform.isAndroid) {
       return _androidOnWillPop;
     } else {
-      if ((widget as XBPage).needIosGestureBack() && _canLoadingPop()) {
+      if ((widget as XBPage).needIosGestureBack(this) && _canLoadingPop()) {
         return null;
       } else {
         return _iosOnWillPop;

@@ -45,12 +45,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
    * 如果返回true，则buildAppBar不可以重写
    * 返回true，没有appbar
    * */
-  bool needShowContentFromScreenTop() {
+  bool needShowContentFromScreenTop(vm) {
     return false;
   }
 
   /// 是否启动iOS侧滑返回
-  bool needIosGestureBack() {
+  bool needIosGestureBack(vm) {
     return true;
   }
 
@@ -79,7 +79,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return false;
   }
 
-  bool get _primary => !needShowContentFromScreenTop();
+  bool _primary(vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
 
@@ -145,10 +145,10 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _buildLoadingContent(T vm) {
     Widget scaffold = Scaffold(
-      primary: _primary,
+      primary: _primary(vm),
       backgroundColor: backgroundColor,
       resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
-      appBar: _primary == false ? const XBEmptyAppBar() : buildAppBar(vm),
+      appBar: _primary(vm) == false ? const XBEmptyAppBar() : buildAppBar(vm),
       body: _buildBodyContent(vm),
     );
     if (!needLoading()) {
