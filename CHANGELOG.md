@@ -170,3 +170,7 @@
 
 - XBButton增加不可点击状态
 
+## 0.0.45
+
+- actionSheetWidget增加isScrollControlled属性
+
