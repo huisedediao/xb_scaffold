@@ -9,30 +9,56 @@ class XBToastItem {
 
 final List<XBToastItem> _items = [];
 
-_hideLast() {
-  if (_items.isNotEmpty) {
-    final lastItem = _items.removeLast();
-    if (lastItem.key.currentState != null) {
-      lastItem.key.currentState?.hide(() {
-        lastItem.entry.remove();
-      });
-    } else {
-      lastItem.entry.remove();
-    }
-  }
+toast(String msg,
+    {int duration = 3,
+    double bottom = 150,
+    Color? backgroundColor,
+    TextStyle? msgStyle}) {
+  toastWidget(
+    bottom: bottom,
+    duration: duration,
+    backgroundColor: backgroundColor,
+    widget: Padding(
+      padding: EdgeInsets.only(
+          left: spaces.gapLess,
+          right: spaces.gapLess,
+          top: spaces.gapLess * 0.5,
+          bottom: spaces.gapLess * 0.5),
+      child: Text(
+        msg,
+        style: msgStyle ?? const TextStyle(color: Colors.white),
+      ),
+    ),
+  );
 }
 
-toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
+toastWidget(
+    {required Widget widget,
+    int duration = 3,
+    double bottom = 150,
+    Color? backgroundColor}) {
   try {
-    _toastWidget(widget: widget, duration: duration, bottom: bottom);
+    _toastWidget(
+        widget: widget,
+        duration: duration,
+        bottom: bottom,
+        backgroundColor: backgroundColor);
   } catch (e) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _toastWidget(widget: widget, duration: duration, bottom: bottom);
+      _toastWidget(
+          widget: widget,
+          duration: duration,
+          bottom: bottom,
+          backgroundColor: backgroundColor);
     });
   }
 }
 
-_toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
+_toastWidget(
+    {required Widget widget,
+    int duration = 3,
+    double bottom = 150,
+    Color? backgroundColor}) {
   _hideLast();
   final overlay = Overlay.of(xbGlobalContext);
   final GlobalKey<XBFadeWidgetState> key = GlobalKey();
@@ -59,7 +85,7 @@ _toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    color: Colors.black87,
+                    color: backgroundColor ?? Colors.black87,
                     child: widget,
                   ),
                 ),
@@ -81,20 +107,15 @@ _toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
   });
 }
 
-toast(String msg, {int duration = 3, double bottom = 150}) {
-  toastWidget(
-    bottom: bottom,
-    duration: duration,
-    widget: Padding(
-      padding: EdgeInsets.only(
-          left: spaces.gapLess,
-          right: spaces.gapLess,
-          top: spaces.gapLess * 0.5,
-          bottom: spaces.gapLess * 0.5),
-      child: Text(
-        msg,
-        style: const TextStyle(color: Colors.white),
-      ),
-    ),
-  );
+_hideLast() {
+  if (_items.isNotEmpty) {
+    final lastItem = _items.removeLast();
+    if (lastItem.key.currentState != null) {
+      lastItem.key.currentState?.hide(() {
+        lastItem.entry.remove();
+      });
+    } else {
+      lastItem.entry.remove();
+    }
+  }
 }

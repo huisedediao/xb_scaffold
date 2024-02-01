@@ -62,12 +62,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                 children: [
                   _buildWidget(vm, 'show dialog', () {
                     dialog(
-                        title: "title",
-                        titleStyle: TextStyle(
-                          fontSize: fontSizes.s18,
-                          fontWeight: fontWeights.medium,
-                          color: Colors.white,
-                        ),
+                        title: "温馨提示",
                         msg:
                             "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
                         btnTitles: ["取消", "确定"],
@@ -117,7 +112,10 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     // ));
                   }),
                   _buildWidget(vm, 'show toast', () {
-                    toast("isTop:${isTop(this)}");
+                    toast("isTop:${isTop(this)}",
+                        backgroundColor: Colors.red.withAlpha(100),
+                        msgStyle:
+                            TextStyle(fontSize: 30, color: Colors.yellow));
 
                     Future.delayed(const Duration(seconds: 2), () {
                       toast("isInStack:${isInStack(XBWidgetTest)}");

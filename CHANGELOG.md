@@ -190,3 +190,7 @@
 
 - dialog添加titleStyle
 
+## 0.0.50
+
+- 优化toast
+
