@@ -85,7 +85,8 @@ _toastWidget(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    color: backgroundColor ?? Colors.black87,
+                    color:
+                        backgroundColor ?? const Color.fromRGBO(91, 91, 91, 1),
                     child: widget,
                   ),
                 ),

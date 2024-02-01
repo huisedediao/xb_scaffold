@@ -98,6 +98,21 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return naviBarBG;
   }
 
+  /// navigationBar title的颜色
+  Color? get navigationBarTitleColor {
+    return naviBarTitle;
+  }
+
+  /// navigationBar title的大小
+  double? get navigationBarTitleSize {
+    return 16;
+  }
+
+  /// navigationBar title的字重
+  FontWeight? get navigationBarTitleFontWeight {
+    return app.fontWeights.bold;
+  }
+
   /// 页面的标题
   /// 如果重写了buildTitle，则不生效
   String setTitle(T vm) {
@@ -255,9 +270,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget _defaultTitle(T vm) {
     return Text(setTitle(vm),
         style: TextStyle(
-            color: naviBarTitle,
-            fontWeight: app.fontWeights.bold,
-            fontSize: 16));
+            color: navigationBarTitleColor,
+            fontWeight: navigationBarTitleFontWeight,
+            fontSize: navigationBarTitleSize));
   }
 
   /// 构建navigationBar右侧widget
