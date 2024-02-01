@@ -63,6 +63,11 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                   _buildWidget(vm, 'show dialog', () {
                     dialog(
                         title: "title",
+                        titleStyle: TextStyle(
+                          fontSize: fontSizes.s18,
+                          fontWeight: fontWeights.medium,
+                          color: Colors.white,
+                        ),
                         msg:
                             "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
                         btnTitles: ["取消", "确定"],

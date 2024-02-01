@@ -182,3 +182,11 @@
 
 - optimize
 
+## 0.0.48
+
+- dialog添加dialogContent
+
+## 0.0.49
+
+- dialog添加titleStyle
+

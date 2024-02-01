@@ -14,6 +14,68 @@ dialogWidget({
   }
 }
 
+dialogContent(
+    {required String title,
+    TextStyle? titleStyle,
+    required Widget content,
+    required List<String> btnTitles,
+    required ValueChanged<int> onSelected}) {
+  dialogWidget(
+      widget: Padding(
+    padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        color: Colors.white,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: spaces.gapDef,
+            ),
+            Text(
+              title,
+              style: titleStyle ??
+                  TextStyle(
+                      fontSize: fontSizes.s18,
+                      fontWeight: fontWeights.semiBold),
+            ),
+            Padding(
+              padding: EdgeInsets.only(
+                  left: spaces.gapDef,
+                  right: spaces.gapDef,
+                  top: spaces.gapLess,
+                  bottom: spaces.gapDef),
+              child: content,
+            ),
+            Container(
+              height: onePixel,
+              color: lineColor,
+            ),
+            Row(
+              children: _setupBtns(xbGlobalContext, btnTitles, onSelected),
+            )
+          ],
+        ),
+      ),
+    ),
+  ));
+}
+
+dialog(
+    {required String title,
+    TextStyle? titleStyle,
+    required String msg,
+    required List<String> btnTitles,
+    required ValueChanged<int> onSelected}) {
+  dialogContent(
+      title: title,
+      titleStyle: titleStyle,
+      content: Text(msg),
+      btnTitles: btnTitles,
+      onSelected: onSelected);
+}
+
 _dialogWidget({
   required Widget widget,
 }) {
@@ -34,51 +96,6 @@ _dialogWidget({
       );
     },
   );
-}
-
-dialog(
-    {required String title,
-    required String msg,
-    required List<String> btnTitles,
-    required ValueChanged<int> onSelected}) {
-  dialogWidget(
-      widget: Padding(
-    padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        color: Colors.white,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: spaces.gapDef,
-            ),
-            Text(
-              title,
-              style: TextStyle(
-                  fontSize: fontSizes.s18, fontWeight: fontWeights.medium),
-            ),
-            Padding(
-              padding: EdgeInsets.only(
-                  left: spaces.gapDef,
-                  right: spaces.gapDef,
-                  top: spaces.gapLess,
-                  bottom: spaces.gapDef),
-              child: Text(msg),
-            ),
-            Container(
-              height: onePixel,
-              color: lineColor,
-            ),
-            Row(
-              children: _setupBtns(xbGlobalContext, btnTitles, onSelected),
-            )
-          ],
-        ),
-      ),
-    ),
-  ));
 }
 
 List<Widget> _setupBtns(BuildContext context, List<String> btnTitles,
