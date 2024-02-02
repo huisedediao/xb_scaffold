@@ -16,6 +16,11 @@ class XBHoveringTest extends XBPage<XBHoveringTestVM> {
   }
 
   @override
+  bool needLoading() {
+    return true;
+  }
+
+  @override
   Widget buildPage(vm, BuildContext context) {
     return XBHoveringHeaderList(
       ///分组信息，每组有几个item

@@ -41,6 +41,12 @@ class XBPageVM<T> extends XBVM<T> {
 
   _showLoading() {
     if (needShowLoadingWidget) {
+      if (loadingWidgetFadeKey.currentState == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showLoading();
+        });
+        return;
+      }
       _isShowLoadingWidget = true;
       notify();
 
