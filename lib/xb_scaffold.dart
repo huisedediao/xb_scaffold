@@ -28,22 +28,38 @@ export './src/xb_route.dart';
 export './src/utils/xb_unique_list.dart';
 export './src/utils/xb_stack_list.dart';
 
+/// 路由栈监听
+XBNavigatorObserver _navigatorObserver = XBNavigatorObserver();
+XBNavigatorObserver get navigatorObserver => _navigatorObserver;
 final StreamController _stackStreamController = StreamController.broadcast();
-
 StreamController get stackStreamController => _stackStreamController;
-
 Stream get stackStream => _stackStreamController.stream;
 
-XBNavigatorObserver navigatorObserver = XBNavigatorObserver();
+/// 全局BuildContext
+late BuildContext _xbGlobalContext;
+BuildContext get xbGlobalContext => _xbGlobalContext;
 
-late BuildContext xbGlobalContext;
-
+/// 结束输入框编辑
 void get endEditing => FocusScope.of(xbGlobalContext).requestFocus(FocusNode());
+
+/// 用于外部控制loading要长什么样
+typedef XBLoadingBuilder = Widget Function(BuildContext context);
+XBLoadingBuilder? _xbLoadingBuilder;
+XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 
 class XBScaffold extends StatefulWidget {
   final Widget child;
+
+  /// 图片路径，区分主题
   final List<String> imgPrefixs;
-  const XBScaffold({required this.child, required this.imgPrefixs, super.key});
+
+  /// loading要长什么样
+  final XBLoadingBuilder? loadingBuilder;
+  const XBScaffold(
+      {required this.child,
+      required this.imgPrefixs,
+      this.loadingBuilder,
+      super.key});
 
   @override
   State<XBScaffold> createState() => _MyWidgetState();
@@ -53,12 +69,13 @@ class _MyWidgetState extends State<XBScaffold> {
   @override
   void initState() {
     super.initState();
+    _xbLoadingBuilder = widget.loadingBuilder;
     _initXBScaffold(imgPrefixs: widget.imgPrefixs);
   }
 
   @override
   Widget build(BuildContext context) {
-    xbGlobalContext = context;
+    _xbGlobalContext = context;
     return widget.child;
   }
 }

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+/// 展示全局loading，优先级：widget > xbLoadingBuilder > const XBLoadingWidget()
 showLoadingGlobal(
     {bool topLeftEnable = true,
     bool topCenterEnable = false,
@@ -125,8 +126,16 @@ _exeTask() {
   try {
     final task = _taskQueue.first;
     if (task.name == _taskShow) {
+      late Widget loadingBody;
+      if (task.widget != null) {
+        loadingBody = task.widget!;
+      } else if (xbLoadingBuilder != null) {
+        loadingBody = xbLoadingBuilder!(xbGlobalContext);
+      } else {
+        loadingBody = const XBLoadingWidget();
+      }
       _showLoadingGlobal(
-          widget: task.widget ?? const XBLoadingWidget(),
+          widget: loadingBody,
           topLeftEnable: task.topLeftEnable,
           topCenterEnable: task.topCenterEnable,
           topRightEnable: task.topRightEnable,

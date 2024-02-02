@@ -1,5 +1,4 @@
 import 'package:example/xb_page_test.dart';
-import 'package:flutter/src/widgets/framework.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageTestVM extends XBPageVM<XBPageTest> {

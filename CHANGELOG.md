@@ -202,3 +202,7 @@
 
 - 优化dialogWidget
 
+## 0.0.53
+
+- 添加设置loading样式接口
+
