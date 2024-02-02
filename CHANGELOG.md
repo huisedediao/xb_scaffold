@@ -198,3 +198,7 @@
 
 - 修改toast的默认背景颜色为灰色、XBPage新增navigationBarTitle的颜色和字体设置
 
+## 0.0.52
+
+- 优化dialogWidget
+

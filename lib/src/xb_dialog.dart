@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/configs/color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-dialogWidget({
-  required Widget widget,
-}) {
+dialogWidget(Widget widget) {
   try {
     _dialogWidget(widget: widget);
   } catch (e) {
@@ -20,8 +18,7 @@ dialogContent(
     required Widget content,
     required List<String> btnTitles,
     required ValueChanged<int> onSelected}) {
-  dialogWidget(
-      widget: Padding(
+  dialogWidget(Padding(
     padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
     child: ClipRRect(
       borderRadius: BorderRadius.circular(10),
