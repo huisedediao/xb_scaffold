@@ -47,6 +47,10 @@ typedef XBLoadingBuilder = Widget Function(BuildContext context);
 XBLoadingBuilder? _xbLoadingBuilder;
 XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 
+/// toast的背景颜色
+Color? _toastBackgroundColor;
+Color? get toastBackgroundColor => _toastBackgroundColor;
+
 class XBScaffold extends StatefulWidget {
   final Widget child;
 
@@ -55,10 +59,15 @@ class XBScaffold extends StatefulWidget {
 
   /// loading要长什么样
   final XBLoadingBuilder? loadingBuilder;
+
+  /// toast的背景颜色
+  final Color? toastBackgroundColor;
+
   const XBScaffold(
       {required this.child,
       required this.imgPrefixs,
       this.loadingBuilder,
+      this.toastBackgroundColor,
       super.key});
 
   @override
@@ -70,6 +79,7 @@ class _MyWidgetState extends State<XBScaffold> {
   void initState() {
     super.initState();
     _xbLoadingBuilder = widget.loadingBuilder;
+    _toastBackgroundColor = widget.toastBackgroundColor;
     _initXBScaffold(imgPrefixs: widget.imgPrefixs);
   }
 
