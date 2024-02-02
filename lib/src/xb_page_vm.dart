@@ -8,26 +8,26 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBPageVM<T> extends XBVM<T> {
   XBPageVM({required super.context}) {
     if ((widget as XBPage).needInitLoading()) {
-      _isLoading = true;
+      _isShowLoadingWidget = true;
     }
   }
 
-  bool _isLoading = false;
+  bool _isShowLoadingWidget = false;
 
-  bool get isLoading => _isLoading;
+  bool get isShowLoadingWidget => _isShowLoadingWidget;
 
-  GlobalKey<XBFadeWidgetState>? _fadeKey;
+  GlobalKey<XBFadeWidgetState>? _loadingWidgetFadeKey;
 
-  GlobalKey<XBFadeWidgetState> get fadeKey {
-    _fadeKey ??= GlobalKey();
-    return _fadeKey!;
+  GlobalKey<XBFadeWidgetState> get loadingWidgetFadeKey {
+    _loadingWidgetFadeKey ??= GlobalKey();
+    return _loadingWidgetFadeKey!;
   }
 
   void back<O extends Object?>([O? result]) {
     pop(result);
   }
 
-  bool get needLoading => (widget as XBPage).needLoading();
+  bool get needShowLoadingWidget => (widget as XBPage).needLoading();
 
   showLoading() {
     try {
@@ -40,20 +40,20 @@ class XBPageVM<T> extends XBVM<T> {
   }
 
   _showLoading() {
-    if (needLoading) {
-      _isLoading = true;
+    if (needShowLoadingWidget) {
+      _isShowLoadingWidget = true;
       notify();
 
-      fadeKey.currentState?.show();
+      loadingWidgetFadeKey.currentState?.show();
     }
   }
 
   hideLoading() {
     try {
-      if (needLoading) {
-        fadeKey.currentState?.hide(() {
+      if (needShowLoadingWidget) {
+        loadingWidgetFadeKey.currentState?.hide(() {
           try {
-            _isLoading = false;
+            _isShowLoadingWidget = false;
             notify();
           } catch (e) {}
         });
@@ -93,6 +93,6 @@ class XBPageVM<T> extends XBVM<T> {
 
   /// loading是否允许返回
   bool _canLoadingPop() =>
-      isLoading == false ||
+      isShowLoadingWidget == false ||
       (widget as XBPage).needResponseNavigationBarLeftWhileLoading();
 }

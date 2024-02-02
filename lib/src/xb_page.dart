@@ -173,10 +173,10 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       children: [
         scaffold,
         XBFadeWidget(
-          key: vm.fadeKey,
+          key: vm.loadingWidgetFadeKey,
           initShow: needInitLoading(),
           child: Visibility(
-            visible: vm.isLoading,
+            visible: vm.isShowLoadingWidget,
             child: Stack(children: [
               Column(
                 children: [

@@ -20,15 +20,15 @@ class MyApp extends StatelessWidget {
       navigatorObservers: [navigatorObserver],
       home: XBScaffold(
           imgPrefixs: const ["assets/images/default/", "assets/images/custom/"],
-          loadingBuilder: (context) {
-            return Center(
-              child: Container(
-                height: 100,
-                width: 100,
-                color: Colors.red,
-              ),
-            );
-          },
+          // loadingBuilder: (context) {
+          //   return Center(
+          //     child: Container(
+          //       height: 100,
+          //       width: 100,
+          //       color: Colors.red,
+          //     ),
+          //   );
+          // },
           child: const MyHomePage(title: 'Flutter Demo Home Page')),
     );
   }
