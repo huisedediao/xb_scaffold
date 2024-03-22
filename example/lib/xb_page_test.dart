@@ -3,6 +3,7 @@ import 'package:example/xb_button_test.dart';
 import 'package:example/xb_hovering_test.dart';
 import 'package:example/xb_page_test_vm.dart';
 import 'package:example/xb_push_page.dart';
+import 'package:example/xb_rotate_test.dart';
 import 'package:example/xb_widget_test.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
@@ -150,6 +151,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                   }),
                   _buildWidget(vm, '进入 XBButton测试页面', () {
                     push(XBButtonTest());
+                  }),
+                  _buildWidget(vm, '进入 旋转测试页面', () {
+                    push(XBRotateTest());
                   })
                 ],
               )
