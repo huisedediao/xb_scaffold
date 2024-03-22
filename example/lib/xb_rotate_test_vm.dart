@@ -11,13 +11,13 @@ class XBRotateTestVM extends XBPageVM<XBRotateTest> {
     orientation = orientation == 0 ? 1 : 0;
     if (orientation == 1) {
       SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
       ]);
     } else {
       SystemChrome.setPreferredOrientations([
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
       ]);
     }
     // notify();

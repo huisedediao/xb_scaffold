@@ -12,7 +12,7 @@ class XBRotateTest extends XBPage<XBRotateTestVM> {
 
   @override
   bool needShowContentFromScreenTop(XBRotateTestVM vm) {
-    return vm.orientation == 0;
+    return vm.orientation == 1;
   }
 
   @override
