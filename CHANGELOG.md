@@ -230,3 +230,7 @@
 
 - XBWidget新增rebuild vm方法
 
+## 0.0.60
+
+- optimize
+

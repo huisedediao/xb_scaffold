@@ -46,9 +46,11 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
   /// 刷新UI
   rebuild({bool regenerateVM = false}) {
     if (regenerateVM) {
-      setState(() {
-        vm = widget.generateVM(context);
-      });
+      if (mounted) {
+        setState(() {
+          vm = widget.generateVM(context);
+        });
+      }
     } else {
       vm.notify();
     }
