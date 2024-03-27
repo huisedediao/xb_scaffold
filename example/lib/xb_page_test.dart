@@ -1,5 +1,6 @@
 import 'package:example/theme/app_extension.dart';
 import 'package:example/xb_button_test.dart';
+import 'package:example/xb_global_key_test.dart';
 import 'package:example/xb_hovering_test.dart';
 import 'package:example/xb_page_test_vm.dart';
 import 'package:example/xb_push_page.dart';
@@ -154,6 +155,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                   }),
                   _buildWidget(vm, '进入 旋转测试页面', () {
                     push(XBRotateTest());
+                  }),
+                  _buildWidget(vm, '进入 globalKey测试页面', () {
+                    push(XBGlobalKeyTest());
                   })
                 ],
               )

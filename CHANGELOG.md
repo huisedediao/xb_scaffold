@@ -222,3 +222,7 @@
 
 - 更新协议
 
+## 0.0.58
+
+- XBWidget改成继承自StatefulWidget
+
