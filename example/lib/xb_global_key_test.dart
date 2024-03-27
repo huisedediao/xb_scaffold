@@ -17,12 +17,25 @@ class XBGlobalKeyTest extends XBPage<XBGlobalKeyTestVM> {
       children: [
         XBGlobalKeyTestWidget(key: vm.globalKey),
         XBButton(
-          onTap: vm.onTap,
+          onTap: vm.onChangeTitle,
           child: Container(
-            color: colors.randColor,
+            color: Colors.blue,
             child: const Padding(
               padding: EdgeInsets.all(8.0),
               child: Text("change title"),
+            ),
+          ),
+        ),
+        const SizedBox(
+          height: 10,
+        ),
+        XBButton(
+          onTap: vm.onChangeVM,
+          child: Container(
+            color: Colors.blue,
+            child: const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text("change vm"),
             ),
           ),
         )

@@ -40,30 +40,64 @@ abstract class XBWidget<T extends XBVM> extends StatefulWidget {
 }
 
 class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
-  BuildContext? vmContext;
-
-  /// 获取vm，必须在buildWidget调用之后使用
   /// 在外部使用时，不应该保存vm，避免生命周期问题
-  T get vm {
-    assert(vmContext != null, "vmContext is null");
-    return Provider.of<T>(vmContext!, listen: false);
-  }
+  late T vm;
 
   /// 刷新UI
-  rebuildUI() {
-    vm.notify();
+  rebuild({bool regenerateVM = false}) {
+    if (regenerateVM) {
+      setState(() {
+        vm = widget.generateVM(context);
+      });
+    } else {
+      vm.notify();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    vm = widget.generateVM(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (ctx) => widget.generateVM(context),
+    return ChangeNotifierProvider<T>.value(
+      value: vm,
       child: Consumer<T>(
         builder: (context, vm, child) {
-          vmContext = context;
           return widget.buildWidget(vm, context);
         },
       ),
     );
   }
 }
+
+// class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
+//   BuildContext? vmContext;
+
+//   /// 获取vm，必须在buildWidget调用之后使用
+//   /// 在外部使用时，不应该保存vm，避免生命周期问题
+//   T get vm {
+//     assert(vmContext != null, "vmContext is null");
+//     return Provider.of<T>(vmContext!, listen: false);
+//   }
+
+//   /// 刷新UI
+//   rebuildUI() {
+//     vm.notify();
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return ChangeNotifierProvider(
+//       create: (ctx) => widget.generateVM(context),
+//       child: Consumer<T>(
+//         builder: (context, vm, child) {
+//           vmContext = context;
+//           return widget.buildWidget(vm, context);
+//         },
+//       ),
+//     );
+//   }
+// }

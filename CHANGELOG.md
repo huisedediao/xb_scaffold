@@ -226,3 +226,7 @@
 
 - XBWidget改成继承自StatefulWidget
 
+## 0.0.59
+
+- XBWidget新增rebuild vm方法
+

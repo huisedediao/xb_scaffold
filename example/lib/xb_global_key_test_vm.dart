@@ -9,8 +9,13 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
   final GlobalKey<XBWidgetState> _globalKey = GlobalKey();
   GlobalKey get globalKey => _globalKey;
 
-  onTap() {
+  onChangeTitle() {
     final currentState = globalKey.currentState as XBWidgetState;
     (currentState.vm as XBGlobalKeyTestWidgetVM).changeTitle();
+  }
+
+  onChangeVM() {
+    final currentState = globalKey.currentState as XBWidgetState;
+    currentState.rebuild(regenerateVM: true);
   }
 }
