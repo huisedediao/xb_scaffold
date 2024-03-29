@@ -18,4 +18,10 @@ class XBVM<T> extends ChangeNotifier {
       // ignore: empty_catches
     } catch (e) {}
   }
+
+  @override
+  void dispose() {
+    debugPrint("$runtimeType dispose");
+    super.dispose();
+  }
 }

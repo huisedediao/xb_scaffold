@@ -73,6 +73,13 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    debugPrint("$runtimeType dispose");
+    vm.dispose();
+    super.dispose();
+  }
 }
 
 // class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
