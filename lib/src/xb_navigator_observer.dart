@@ -1,6 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+class XBStackChangedInfo {
+  /// type: 0 push；1 pop
+  final int type;
+  final Route route;
+  final Route? previousRoute;
+
+  bool get isPush => type == 0;
+  bool get isPop => type == 1;
+
+  XBStackChangedInfo(
+      {required this.type, required this.route, this.previousRoute});
+}
+
 class XBNavigatorObserver extends NavigatorObserver {
   final List<Route> _stack = [];
 
@@ -16,19 +29,47 @@ class XBNavigatorObserver extends NavigatorObserver {
   /// ignore为true，则从栈顶往下找到第一个XBRoute进行判断，否则直接取栈顶元素判断
   /// hsCode如果不为空，则再判断hashCode是否相等
   bool _topIsType(Type type, [bool ignore = true, int? hsCode]) {
-    if (_stack.isEmpty) return false;
+    return _topNIsType(type, 0, ignore, hsCode);
+  }
+
+  /// 栈顶之下第一个是widget
+  bool topSecondIsWidget(Widget widget, [bool ignore = true]) {
+    return topNIsWidget(widget, 1, ignore);
+  }
+
+  /// 栈顶之下第n是widget
+  bool topNIsWidget(Widget widget, [int n = 0, bool ignore = true]) {
+    return _topNIsType(widget.runtimeType, n, ignore, widget.hashCode);
+  }
+
+  /// 栈顶之下第n是type类型
+  bool _topNIsType(Type type, [int n = 0, bool ignore = true, int? hsCode]) {
+    int fixN = 1 + n;
+    if (_stack.length < fixN) return false;
     String typeStr = '$type';
     if (ignore == false) {
-      return isXBRoute(_stack.last, hsCode) &&
-          _stack.last.settings.name == typeStr;
+      final tempRoute = _stack[_stack.length - fixN];
+      return (_isXBRoute(tempRoute) &&
+              (hsCode == null
+                  ? true
+                  : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) &&
+          tempRoute.settings.name == typeStr;
     }
+    int routeIndex = 0;
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
-      if (isXBRoute(tempRoute, hsCode)) {
-        if (tempRoute.settings.name == typeStr) {
-          return true;
+      if (_isXBRoute(tempRoute)) {
+        if (routeIndex < n) {
+          routeIndex++;
         } else {
-          return false;
+          if (tempRoute.settings.name == typeStr &&
+              (hsCode == null
+                  ? true
+                  : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) {
+            return true;
+          } else {
+            return false;
+          }
         }
       }
     }
@@ -47,7 +88,10 @@ class XBNavigatorObserver extends NavigatorObserver {
     if (_stack.isEmpty) return false;
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
-      if (isXBRoute(tempRoute, hsCode)) {
+      if (_isXBRoute(tempRoute) &&
+          (hsCode == null
+              ? true
+              : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) {
         if (tempRoute.settings.name == '$type') {
           return true;
         }
@@ -56,25 +100,40 @@ class XBNavigatorObserver extends NavigatorObserver {
     return false;
   }
 
+  /// 判断路由是否映射Widget
+  /// 必须是XBRoute
+  bool routeIsMapWidget({required Route route, required Widget widget}) {
+    return _isXBRoute(route) &&
+        _isEqualHashCode(route: route, hsCode: widget.hashCode);
+  }
+
   /// 判断是否是XBRoute
-  /// hsCode如果不为空，则再判断hashCode是否相等
-  /// 忽略hashCode碰撞
-  bool isXBRoute(Route route, [int? hsCode]) {
+  bool isXBRoute(Route route) {
+    return _isXBRoute(route);
+  }
+
+  /// 判断是否是XBRoute
+  bool _isXBRoute(Route route) {
     final arg = route.settings.arguments;
     if (arg == null || arg is! Map) {
       return false;
     }
     final tempCategoryName = arg[xbCategoryNameKey];
-    final isXBRouteType = tempCategoryName != null &&
+    return tempCategoryName != null &&
         tempCategoryName is String &&
         tempCategoryName == xbCategoryName;
-    if (hsCode != null) {
-      final tempHashCode = arg[xbHashCodeKey];
-      final isSameCode =
-          tempHashCode != null && tempHashCode is int && tempHashCode == hsCode;
-      return isXBRouteType && isSameCode;
+  }
+
+  /// 判断hashCode是否相等
+  bool _isEqualHashCode({required Route route, required int hsCode}) {
+    final arg = route.settings.arguments;
+    if (arg == null || arg is! Map) {
+      return false;
     }
-    return isXBRouteType;
+    final tempHashCode = arg[xbHashCodeKey];
+    return tempHashCode != null &&
+        tempHashCode is int &&
+        tempHashCode == hsCode;
   }
 
   bool get topIsXBRoute {
@@ -92,19 +151,23 @@ class XBNavigatorObserver extends NavigatorObserver {
   @override
   void didPush(Route route, Route? previousRoute) {
     super.didPush(route, previousRoute);
-    _logRouteInfo(route, previousRoute);
+    final changedInfo =
+        XBStackChangedInfo(type: 0, route: route, previousRoute: previousRoute);
+    _logRouteInfo(changedInfo);
     _stack.add(route);
     debugPrint("_stack len:${_stack.length}");
-    xbStackStreamController.add(null);
+    xbStackStreamController.add(changedInfo);
   }
 
   @override
   void didPop(Route route, Route? previousRoute) {
     super.didPop(route, previousRoute);
-    _logRouteInfo(route, previousRoute, 1);
+    final changedInfo =
+        XBStackChangedInfo(type: 1, route: route, previousRoute: previousRoute);
+    _logRouteInfo(changedInfo);
     _stack.removeLast();
     debugPrint("_stack len:${_stack.length}");
-    xbStackStreamController.add(null);
+    xbStackStreamController.add(changedInfo);
   }
 
   String _routeInfo(Route? route) {
@@ -119,10 +182,9 @@ class XBNavigatorObserver extends NavigatorObserver {
     return ret;
   }
 
-  /// type: 0 push；1 pop
-  _logRouteInfo(Route route, Route? previousRoute, [int type = 0]) {
-    String opera = type == 0 ? "didPush" : "didPop";
+  _logRouteInfo(XBStackChangedInfo info) {
+    String opera = info.isPush ? "didPush" : "didPop";
     debugPrint(
-        "$opera:${_routeInfo(route)},previous:${_routeInfo(previousRoute)}");
+        "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}");
   }
 }

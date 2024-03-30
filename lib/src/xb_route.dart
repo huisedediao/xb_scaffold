@@ -9,8 +9,18 @@ String xbCategoryName = "xb_route";
 String xbHashCodeKey = "xb_hash_code";
 
 /// 页面是否在栈顶
-bool topIsWidget(Widget page) {
-  return xbRouteObserver.topIsWidget(page);
+bool topIsWidget(Widget widget) {
+  return xbRouteObserver.topIsWidget(widget);
+}
+
+/// 页面是否在栈顶之下的第一个
+bool topSecondIsWidget(Widget widget) {
+  return xbRouteObserver.topSecondIsWidget(widget);
+}
+
+/// 判断是否是XBRoute
+bool isXBRoute(Route route) {
+  return xbRouteObserver.isXBRoute(route);
 }
 
 /// 栈顶是否是type类型
@@ -26,6 +36,12 @@ bool stackContainWidget(Widget widget) {
 /// 类型是否在栈里，如果是根节点，没办法判断是否在栈里
 bool stackContainType(Type type) {
   return xbRouteObserver.stackContainType(type);
+}
+
+/// 判断路由是否映射Widget
+/// 非XBRoute都返回false
+bool routeIsMapWidget({required Route route, required Widget widget}) {
+  return xbRouteObserver.routeIsMapWidget(route: route, widget: widget);
 }
 
 /// 进入新页面

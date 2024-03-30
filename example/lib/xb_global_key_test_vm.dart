@@ -18,4 +18,22 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
     final currentState = globalKey.currentState as XBWidgetState;
     currentState.rebuild(regenerateVM: true);
   }
+
+  @override
+  willHide() {
+    super.willHide();
+    print("$runtimeType willHide");
+  }
+
+  @override
+  willShow() {
+    super.willShow();
+    print("$runtimeType willShow");
+  }
+
+  @override
+  void willDispose() {
+    super.willDispose();
+    print("$runtimeType willDispose");
+  }
 }

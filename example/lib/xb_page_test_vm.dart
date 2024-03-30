@@ -25,4 +25,22 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
     hideLoadingGlobal();
     super.back(result);
   }
+
+  @override
+  willHide() {
+    super.willHide();
+    print("$runtimeType willHide");
+  }
+
+  @override
+  willShow() {
+    super.willShow();
+    print("$runtimeType willShow");
+  }
+
+  @override
+  void willDispose() {
+    super.willDispose();
+    print("$runtimeType willDispose");
+  }
 }

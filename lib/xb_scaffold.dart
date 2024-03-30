@@ -31,10 +31,12 @@ export './src/utils/xb_stack_list.dart';
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
 XBNavigatorObserver get xbRouteObserver => _xbRouteObserver;
-final StreamController _xbRouteStackStreamController =
-    StreamController.broadcast();
-StreamController get xbStackStreamController => _xbRouteStackStreamController;
-Stream get xbRouteStackStream => _xbRouteStackStreamController.stream;
+final StreamController<XBStackChangedInfo> _xbRouteStackStreamController =
+    StreamController<XBStackChangedInfo>.broadcast();
+StreamController<XBStackChangedInfo> get xbStackStreamController =>
+    _xbRouteStackStreamController;
+Stream<XBStackChangedInfo> get xbRouteStackStream =>
+    _xbRouteStackStreamController.stream;
 
 /// 全局BuildContext
 late BuildContext _xbGlobalContext;
