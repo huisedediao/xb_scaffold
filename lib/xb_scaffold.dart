@@ -3,8 +3,7 @@ library xb_scaffold;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_navigator_observer.dart';
-
+import './src/xb_navigator_observer.dart';
 import 'src/xb_theme/xb_theme_vm.dart';
 
 export './src/xb_page.dart';
@@ -24,6 +23,7 @@ export './src/common/xb_navigator_back_btn.dart';
 export './src/common/xb_hovering_header_list/xb_hovering_header_list.dart';
 export './src/xb_theme/xb_theme_mixin.dart';
 export './src/xb_route.dart';
+export './src/xb_life_cycle_mixin.dart';
 
 export './src/utils/xb_unique_list.dart';
 export './src/utils/xb_stack_list.dart';
@@ -31,11 +31,11 @@ export './src/utils/xb_stack_list.dart';
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
 XBNavigatorObserver get xbRouteObserver => _xbRouteObserver;
-final StreamController<XBStackChangedInfo> _xbRouteStackStreamController =
-    StreamController<XBStackChangedInfo>.broadcast();
-StreamController<XBStackChangedInfo> get xbStackStreamController =>
+final StreamController<XBStackChangedEvent> _xbRouteStackStreamController =
+    StreamController<XBStackChangedEvent>.broadcast();
+StreamController<XBStackChangedEvent> get xbStackStreamController =>
     _xbRouteStackStreamController;
-Stream<XBStackChangedInfo> get xbRouteStackStream =>
+Stream<XBStackChangedEvent> get xbRouteStackStream =>
     _xbRouteStackStreamController.stream;
 
 /// 全局BuildContext

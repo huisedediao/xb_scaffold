@@ -6,7 +6,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBPageVM<T> extends XBVM<T> {
+class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   XBPageVM({required super.context}) {
     if ((widget as XBPage).needInitLoading()) {
       _isShowLoadingWidget = true;
@@ -16,38 +16,9 @@ class XBPageVM<T> extends XBVM<T> {
 
   _addStackListen() {
     _stackSubscription = xbRouteStackStream.listen((event) {
-      if (!isXBRoute(event.route)) {
-        // 如果pop或者push的不是XBRoute，不处理
-        return;
-      }
-      if (event.isPush) {
-        /// 不能用routeIsMapWidget判断，因为如果是根节点，无法判断
-        if (topSecondIsWidget(widget as Widget)) {
-          willHide();
-        }
-      } else {
-        if (topIsWidget(widget as Widget)) {
-          willShow();
-          return;
-        }
-        if (routeIsMapWidget(route: event.route, widget: widget as Widget)) {
-          willDispose();
-        }
-      }
+      handleStackChanged(event: event, widget: widget as Widget);
     });
   }
-
-  /// 即将隐藏，从展示状态变成被覆盖状态
-  @mustCallSuper
-  void willHide() {}
-
-  /// 即将展示，从被覆盖状态变成展示状态
-  @mustCallSuper
-  void willShow() {}
-
-  /// 即将销毁
-  @mustCallSuper
-  void willDispose() {}
 
   late StreamSubscription _stackSubscription;
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBStackChangedInfo {
+class XBStackChangedEvent {
   /// type: 0 push；1 pop
   final int type;
   final Route route;
@@ -10,7 +10,7 @@ class XBStackChangedInfo {
   bool get isPush => type == 0;
   bool get isPop => type == 1;
 
-  XBStackChangedInfo(
+  XBStackChangedEvent(
       {required this.type, required this.route, this.previousRoute});
 }
 
@@ -151,8 +151,8 @@ class XBNavigatorObserver extends NavigatorObserver {
   @override
   void didPush(Route route, Route? previousRoute) {
     super.didPush(route, previousRoute);
-    final changedInfo =
-        XBStackChangedInfo(type: 0, route: route, previousRoute: previousRoute);
+    final changedInfo = XBStackChangedEvent(
+        type: 0, route: route, previousRoute: previousRoute);
     _logRouteInfo(changedInfo);
     _stack.add(route);
     debugPrint("_stack len:${_stack.length}");
@@ -162,8 +162,8 @@ class XBNavigatorObserver extends NavigatorObserver {
   @override
   void didPop(Route route, Route? previousRoute) {
     super.didPop(route, previousRoute);
-    final changedInfo =
-        XBStackChangedInfo(type: 1, route: route, previousRoute: previousRoute);
+    final changedInfo = XBStackChangedEvent(
+        type: 1, route: route, previousRoute: previousRoute);
     _logRouteInfo(changedInfo);
     _stack.removeLast();
     debugPrint("_stack len:${_stack.length}");
@@ -182,7 +182,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     return ret;
   }
 
-  _logRouteInfo(XBStackChangedInfo info) {
+  _logRouteInfo(XBStackChangedEvent info) {
     String opera = info.isPush ? "didPush" : "didPop";
     debugPrint(
         "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}");
