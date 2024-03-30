@@ -238,3 +238,7 @@
 
 - 修复vm没有调用dispose方法导致内存泄漏
 
+## 0.0.62
+
+- 增加XBRoute的生命周期willHide、willShow、willDispose
+
