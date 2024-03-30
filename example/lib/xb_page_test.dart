@@ -114,13 +114,13 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     // ));
                   }),
                   _buildWidget(vm, 'show toast', () {
-                    toast("isTop:${isTop(this)}",
+                    toast("isTop:${topIsWidget(this)}",
                         backgroundColor: Colors.red.withAlpha(100),
                         msgStyle:
                             TextStyle(fontSize: 30, color: Colors.yellow));
 
                     Future.delayed(const Duration(seconds: 2), () {
-                      toast("isInStack:${isInStack(XBWidgetTest)}");
+                      toast("isInStack:${stackContainWidget(this)}");
                     });
 
                     // vm.toast(

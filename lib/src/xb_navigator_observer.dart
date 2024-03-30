@@ -4,34 +4,27 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBNavigatorObserver extends NavigatorObserver {
   final List<Route> _stack = [];
 
-  /// ignore: 是否忽略XBRoute以外的路由
-  bool isTop(Widget widget, [bool ignore = true]) {
-    return topIsType(widget.runtimeType, ignore);
+  bool topIsWidget(Widget widget, [bool ignore = true]) {
+    return _topIsType(widget.runtimeType, ignore, widget.hashCode);
   }
 
-  bool isInStack(Type type) {
-    if (_stack.isEmpty) return false;
-    for (int i = _stack.length - 1; i >= 0; i--) {
-      Route tempRoute = _stack[i];
-      if (isXBRoute(tempRoute)) {
-        if (tempRoute.settings.name == '$type') {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  /// ignore: 是否忽略XBRoute以外的路由
   bool topIsType(Type type, [bool ignore = true]) {
+    return _topIsType(type, ignore);
+  }
+
+  /// ignore: 是否忽略XBRoute以外的路由
+  /// ignore为true，则从栈顶往下找到第一个XBRoute进行判断，否则直接取栈顶元素判断
+  /// hsCode如果不为空，则再判断hashCode是否相等
+  bool _topIsType(Type type, [bool ignore = true, int? hsCode]) {
     if (_stack.isEmpty) return false;
     String typeStr = '$type';
     if (ignore == false) {
-      return isXBRoute(_stack.last) && _stack.last.settings.name == typeStr;
+      return isXBRoute(_stack.last, hsCode) &&
+          _stack.last.settings.name == typeStr;
     }
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
-      if (isXBRoute(tempRoute)) {
+      if (isXBRoute(tempRoute, hsCode)) {
         if (tempRoute.settings.name == typeStr) {
           return true;
         } else {
@@ -42,13 +35,46 @@ class XBNavigatorObserver extends NavigatorObserver {
     return false;
   }
 
-  bool isXBRoute(Route route) {
+  bool stackContainWidget(Widget widget) {
+    return _stackContainType(widget.runtimeType, widget.hashCode);
+  }
+
+  bool stackContainType(Type type, [int? hsCode]) {
+    return _stackContainType(type);
+  }
+
+  bool _stackContainType(Type type, [int? hsCode]) {
+    if (_stack.isEmpty) return false;
+    for (int i = _stack.length - 1; i >= 0; i--) {
+      Route tempRoute = _stack[i];
+      if (isXBRoute(tempRoute, hsCode)) {
+        if (tempRoute.settings.name == '$type') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// 判断是否是XBRoute
+  /// hsCode如果不为空，则再判断hashCode是否相等
+  /// 忽略hashCode碰撞
+  bool isXBRoute(Route route, [int? hsCode]) {
     final arg = route.settings.arguments;
     if (arg == null || arg is! Map) {
       return false;
     }
-    final tempName = arg[xbCategoryNameKey];
-    return tempName != null && tempName is String && tempName == xbCategoryName;
+    final tempCategoryName = arg[xbCategoryNameKey];
+    final isXBRouteType = tempCategoryName != null &&
+        tempCategoryName is String &&
+        tempCategoryName == xbCategoryName;
+    if (hsCode != null) {
+      final tempHashCode = arg[xbHashCodeKey];
+      final isSameCode =
+          tempHashCode != null && tempHashCode is int && tempHashCode == hsCode;
+      return isXBRouteType && isSameCode;
+    }
+    return isXBRouteType;
   }
 
   bool get topIsXBRoute {

@@ -28,7 +28,7 @@ class XBPushPageVM extends XBPageVM<XBPushPage> {
 
   @override
   void back<O extends Object?>([O? result]) {
-    toast("XBPageTest is inStack:${isInStack(XBPageTest)}");
+    toast("XBPageTest is inStack:${stackContainType(XBPageTest)}");
     popToRoot();
     // popUntilType(XBPageTest);
   }
