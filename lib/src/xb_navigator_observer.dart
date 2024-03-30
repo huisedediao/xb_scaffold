@@ -95,7 +95,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     _logRouteInfo(route, previousRoute);
     _stack.add(route);
     debugPrint("_stack len:${_stack.length}");
-    stackStreamController.add(null);
+    xbStackStreamController.add(null);
   }
 
   @override
@@ -104,7 +104,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     _logRouteInfo(route, previousRoute, 1);
     _stack.removeLast();
     debugPrint("_stack len:${_stack.length}");
-    stackStreamController.add(null);
+    xbStackStreamController.add(null);
   }
 
   String _routeInfo(Route? route) {

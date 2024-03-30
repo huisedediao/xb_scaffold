@@ -86,7 +86,7 @@ _toastWidget(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     color: backgroundColor ??
-                        (toastBackgroundColor ?? Colors.black),
+                        (xbToastBackgroundColor ?? Colors.black),
                     child: widget,
                   ),
                 ),

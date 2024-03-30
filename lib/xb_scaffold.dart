@@ -29,11 +29,12 @@ export './src/utils/xb_unique_list.dart';
 export './src/utils/xb_stack_list.dart';
 
 /// 路由栈监听
-XBNavigatorObserver _navigatorObserver = XBNavigatorObserver();
-XBNavigatorObserver get navigatorObserver => _navigatorObserver;
-final StreamController _stackStreamController = StreamController.broadcast();
-StreamController get stackStreamController => _stackStreamController;
-Stream get stackStream => _stackStreamController.stream;
+XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
+XBNavigatorObserver get xbRouteObserver => _xbRouteObserver;
+final StreamController _xbRouteStackStreamController =
+    StreamController.broadcast();
+StreamController get xbStackStreamController => _xbRouteStackStreamController;
+Stream get xbRouteStackStream => _xbRouteStackStreamController.stream;
 
 /// 全局BuildContext
 late BuildContext _xbGlobalContext;
@@ -48,8 +49,8 @@ XBLoadingBuilder? _xbLoadingBuilder;
 XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 
 /// toast的背景颜色
-Color? _toastBackgroundColor;
-Color? get toastBackgroundColor => _toastBackgroundColor;
+Color? _xbToastBackgroundColor;
+Color? get xbToastBackgroundColor => _xbToastBackgroundColor;
 
 class XBScaffold extends StatefulWidget {
   final Widget child;
@@ -79,7 +80,7 @@ class _MyWidgetState extends State<XBScaffold> {
   void initState() {
     super.initState();
     _xbLoadingBuilder = widget.loadingBuilder;
-    _toastBackgroundColor = widget.toastBackgroundColor;
+    _xbToastBackgroundColor = widget.toastBackgroundColor;
     _initXBScaffold(imgPrefixs: widget.imgPrefixs);
   }
 

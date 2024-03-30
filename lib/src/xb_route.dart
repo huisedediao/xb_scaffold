@@ -10,22 +10,22 @@ String xbHashCodeKey = "xb_hash_code";
 
 /// 页面是否在栈顶
 bool topIsWidget(Widget page) {
-  return navigatorObserver.topIsWidget(page);
+  return xbRouteObserver.topIsWidget(page);
 }
 
 /// 栈顶是否是type类型
 bool topIsType(Type type) {
-  return navigatorObserver.topIsType(type);
+  return xbRouteObserver.topIsType(type);
 }
 
 /// 页面是否在栈里，如果是根节点，没办法判断是否在栈里
 bool stackContainWidget(Widget widget) {
-  return navigatorObserver.stackContainWidget(widget);
+  return xbRouteObserver.stackContainWidget(widget);
 }
 
 /// 类型是否在栈里，如果是根节点，没办法判断是否在栈里
 bool stackContainType(Type type) {
-  return navigatorObserver.stackContainType(type);
+  return xbRouteObserver.stackContainType(type);
 }
 
 /// 进入新页面

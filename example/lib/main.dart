@@ -17,19 +17,10 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      navigatorObservers: [navigatorObserver],
-      home: XBScaffold(
-          imgPrefixs: const ["assets/images/default/", "assets/images/custom/"],
-          // loadingBuilder: (context) {
-          //   return Center(
-          //     child: Container(
-          //       height: 100,
-          //       width: 100,
-          //       color: Colors.red,
-          //     ),
-          //   );
-          // },
-          child: const MyHomePage(title: 'Flutter Demo Home Page')),
+      navigatorObservers: [xbRouteObserver],
+      home: const XBScaffold(
+          imgPrefixs: ["assets/images/default/", "assets/images/custom/"],
+          child: MyHomePage(title: 'Flutter Demo Home Page')),
     );
   }
 }
@@ -47,7 +38,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    stackStream.listen((event) {
+    xbRouteStackStream.listen((event) {
       print("栈发生改变");
     });
   }

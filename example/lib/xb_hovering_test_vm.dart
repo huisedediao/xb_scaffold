@@ -6,7 +6,7 @@ class XBHoveringTestVM extends XBPageVM<XBHoveringTest> {
     showLoading();
     Future.delayed(Duration(seconds: 1), () {
       hideLoading();
-      navigatorObserver.showStack();
+      xbRouteObserver.showStack();
     });
   }
 
