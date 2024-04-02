@@ -11,10 +11,9 @@ abstract class XBWidget<T extends XBVM> extends StatefulWidget {
   /// 构建主体
   Widget buildWidget(T vm, BuildContext context);
 
-  void didChangeDependencies(XBWidgetState state, T vm) {}
+  void didChangeDependencies(T vm) {}
 
-  void didUpdateWidget(
-      covariant XBWidget<T> oldWidget, XBWidgetState state, T vm) {}
+  void didUpdateWidget(covariant XBWidget<T> oldWidget, T vm) {}
 
   @override
   XBWidgetState createState() => XBWidgetState<T>();
@@ -24,35 +23,45 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
   /// 在外部使用时，不应该保存vm，避免生命周期问题
   late T vm;
 
-  /// 刷新UI
-  rebuild({bool regenerateVM = false}) {
-    if (regenerateVM) {
-      if (mounted) {
-        setState(() {
-          vm = widget.generateVM(context);
-        });
-      }
-    } else {
-      vm.notify();
+  /// 重置vm，所有状态回到初始状态，然后刷新ui
+  /// 重置引起的vm的dispose，不会触发XBPageVm的willDispose
+  reset() {
+    if (mounted) {
+      setState(() {
+        final tempVM = vm;
+        _generateVM();
+        tempVM.dispose();
+      });
     }
+  }
+
+  /// 刷新UI
+  rebuildUI() {
+    vm.notify();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    widget.didChangeDependencies(this, vm);
+    widget.didChangeDependencies(vm);
   }
 
   @override
   void didUpdateWidget(covariant XBWidget<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
-    widget.didUpdateWidget(oldWidget, this, vm);
+    widget.didUpdateWidget(oldWidget, vm);
   }
 
   @override
   void initState() {
     super.initState();
+    _generateVM();
+  }
+
+  _generateVM() {
     vm = widget.generateVM(context);
+    vm.state = this;
+    vm.didCreate();
   }
 
   @override

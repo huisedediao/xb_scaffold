@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_sys_space.dart';
 export 'xb_dialog.dart';
 export 'xb_action_sheet.dart';
@@ -9,7 +10,13 @@ class XBVM<T> extends ChangeNotifier {
 
   T get widget => context.widget as T;
 
+  late XBWidgetState state;
+
   XBVM({required this.context});
+
+  /// 已经完成创建
+  @mustCallSuper
+  void didCreate() {}
 
   /// 通知刷新
   notify() {

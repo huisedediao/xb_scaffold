@@ -38,6 +38,19 @@ class XBGlobalKeyTest extends XBPage<XBGlobalKeyTestVM> {
               child: Text("change vm"),
             ),
           ),
+        ),
+        const SizedBox(
+          height: 10,
+        ),
+        XBButton(
+          onTap: vm.onGetState,
+          child: Container(
+            color: Colors.blue,
+            child: const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text("get state"),
+            ),
+          ),
         )
       ],
     );

@@ -9,6 +9,11 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
   final GlobalKey<XBWidgetState> _globalKey = GlobalKey();
   GlobalKey get globalKey => _globalKey;
 
+  onGetState() {
+    print("state:$state,state.hashCode:${state.hashCode}");
+    state.reset();
+  }
+
   onChangeTitle() {
     final currentState = globalKey.currentState as XBWidgetState;
     (currentState.vm as XBGlobalKeyTestWidgetVM).changeTitle();
@@ -16,7 +21,13 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
 
   onChangeVM() {
     final currentState = globalKey.currentState as XBWidgetState;
-    currentState.rebuild(regenerateVM: true);
+    currentState.reset();
+  }
+
+  @override
+  didCreate() {
+    super.didCreate();
+    print("$runtimeType didCreate");
   }
 
   @override
@@ -35,5 +46,11 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
   void willDispose() {
     super.willDispose();
     print("$runtimeType willDispose");
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    print("$runtimeType dispose");
   }
 }

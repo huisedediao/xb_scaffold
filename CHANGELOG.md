@@ -250,3 +250,7 @@
 
 - optimize
 
+## 0.0.65
+
+- XBVM增加state引用
+
