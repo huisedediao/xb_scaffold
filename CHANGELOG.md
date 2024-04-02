@@ -242,3 +242,11 @@
 
 - 增加XBRoute的生命周期willHide、willShow、willDispose
 
+## 0.0.63
+
+- XBWidget增加didChangeDependencies、didUpdateWidget
+
+## 0.0.64
+
+- optimize
+
