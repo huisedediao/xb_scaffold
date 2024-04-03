@@ -11,15 +11,15 @@ abstract class XBWidget<T extends XBVM> extends StatefulWidget {
   /// 构建主体
   Widget buildWidget(T vm, BuildContext context);
 
-  void didChangeDependencies(T vm) {}
-
-  void didUpdateWidget(covariant XBWidget<T> oldWidget, T vm) {}
+  /// 保持页面状态
+  bool get wantKeepAlive => false;
 
   @override
   XBWidgetState createState() => XBWidgetState<T>();
 }
 
-class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
+class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
+    with AutomaticKeepAliveClientMixin {
   /// 在外部使用时，不应该保存vm，避免生命周期问题
   late T vm;
 
@@ -43,13 +43,13 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    widget.didChangeDependencies(vm);
+    vm.didChangeDependencies();
   }
 
   @override
   void didUpdateWidget(covariant XBWidget<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
-    widget.didUpdateWidget(oldWidget, vm);
+    vm.didUpdateWidget(oldWidget);
   }
 
   @override
@@ -66,6 +66,7 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return ChangeNotifierProvider<T>.value(
       value: vm,
       child: Consumer<T>(
@@ -75,6 +76,9 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
       ),
     );
   }
+
+  @override
+  bool get wantKeepAlive => widget.wantKeepAlive;
 
   @override
   void dispose() {

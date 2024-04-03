@@ -26,6 +26,12 @@ class XBVM<T> extends ChangeNotifier {
     } catch (e) {}
   }
 
+  @mustCallSuper
+  void didChangeDependencies() {}
+
+  @mustCallSuper
+  void didUpdateWidget(covariant T oldWidget) {}
+
   @override
   void dispose() {
     debugPrint("$runtimeType dispose");

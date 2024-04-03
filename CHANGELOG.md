@@ -258,3 +258,11 @@
 
 - 修改命名
 
+## 0.0.67
+
+- XBWidgetState增加wantKeepAlive
+
+## 0.0.68
+
+- optimize
+
