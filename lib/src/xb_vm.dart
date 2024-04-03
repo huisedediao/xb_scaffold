@@ -16,7 +16,7 @@ class XBVM<T> extends ChangeNotifier {
 
   /// 已经完成创建
   @mustCallSuper
-  void didCreate() {}
+  void didCreated() {}
 
   /// 通知刷新
   notify() {

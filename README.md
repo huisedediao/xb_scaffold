@@ -143,6 +143,12 @@ popUtilType
 /// 回到指定页面
 popUtilWidget
 
+/// 顶部是widget
+topIsWidget
+
+/// 顶部是某个类型
+topIsType
+
 ```
 
 ### ListView分组头部悬浮

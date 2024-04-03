@@ -61,7 +61,7 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>> {
   _generateVM() {
     vm = widget.generateVM(context);
     vm.state = this;
-    vm.didCreate();
+    vm.didCreated();
   }
 
   @override

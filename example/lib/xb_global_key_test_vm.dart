@@ -25,8 +25,8 @@ class XBGlobalKeyTestVM extends XBPageVM<XBGlobalKeyTest> {
   }
 
   @override
-  didCreate() {
-    super.didCreate();
+  didCreated() {
+    super.didCreated();
     print("$runtimeType didCreate");
   }
 
