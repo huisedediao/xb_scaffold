@@ -17,6 +17,7 @@ export './src/common/xb_button.dart';
 export './src/common/xb_empty_app_bar.dart';
 export './src/common/xb_fade_widget.dart';
 export './src/common/xb_image.dart';
+export './src/common/xb_file_image.dart';
 export './src/common/xb_shadow_container.dart';
 export './src/common/xb_loading_widget.dart';
 export './src/common/xb_navigator_back_btn.dart';
