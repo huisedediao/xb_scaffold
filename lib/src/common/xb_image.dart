@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/src/common/xb_file_image.dart';
 import '../configs/color_config.dart';
 
 /*
@@ -33,8 +34,8 @@ class XBImage extends StatelessWidget {
     }
 
     if (img is File) {
-      return Image.file(
-        img,
+      return Image(
+        image: XBFileImage(img),
         width: width,
         height: height,
         fit: fit,
