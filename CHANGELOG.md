@@ -272,5 +272,9 @@
 
 ## 0.0.70
 
-- 暴漏xb_file_image
+- 暴露xb_file_image
+
+## 0.0.71
+
+- 新增XBTip组件
 

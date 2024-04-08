@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
-export 'xb_sys_space.dart';
-export 'xb_dialog.dart';
-export 'xb_action_sheet.dart';
-export 'xb_toast.dart';
 
 class XBVM<T> extends ChangeNotifier {
   final BuildContext context;

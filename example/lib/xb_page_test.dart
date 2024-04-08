@@ -76,6 +76,12 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                           }
                         });
                   }),
+                  XBTip(
+                    tip: "提示",
+                    child: Text("你来点我呀"),
+                    tipStyle: TextStyle(color: colors.randColor),
+                    bgColor: Colors.green,
+                  ),
                   _buildWidget(vm, 'show action sheet', () {
                     actionSheet(
                         titles: [

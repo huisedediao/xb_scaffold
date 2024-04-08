@@ -28,6 +28,11 @@ export './src/xb_life_cycle_mixin.dart';
 
 export './src/utils/xb_unique_list.dart';
 export './src/utils/xb_stack_list.dart';
+export './src/xb_sys_space.dart';
+export './src/xb_dialog.dart';
+export './src/xb_action_sheet.dart';
+export './src/xb_toast.dart';
+export './src/xb_tip.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
