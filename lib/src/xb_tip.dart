@@ -5,8 +5,18 @@ class XBTip extends StatefulWidget {
   final String tip;
   final TextStyle? tipStyle;
   final Color? bgColor;
+  final double maxWidth;
+
+  /// 箭头起始位置，箭头始终指向child在x轴的中心位置
+  final double? arrowStart;
   const XBTip(
-      {Key? key, this.child, required this.tip, this.tipStyle, this.bgColor})
+      {Key? key,
+      this.child,
+      required this.tip,
+      this.tipStyle,
+      this.bgColor,
+      this.maxWidth = 280,
+      this.arrowStart})
       : super(key: key);
 
   @override
@@ -43,6 +53,17 @@ class _XBTipState extends State<XBTip> {
   showTips(BuildContext context, Offset position) {
     Color bgColor = widget.bgColor ?? Colors.black;
     double paddingLeft = 10;
+    double textWidth = textSize().width;
+    double arrowWidth = 10;
+    double arrowStart = widget.arrowStart ?? textWidth * 0.5;
+    if (arrowStart < 0) {
+      arrowStart = 0;
+    }
+    double arrowMaxStart = textWidth - arrowWidth;
+    if (arrowStart > arrowMaxStart) {
+      arrowStart = arrowMaxStart;
+    }
+    double offset = textWidth * 0.5 - arrowWidth * 0.5 - arrowStart;
     OverlayEntry? tipsOverlay;
     tipsOverlay = OverlayEntry(builder: (ctx) {
       return Material(
@@ -51,19 +72,29 @@ class _XBTipState extends State<XBTip> {
           children: [
             Positioned(
               //减去了文字一半的长度，让tips居中，这个位置可以自己根据需求调整
-              left: position.dx + 12 - (widget.tip.length * 12) - paddingLeft,
+              left: position.dx - textWidth / 2 + offset,
               top: position.dy,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CustomPaint(
-                    size: const Size(10,
-                        5), //You can Replace this with your desired WIDTH and HEIGHT
-                    painter: RPSCustomPainter(color: bgColor),
+                  Padding(
+                    padding: EdgeInsets.only(left: arrowStart),
+                    child: CustomPaint(
+                      size: Size(arrowWidth,
+                          5), //You can Replace this with your desired WIDTH and HEIGHT
+                      painter: RPSCustomPainter(color: bgColor),
+                    ),
                   ),
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(arrowStart < 3 ? 0 : 6),
+                        topRight: Radius.circular(
+                            arrowStart > arrowMaxStart - 3 ? 0 : 6),
+                        bottomLeft: const Radius.circular(6),
+                        bottomRight: const Radius.circular(6)),
                     child: Container(
                       color: bgColor,
+                      constraints: BoxConstraints(maxWidth: widget.maxWidth),
                       child: Padding(
                         padding: EdgeInsets.only(
                             left: paddingLeft,
@@ -72,9 +103,7 @@ class _XBTipState extends State<XBTip> {
                             bottom: 5),
                         child: Text(
                           widget.tip,
-                          style: widget.tipStyle ??
-                              const TextStyle(
-                                  color: Colors.white, fontSize: 12),
+                          style: _tipsStyle,
                         ),
                       ),
                     ),
@@ -83,16 +112,35 @@ class _XBTipState extends State<XBTip> {
               ),
             ),
             //移除tips
-            Positioned.fill(child: GestureDetector(
+            Positioned.fill(
+                child: GestureDetector(
               onTap: () {
                 tipsOverlay?.remove();
               },
+              child: Container(
+                color: Colors.transparent,
+              ),
             ))
           ],
         ),
       );
     });
     Overlay.of(context).insert(tipsOverlay);
+  }
+
+  TextStyle get _tipsStyle =>
+      widget.tipStyle ?? const TextStyle(color: Colors.white, fontSize: 12);
+
+  Size textSize() {
+    final TextPainter textPainter = TextPainter(
+      text: TextSpan(text: widget.tip, style: _tipsStyle),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: widget.maxWidth);
+
+    final double height = textPainter.height;
+    final double width = textPainter.width;
+    return Size(width, height);
   }
 }
 
