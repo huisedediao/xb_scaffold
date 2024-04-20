@@ -11,6 +11,7 @@ class XBFileImage extends FileImage {
   int get hashCode => file.hashCode & scale.hashCode;
 
   @override
+  // ignore: non_nullable_equals_parameter
   bool operator ==(dynamic other) {
     if (other.runtimeType != runtimeType) return false;
     final XBFileImage typedOther = other;

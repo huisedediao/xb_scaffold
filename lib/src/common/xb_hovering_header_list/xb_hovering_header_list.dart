@@ -51,7 +51,7 @@ class XBHoveringHeaderList extends StatefulWidget {
 class XBHoveringHeaderListState extends State<XBHoveringHeaderList> {
   double _lastOffset = 0;
   int _hoverOffsetInfoIndex = 0;
-  GlobalKey<XBSectionListState> _sectionListKey = GlobalKey();
+  final GlobalKey<XBSectionListState> _sectionListKey = GlobalKey();
 
   ///用于控制hoverHeader偏移量和是否显示
   XBHoveringHeaderVM? _hoverVM;
@@ -153,7 +153,7 @@ class XBHoveringHeaderListState extends State<XBHoveringHeaderList> {
     //            print("sectionHeaderBuild : $section");
     double headerH = widget.headerHeightForSection(section);
 
-    Widget ret = Container(
+    Widget ret = SizedBox(
       height: headerH,
       child: widget.sectionHeaderBuild(ctx, section),
     );

@@ -27,6 +27,12 @@ class _XBTipState extends State<XBTip> {
   final GlobalKey childKey = GlobalKey();
 
   @override
+  void initState() {
+    super.initState();
+    assert(widget.tip.isNotEmpty, "tip 不能为空字符串");
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTapDown: (details) {
@@ -64,6 +70,9 @@ class _XBTipState extends State<XBTip> {
       arrowStart = arrowMaxStart;
     }
     double offset = textWidth * 0.5 - arrowWidth * 0.5 - arrowStart;
+    bool isNotNeedTopLeftRadius = arrowStart < 4;
+    bool isNotNeedTopRightRadius =
+        (arrowStart + arrowWidth) > (paddingLeft + textWidth - 4);
     OverlayEntry? tipsOverlay;
     tipsOverlay = OverlayEntry(builder: (ctx) {
       return Material(
@@ -87,9 +96,10 @@ class _XBTipState extends State<XBTip> {
                   ),
                   ClipRRect(
                     borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(arrowStart < 3 ? 0 : 6),
-                        topRight: Radius.circular(
-                            arrowStart > arrowMaxStart - 3 ? 0 : 6),
+                        topLeft:
+                            Radius.circular(isNotNeedTopLeftRadius ? 0 : 6),
+                        topRight:
+                            Radius.circular(isNotNeedTopRightRadius ? 0 : 6),
                         bottomLeft: const Radius.circular(6),
                         bottomRight: const Radius.circular(6)),
                     child: Container(
