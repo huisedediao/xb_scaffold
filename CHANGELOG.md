@@ -286,3 +286,7 @@
 
 - 优化XBTip组件
 
+## 0.0.74
+
+- 新增XBRefreshTask、新增XBNetImgSizeUtil
+
