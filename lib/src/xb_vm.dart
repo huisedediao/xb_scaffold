@@ -10,6 +10,9 @@ class XBVM<T> extends ChangeNotifier {
 
   XBVM({required this.context});
 
+  bool _disposed = false;
+  bool get disposed => _disposed;
+
   /// 已经完成创建
   @mustCallSuper
   void didCreated() {}
@@ -31,6 +34,7 @@ class XBVM<T> extends ChangeNotifier {
   @override
   void dispose() {
     debugPrint("$runtimeType dispose");
+    _disposed = true;
     super.dispose();
   }
 }

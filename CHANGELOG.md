@@ -290,3 +290,11 @@
 
 - 新增XBRefreshTask、新增XBNetImgSizeUtil
 
+## 0.0.75
+
+- XBVM新增disposed标记、新增XBTimer
+
+## 0.0.76
+
+- 暴露XBTimer给外部
+
