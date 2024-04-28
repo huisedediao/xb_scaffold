@@ -298,3 +298,11 @@
 
 - 暴露XBTimer给外部
 
+## 0.0.77
+
+- 修复XBTip的bug
+
+## 0.0.78
+
+- XBUniqueList增加拓展方法
+

@@ -77,61 +77,66 @@ class _XBTipState extends State<XBTip> {
     tipsOverlay = OverlayEntry(builder: (ctx) {
       return Material(
         color: Colors.transparent,
-        child: Stack(
-          children: [
-            Positioned(
-              //减去了文字一半的长度，让tips居中，这个位置可以自己根据需求调整
-              left: position.dx - textWidth / 2 + offset,
-              top: position.dy,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.only(left: arrowStart),
-                    child: CustomPaint(
-                      size: Size(arrowWidth,
-                          5), //You can Replace this with your desired WIDTH and HEIGHT
-                      painter: RPSCustomPainter(color: bgColor),
+        child: WillPopScope(
+          onWillPop: () async {
+            return false;
+          },
+          child: Stack(
+            children: [
+              Positioned(
+                //减去了文字一半的长度，让tips居中，这个位置可以自己根据需求调整
+                left: position.dx - textWidth / 2 + offset,
+                top: position.dy,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(left: arrowStart),
+                      child: CustomPaint(
+                        size: Size(arrowWidth,
+                            5), //You can Replace this with your desired WIDTH and HEIGHT
+                        painter: RPSCustomPainter(color: bgColor),
+                      ),
                     ),
-                  ),
-                  ClipRRect(
-                    borderRadius: BorderRadius.only(
-                        topLeft:
-                            Radius.circular(isNotNeedTopLeftRadius ? 0 : 6),
-                        topRight:
-                            Radius.circular(isNotNeedTopRightRadius ? 0 : 6),
-                        bottomLeft: const Radius.circular(6),
-                        bottomRight: const Radius.circular(6)),
-                    child: Container(
-                      color: bgColor,
-                      constraints: BoxConstraints(maxWidth: widget.maxWidth),
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                            left: paddingLeft,
-                            right: paddingLeft,
-                            top: 5,
-                            bottom: 5),
-                        child: Text(
-                          widget.tip,
-                          style: _tipsStyle,
+                    ClipRRect(
+                      borderRadius: BorderRadius.only(
+                          topLeft:
+                              Radius.circular(isNotNeedTopLeftRadius ? 0 : 6),
+                          topRight:
+                              Radius.circular(isNotNeedTopRightRadius ? 0 : 6),
+                          bottomLeft: const Radius.circular(6),
+                          bottomRight: const Radius.circular(6)),
+                      child: Container(
+                        color: bgColor,
+                        constraints: BoxConstraints(maxWidth: widget.maxWidth),
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                              left: paddingLeft,
+                              right: paddingLeft,
+                              top: 5,
+                              bottom: 5),
+                          child: Text(
+                            widget.tip,
+                            style: _tipsStyle,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            //移除tips
-            Positioned.fill(
-                child: GestureDetector(
-              onTap: () {
-                tipsOverlay?.remove();
-              },
-              child: Container(
-                color: Colors.transparent,
-              ),
-            ))
-          ],
+              //移除tips
+              Positioned.fill(
+                  child: GestureDetector(
+                onTap: () {
+                  tipsOverlay?.remove();
+                },
+                child: Container(
+                  color: Colors.transparent,
+                ),
+              ))
+            ],
+          ),
         ),
       );
     });
