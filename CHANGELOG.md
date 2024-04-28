@@ -310,3 +310,7 @@
 
 - 优化XBTip
 
+## 0.0.80
+
+- 新增XBPreventMultiTap
+
