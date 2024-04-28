@@ -306,3 +306,7 @@
 
 - XBUniqueList增加拓展方法
 
+## 0.0.79
+
+- 优化XBTip
+
