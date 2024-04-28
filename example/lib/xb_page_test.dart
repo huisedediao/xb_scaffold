@@ -77,21 +77,11 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                           }
                         });
                   }),
-                  WillPopScope(
-                    onWillPop: () async {
-                      if (vm.tipKey.currentState?.isShow() ?? false) {
-                        vm.tipKey.currentState?.hide();
-                        return false;
-                      }
-                      return true;
-                    },
-                    child: XBTip(
-                      key: vm.tipKey,
-                      tip: "仅对门店下支持客流统计的设备做数据分析。不支持客流统计的设备不做统计。",
-                      child: Text("你来点我呀"),
-                      tipStyle: TextStyle(color: colors.randColor),
-                      bgColor: Colors.green,
-                    ),
+                  XBTip(
+                    tip: "仅对门店下支持客流统计的设备做数据分析。不支持客流统计的设备不做统计。",
+                    child: Text("你来点我呀"),
+                    tipStyle: TextStyle(color: colors.randColor),
+                    bgColor: Colors.green,
                   ),
                   _buildWidget(vm, 'show action sheet', () {
                     actionSheet(

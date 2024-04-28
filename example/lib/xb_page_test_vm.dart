@@ -1,5 +1,4 @@
 import 'package:example/xb_page_test.dart';
-import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageTestVM extends XBPageVM<XBPageTest> {
@@ -20,8 +19,6 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
       // hideLoadingGlobal();
     });
   }
-
-  GlobalKey<XBTipState> tipKey = GlobalKey();
 
   @override
   void back<O extends Object?>([O? result]) {

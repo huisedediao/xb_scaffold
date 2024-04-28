@@ -20,10 +20,10 @@ class XBTip extends StatefulWidget {
       : super(key: key);
 
   @override
-  State<XBTip> createState() => XBTipState();
+  State<XBTip> createState() => _XBTipState();
 }
 
-class XBTipState extends State<XBTip> {
+class _XBTipState extends State<XBTip> {
   final GlobalKey childKey = GlobalKey();
   OverlayEntry? tipsOverlay;
 
@@ -44,24 +44,33 @@ class XBTipState extends State<XBTip> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (details) {
-        RenderBox box =
-            childKey.currentContext?.findRenderObject() as RenderBox;
-        Offset position = box.localToGlobal(Offset.zero);
-        //调用显示tips
-        showTips(
-          context,
-          Offset(
-            position.dx + box.size.width / 2,
-            position.dy + box.size.height,
-          ),
-        );
+    return WillPopScope(
+      onWillPop: () async {
+        if (isShow()) {
+          hide();
+          return false;
+        }
+        return true;
       },
-      child: Container(
-          key: childKey,
-          //如果没有外部的点击组件可以自己设置一个默认组件
-          child: widget.child),
+      child: GestureDetector(
+        onTapDown: (details) {
+          RenderBox box =
+              childKey.currentContext?.findRenderObject() as RenderBox;
+          Offset position = box.localToGlobal(Offset.zero);
+          //调用显示tips
+          showTips(
+            context,
+            Offset(
+              position.dx + box.size.width / 2,
+              position.dy + box.size.height,
+            ),
+          );
+        },
+        child: Container(
+            key: childKey,
+            //如果没有外部的点击组件可以自己设置一个默认组件
+            child: widget.child),
+      ),
     );
   }
 
