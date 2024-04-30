@@ -17,6 +17,8 @@ dialogContent(
     TextStyle? titleStyle,
     required Widget content,
     required List<String> btnTitles,
+    Color? btnHighLightColor,
+    Color? btnDefaultColor,
     required ValueChanged<int> onSelected}) {
   dialogWidget(Padding(
     padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
@@ -50,7 +52,11 @@ dialogContent(
               color: lineColor,
             ),
             Row(
-              children: _setupBtns(xbGlobalContext, btnTitles, onSelected),
+              children: _setupBtns(
+                  btnTitles: btnTitles,
+                  onSelected: onSelected,
+                  btnHighLightColor: btnHighLightColor,
+                  btnDefaultColor: btnDefaultColor),
             )
           ],
         ),
@@ -64,13 +70,17 @@ dialog(
     TextStyle? titleStyle,
     required String msg,
     required List<String> btnTitles,
+    Color? btnHighLightColor,
+    Color? btnDefaultColor,
     required ValueChanged<int> onSelected}) {
   dialogContent(
       title: title,
       titleStyle: titleStyle,
       content: Text(msg),
       btnTitles: btnTitles,
-      onSelected: onSelected);
+      onSelected: onSelected,
+      btnHighLightColor: btnHighLightColor,
+      btnDefaultColor: btnDefaultColor);
 }
 
 _dialogWidget({
@@ -95,19 +105,23 @@ _dialogWidget({
   );
 }
 
-List<Widget> _setupBtns(BuildContext context, List<String> btnTitles,
-    ValueChanged<int> onSelected) {
+List<Widget> _setupBtns({
+  required List<String> btnTitles,
+  required ValueChanged<int> onSelected,
+  required Color? btnHighLightColor,
+  required Color? btnDefaultColor,
+}) {
   if (btnTitles.length == 1) {
     return [
-      _buildBtn(btnTitles[0], Colors.blue, () {
-        Navigator.of(context, rootNavigator: false).pop();
+      _buildBtn(btnTitles[0], btnHighLightColor ?? Colors.blue, () {
+        pop();
         onSelected(0);
       })
     ];
   } else {
     return [
-      _buildBtn(btnTitles[0], Colors.black, () {
-        Navigator.of(context, rootNavigator: false).pop();
+      _buildBtn(btnTitles[0], btnDefaultColor ?? Colors.black, () {
+        pop();
         onSelected(0);
       }),
       Container(
@@ -115,8 +129,8 @@ List<Widget> _setupBtns(BuildContext context, List<String> btnTitles,
         width: onePixel,
         color: lineColor,
       ),
-      _buildBtn(btnTitles[1], Colors.blue, () {
-        Navigator.of(context, rootNavigator: false).pop();
+      _buildBtn(btnTitles[1], btnHighLightColor ?? Colors.blue, () {
+        pop();
         onSelected(1);
       })
     ];

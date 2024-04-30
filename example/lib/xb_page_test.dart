@@ -68,6 +68,8 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                         msg:
                             "msgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsgmsg",
                         btnTitles: ["取消", "确定"],
+                        btnHighLightColor: Colors.red,
+                        btnDefaultColor: Colors.grey,
                         onSelected: (index) {
                           if (index == 0) {
                             // replace(const XBPushPage());

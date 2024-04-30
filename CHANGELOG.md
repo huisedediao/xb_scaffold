@@ -314,3 +314,7 @@
 
 - 新增XBPreventMultiTap
 
+## 0.0.81
+
+- dialog新增按钮文字颜色设置
+
