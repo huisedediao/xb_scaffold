@@ -15,7 +15,11 @@ class XBVM<T> extends ChangeNotifier {
 
   /// 已经完成创建
   @mustCallSuper
-  void didCreated() {}
+  void didCreated() {
+    String log = "$runtimeType didCreated";
+    debugPrint(log);
+    recordLog(log);
+  }
 
   /// 通知刷新
   notify() {
@@ -33,7 +37,9 @@ class XBVM<T> extends ChangeNotifier {
 
   @override
   void dispose() {
-    debugPrint("$runtimeType dispose");
+    String log = "$runtimeType dispose";
+    debugPrint(log);
+    recordLog(log);
     _disposed = true;
     super.dispose();
   }

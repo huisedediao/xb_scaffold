@@ -18,6 +18,8 @@ class XBPageTestVM extends XBPageVM<XBPageTest> {
       // hideLoadingGlobal();
       // hideLoadingGlobal();
     });
+
+    showLog();
   }
 
   @override

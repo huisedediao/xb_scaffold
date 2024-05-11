@@ -27,13 +27,25 @@ mixin XBLifeCycleMixin {
 
   /// 即将隐藏，从展示状态变成被覆盖状态
   @mustCallSuper
-  void willHide() {}
+  void willHide() {
+    String log = "$runtimeType willHide";
+    debugPrint(log);
+    recordLog(log);
+  }
 
   /// 即将展示，从被覆盖状态变成展示状态
   @mustCallSuper
-  void willShow() {}
+  void willShow() {
+    String log = "$runtimeType willShow";
+    debugPrint(log);
+    recordLog(log);
+  }
 
   /// 即将销毁
   @mustCallSuper
-  void willDispose() {}
+  void willDispose() {
+    String log = "$runtimeType willDispose";
+    debugPrint(log);
+    recordLog(log);
+  }
 }

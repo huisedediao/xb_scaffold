@@ -34,6 +34,7 @@ export './src/utils/xb_prevent_multi_tap.dart';
 export './src/utils/xb_refresh_task/xb_refresh_task_util.dart';
 export './src/xb_sys_space.dart';
 export './src/xb_dialog.dart';
+export './src/xb_log.dart';
 export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
 export './src/xb_tip.dart';
@@ -64,6 +65,10 @@ XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 Color? _xbToastBackgroundColor;
 Color? get xbToastBackgroundColor => _xbToastBackgroundColor;
 
+/// max log len
+int? _maxLogLen;
+int? get maxLogLen => _maxLogLen;
+
 class XBScaffold extends StatefulWidget {
   final Widget child;
 
@@ -76,11 +81,15 @@ class XBScaffold extends StatefulWidget {
   /// toast的背景颜色
   final Color? toastBackgroundColor;
 
+  /// max log len, 默认30
+  final int? maxLogLen;
+
   const XBScaffold(
       {required this.child,
       required this.imgPrefixs,
       this.loadingBuilder,
       this.toastBackgroundColor,
+      this.maxLogLen,
       super.key});
 
   @override
@@ -93,6 +102,7 @@ class _MyWidgetState extends State<XBScaffold> {
     super.initState();
     _xbLoadingBuilder = widget.loadingBuilder;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
+    _maxLogLen = widget.maxLogLen;
     _initXBScaffold(imgPrefixs: widget.imgPrefixs);
   }
 

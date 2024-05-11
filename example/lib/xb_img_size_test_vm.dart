@@ -2,7 +2,9 @@ import 'package:example/xb_img_size_test.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBImgSizeTestVM extends XBPageVM<XBImgSizeTest> {
-  XBImgSizeTestVM({required super.context});
+  XBImgSizeTestVM({required super.context}) {
+    showLog();
+  }
 
   onGetSizeFromNet() async {
     XBImgSizeUtil.getImageSizeFromUrl(

@@ -184,7 +184,9 @@ class XBNavigatorObserver extends NavigatorObserver {
 
   _logRouteInfo(XBStackChangedEvent info) {
     String opera = info.isPush ? "didPush" : "didPop";
-    debugPrint(
-        "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}");
+    String log =
+        "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}";
+    debugPrint(log);
+    recordLog(log);
   }
 }
