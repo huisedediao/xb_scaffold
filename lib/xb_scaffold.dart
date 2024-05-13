@@ -65,9 +65,9 @@ XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 Color? _xbToastBackgroundColor;
 Color? get xbToastBackgroundColor => _xbToastBackgroundColor;
 
-/// max log len
-int? _maxLogLen;
-int? get maxLogLen => _maxLogLen;
+/// max page log len
+int? _maxPageLogLen;
+int? get maxPageLogLen => _maxPageLogLen;
 
 class XBScaffold extends StatefulWidget {
   final Widget child;
@@ -81,15 +81,15 @@ class XBScaffold extends StatefulWidget {
   /// toast的背景颜色
   final Color? toastBackgroundColor;
 
-  /// max log len, 默认30
-  final int? maxLogLen;
+  /// max page log len, 默认30
+  final int? maxPageLogLen;
 
   const XBScaffold(
       {required this.child,
       required this.imgPrefixs,
       this.loadingBuilder,
       this.toastBackgroundColor,
-      this.maxLogLen,
+      this.maxPageLogLen,
       super.key});
 
   @override
@@ -102,7 +102,7 @@ class _MyWidgetState extends State<XBScaffold> {
     super.initState();
     _xbLoadingBuilder = widget.loadingBuilder;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
-    _maxLogLen = widget.maxLogLen;
+    _maxPageLogLen = widget.maxPageLogLen;
     _initXBScaffold(imgPrefixs: widget.imgPrefixs);
   }
 

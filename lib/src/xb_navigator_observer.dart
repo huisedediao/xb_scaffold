@@ -187,6 +187,6 @@ class XBNavigatorObserver extends NavigatorObserver {
     String log =
         "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
   }
 }

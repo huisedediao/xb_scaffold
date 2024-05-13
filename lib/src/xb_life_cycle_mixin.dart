@@ -30,7 +30,7 @@ mixin XBLifeCycleMixin {
   void willHide() {
     String log = "$runtimeType willHide";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
   }
 
   /// 即将展示，从被覆盖状态变成展示状态
@@ -38,7 +38,7 @@ mixin XBLifeCycleMixin {
   void willShow() {
     String log = "$runtimeType willShow";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
   }
 
   /// 即将销毁
@@ -46,6 +46,6 @@ mixin XBLifeCycleMixin {
   void willDispose() {
     String log = "$runtimeType willDispose";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
   }
 }

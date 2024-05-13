@@ -18,7 +18,7 @@ class XBVM<T> extends ChangeNotifier {
   void didCreated() {
     String log = "$runtimeType didCreated";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
   }
 
   /// 通知刷新
@@ -39,7 +39,7 @@ class XBVM<T> extends ChangeNotifier {
   void dispose() {
     String log = "$runtimeType dispose";
     debugPrint(log);
-    recordLog(log);
+    recordPageLog(log);
     _disposed = true;
     super.dispose();
   }
