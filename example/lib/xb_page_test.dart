@@ -3,6 +3,7 @@ import 'package:example/xb_button_test.dart';
 import 'package:example/xb_global_key_test.dart';
 import 'package:example/xb_hovering_test.dart';
 import 'package:example/xb_img_size_test.dart';
+import 'package:example/xb_network_test.dart';
 import 'package:example/xb_page_test_vm.dart';
 import 'package:example/xb_push_page.dart';
 import 'package:example/xb_rotate_test.dart';
@@ -169,6 +170,9 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                   }),
                   _buildWidget(vm, '进入 获取图片size测试页面', () {
                     push(XBImgSizeTest());
+                  }),
+                  _buildWidget(vm, '进入 XBHttp测试页面', () {
+                    push(XBNetwrokTest());
                   })
                 ],
               )

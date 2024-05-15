@@ -330,3 +330,7 @@
 
 - pageLogInfo增加分隔符参数
 
+## 0.0.85
+
+- 增加xb_print和XBHttp
+

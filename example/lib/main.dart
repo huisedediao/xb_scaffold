@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 void main() async {
+  XBDioConfig.init(baseUrl: "https://www.baidu.com/");
   runApp(const MyApp());
 }
 

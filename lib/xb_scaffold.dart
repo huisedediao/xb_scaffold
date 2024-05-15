@@ -35,9 +35,12 @@ export './src/utils/xb_refresh_task/xb_refresh_task_util.dart';
 export './src/xb_sys_space.dart';
 export './src/xb_dialog.dart';
 export './src/xb_log.dart';
+export './src/xb_print.dart';
 export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
 export './src/xb_tip.dart';
+export './src/network/xb_dio_config.dart';
+export './src/network/xb_http.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
