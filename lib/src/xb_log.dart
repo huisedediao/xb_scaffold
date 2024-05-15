@@ -13,8 +13,8 @@ void recordPageLog(String msg) {
   }
 }
 
-String pageLogInfo() {
-  return _pageLogList.join('\n');
+String pageLogInfo({String separator = '\n'}) {
+  return _pageLogList.join(separator);
 }
 
 showPageLog() {
