@@ -16,6 +16,7 @@ class XBRequestInterceptor extends Interceptor {
             "baseurl: ${options.baseUrl}\n"
             "path: ${options.path}\n"
             "data: ${jsonEncode(options.data)}\n"
+            "queryParameters: ${jsonEncode(options.queryParameters)}\n"
             "header: ${jsonEncode(options.headers)}\n"
             "request end-------\n");
       } catch (e) {

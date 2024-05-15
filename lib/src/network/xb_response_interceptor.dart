@@ -16,6 +16,7 @@ class XBResponseInterceptor extends Interceptor {
             "path: ${response.requestOptions.path}\n"
             "request headers: ${jsonEncode(response.requestOptions.headers)}\n"
             "request data: ${jsonEncode(response.requestOptions.data)}\n"
+            "request queryParameters: ${jsonEncode(response.requestOptions.queryParameters)}\n"
             "statusCode: ${response.statusCode}\n"
             "response data: ${jsonEncode(response.data)}\n"
             // "header: ${response.headers}"
@@ -37,6 +38,7 @@ class XBResponseInterceptor extends Interceptor {
             "path: ${err.requestOptions.path}\n"
             "request headers: ${jsonEncode(err.requestOptions.headers)}\n"
             "request data: ${jsonEncode(err.requestOptions.data)}\n"
+            "request queryParameters: ${jsonEncode(err.requestOptions.queryParameters)}\n"
             "response: ${err.response.toString()}\n"
             // "header: ${response.headers}"
             "error end-------\n");

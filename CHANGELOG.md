@@ -334,3 +334,7 @@
 
 - 增加xb_print和XBHttp
 
+## 0.0.86
+
+- 拦截器增加queryParameters打印
+
