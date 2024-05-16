@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+export 'xb_dio_config.dart';
+export 'xb_request_interceptor.dart';
+export 'xb_response_interceptor.dart';
 
 class XBHttp {
   static const String getMethod = "GET";
