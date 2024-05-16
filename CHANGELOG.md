@@ -338,3 +338,7 @@
 
 - 拦截器增加queryParameters打印
 
+## 0.0.87
+
+- 修改queryParameters参数名称、pageLog添加时间
+
