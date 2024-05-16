@@ -7,7 +7,7 @@ class XBHttp {
 
   static Future<E> request<E>(String url,
       {String method = getMethod,
-      Map<String, dynamic>? params, //这个是拼接在url后面的参数
+      Map<String, dynamic>? queryParams, //这个是拼接在url后面的参数
       dynamic bodyParams, //这个是放在body里面的参数
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
@@ -15,9 +15,9 @@ class XBHttp {
     final options = Options(method: method, headers: headers);
 
     if (method == getMethod) {
-      if (params != null) {
+      if (queryParams != null) {
         String getParamsStr = "";
-        params.forEach((key, value) {
+        queryParams.forEach((key, value) {
           getParamsStr += (getParamsStr.isEmpty) ? "?" : "&";
           getParamsStr += "$key=$value";
         });
@@ -27,7 +27,7 @@ class XBHttp {
       Response response = await XBDioConfig.dio.request(url,
           cancelToken: cancelToken,
           options: options,
-          queryParameters: params,
+          queryParameters: queryParams,
           data: bodyParams);
       if (response.data is String) {
         _print(info: "response.data is String", needLog: needLog);
@@ -53,19 +53,19 @@ class XBHttp {
   }
 
   static Future<E> get<E>(String url,
-      {Map<String, dynamic>? params,
+      {Map<String, dynamic>? queryParams,
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
       bool needLog = true}) async {
     return await XBHttp.request(url,
-        params: params,
+        queryParams: queryParams,
         headers: headers,
         cancelToken: cancelToken,
         needLog: needLog);
   }
 
   static Future<E> post<E>(String url,
-      {Map<String, dynamic>? params,
+      {Map<String, dynamic>? queryParams,
       dynamic bodyParams,
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
@@ -73,7 +73,7 @@ class XBHttp {
       bool needLog = true}) async {
     return await XBHttp.request(url,
         method: 'POST',
-        params: params,
+        queryParams: queryParams,
         bodyParams: bodyParams,
         headers: headers,
         cancelToken: cancelToken,
@@ -81,7 +81,7 @@ class XBHttp {
   }
 
   static Future<E> put<E>(String url,
-      {Map<String, dynamic>? params,
+      {Map<String, dynamic>? queryParams,
       dynamic bodyParams,
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
@@ -89,7 +89,7 @@ class XBHttp {
       bool needLog = true}) async {
     return await XBHttp.request(url,
         method: 'PUT',
-        params: params,
+        queryParams: queryParams,
         bodyParams: bodyParams,
         headers: headers,
         cancelToken: cancelToken,
@@ -97,7 +97,7 @@ class XBHttp {
   }
 
   static Future<E> delete<E>(String url,
-      {Map<String, dynamic>? params,
+      {Map<String, dynamic>? queryParams,
       dynamic bodyParams,
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
@@ -105,7 +105,7 @@ class XBHttp {
       bool needLog = true}) async {
     return await XBHttp.request(url,
         method: 'DELETE',
-        params: params,
+        queryParams: queryParams,
         bodyParams: bodyParams,
         headers: headers,
         cancelToken: cancelToken,
