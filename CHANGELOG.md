@@ -342,3 +342,7 @@
 
 - 修改queryParameters参数名称、pageLog添加时间
 
+## 0.0.88
+
+- 暴露dio拦截器
+
