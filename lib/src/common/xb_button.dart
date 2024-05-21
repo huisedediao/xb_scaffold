@@ -21,6 +21,9 @@ class XBButton extends StatefulWidget {
   /// 点击事件
   final VoidCallback? onTap;
 
+  /// 点击事件，enable == false 时的点击事件
+  final VoidCallback? onTapDisable;
+
   /// 点击效果
   final XBButtonTapEffect effect;
 
@@ -46,6 +49,7 @@ class XBButton extends StatefulWidget {
       this.effect = XBButtonTapEffect.opacity,
       this.coverEffectColor,
       this.coverEffectRadius,
+      this.onTapDisable,
       Key? key})
       : super(key: key);
 
@@ -65,20 +69,23 @@ class _XBButtonState extends State<XBButton> {
   @override
   Widget build(BuildContext context) {
     if (!widget.enable) {
-      return Stack(
-        alignment: Alignment.center,
-        children: [
-          widget.child,
-          Container(
-            color: widget.disableColor ?? Colors.white24,
-            child: Visibility(
-                visible: false,
-                maintainState: true,
-                maintainSize: true,
-                maintainAnimation: true,
-                child: widget.child),
-          )
-        ],
+      return GestureDetector(
+        onTap: widget.onTapDisable,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            widget.child,
+            Container(
+              color: widget.disableColor ?? Colors.white24,
+              child: Visibility(
+                  visible: false,
+                  maintainState: true,
+                  maintainSize: true,
+                  maintainAnimation: true,
+                  child: widget.child),
+            )
+          ],
+        ),
       );
     }
 

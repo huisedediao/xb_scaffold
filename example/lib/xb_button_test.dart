@@ -19,6 +19,9 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             onTap: () {
               debugPrint("XBButton 1 clicked");
             },
+            onTapDisable: () {
+              debugPrint("XBButton 1 onTapDisable");
+            },
             child: Container(
               height: 50,
               color: Colors.blue,

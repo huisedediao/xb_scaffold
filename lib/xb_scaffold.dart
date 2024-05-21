@@ -38,8 +38,8 @@ export './src/xb_log.dart';
 export './src/xb_print.dart';
 export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
-export './src/xb_tip.dart';
-export './src/xb_parse.dart';
+export 'src/common/xb_tip.dart';
+export 'src/utils/xb_parse.dart';
 export './src/network/xb_http.dart';
 
 /// 路由栈监听
