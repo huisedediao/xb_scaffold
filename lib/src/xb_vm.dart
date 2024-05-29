@@ -29,6 +29,10 @@ class XBVM<T> extends ChangeNotifier {
     } catch (e) {}
   }
 
+  listen<E>(Function(E) onData) {
+    XBEventBus.addListener<E>(this, onData);
+  }
+
   @mustCallSuper
   void didChangeDependencies() {}
 
@@ -40,6 +44,7 @@ class XBVM<T> extends ChangeNotifier {
     String log = "$runtimeType dispose";
     debugPrint(log);
     recordPageLog(log);
+    XBEventBus.removeListener(this);
     _disposed = true;
     super.dispose();
   }

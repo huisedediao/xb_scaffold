@@ -54,6 +54,9 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             child: XBButton(
               onTap: () {
                 debugPrint("green clicked");
+                XBEventBus.fire("test event bus");
+                XBEventBus.fire(111);
+                XBEventBus.fire(222.0);
               },
               child: Container(
                 width: 100,
