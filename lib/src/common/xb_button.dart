@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+_XBButtonState? _tappingState;
+
 /// 使用cover的时候，会覆盖掉child上的点击事件
 /// 如果需要响应child上的点击事件，使用opacity
 
@@ -76,7 +78,7 @@ class _XBButtonState extends State<XBButton> {
           children: [
             widget.child,
             Container(
-              color: widget.disableColor ?? Colors.white24,
+              color: widget.disableColor ?? Colors.white38,
               child: Visibility(
                   visible: false,
                   maintainState: true,
@@ -91,7 +93,6 @@ class _XBButtonState extends State<XBButton> {
 
     final tapChild = GestureDetector(
       onTap: widget.onTap,
-      behavior: HitTestBehavior.opaque,
       child: _child(),
     );
     if (widget.effect == XBButtonTapEffect.none) {
@@ -99,14 +100,22 @@ class _XBButtonState extends State<XBButton> {
     } else {
       return Listener(
         onPointerDown: (event) {
+          if (_tappingState != null) return;
+          _tappingState = this;
           _onTapDown = true;
           _setStateIfMounted();
         },
         onPointerUp: (event) {
+          if (_tappingState == this) {
+            _tappingState = null;
+          }
           _onTapDown = false;
           _setStateIfMounted();
         },
         onPointerCancel: (e) {
+          if (_tappingState == this) {
+            _tappingState = null;
+          }
           _onTapDown = false;
           _setStateIfMounted();
         },

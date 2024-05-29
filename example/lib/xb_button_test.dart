@@ -42,6 +42,27 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
               alignment: Alignment.center,
               child: Text("enable test"),
             )),
+        XBButton(
+          onTap: () {
+            debugPrint("red clicked");
+          },
+          child: Container(
+            width: 200,
+            height: 200,
+            color: Colors.red,
+            alignment: Alignment.center,
+            child: XBButton(
+              onTap: () {
+                debugPrint("green clicked");
+              },
+              child: Container(
+                width: 100,
+                height: 100,
+                color: Colors.green,
+              ),
+            ),
+          ),
+        )
       ],
     );
   }
