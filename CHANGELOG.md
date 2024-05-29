@@ -358,3 +358,7 @@
 
 - 修改目录结构、XBButton添加disable点击事件
 
+## 0.0.92
+
+- 添加eventbus
+
