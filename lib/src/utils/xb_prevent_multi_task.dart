@@ -1,6 +1,6 @@
-class XBPreventMultiTap {
+class XBPreventMultiTask {
   final int intervalMilliseconds;
-  XBPreventMultiTap({required this.intervalMilliseconds});
+  XBPreventMultiTask({required this.intervalMilliseconds});
   DateTime _dateTime = DateTime.now();
 
   execute(void Function() task) {
