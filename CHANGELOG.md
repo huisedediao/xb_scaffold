@@ -370,3 +370,7 @@
 
 - optimize
 
+## 0.0.95
+
+- optimize eventBus
+
