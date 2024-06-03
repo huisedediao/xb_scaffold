@@ -186,7 +186,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     String opera = info.isPush ? "didPush" : "didPop";
     String log =
         "$opera:${_routeInfo(info.route)},previous:${_routeInfo(info.previousRoute)}";
-    debugPrint(log);
+    xbError(log);
     recordPageLog(log);
   }
 }
