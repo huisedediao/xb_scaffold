@@ -4,7 +4,9 @@ T? xbParse<T>(dynamic object, [int trueValue = 1]) {
 
   try {
     if (T == int) {
-      return int.tryParse(object.toString()) as T?;
+      int? ret = int.tryParse(object.toString());
+      ret ??= xbParse<double>(object)?.toInt();
+      return ret as T?;
     } else if (T == double) {
       return double.tryParse(object.toString()) as T?;
     } else if (T == String) {

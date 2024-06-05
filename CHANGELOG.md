@@ -374,3 +374,7 @@
 
 - optimize eventBus
 
+## 0.0.96
+
+- 优化parse int
+
