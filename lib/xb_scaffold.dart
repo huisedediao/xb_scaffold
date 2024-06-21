@@ -42,6 +42,10 @@ export './src/xb_toast.dart';
 export 'src/common/xb_tip.dart';
 export 'src/utils/xb_parse.dart';
 export './src/network/xb_http.dart';
+export 'src/common/xb_title_picker/xb_title_picker.dart';
+export 'src/common/xb_title_picker/xb_title_picker_index.dart';
+export 'src/common/xb_title_picker/xb_title_picker_multi.dart';
+export 'src/configs/xb_def.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
