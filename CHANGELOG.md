@@ -378,3 +378,7 @@
 
 - 优化parse int
 
+## 0.0.97
+
+- 新增xb_title_picker
+
