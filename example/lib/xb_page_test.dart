@@ -49,6 +49,11 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   }
 
   @override
+  bool needResponseContentWhileLoading() {
+    return false;
+  }
+
+  @override
   List<Widget>? actions(XBPageTestVM vm) {
     return [
       XBButton(

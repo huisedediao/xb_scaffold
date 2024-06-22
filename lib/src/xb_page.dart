@@ -54,18 +54,23 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return true;
   }
 
-  /// 在展示loading的时候，是否需要相应navigationBar的左侧部分
+  /// 在展示loading的时候，是否需要响应navigationBar的左侧部分
   bool needResponseNavigationBarLeftWhileLoading() {
     return true;
   }
 
-  /// 在展示loading的时候，是否需要相应navigationBar的中间部分
+  /// 在展示loading的时候，是否需要响应navigationBar的中间部分
   bool needResponseNavigationBarCenterWhileLoading() {
     return false;
   }
 
-  /// 在展示loading的时候，是否需要相应navigationBar的右侧部分
+  /// 在展示loading的时候，是否需要响应navigationBar的右侧部分
   bool needResponseNavigationBarRightWhileLoading() {
+    return false;
+  }
+
+  /// 在展示loading的时候，是否需要响应content部分
+  bool needResponseContentWhileLoading() {
     return false;
   }
 
@@ -207,7 +212,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
                   ),
                   Expanded(
                       child: Container(
-                    color: Colors.transparent,
+                    color: needResponseContentWhileLoading()
+                        ? null
+                        : Colors.transparent,
                   ))
                 ],
               ),
