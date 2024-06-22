@@ -35,7 +35,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   bool needResponseNavigationBarLeftWhileLoading() {
-    return true;
+    return false;
   }
 
   @override
@@ -46,6 +46,38 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   @override
   bool needResponseNavigationBarRightWhileLoading() {
     return false;
+  }
+
+  @override
+  List<Widget>? actions(XBPageTestVM vm) {
+    return [
+      XBButton(
+          onTap: () {
+            toast('点击了右键');
+          },
+          child: Container(
+            color: Colors.red,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text("右键点击测试"),
+            ),
+          ))
+    ];
+  }
+
+  @override
+  Widget? buildTitle(XBPageTestVM vm) {
+    return XBButton(
+        onTap: () {
+          toast('点击了标题');
+        },
+        child: Container(
+          color: Colors.red,
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text("标题点击测试"),
+          ),
+        ));
   }
 
   @override
@@ -151,9 +183,22 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     });
                   }),
                   _buildWidget(vm, 'show global loading', () {
-                    showLoadingGlobal();
+                    final contentEnable = false;
+                    final topLeftEnable = false;
+                    final topCenterEnable = false;
+                    final topRightEnable = true;
+                    showLoadingGlobal(
+                        contentEnable: contentEnable,
+                        topLeftEnable: topLeftEnable,
+                        topCenterEnable: topCenterEnable,
+                        topRightEnable: topRightEnable);
                     Future.delayed(const Duration(seconds: 3), () {
-                      showLoadingGlobal(msg: "global loading");
+                      showLoadingGlobal(
+                          msg: "global loading",
+                          contentEnable: contentEnable,
+                          topLeftEnable: topLeftEnable,
+                          topCenterEnable: topCenterEnable,
+                          topRightEnable: topRightEnable);
                       Future.delayed(const Duration(seconds: 3), () {
                         hideLoadingGlobal();
                       });
