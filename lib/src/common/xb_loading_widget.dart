@@ -10,12 +10,14 @@ showLoadingGlobal(
     bool topCenterEnable = false,
     bool topRightEnable = false,
     bool contentEnable = true,
+    String? msg,
     Widget? widget}) {
   _taskQueue.add(XBLoadingTask(_taskShow,
       topLeftEnable: topLeftEnable,
       topCenterEnable: topCenterEnable,
       topRightEnable: topRightEnable,
       contentEnable: contentEnable,
+      msg: msg,
       widget: widget));
   _exeTask();
 }
@@ -42,12 +44,14 @@ class XBLoadingTask {
   bool topCenterEnable;
   bool topRightEnable;
   bool contentEnable;
+  String? msg;
   Widget? widget;
   XBLoadingTask(this.name,
       {this.topLeftEnable = true,
       this.topCenterEnable = false,
       this.topRightEnable = false,
       this.contentEnable = false,
+      this.msg,
       this.widget});
 }
 
@@ -130,9 +134,11 @@ _exeTask() {
       if (task.widget != null) {
         loadingBody = task.widget!;
       } else if (xbLoadingBuilder != null) {
-        loadingBody = xbLoadingBuilder!(xbGlobalContext);
+        loadingBody = xbLoadingBuilder!(xbGlobalContext, task.msg);
       } else {
-        loadingBody = const XBLoadingWidget();
+        loadingBody = XBLoadingWidget(
+          msg: task.msg,
+        );
       }
       _showLoadingGlobal(
           widget: loadingBody,
@@ -154,28 +160,63 @@ _exeTask() {
 }
 
 class XBLoadingWidget extends XBVMLessWidget {
-  const XBLoadingWidget({super.key});
+  final String? msg;
+  const XBLoadingWidget({this.msg, super.key});
 
-  final double w = 70;
+  double get w => 60;
+
+  bool get msgEnable => msg != null && msg!.isNotEmpty;
 
   @override
   Widget buildWidget(XBVM vm, BuildContext context) {
     return Container(
-        // color: Colors.orange,
         alignment: Alignment.center,
-        child: XBShadowContainer(
+        child: Container(
+          alignment: Alignment.center,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Container(
-              height: w,
-              width: w,
-              color: Colors.white,
-              alignment: Alignment.center,
-              child: XBAnimationRotate(
-                repeat: true,
-                duration: const Duration(milliseconds: 1000),
-                child:
-                    CustomPaint(size: Size(w, w), painter: XBLoadingPainter()),
+            child: XBShadowContainer(
+              child: Container(
+                color: Colors.white,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(
+                          top: 10,
+                          left: 10,
+                          right: 10,
+                          bottom: msgEnable ? 2 : 10),
+                      child: SizedBox(
+                        height: w,
+                        width: w,
+                        child: XBAnimationRotate(
+                          repeat: true,
+                          duration: const Duration(milliseconds: 1000),
+                          child: CustomPaint(
+                              size: Size(w, w), painter: XBLoadingPainter()),
+                        ),
+                      ),
+                    ),
+                    Visibility(
+                        visible: msgEnable,
+                        child: Material(
+                          color: Colors.white,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                                bottom: msgEnable ? 10 : 0,
+                                left: 10,
+                                right: 10),
+                            child: Text(
+                              msg ?? "",
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  TextStyle(color: Colors.black.withAlpha(150)),
+                            ),
+                          ),
+                        ))
+                  ],
+                ),
               ),
             ),
           ),
@@ -193,7 +234,7 @@ class XBLoadingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = min(size.width, size.height) / 3;
+    final radius = min(size.width, size.height) / 2;
 
     _paint.color = color ?? Colors.black.withAlpha(100);
     _paint.style = PaintingStyle.stroke;

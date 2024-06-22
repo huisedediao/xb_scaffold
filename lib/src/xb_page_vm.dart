@@ -37,9 +37,12 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     pop(result);
   }
 
+  String? loadingMsg;
+
   bool get needShowLoadingWidget => (widget as XBPage).needLoading();
 
-  showLoading() {
+  showLoading({String? msg}) {
+    loadingMsg = msg;
     try {
       _showLoading();
     } catch (e) {

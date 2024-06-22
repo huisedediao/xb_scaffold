@@ -65,7 +65,7 @@ BuildContext get xbGlobalContext => _xbGlobalContext;
 void get endEditing => FocusScope.of(xbGlobalContext).requestFocus(FocusNode());
 
 /// 用于外部控制loading要长什么样
-typedef XBLoadingBuilder = Widget Function(BuildContext context);
+typedef XBLoadingBuilder = Widget Function(BuildContext context, String? msg);
 XBLoadingBuilder? _xbLoadingBuilder;
 XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 

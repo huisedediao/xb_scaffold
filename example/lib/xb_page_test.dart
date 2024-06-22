@@ -144,17 +144,20 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                   _buildWidget(vm, 'show loading', () {
                     vm.showLoading();
                     Future.delayed(const Duration(seconds: 3), () {
-                      vm.hideLoading();
+                      vm.showLoading(msg: "loading");
+                      Future.delayed(const Duration(seconds: 3), () {
+                        vm.hideLoading();
+                      });
                     });
                   }),
                   _buildWidget(vm, 'show global loading', () {
                     showLoadingGlobal();
-                    // Future.delayed(const Duration(seconds: 3), () {
-                    //   showLoadingGlobal();
-                    //   Future.delayed(const Duration(seconds: 3), () {
-                    //     hideLoadingGlobal();
-                    //   });
-                    // });
+                    Future.delayed(const Duration(seconds: 3), () {
+                      showLoadingGlobal(msg: "global loading");
+                      Future.delayed(const Duration(seconds: 3), () {
+                        hideLoadingGlobal();
+                      });
+                    });
                   }),
                   _buildWidget(vm, '进入 悬浮段头列表页面', () {
                     push(XBHoveringTest());

@@ -222,9 +222,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 如果需要不同loading，重写此方法
   Widget buildLoading(T vm) {
     if (xbLoadingBuilder != null) {
-      return xbLoadingBuilder!(xbGlobalContext);
+      return xbLoadingBuilder!(xbGlobalContext, vm.loadingMsg);
     }
-    return const XBLoadingWidget();
+    return XBLoadingWidget(msg: vm.loadingMsg);
   }
 
   Widget _buildBodyContent(T vm) {
