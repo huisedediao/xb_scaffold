@@ -50,7 +50,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
 
   @override
   bool needResponseContentWhileLoading() {
-    return false;
+    return true;
   }
 
   @override
@@ -178,17 +178,31 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     //   color: app.colors.randColor,
                     // ));
                   }),
+                  _buildWidget(vm, '测试局部和全局loading是否在同一个位置', () {
+                    ///
+                    vm.showLoading();
+                    Future.delayed(Duration(seconds: 3), () {
+                      vm.hideLoading();
+                      showLoadingGlobal();
+                      Future.delayed(Duration(seconds: 3), () {
+                        hideLoadingGlobal();
+                      });
+                    });
+                  }),
                   _buildWidget(vm, 'show loading', () {
                     vm.showLoading();
                     Future.delayed(const Duration(seconds: 3), () {
-                      vm.showLoading(msg: "loading");
+                      vm.showLoading(msg: "loading 1");
                       Future.delayed(const Duration(seconds: 3), () {
-                        vm.hideLoading();
+                        vm.showLoading(msg: "loading 2");
+                        Future.delayed(const Duration(seconds: 3), () {
+                          vm.hideLoading();
+                        });
                       });
                     });
                   }),
                   _buildWidget(vm, 'show global loading', () {
-                    final contentEnable = false;
+                    final contentEnable = true;
                     final topLeftEnable = false;
                     final topCenterEnable = false;
                     final topRightEnable = true;
@@ -199,13 +213,21 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                         topRightEnable: topRightEnable);
                     Future.delayed(const Duration(seconds: 3), () {
                       showLoadingGlobal(
-                          msg: "global loading",
+                          msg: "global loading 1",
                           contentEnable: contentEnable,
                           topLeftEnable: topLeftEnable,
                           topCenterEnable: topCenterEnable,
                           topRightEnable: topRightEnable);
                       Future.delayed(const Duration(seconds: 3), () {
-                        hideLoadingGlobal();
+                        showLoadingGlobal(
+                            msg: "global loading 2",
+                            contentEnable: contentEnable,
+                            topLeftEnable: topLeftEnable,
+                            topCenterEnable: topCenterEnable,
+                            topRightEnable: topRightEnable);
+                        Future.delayed(const Duration(seconds: 3), () {
+                          hideLoadingGlobal();
+                        });
                       });
                     });
                   }),
