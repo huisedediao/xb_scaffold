@@ -5,22 +5,41 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 double _cellHeight = 50;
 double _gap = 8;
 
-actionSheetWidget({required Widget widget, bool isScrollControlled = false}) {
+actionSheetWidget({
+  required Widget widget,
+  bool isScrollControlled = false,
+  bool isDismissible = true,
+  bool enableDrag = true,
+}) {
   try {
-    _actionSheetWidget(widget: widget, isScrollControlled: isScrollControlled);
+    _actionSheetWidget(
+        widget: widget,
+        isScrollControlled: isScrollControlled,
+        isDismissible: isDismissible,
+        enableDrag: enableDrag);
   } catch (e) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _actionSheetWidget(
-          widget: widget, isScrollControlled: isScrollControlled);
+          widget: widget,
+          isScrollControlled: isScrollControlled,
+          isDismissible: isDismissible,
+          enableDrag: enableDrag);
     });
   }
 }
 
-_actionSheetWidget({required Widget widget, bool isScrollControlled = false}) {
+_actionSheetWidget({
+  required Widget widget,
+  bool isScrollControlled = false,
+  bool isDismissible = true,
+  bool enableDrag = true,
+}) {
   showModalBottomSheet(
     context: xbGlobalContext,
     isScrollControlled: isScrollControlled,
     backgroundColor: Colors.transparent,
+    isDismissible: isDismissible,
+    enableDrag: enableDrag,
     builder: (BuildContext context) {
       return widget;
     },

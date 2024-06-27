@@ -21,6 +21,14 @@ class XBVM<T> extends ChangeNotifier {
     recordPageLog(log);
   }
 
+  /// 页面已经build完成
+  @mustCallSuper
+  void widgetDidBuilt() {
+    String log = "$runtimeType pageDidBuilt";
+    debugPrint(log);
+    recordPageLog(log);
+  }
+
   /// 通知刷新
   notify() {
     try {

@@ -56,6 +56,11 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
   void initState() {
     super.initState();
     _generateVM();
+
+    // 在页面构建完成的第一时间执行操作
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      vm.widgetDidBuilt();
+    });
   }
 
   _generateVM() {

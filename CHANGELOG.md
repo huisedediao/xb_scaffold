@@ -398,3 +398,11 @@
 
 - 局部loading添加content响应参数设置
 
+## 0.0.102
+
+- actionSheetWidget新增参数
+
+## 0.0.103
+
+- XBVM新增widgetDidBuilt方法
+
