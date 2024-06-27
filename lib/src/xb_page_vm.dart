@@ -16,7 +16,11 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   _addStackListen() {
     _stackSubscription = xbRouteStackStream.listen((event) {
-      handleStackChanged(event: event, widget: widget as Widget);
+      try {
+        handleStackChanged(event: event, widget: widget as Widget);
+      } catch (e) {
+        //
+      }
     });
   }
 

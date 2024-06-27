@@ -406,3 +406,7 @@
 
 - XBVM新增widgetDidBuilt方法
 
+## 0.0.104
+
+- optimize
+
