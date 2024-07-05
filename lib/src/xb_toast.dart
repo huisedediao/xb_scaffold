@@ -65,6 +65,8 @@ _toastWidget(
   final overlayEntry = OverlayEntry(
     builder: (context) => Positioned(
       bottom: bottom,
+      left: 0,
+      right: 0,
       child: IgnorePointer(
         ignoring: true,
         child: Material(
@@ -75,7 +77,6 @@ _toastWidget(
             child: Container(
               // color: Colors.green,
               alignment: Alignment.center,
-              width: MediaQuery.of(context).size.width,
               child: Padding(
                 padding: EdgeInsets.only(
                     left: spaces.gapLess,
@@ -102,7 +103,7 @@ _toastWidget(
   _items.add(XBToastItem(entry: overlayEntry, key: key));
 
   Future.delayed(Duration(seconds: duration)).then((value) {
-    if (overlayEntry == _items.last.entry) {
+    if (_items.isNotEmpty && overlayEntry == _items.last.entry) {
       _hideLast();
     }
   });
