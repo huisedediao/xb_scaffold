@@ -414,3 +414,7 @@
 
 - optimize
 
+## 0.0.106
+
+- 修复toast bug
+

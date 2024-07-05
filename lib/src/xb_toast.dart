@@ -99,8 +99,8 @@ _toastWidget(
     ),
   );
 
-  overlay.insert(overlayEntry);
   _items.add(XBToastItem(entry: overlayEntry, key: key));
+  overlay.insert(overlayEntry);
 
   Future.delayed(Duration(seconds: duration)).then((value) {
     if (_items.isNotEmpty && overlayEntry == _items.last.entry) {
