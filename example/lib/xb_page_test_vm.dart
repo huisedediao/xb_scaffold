@@ -6,6 +6,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBPageTestVM extends XBPageVM<XBPageTest> {
   late StreamSubscription _subscription;
   XBPageTestVM({required super.context}) {
+    xbError("constructor");
     // showLoading();
     // toast("msg");
     // dialog(

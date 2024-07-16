@@ -43,16 +43,18 @@ _handleInfo(Object info, [int type = 0]) {
   }
 }
 
-_print(Object info, int type) {
+void _print(Object info, int type) {
+  String timestamp = DateTime.now().toIso8601String();
+  String message = '[$timestamp] $info';
   if (type == 0) {
     if (kDebugMode) {
-      _logger.d(info);
+      _logger.d(message);
     }
   } else if (type == 1) {
     if (kDebugMode) {
-      _logger.e(info);
+      _logger.e(message);
     }
   } else {
-    _logger.e(info);
+    _logger.e(message);
   }
 }
