@@ -422,3 +422,7 @@
 
 - 打印新增时间
 
+## 0.0.108
+
+- 新增XBWaitTask、修复ListView滚动Appbar变色
+
