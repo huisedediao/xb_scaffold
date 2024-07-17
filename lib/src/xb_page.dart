@@ -255,6 +255,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   PreferredSizeWidget buildAppBar(T vm) {
     return AppBar(
       backgroundColor: navigationBarBGColor,
+      scrolledUnderElevation: 0.0,
       elevation: 0,
       centerTitle: true,
       actions: actions(vm),

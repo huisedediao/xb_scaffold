@@ -7,6 +7,17 @@ void main() async {
   runApp(const MyApp());
 }
 
+/*
+使用ListView 。滚动时 AppBar 改变颜色问题:
+MaterialApp(
+    theme: ThemeData(
+        appBarTheme: AppBarTheme(scrolledUnderElevation: 0.0)
+    )
+)
+AppBar(
+    scrolledUnderElevation: 0.0
+)
+*/
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -15,6 +26,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
+        // appBarTheme: AppBarTheme(scrolledUnderElevation: 0.0),
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
