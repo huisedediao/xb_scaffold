@@ -8,7 +8,28 @@ class XBHoveringTestVM extends XBPageVM<XBHoveringTest> {
       hideLoading();
       xbRouteObserver.showStack();
     });
+
+    testTask();
   }
+
+  testTask() async {
+    xbError("开始执行");
+    final ret =
+        await waitTask.execute<int>(task: test, param: 1, milliseconds: 2000);
+    if (ret) {
+      print("执行成功");
+    } else {
+      print("执行超时");
+    }
+  }
+
+  Future test(int param) async {
+    return await Future.delayed(Duration(seconds: param), () {
+      xbError("test 执行完成");
+    });
+  }
+
+  XBWaitTask waitTask = XBWaitTask();
 
   final List<int> itemCounts = [5, 5];
 }
