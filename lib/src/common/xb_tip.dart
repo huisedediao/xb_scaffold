@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBTip extends StatefulWidget {
   final Widget? child;
@@ -6,18 +7,16 @@ class XBTip extends StatefulWidget {
   final TextStyle? tipStyle;
   final Color? bgColor;
   final double maxWidth;
-
-  /// 箭头起始位置，箭头始终指向child在x轴的中心位置
-  final double? arrowStart;
-  const XBTip(
-      {Key? key,
-      this.child,
-      required this.tip,
-      this.tipStyle,
-      this.bgColor,
-      this.maxWidth = 280,
-      this.arrowStart})
-      : super(key: key);
+  final double paddingH;
+  const XBTip({
+    Key? key,
+    this.child,
+    required this.tip,
+    this.tipStyle,
+    this.bgColor,
+    this.maxWidth = 280,
+    this.paddingH = 10,
+  }) : super(key: key);
 
   @override
   State<XBTip> createState() => _XBTipState();
@@ -30,8 +29,12 @@ class _XBTipState extends State<XBTip> {
   @override
   void initState() {
     super.initState();
+    assert(widget.maxWidth < (screenW - contentPadding * 2),
+        "最大宽度不能超过屏幕宽度 - ${contentPadding * 2}");
     assert(widget.tip.isNotEmpty, "tip 不能为空字符串");
   }
+
+  final double contentPadding = 5;
 
   bool isShow() {
     return tipsOverlay != null;
@@ -77,56 +80,55 @@ class _XBTipState extends State<XBTip> {
   ///显示一个Tips的方法
   showTips(BuildContext context, Offset position) {
     Color bgColor = widget.bgColor ?? Colors.black;
-    double paddingLeft = 10;
     double textWidth = textSize().width;
+    double contentWidth = textWidth + widget.paddingH * 2;
+
+    /// 判断左右是否超出边界，并调整位置
+    double contentLeft = position.dx - contentWidth / 2;
+    double arrowOffset = 0;
+    if (contentLeft < contentPadding) {
+      arrowOffset = -(contentPadding - contentLeft);
+      contentLeft = contentPadding;
+    } else if (contentLeft + contentWidth > screenW - contentPadding) {
+      arrowOffset = contentLeft + contentWidth - screenW + contentPadding;
+      contentLeft = screenW - contentPadding - contentWidth;
+    }
+
     double arrowWidth = 10;
-    double arrowStart = widget.arrowStart ?? textWidth * 0.5;
-    if (arrowStart < 0) {
-      arrowStart = 0;
-    }
-    double arrowMaxStart = textWidth - arrowWidth;
-    if (arrowStart > arrowMaxStart) {
-      arrowStart = arrowMaxStart;
-    }
-    double offset = textWidth * 0.5 - arrowWidth * 0.5 - arrowStart;
-    bool isNotNeedTopLeftRadius = arrowStart < 4;
-    bool isNotNeedTopRightRadius =
-        (arrowStart + arrowWidth) > (paddingLeft + textWidth - 4);
+    double arrowHeight = 5;
+    double arrowStart =
+        contentLeft + contentWidth * 0.5 - arrowWidth * 0.5 + arrowOffset;
+
+    double circular = 5;
+
     tipsOverlay = OverlayEntry(builder: (ctx) {
       return Material(
         color: Colors.transparent,
         child: Stack(
           children: [
             Positioned(
-              //减去了文字一半的长度，让tips居中，这个位置可以自己根据需求调整
-              left: position.dx - textWidth / 2 + offset,
+              //让tips居中
+              left: contentLeft,
               top: position.dy,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Padding(
-                    padding: EdgeInsets.only(left: arrowStart),
-                    child: CustomPaint(
-                      size: Size(arrowWidth,
-                          5), //You can Replace this with your desired WIDTH and HEIGHT
-                      painter: RPSCustomPainter(color: bgColor),
-                    ),
+                  SizedBox(
+                    height: arrowHeight,
                   ),
                   ClipRRect(
                     borderRadius: BorderRadius.only(
-                        topLeft:
-                            Radius.circular(isNotNeedTopLeftRadius ? 0 : 6),
-                        topRight:
-                            Radius.circular(isNotNeedTopRightRadius ? 0 : 6),
-                        bottomLeft: const Radius.circular(6),
-                        bottomRight: const Radius.circular(6)),
+                        topLeft: Radius.circular(circular),
+                        topRight: Radius.circular(circular),
+                        bottomLeft: Radius.circular(circular),
+                        bottomRight: Radius.circular(circular)),
                     child: Container(
                       color: bgColor,
                       constraints: BoxConstraints(maxWidth: widget.maxWidth),
                       child: Padding(
                         padding: EdgeInsets.only(
-                            left: paddingLeft,
-                            right: paddingLeft,
+                            left: widget.paddingH,
+                            right: widget.paddingH,
                             top: 5,
                             bottom: 5),
                         child: Text(
@@ -137,6 +139,17 @@ class _XBTipState extends State<XBTip> {
                     ),
                   ),
                 ],
+              ),
+            ),
+            Positioned(
+              top: position.dy + 1,
+              child: Padding(
+                padding: EdgeInsets.only(left: arrowStart),
+                child: CustomPaint(
+                  size: Size(arrowWidth,
+                      arrowHeight), //You can Replace this with your desired WIDTH and HEIGHT
+                  painter: RPSCustomPainter(color: bgColor),
+                ),
               ),
             ),
             //移除tips
@@ -164,7 +177,7 @@ class _XBTipState extends State<XBTip> {
       text: TextSpan(text: widget.tip, style: _tipsStyle),
       maxLines: 1,
       textDirection: TextDirection.ltr,
-    )..layout(maxWidth: widget.maxWidth);
+    )..layout(maxWidth: widget.maxWidth - widget.paddingH * 2);
 
     final double height = textPainter.height;
     final double width = textPainter.width;

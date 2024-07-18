@@ -100,6 +100,12 @@ class XBPageTest extends XBPage<XBPageTestVM> {
             children: [
               Wrap(
                 children: [
+                  XBTip(
+                    tip: "仅对门店下支持客流统计的设备做数据分析。不支持客流统计的设备不做统计。",
+                    child: Text("你来点我呀"),
+                    tipStyle: TextStyle(color: colors.randColor),
+                    bgColor: Colors.green,
+                  ),
                   _buildWidget(vm, 'show dialog', () {
                     dialog(
                         title: "温馨提示",
@@ -122,6 +128,7 @@ class XBPageTest extends XBPage<XBPageTestVM> {
                     child: Text("你来点我呀"),
                     tipStyle: TextStyle(color: colors.randColor),
                     bgColor: Colors.green,
+                    maxWidth: 200,
                   ),
                   _buildWidget(vm, 'show action sheet', () {
                     actionSheet(
