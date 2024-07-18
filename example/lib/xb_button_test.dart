@@ -14,6 +14,7 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
     return Column(
       children: [
         XBButton(
+            preventMultiTapMilliseconds: 5000,
             enable: false,
             // disableColor: Colors.black38,
             onTap: () {
@@ -32,6 +33,7 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
               ),
             )),
         XBButton(
+            preventMultiTapMilliseconds: 2000,
             enable: true,
             onTap: () {
               debugPrint("XBButton 2 clicked");

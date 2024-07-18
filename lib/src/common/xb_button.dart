@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 _XBButtonState? _tappingState;
 
@@ -41,6 +42,9 @@ class XBButton extends StatefulWidget {
   /// 是否需要点击效果，默认为true
   final bool needTapEffect;
 
+  /// 屏蔽连续点击的间隔，默认0.5s
+  final int preventMultiTapMilliseconds;
+
   const XBButton(
       {required this.child,
       this.enable = true,
@@ -52,6 +56,7 @@ class XBButton extends StatefulWidget {
       this.coverEffectColor,
       this.coverEffectRadius,
       this.onTapDisable,
+      this.preventMultiTapMilliseconds = 500,
       Key? key})
       : super(key: key);
 
@@ -61,6 +66,15 @@ class XBButton extends StatefulWidget {
 
 class _XBButtonState extends State<XBButton> {
   bool _onTapDown = false;
+
+  late XBPreventMultiTask _preventMultiTask;
+
+  @override
+  void initState() {
+    super.initState();
+    _preventMultiTask = XBPreventMultiTask(
+        intervalMilliseconds: widget.preventMultiTapMilliseconds);
+  }
 
   _setStateIfMounted() {
     if (mounted) {
@@ -72,7 +86,11 @@ class _XBButtonState extends State<XBButton> {
   Widget build(BuildContext context) {
     if (!widget.enable) {
       return GestureDetector(
-        onTap: widget.onTapDisable,
+        onTap: () {
+          _preventMultiTask.execute(() {
+            widget.onTapDisable?.call();
+          });
+        },
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -92,7 +110,11 @@ class _XBButtonState extends State<XBButton> {
     }
 
     final tapChild = GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        _preventMultiTask.execute(() {
+          widget.onTap?.call();
+        });
+      },
       child: _child(),
     );
     if (widget.effect == XBButtonTapEffect.none) {
@@ -121,6 +143,16 @@ class _XBButtonState extends State<XBButton> {
         },
         child: tapChild,
       );
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant XBButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.preventMultiTapMilliseconds !=
+        oldWidget.preventMultiTapMilliseconds) {
+      _preventMultiTask = XBPreventMultiTask(
+          intervalMilliseconds: widget.preventMultiTapMilliseconds);
     }
   }
 
