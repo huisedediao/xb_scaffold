@@ -430,3 +430,7 @@
 
 - XBWaitTask优化、XBTip自适应位置
 
+## 0.0.110
+
+- XBButton优化
+
