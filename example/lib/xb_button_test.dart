@@ -18,10 +18,10 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             enable: false,
             // disableColor: Colors.black38,
             onTap: () {
-              debugPrint("XBButton 1 clicked");
+              xbError("XBButton 1 clicked");
             },
             onTapDisable: () {
-              debugPrint("XBButton 1 onTapDisable");
+              xbError("XBButton 1 onTapDisable");
             },
             child: Container(
               height: 50,
@@ -36,7 +36,7 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             preventMultiTapMilliseconds: 2000,
             enable: true,
             onTap: () {
-              debugPrint("XBButton 2 clicked");
+              xbError("XBButton 2 clicked");
             },
             child: Container(
               height: 50,
@@ -46,7 +46,7 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             )),
         XBButton(
           onTap: () {
-            debugPrint("red clicked");
+            xbError("red clicked");
           },
           child: Container(
             width: 200,
@@ -55,7 +55,7 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
             alignment: Alignment.center,
             child: XBButton(
               onTap: () {
-                debugPrint("green clicked");
+                xbError("green clicked");
                 XBEventBus.fire("test event bus");
                 XBEventBus.fire(111);
                 XBEventBus.fire(222.0);

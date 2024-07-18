@@ -90,11 +90,13 @@ class _XBButtonState extends State<XBButton> {
   Widget build(BuildContext context) {
     if (!widget.enable) {
       return GestureDetector(
-        onTap: () {
-          _preventMultiTask.execute(() {
-            widget.onTapDisable?.call();
-          });
-        },
+        onTap: widget.onTapDisable == null
+            ? null
+            : () {
+                _preventMultiTask.execute(() {
+                  widget.onTapDisable?.call();
+                });
+              },
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -114,11 +116,13 @@ class _XBButtonState extends State<XBButton> {
     }
 
     final tapChild = GestureDetector(
-      onTap: () {
-        _preventMultiTask.execute(() {
-          widget.onTap?.call();
-        });
-      },
+      onTap: widget.onTap == null
+          ? null
+          : () {
+              _preventMultiTask.execute(() {
+                widget.onTap?.call();
+              });
+            },
       child: _child(),
     );
     if (widget.effect == XBButtonTapEffect.none) {
