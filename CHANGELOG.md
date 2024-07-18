@@ -426,3 +426,7 @@
 
 - 新增XBWaitTask、修复ListView滚动Appbar变色
 
+## 0.0.109
+
+- XBWaitTask优化、XBTip自适应位置
+
