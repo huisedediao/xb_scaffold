@@ -67,6 +67,20 @@ class XBButtonTest extends XBPage<XBButtonTestVM> {
               ),
             ),
           ),
+        ),
+        Container(
+          color: Colors.amber.withAlpha(20),
+          child: XBButton(
+              onTap: () {
+                xbError("cover test");
+              },
+              coverTransparentWhileOpacity: true,
+              child: Container(
+                width: 200,
+                height: 300,
+                alignment: Alignment.center,
+                child: Text("cover test"),
+              )),
         )
       ],
     );

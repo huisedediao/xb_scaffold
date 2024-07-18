@@ -45,6 +45,9 @@ class XBButton extends StatefulWidget {
   /// 屏蔽连续点击的间隔，默认0.5s
   final int preventMultiTapMilliseconds;
 
+  /// effect为opacity的时候，是否需要覆盖一层透明的Container
+  final bool coverTransparentWhileOpacity;
+
   const XBButton(
       {required this.child,
       this.enable = true,
@@ -57,6 +60,7 @@ class XBButton extends StatefulWidget {
       this.coverEffectRadius,
       this.onTapDisable,
       this.preventMultiTapMilliseconds = 500,
+      this.coverTransparentWhileOpacity = false,
       Key? key})
       : super(key: key);
 
@@ -158,7 +162,15 @@ class _XBButtonState extends State<XBButton> {
 
   Widget _child() {
     if (widget.effect == XBButtonTapEffect.opacity) {
-      return Opacity(opacity: _opacityEffectOpacity(), child: widget.child);
+      final temp =
+          Opacity(opacity: _opacityEffectOpacity(), child: widget.child);
+      if (widget.coverTransparentWhileOpacity) {
+        return Container(
+          color: Colors.transparent,
+          child: temp,
+        );
+      }
+      return temp;
     } else {
       return ClipRRect(
         borderRadius: BorderRadius.circular(widget.coverEffectRadius ?? 0),
@@ -192,7 +204,6 @@ class _XBButtonState extends State<XBButton> {
   /// 点击的时候才展示cover，所以点击的时候不透明度为1
   double _coverEffectOpacity() {
     if (widget.needTapEffect == false) return 0.0;
-    // return 1.0;
     return _onTapDown ? 1.0 : 0.0;
   }
 }
