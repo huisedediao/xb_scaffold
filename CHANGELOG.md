@@ -438,3 +438,7 @@
 
 - XBButton优化
 
+## 0.0.112
+
+- 新增ValueGetter和ValueChanged定义
+
