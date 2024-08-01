@@ -41,20 +41,20 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     if (isFinishedPushAnimation) {
       task.run();
     } else {
-      ensureAfterPushAnimationTasks.add(task);
+      _ensureAfterPushAnimationTasks.add(task);
     }
   }
 
   /// 执行动画完成后的任务
   _executeEnsureAfterPushAnimationTasks() {
-    for (var task in ensureAfterPushAnimationTasks) {
+    for (var task in _ensureAfterPushAnimationTasks) {
       task.run();
     }
-    ensureAfterPushAnimationTasks.clear();
+    _ensureAfterPushAnimationTasks.clear();
   }
 
   /// 确保在动画完成后执行的任务
-  List<XBVoidParamTask> ensureAfterPushAnimationTasks = [];
+  final List<XBVoidParamTask> _ensureAfterPushAnimationTasks = [];
 
   /// 是否完成push动画
   bool _isFinishedPushAnimation = false;
