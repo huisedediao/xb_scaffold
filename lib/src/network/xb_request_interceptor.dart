@@ -10,8 +10,10 @@ class XBRequestInterceptor extends Interceptor {
   void onRequest(
       RequestOptions options, RequestInterceptorHandler handler) async {
     if (printLog) {
+      options.headers
+          .addAll({'requestId': DateTime.now().microsecondsSinceEpoch});
       try {
-        xbLog("request start-------\n"
+        xbLog("request start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
             "method: ${options.method}\n"
             "baseurl: ${options.baseUrl}\n"
             "path: ${options.path}\n"

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_dio_config.dart';
@@ -115,9 +116,9 @@ class XBHttp {
         needLog: needLog);
   }
 
-  ///dio 实现文件上传
-  ///是编译以后的文件路径，不是asset/.....png这样的
-  static Future<E> fileUpload<E>(
+  /// dio 实现文件上传
+  /// 是编译以后的文件路径，不是asset/.....png这样的
+  static Future<E> fileUploadFromPath<E>(
     String url,
     String filePath,
     String filename, {
@@ -125,32 +126,55 @@ class XBHttp {
     bool needLog = true,
     CancelToken? cancelToken,
   }) async {
-    xbLog("fileUpload,url:$url,headers:$headers");
+    return _fileUpload(
+        url, await MultipartFile.fromFile(filePath, filename: filename),
+        headers: headers, needLog: needLog, cancelToken: cancelToken);
+  }
+
+  static Future<E> fileUploadFromBytes<E>(
+    String url,
+    Uint8List bytes,
+    String filename, {
+    Map<String, dynamic>? headers,
+    bool needLog = true,
+    CancelToken? cancelToken,
+  }) async {
+    return _fileUpload(url, MultipartFile.fromBytes(bytes, filename: filename),
+        headers: headers, needLog: needLog, cancelToken: cancelToken);
+  }
+
+  static Future<E> _fileUpload<E>(
+    String url,
+    MultipartFile multipartFile, {
+    Map<String, dynamic>? headers,
+    bool needLog = true,
+    CancelToken? cancelToken,
+  }) async {
     final options = Options(headers: headers);
 
-    ///创建Dio
+    /// 创建Dio
     Dio dio = Dio();
 
     Map<String, dynamic> map = {};
-    map["file"] = await MultipartFile.fromFile(filePath, filename: filename);
+    map["file"] = multipartFile;
 
-    ///通过FormData
+    /// 通过FormData
     FormData formData = FormData.fromMap(map);
 
-    ///发送post
+    /// 发送post
     Response response = await dio.post(
       url, data: formData, options: options,
       cancelToken: cancelToken,
 
-      ///这里是发送请求回调函数
-      ///[progress] 当前的进度
-      ///[total] 总进度
+      /// 这里是发送请求回调函数
+      /// [progress] 当前的进度
+      /// [total] 总进度
       onSendProgress: (int progress, int total) {
         _print(info: "当前进度是 $progress 总进度是 $total", needLog: needLog);
       },
     );
 
-    ///服务器响应结果
+    /// 服务器响应结果
     var data = response.data;
 
     _print(info: "fileUpload response.data : $data", needLog: needLog);

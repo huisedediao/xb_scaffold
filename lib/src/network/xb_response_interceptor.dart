@@ -10,7 +10,8 @@ class XBResponseInterceptor extends Interceptor {
   void onResponse(Response response, ResponseInterceptorHandler handler) {
     if (printLog) {
       try {
-        xbLog("response start-------\n"
+        xbLog(
+            "response start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
             "method: ${response.requestOptions.method}\n"
             "baseurl: ${response.requestOptions.baseUrl}\n"
             "path: ${response.requestOptions.path}\n"
@@ -32,7 +33,7 @@ class XBResponseInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) {
     if (printLog) {
       try {
-        xbLog("error start-------\n"
+        xbLog("error start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
             "method: ${err.requestOptions.method}\n"
             "baseurl: ${err.requestOptions.baseUrl}\n"
             "path: ${err.requestOptions.path}\n"
