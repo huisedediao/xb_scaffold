@@ -8,6 +8,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   XBPageVM({required super.context}) {
+    _createTime = DateTime.now().millisecondsSinceEpoch;
     if ((widget as XBPage).needInitLoading()) {
       _isShowLoadingWidget = true;
     }
@@ -22,6 +23,29 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
         //
       }
     });
+  }
+
+  int? _createTime;
+
+  final XBTimer _pushNotifyAnimationTimer = XBTimer();
+
+  @override
+  notify() {
+    if ((widget as XBPage).notifyNeedAfterPushAnimation) {
+      if (_createTime == null) return;
+      final difTime = DateTime.now().millisecondsSinceEpoch - _createTime!;
+      if (difTime >= (widget as XBPage).pushAnimationMilliseconds(this)) {
+        super.notify();
+      } else {
+        _pushNotifyAnimationTimer.once(
+            duration: Duration(milliseconds: difTime + 10),
+            onTick: () {
+              notify();
+            });
+      }
+      return;
+    }
+    super.notify();
   }
 
   late StreamSubscription _stackSubscription;
@@ -87,6 +111,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   @override
   void dispose() {
     _stackSubscription.cancel();
+    _pushNotifyAnimationTimer.cancel();
     super.dispose();
   }
 

@@ -6,7 +6,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBTimer {
   /// 跟随vm生命周期
   final XBVM? listeningVM;
-  XBTimer({required this.listeningVM});
+  XBTimer({this.listeningVM});
 
   Timer? _timer;
 

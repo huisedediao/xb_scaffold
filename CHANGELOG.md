@@ -442,3 +442,7 @@
 
 - 新增ValueGetter和ValueChanged定义
 
+## 0.0.113
+
+- optimized
+

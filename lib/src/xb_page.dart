@@ -11,118 +11,82 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /*
   * 如果使用的是CupertinoTab或者原生的tabbar，需要给底部预留tabbar的位置
   * */
-  bool needPageContentAdaptTabbar() {
-    return false;
-  }
+  bool needPageContentAdaptTabbar() => false;
 
   /// 是否需要安全区域
-  bool needSafeArea() {
-    return false;
-  }
+  bool needSafeArea() => false;
 
   /// 是否启动安卓物理返回
-  bool onAndroidPhysicalBack(T vm) {
-    return true;
-  }
+  bool onAndroidPhysicalBack(T vm) => true;
 
   /// 屏幕方向改变后，是否需要重新build
-  bool needRebuildWhileOrientationChanged() {
-    return false;
-  }
+  bool needRebuildWhileOrientationChanged() => false;
 
   /// 是否需要监听主题变化，默认否
-  bool needRebuildWhileAppThemeChanged() {
-    return false;
-  }
+  bool needRebuildWhileAppThemeChanged() => false;
 
   /// 是否需要输入框跟随键盘移动
-  bool needAdaptKeyboard() {
-    return false;
-  }
+  bool needAdaptKeyboard() => false;
 
   /*
    * 返回true，则从屏幕顶部开始展示页面（而不是从状态栏下面开始）
    * 如果返回true，则buildAppBar不可以重写
    * 返回true，没有appbar
    * */
-  bool needShowContentFromScreenTop(T vm) {
-    return false;
-  }
+  bool needShowContentFromScreenTop(T vm) => false;
 
   /// 是否启动iOS侧滑返回
-  bool needIosGestureBack(T vm) {
-    return true;
-  }
+  bool needIosGestureBack(T vm) => true;
 
   /// 在展示loading的时候，是否需要响应navigationBar的左侧部分
-  bool needResponseNavigationBarLeftWhileLoading() {
-    return true;
-  }
+  bool needResponseNavigationBarLeftWhileLoading() => true;
 
   /// 在展示loading的时候，是否需要响应navigationBar的中间部分
-  bool needResponseNavigationBarCenterWhileLoading() {
-    return false;
-  }
+  bool needResponseNavigationBarCenterWhileLoading() => false;
 
   /// 在展示loading的时候，是否需要响应navigationBar的右侧部分
-  bool needResponseNavigationBarRightWhileLoading() {
-    return false;
-  }
+  bool needResponseNavigationBarRightWhileLoading() => false;
 
   /// 在展示loading的时候，是否需要响应content部分
-  bool needResponseContentWhileLoading() {
-    return false;
-  }
+  bool needResponseContentWhileLoading() => false;
 
   /// 是否需要在刚展示页面就展示loading
-  bool needInitLoading() {
-    return false;
-  }
+  bool needInitLoading() => false;
 
   /// 是否需要loading
-  bool needLoading() {
-    return false;
-  }
+  bool needLoading() => false;
+
+  /// notify是否需要在push动画完成之后
+  bool get notifyNeedAfterPushAnimation => false;
 
   bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
 
   /// 页面背景颜色
-  Color? get backgroundColor {
-    return viewBG;
-  }
+  Color? get backgroundColor => viewBG;
 
   /// tabbar的高度
-  tabbarHeight(T vm) {
-    return tabbarH;
-  }
+  tabbarHeight(T vm) => tabbarH;
 
   /// navigationBar的颜色
-  Color? get navigationBarBGColor {
-    return naviBarBG;
-  }
+  Color? get navigationBarBGColor => naviBarBG;
 
   /// navigationBar title的颜色
-  Color? get navigationBarTitleColor {
-    return naviBarTitle;
-  }
+  Color? get navigationBarTitleColor => naviBarTitle;
 
   /// navigationBar title的大小
-  double? get navigationBarTitleSize {
-    return 16;
-  }
+  double? get navigationBarTitleSize => 16;
 
   /// navigationBar title的字重
-  FontWeight? get navigationBarTitleFontWeight {
-    return app.fontWeights.bold;
-  }
+  FontWeight? get navigationBarTitleFontWeight => app.fontWeights.bold;
 
   /// 页面的标题
   /// 如果重写了buildTitle，则不生效
-  String setTitle(T vm) {
-    return "";
-  }
+  String setTitle(T vm) => "";
+
+  /// 页面push动画时间
+  int pushAnimationMilliseconds(T vm) => 250;
 
   /// -------------------- build widgets --------------------
 
