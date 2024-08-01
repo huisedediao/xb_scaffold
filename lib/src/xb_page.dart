@@ -86,7 +86,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   String setTitle(T vm) => "";
 
   /// 页面push动画时间
-  int pushAnimationMilliseconds(T vm) => 250;
+  int pushAnimationMilliseconds(T vm) => 400;
 
   /// -------------------- build widgets --------------------
 

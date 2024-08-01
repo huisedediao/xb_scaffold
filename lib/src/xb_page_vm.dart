@@ -32,13 +32,13 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   @override
   notify() {
     if ((widget as XBPage).notifyNeedAfterPushAnimation) {
-      if (_createTime == null) return;
-      final difTime = DateTime.now().millisecondsSinceEpoch - _createTime!;
-      if (difTime >= (widget as XBPage).pushAnimationMilliseconds(this)) {
+      final difTime = _nowDifCreateTime;
+      final animationTime = (widget as XBPage).pushAnimationMilliseconds(this);
+      if (difTime >= animationTime) {
         super.notify();
       } else {
         _pushNotifyAnimationTimer.once(
-            duration: Duration(milliseconds: difTime + 10),
+            duration: Duration(milliseconds: animationTime - difTime),
             onTick: () {
               notify();
             });
@@ -47,6 +47,16 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     }
     super.notify();
   }
+
+  int get _nowDifCreateTime {
+    if (_createTime == null) {
+      return 0;
+    }
+    return DateTime.now().millisecondsSinceEpoch - _createTime!;
+  }
+
+  bool get isAfterPushAnimation =>
+      _nowDifCreateTime >= (widget as XBPage).pushAnimationMilliseconds(this);
 
   late StreamSubscription _stackSubscription;
 
