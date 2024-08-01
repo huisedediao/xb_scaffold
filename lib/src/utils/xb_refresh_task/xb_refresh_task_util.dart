@@ -1,19 +1,19 @@
 import 'dart:async';
 
-import './xb_refresh_task.dart';
-export 'xb_refresh_task.dart';
+import '../xb_task/xb_task.dart';
+export '../xb_task/xb_task.dart';
 
 class XBRefreshTasKUtil {
   final Duration duration;
 
-  XBRefreshTask? _task;
+  XBTask? _task;
   Timer? _timer;
 
   XBRefreshTasKUtil({
     required this.duration,
   });
 
-  refresh(XBRefreshTask task) {
+  refresh(XBTask task) {
     _task = task;
     _startTimer();
   }

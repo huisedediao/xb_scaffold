@@ -2,18 +2,22 @@
 
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   XBPageVM({required super.context}) {
-    _createTime = DateTime.now().millisecondsSinceEpoch;
-    if ((widget as XBPage).needInitLoading()) {
+    _pushNotifyAnimationTimer.once(
+        duration:
+            Duration(milliseconds: _castWidget.pushAnimationMilliseconds(this)),
+        onTick: didFinishedPushAnimation);
+    if (_castWidget.needInitLoading()) {
       _isShowLoadingWidget = true;
     }
     _addStackListen();
   }
+
+  XBPage get _castWidget => widget as XBPage;
 
   _addStackListen() {
     _stackSubscription = xbRouteStackStream.listen((event) {
@@ -25,38 +29,54 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     });
   }
 
-  int? _createTime;
+  @mustCallSuper
+  didFinishedPushAnimation() {
+    _isFinishedPushAnimation = true;
+    _executeEnsureAfterPushAnimationTasks();
+  }
 
+  /// 添加动画完成任务
+  addEnsureAfterPushAnimationTask(void Function() fun) {
+    XBVoidParamTask task = XBVoidParamTask(execute: fun);
+    if (isFinishedPushAnimation) {
+      task.run();
+    } else {
+      ensureAfterPushAnimationTasks.add(task);
+    }
+  }
+
+  /// 执行动画完成后的任务
+  _executeEnsureAfterPushAnimationTasks() {
+    for (var task in ensureAfterPushAnimationTasks) {
+      task.run();
+    }
+    ensureAfterPushAnimationTasks.clear();
+  }
+
+  /// 确保在动画完成后执行的任务
+  List<XBVoidParamTask> ensureAfterPushAnimationTasks = [];
+
+  /// 是否完成push动画
+  bool _isFinishedPushAnimation = false;
+  bool get isFinishedPushAnimation => _isFinishedPushAnimation;
+
+  /// push动画定时器
   final XBTimer _pushNotifyAnimationTimer = XBTimer();
 
   @override
   notify() {
-    if ((widget as XBPage).notifyNeedAfterPushAnimation) {
-      final difTime = _nowDifCreateTime;
-      final animationTime = (widget as XBPage).pushAnimationMilliseconds(this);
-      if (difTime >= animationTime) {
+    if (_castWidget.notifyNeedAfterPushAnimation) {
+      if (isFinishedPushAnimation) {
         super.notify();
       } else {
-        _pushNotifyAnimationTimer.once(
-            duration: Duration(milliseconds: animationTime - difTime),
-            onTick: () {
-              notify();
-            });
+        addEnsureAfterPushAnimationTask(() {
+          super.notify();
+        });
       }
       return;
     }
     super.notify();
   }
-
-  int get _nowDifCreateTime {
-    if (_createTime == null) {
-      return 0;
-    }
-    return DateTime.now().millisecondsSinceEpoch - _createTime!;
-  }
-
-  bool get isAfterPushAnimation =>
-      _nowDifCreateTime >= (widget as XBPage).pushAnimationMilliseconds(this);
 
   late StreamSubscription _stackSubscription;
 
@@ -77,7 +97,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   String? loadingMsg;
 
-  bool get needShowLoadingWidget => (widget as XBPage).needLoading();
+  bool get needShowLoadingWidget => _castWidget.needLoading();
 
   showLoading({String? msg}) {
     loadingMsg = msg;
@@ -131,7 +151,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     if (Platform.isAndroid) {
       return _androidOnWillPop;
     } else {
-      if ((widget as XBPage).needIosGestureBack(this) && _canLoadingPop()) {
+      if (_castWidget.needIosGestureBack(this) && _canLoadingPop()) {
         return null;
       } else {
         return _iosOnWillPop;
@@ -151,12 +171,12 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
    * */
   Future<bool> _androidOnWillPop() async {
     return !isShowGoabolLoading &&
-        (widget as XBPage).onAndroidPhysicalBack(this) &&
+        _castWidget.onAndroidPhysicalBack(this) &&
         _canLoadingPop();
   }
 
   /// loading是否允许返回
   bool _canLoadingPop() =>
       isShowLoadingWidget == false ||
-      (widget as XBPage).needResponseNavigationBarLeftWhileLoading();
+      _castWidget.needResponseNavigationBarLeftWhileLoading();
 }

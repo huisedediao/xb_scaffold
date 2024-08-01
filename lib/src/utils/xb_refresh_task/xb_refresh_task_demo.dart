@@ -15,7 +15,7 @@ class XBRefreshTaskDemo extends XBPage<XBRefreshTaskDemoVM> {
     return Center(
       child: XBButton(
           onTap: () {
-            vm._util.refresh(XBRefreshTask(
+            vm._util.refresh(XBTask(
                 params: "task${vm.taskIndex}",
                 execute: (param) {
                   debugPrint("执行任务：$param");
@@ -45,7 +45,7 @@ class XBRefreshTaskDemoVM extends XBPageVM<XBRefreshTaskDemo> {
   final XBRefreshTasKUtil _util =
       XBRefreshTasKUtil(duration: const Duration(seconds: 1));
 
-  addTask(XBRefreshTask task) {
+  addTask(XBTask task) {
     _util.refresh(task);
   }
 
