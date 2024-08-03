@@ -16,7 +16,7 @@ class XBRotateTest extends XBPage<XBRotateTestVM> {
   }
 
   @override
-  bool needRebuildWhileOrientationChanged() {
+  bool needRebuildWhileOrientationChanged(vm) {
     return true;
   }
 

@@ -11,22 +11,22 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /*
   * 如果使用的是CupertinoTab或者原生的tabbar，需要给底部预留tabbar的位置
   * */
-  bool needPageContentAdaptTabbar() => false;
+  bool needPageContentAdaptTabbar(T vm) => false;
 
   /// 是否需要安全区域
-  bool needSafeArea() => false;
+  bool needSafeArea(T vm) => false;
 
   /// 是否启动安卓物理返回
   bool onAndroidPhysicalBack(T vm) => true;
 
   /// 屏幕方向改变后，是否需要重新build
-  bool needRebuildWhileOrientationChanged() => false;
+  bool needRebuildWhileOrientationChanged(T vm) => false;
 
   /// 是否需要监听主题变化，默认否
-  bool needRebuildWhileAppThemeChanged() => false;
+  bool needRebuildWhileAppThemeChanged(T vm) => false;
 
   /// 是否需要输入框跟随键盘移动
-  bool needAdaptKeyboard() => false;
+  bool needAdaptKeyboard(T vm) => false;
 
   /*
    * 返回true，则从屏幕顶部开始展示页面（而不是从状态栏下面开始）
@@ -39,47 +39,47 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   bool needIosGestureBack(T vm) => true;
 
   /// 在展示loading的时候，是否需要响应navigationBar的左侧部分
-  bool needResponseNavigationBarLeftWhileLoading() => true;
+  bool needResponseNavigationBarLeftWhileLoading(T vm) => true;
 
   /// 在展示loading的时候，是否需要响应navigationBar的中间部分
-  bool needResponseNavigationBarCenterWhileLoading() => false;
+  bool needResponseNavigationBarCenterWhileLoading(T vm) => false;
 
   /// 在展示loading的时候，是否需要响应navigationBar的右侧部分
-  bool needResponseNavigationBarRightWhileLoading() => false;
+  bool needResponseNavigationBarRightWhileLoading(T vm) => false;
 
   /// 在展示loading的时候，是否需要响应content部分
-  bool needResponseContentWhileLoading() => false;
+  bool needResponseContentWhileLoading(T vm) => false;
 
   /// 是否需要在刚展示页面就展示loading
-  bool needInitLoading() => false;
+  bool needInitLoading(T vm) => false;
 
   /// 是否需要loading
-  bool needLoading() => false;
+  bool needLoading(T vm) => false;
 
   /// notify是否需要在push动画完成之后
-  bool get notifyNeedAfterPushAnimation => false;
+  bool notifyNeedAfterPushAnimation(vm) => false;
 
   bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
 
   /// 页面背景颜色
-  Color? get backgroundColor => viewBG;
+  Color? backgroundColor(T vm) => viewBG;
 
   /// tabbar的高度
   tabbarHeight(T vm) => tabbarH;
 
   /// navigationBar的颜色
-  Color? get navigationBarBGColor => naviBarBG;
+  Color? navigationBarBGColor(T vm) => naviBarBG;
 
   /// navigationBar title的颜色
-  Color? get navigationBarTitleColor => naviBarTitle;
+  Color? navigationBarTitleColor(T vm) => naviBarTitle;
 
   /// navigationBar title的大小
-  double? get navigationBarTitleSize => 16;
+  double? navigationBarTitleSize(T vm) => 16;
 
   /// navigationBar title的字重
-  FontWeight? get navigationBarTitleFontWeight => app.fontWeights.bold;
+  FontWeight? navigationBarTitleFontWeight(T vm) => app.fontWeights.bold;
 
   /// 页面的标题
   /// 如果重写了buildTitle，则不生效
@@ -101,7 +101,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _themeConsumerWidget(T vm) {
-    if (needRebuildWhileAppThemeChanged()) {
+    if (needRebuildWhileAppThemeChanged(vm)) {
       return Consumer(builder: (ctx, XBThemeVM value, child) {
         return _orientaionWidget(vm);
       });
@@ -111,7 +111,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _orientaionWidget(T vm) {
-    if (needRebuildWhileOrientationChanged()) {
+    if (needRebuildWhileOrientationChanged(vm)) {
       return OrientationBuilder(builder: (ctx, orientation) {
         return _rootWidget(vm);
       });
@@ -130,12 +130,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget _buildLoadingContent(T vm) {
     Widget scaffold = Scaffold(
       primary: _primary(vm),
-      backgroundColor: backgroundColor,
-      resizeToAvoidBottomInset: needAdaptKeyboard(), //输入框抵住键盘
+      backgroundColor: backgroundColor(vm),
+      resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
       appBar: _primary(vm) == false ? const XBEmptyAppBar() : buildAppBar(vm),
       body: _buildBodyContent(vm),
     );
-    if (!needLoading()) {
+    if (!needLoading(vm)) {
       return scaffold;
     }
     return Stack(
@@ -143,7 +143,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
         scaffold,
         XBFadeWidget(
           key: vm.loadingWidgetFadeKey,
-          initShow: needInitLoading(),
+          initShow: needInitLoading(vm),
           child: Visibility(
             visible: vm.isShowLoadingWidget,
             child: Stack(children: [
@@ -155,19 +155,19 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
                       children: [
                         Expanded(
                             child: Container(
-                          color: needResponseNavigationBarLeftWhileLoading()
+                          color: needResponseNavigationBarLeftWhileLoading(vm)
                               ? null
                               : Colors.transparent,
                         )),
                         Expanded(
                             child: Container(
-                          color: needResponseNavigationBarCenterWhileLoading()
+                          color: needResponseNavigationBarCenterWhileLoading(vm)
                               ? null
                               : Colors.transparent,
                         )),
                         Expanded(
                             child: Container(
-                          color: needResponseNavigationBarRightWhileLoading()
+                          color: needResponseNavigationBarRightWhileLoading(vm)
                               ? null
                               : Colors.transparent,
                         ))
@@ -176,7 +176,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
                   ),
                   Expanded(
                       child: Container(
-                    color: needResponseContentWhileLoading()
+                    color: needResponseContentWhileLoading(vm)
                         ? null
                         : Colors.transparent,
                   ))
@@ -200,16 +200,16 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _buildBodyContent(T vm) {
     Widget content = buildPage(vm, vm.context);
-    if (needPageContentAdaptTabbar()) {
+    if (needPageContentAdaptTabbar(vm)) {
       content = Padding(
         padding: EdgeInsets.only(bottom: tabbarHeight(vm) + safeAreaBottom),
         child: content,
       );
     }
-    if (needSafeArea()) {
+    if (needSafeArea(vm)) {
       content = SafeArea(child: content);
     }
-    return Container(color: backgroundColor, child: content);
+    return Container(color: backgroundColor(vm), child: content);
   }
 
   /// 构建主体
@@ -218,7 +218,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   PreferredSizeWidget buildAppBar(T vm) {
     return AppBar(
-      backgroundColor: navigationBarBGColor,
+      backgroundColor: navigationBarBGColor(vm),
       scrolledUnderElevation: 0.0,
       elevation: 0,
       centerTitle: true,
@@ -245,9 +245,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget _defaultTitle(T vm) {
     return Text(setTitle(vm),
         style: TextStyle(
-            color: navigationBarTitleColor,
-            fontWeight: navigationBarTitleFontWeight,
-            fontSize: navigationBarTitleSize));
+            color: navigationBarTitleColor(vm),
+            fontWeight: navigationBarTitleFontWeight(vm),
+            fontSize: navigationBarTitleSize(vm)));
   }
 
   /// 构建navigationBar右侧widget

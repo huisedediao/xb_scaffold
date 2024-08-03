@@ -24,32 +24,32 @@ class XBPageTest extends XBPage<XBPageTestVM> {
   }
 
   @override
-  bool needInitLoading() {
+  bool needInitLoading(vm) {
     return false;
   }
 
   @override
-  bool needLoading() {
+  bool needLoading(vm) {
     return true;
   }
 
   @override
-  bool needResponseNavigationBarLeftWhileLoading() {
+  bool needResponseNavigationBarLeftWhileLoading(vm) {
     return false;
   }
 
   @override
-  bool needResponseNavigationBarCenterWhileLoading() {
+  bool needResponseNavigationBarCenterWhileLoading(vm) {
     return false;
   }
 
   @override
-  bool needResponseNavigationBarRightWhileLoading() {
+  bool needResponseNavigationBarRightWhileLoading(vm) {
     return false;
   }
 
   @override
-  bool needResponseContentWhileLoading() {
+  bool needResponseContentWhileLoading(vm) {
     return true;
   }
 

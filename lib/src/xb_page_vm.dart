@@ -7,14 +7,19 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   XBPageVM({required super.context}) {
+    if (_castWidget.needInitLoading(this)) {
+      _isShowLoadingWidget = true;
+    }
+    _addStackListen();
+  }
+
+  @override
+  void didCreated() {
+    super.didCreated();
     _pushNotifyAnimationTimer.once(
         duration:
             Duration(milliseconds: _castWidget.pushAnimationMilliseconds(this)),
         onTick: didFinishedPushAnimation);
-    if (_castWidget.needInitLoading()) {
-      _isShowLoadingWidget = true;
-    }
-    _addStackListen();
   }
 
   XBPage get _castWidget => widget as XBPage;
@@ -35,7 +40,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     _executeEnsureAfterPushAnimationTasks();
   }
 
-  /// 添加动画完成任务
+  /// 添加动画完成后的任务
   addEnsureAfterPushAnimationTask(void Function() fun) {
     XBVoidParamTask task = XBVoidParamTask(execute: fun);
     if (isFinishedPushAnimation) {
@@ -53,7 +58,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     _ensureAfterPushAnimationTasks.clear();
   }
 
-  /// 确保在动画完成后执行的任务
+  /// 确保在动画完成后需要执行的任务
   final List<XBVoidParamTask> _ensureAfterPushAnimationTasks = [];
 
   /// 是否完成push动画
@@ -65,7 +70,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   @override
   notify() {
-    if (_castWidget.notifyNeedAfterPushAnimation) {
+    if (_castWidget.notifyNeedAfterPushAnimation(this)) {
       if (isFinishedPushAnimation) {
         super.notify();
       } else {
@@ -97,7 +102,7 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   String? loadingMsg;
 
-  bool get needShowLoadingWidget => _castWidget.needLoading();
+  bool get needShowLoadingWidget => _castWidget.needLoading(this);
 
   showLoading({String? msg}) {
     loadingMsg = msg;
@@ -178,5 +183,5 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   /// loading是否允许返回
   bool _canLoadingPop() =>
       isShowLoadingWidget == false ||
-      _castWidget.needResponseNavigationBarLeftWhileLoading();
+      _castWidget.needResponseNavigationBarLeftWhileLoading(this);
 }

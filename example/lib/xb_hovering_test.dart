@@ -16,7 +16,7 @@ class XBHoveringTest extends XBPage<XBHoveringTestVM> {
   }
 
   @override
-  bool needLoading() {
+  bool needLoading(vm) {
     return true;
   }
 
