@@ -28,6 +28,7 @@ export './src/xb_life_cycle_mixin.dart';
 
 export './src/utils/xb_unique_list.dart';
 export './src/utils/xb_stack_list.dart';
+export './src/utils/xb_select_model.dart';
 export './src/utils/xb_timer.dart';
 export './src/utils/xb_img_size_util.dart';
 export 'src/utils/xb_prevent_multi_task.dart';

@@ -55,8 +55,8 @@ class _XBTipState extends State<XBTip> {
         }
         return true;
       },
-      child: GestureDetector(
-        onTapDown: (details) {
+      child: XBButton(
+        onTap: () {
           RenderBox box =
               childKey.currentContext?.findRenderObject() as RenderBox;
           Offset position = box.localToGlobal(Offset.zero);
