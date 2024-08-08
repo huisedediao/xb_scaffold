@@ -57,7 +57,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   bool needLoading(T vm) => false;
 
   /// notify是否需要在push动画完成之后
-  bool notifyNeedAfterPushAnimation(vm) => false;
+  bool notifyNeedAfterPushAnimation(T vm) => false;
 
   bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
