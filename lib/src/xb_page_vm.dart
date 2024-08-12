@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -153,6 +154,10 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   /// -------------------- function --------------------
   /// 即将pop
   onWillPop() {
+    xbError("onWillPop");
+    if (kIsWeb) {
+      return _webOnWillPop;
+    }
     if (Platform.isAndroid) {
       return _androidOnWillPop;
     } else {
@@ -162,6 +167,10 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
         return _iosOnWillPop;
       }
     }
+  }
+
+  Future<bool> _webOnWillPop() async {
+    return true;
   }
 
   /// ios如果用WillPopScope的onWillPop不为null，则返回手势失效，可以用这个控制iOS是否能够返回
