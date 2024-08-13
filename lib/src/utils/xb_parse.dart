@@ -1,5 +1,6 @@
 // 通用的解析方法，使用泛型T来决定返回值类型
-T? xbParse<T>(dynamic object, [int trueValue = 1]) {
+T? xbParse<T>(dynamic object,
+    {int trueValue = 1, T Function(Map<String, dynamic>)? factory}) {
   if (object == null) return null;
 
   try {
@@ -17,6 +18,8 @@ T? xbParse<T>(dynamic object, [int trueValue = 1]) {
       }
       final temp = xbParse<int>(object);
       return (temp == trueValue) as T?;
+    } else if (object is Map<String, dynamic> && factory != null) {
+      return factory(object);
     }
   } catch (e) {
     return null;
@@ -25,13 +28,14 @@ T? xbParse<T>(dynamic object, [int trueValue = 1]) {
 }
 
 // 通用的解析列表方法，使用泛型T来决定列表元素类型
-List<T>? xbParseList<T>(dynamic object, [int trueValue = 1]) {
+List<T>? xbParseList<T>(dynamic object,
+    {int trueValue = 1, T Function(Map<String, dynamic>)? factory}) {
   if (object == null || (object is List) == false) return null;
 
   List<T> ret = [];
   try {
     for (var item in object) {
-      T? value = xbParse<T>(item, trueValue);
+      T? value = xbParse<T>(item, trueValue: trueValue, factory: factory);
       if (value != null) {
         ret.add(value);
       }

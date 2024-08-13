@@ -154,7 +154,6 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   /// -------------------- function --------------------
   /// 即将pop
   onWillPop() {
-    xbError("onWillPop");
     if (kIsWeb) {
       return _webOnWillPop;
     }
