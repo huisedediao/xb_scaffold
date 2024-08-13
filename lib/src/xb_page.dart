@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
-import 'configs/color_config.dart';
+import 'configs/xb_color_config.dart';
 
 abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   const XBPage({super.key});

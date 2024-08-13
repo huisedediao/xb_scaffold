@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/configs/color_config.dart';
+import 'package:xb_scaffold/src/configs/xb_color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 dialogWidget(Widget widget) {

@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_file_image.dart';
-import '../configs/color_config.dart';
+import '../configs/xb_color_config.dart';
 
 /*
  * 自动适配网络图片或者本地图片的image
