@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../../xb_scaffold.dart';
-import 'xb_refresh_task_util.dart';
 
 class XBRefreshTaskDemo extends XBPage<XBRefreshTaskDemoVM> {
   const XBRefreshTaskDemo({super.key});

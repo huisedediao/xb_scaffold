@@ -34,7 +34,7 @@ class XBImgSizeUtil {
     return size;
   }
 
-  /// 从File获取图片宽高
+  /// 从File获取图片宽高（路径）
   static Future<Size> getImageSizeFromFile(File file) async {
     if (await file.length() == 0) return Future.value(Size.zero);
     String key = file.path;
@@ -46,7 +46,7 @@ class XBImgSizeUtil {
     return size;
   }
 
-  /// 从File获取图片宽高
+  /// 从File获取图片宽高（二进制数据）
   static Future<Size> getImageSizeFromMemory(Uint8List bytes) async {
     if (bytes.isEmpty) return Future.value(Size.zero);
     String key = "${bytes.first}${bytes.length}${bytes.hashCode}${bytes.last}";
