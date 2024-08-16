@@ -71,17 +71,21 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   @override
   notify() {
-    if (_castWidget.notifyNeedAfterPushAnimation(this)) {
-      if (isFinishedPushAnimation) {
-        super.notify();
-      } else {
-        addEnsureAfterPushAnimationTask(() {
+    try {
+      if (_castWidget.notifyNeedAfterPushAnimation(this)) {
+        if (isFinishedPushAnimation) {
           super.notify();
-        });
+        } else {
+          addEnsureAfterPushAnimationTask(() {
+            super.notify();
+          });
+        }
+        return;
       }
-      return;
+      super.notify();
+    } catch (e) {
+      //
     }
-    super.notify();
   }
 
   late StreamSubscription _stackSubscription;
@@ -103,7 +107,13 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   String? loadingMsg;
 
-  bool get needShowLoadingWidget => _castWidget.needLoading(this);
+  bool get needShowLoadingWidget {
+    try {
+      return _castWidget.needLoading(this);
+    } catch (e) {
+      return false;
+    }
+  }
 
   showLoading({String? msg}) {
     loadingMsg = msg;
@@ -160,10 +170,14 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     if (Platform.isAndroid) {
       return _androidOnWillPop;
     } else {
-      if (_castWidget.needIosGestureBack(this) && _canLoadingPop()) {
+      try {
+        if (_castWidget.needIosGestureBack(this) && _canLoadingPop()) {
+          return null;
+        } else {
+          return _iosOnWillPop;
+        }
+      } catch (e) {
         return null;
-      } else {
-        return _iosOnWillPop;
       }
     }
   }
@@ -183,13 +197,22 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
    * 如果需要控制iOS的滑动返回，在NeedIosGestureUtil中配置
    * */
   Future<bool> _androidOnWillPop() async {
-    return !isShowGoabolLoading &&
-        _castWidget.onAndroidPhysicalBack(this) &&
-        _canLoadingPop();
+    try {
+      return !isShowGoabolLoading &&
+          _castWidget.onAndroidPhysicalBack(this) &&
+          _canLoadingPop();
+    } catch (e) {
+      return false;
+    }
   }
 
   /// loading是否允许返回
-  bool _canLoadingPop() =>
-      isShowLoadingWidget == false ||
-      _castWidget.needResponseNavigationBarLeftWhileLoading(this);
+  bool _canLoadingPop() {
+    try {
+      return isShowLoadingWidget == false ||
+          _castWidget.needResponseNavigationBarLeftWhileLoading(this);
+    } catch (e) {
+      return true;
+    }
+  }
 }
