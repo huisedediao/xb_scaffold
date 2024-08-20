@@ -494,3 +494,7 @@
 
 - XBImage兼容Harmony
 
+## 0.0.126
+
+- optimized
+

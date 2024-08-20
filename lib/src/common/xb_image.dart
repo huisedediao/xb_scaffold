@@ -74,6 +74,9 @@ class XBImage extends StatelessWidget {
             fit: fit,
             gaplessPlayback: true,
             loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) {
+                return child; // 当图片加载完成时返回图片
+              }
               return placeholderWidget ?? Container();
             },
             errorBuilder: (context, error, stackTrace) {
