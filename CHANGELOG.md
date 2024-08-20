@@ -490,3 +490,7 @@
 
 - 兼容2.19.6 dart SDK
 
+## 0.0.125
+
+- XBImage兼容Harmony
+

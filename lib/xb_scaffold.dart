@@ -35,6 +35,7 @@ export 'src/utils/xb_prevent_multi_task.dart';
 export 'src/utils/xb_wait_task.dart';
 export 'src/utils/xb_event_bus.dart';
 export './src/utils/xb_refresh_task/xb_refresh_task_util.dart';
+export './src/xb_sys_config.dart';
 export './src/xb_sys_space.dart';
 export './src/xb_dialog.dart';
 export './src/xb_log.dart';

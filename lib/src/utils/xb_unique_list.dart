@@ -71,4 +71,12 @@ extension XBUniqueList<T> on List<T> {
     }
     return result;
   }
+
+  T? get firstOrNull {
+    if (isEmpty) {
+      return null;
+    } else {
+      return first;
+    }
+  }
 }

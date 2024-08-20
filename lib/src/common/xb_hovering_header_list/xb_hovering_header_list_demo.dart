@@ -73,7 +73,7 @@ class _XBHoveringHeaderListDemoState extends State<XBHoveringHeaderListDemo> {
         ///分割线builder
         separatorBuilder: (ctx, indexPath, height, isLast) {
 //        print("indexPath : $indexPath,$isLast");
-          return Separator();
+          return const Separator();
         },
 
         ///分割线高度
@@ -120,7 +120,7 @@ class CellOne extends StatelessWidget {
         height: height,
         color: Colors.black38,
         alignment: Alignment.center,
-        child: Text(title, style: TextStyle(color: Colors.white)),
+        child: Text(title, style: const TextStyle(color: Colors.white)),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_file_image.dart';
+import 'package:xb_scaffold/src/xb_sys_config.dart';
 import '../configs/xb_color_config.dart';
 
 /*
@@ -15,9 +16,15 @@ class XBImage extends StatelessWidget {
   final double? width;
   final BoxFit? fit;
   final Widget? placeholderWidget;
+  final Widget? errWidget;
 
   const XBImage(this.img,
-      {super.key, this.height, this.width, this.placeholderWidget, this.fit});
+      {super.key,
+      this.height,
+      this.width,
+      this.placeholderWidget,
+      this.errWidget,
+      this.fit});
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +66,24 @@ class XBImage extends StatelessWidget {
 
     if (img is String) {
       if (img.startsWith("http")) {
+        if (isHarmony) {
+          return Image.network(
+            img,
+            width: width,
+            height: height,
+            fit: fit,
+            gaplessPlayback: true,
+            loadingBuilder: (context, child, loadingProgress) {
+              return placeholderWidget ?? Container();
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return errWidget ??
+                  Container(
+                    color: viewBG,
+                  );
+            },
+          );
+        }
         return CachedNetworkImage(
           fadeInDuration: const Duration(milliseconds: 0),
           fadeOutDuration: const Duration(milliseconds: 0),
@@ -69,9 +94,11 @@ class XBImage extends StatelessWidget {
           placeholder: (context, url) {
             return placeholderWidget ?? Container();
           },
-          errorWidget: (context, url, error) => Container(
-            color: viewBG,
-          ),
+          errorWidget: (context, url, error) =>
+              errWidget ??
+              Container(
+                color: viewBG,
+              ),
         );
       } else {
         return Image.asset(
