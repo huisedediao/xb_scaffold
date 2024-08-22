@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'xb_vm.dart';
 
 abstract class XBWidget<T extends XBVM> extends StatefulWidget {
-  const XBWidget({required super.key});
+  const XBWidget({super.key});
 
   /// 生成vm
   T generateVM(BuildContext context);

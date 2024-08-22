@@ -498,3 +498,7 @@
 
 - optimized
 
+## 0.0.127
+
+- 添加多选actionSheet
+
