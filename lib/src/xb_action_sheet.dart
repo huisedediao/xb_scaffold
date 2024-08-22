@@ -187,7 +187,7 @@ actionSheetMulti({
       topRadius: topRadius,
       itemBuilder: itemBuilder ??
           (context, index, isSelected, height, onTap) {
-            return _DefMultiItem(
+            return XBActionSheetMultiDefItem(
               title: titles[index],
               isSelected: isSelected,
               height: height,
@@ -237,7 +237,7 @@ actionSheetMultiItem({
   IndexedWidgetBuilder? separatorBuilder,
 }) async {
   actionSheetWidget(
-    widget: _DefMultiItemWidget(
+    widget: XBActionSheetMultiItemDefWidget(
         itemCount: itemCount,
         selectedIndexes: selectedIndexes,
         itemBuilder: itemBuilder,
@@ -254,7 +254,8 @@ actionSheetMultiItem({
   );
 }
 
-class _DefMultiItemWidget extends XBWidget<_DefMultiItemWidgetVM> {
+class XBActionSheetMultiItemDefWidget
+    extends XBWidget<XBActionSheetMultiItemDefWidgetVM> {
   final int itemCount;
 
   /// 如果不为null，则使用自定义item
@@ -289,7 +290,7 @@ class _DefMultiItemWidget extends XBWidget<_DefMultiItemWidgetVM> {
 
   /// 分割线
   final IndexedWidgetBuilder? separatorBuilder;
-  const _DefMultiItemWidget(
+  const XBActionSheetMultiItemDefWidget(
       {required this.itemCount,
       required this.itemBuilder,
       required this.onDone,
@@ -306,11 +307,12 @@ class _DefMultiItemWidget extends XBWidget<_DefMultiItemWidgetVM> {
 
   @override
   generateVM(BuildContext context) {
-    return _DefMultiItemWidgetVM(context: context);
+    return XBActionSheetMultiItemDefWidgetVM(context: context);
   }
 
   @override
-  Widget buildWidget(_DefMultiItemWidgetVM vm, BuildContext context) {
+  Widget buildWidget(
+      XBActionSheetMultiItemDefWidgetVM vm, BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.only(
           topLeft: Radius.circular(topRadius),
@@ -395,7 +397,7 @@ class _DefMultiItemWidget extends XBWidget<_DefMultiItemWidgetVM> {
 
   Widget get centerWidget => titleWidget ?? Container();
 
-  Widget rightBtn(_DefMultiItemWidgetVM vm) {
+  Widget rightBtn(XBActionSheetMultiItemDefWidgetVM vm) {
     Widget ret;
     if (doneBtn != null) {
       ret = doneBtn!;
@@ -421,9 +423,10 @@ class _DefMultiItemWidget extends XBWidget<_DefMultiItemWidgetVM> {
   }
 }
 
-class _DefMultiItemWidgetVM extends XBVM<_DefMultiItemWidget> {
+class XBActionSheetMultiItemDefWidgetVM
+    extends XBVM<XBActionSheetMultiItemDefWidget> {
   List<int> selectedIndexes = [];
-  _DefMultiItemWidgetVM({required super.context}) {
+  XBActionSheetMultiItemDefWidgetVM({required super.context}) {
     selectedIndexes.addAll(widget.selectedIndexes ?? []);
   }
 
@@ -457,12 +460,13 @@ class _DefMultiItemWidgetVM extends XBVM<_DefMultiItemWidget> {
   isSelected(int index) => selectedIndexes.contains(index);
 }
 
-class _DefMultiItem extends StatelessWidget {
+class XBActionSheetMultiDefItem extends StatelessWidget {
   final String title;
   final bool isSelected;
   final VoidCallback? onTap;
   final double height;
-  const _DefMultiItem({
+  const XBActionSheetMultiDefItem({
+    super.key,
     required this.title,
     required this.isSelected,
     required this.height,
