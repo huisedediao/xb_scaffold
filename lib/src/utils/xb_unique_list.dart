@@ -79,4 +79,20 @@ extension XBUniqueList<T> on List<T> {
       return first;
     }
   }
+
+  T? get lastOrNull {
+    if (isEmpty) {
+      return null;
+    } else {
+      return last;
+    }
+  }
+
+  T? get(int index) {
+    if (isEmpty || index < 0 || index >= length) {
+      return null;
+    } else {
+      return this[index];
+    }
+  }
 }
