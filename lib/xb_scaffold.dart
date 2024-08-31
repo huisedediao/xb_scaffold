@@ -50,6 +50,9 @@ export 'src/common/xb_title_picker/xb_title_picker.dart';
 export 'src/common/xb_title_picker/xb_title_picker_index.dart';
 export 'src/common/xb_title_picker/xb_title_picker_multi.dart';
 export 'src/configs/xb_def.dart';
+export 'src/common/xb_bg.dart';
+export 'src/common/xb_gradient_widget.dart';
+export 'src/common/xb_disable.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
