@@ -22,4 +22,9 @@ class XBRotateTestVM extends XBPageVM<XBRotateTest> {
     }
     // notify();
   }
+
+  @override
+  void widgetSizeDidChanged() {
+    xbError("widgetSizeDidChanged:$widgetSize");
+  }
 }

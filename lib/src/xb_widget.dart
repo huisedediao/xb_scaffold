@@ -76,7 +76,12 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
       value: vm,
       child: Consumer<T>(
         builder: (context, vm, child) {
-          return widget.buildWidget(vm, context);
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              vm.widgetSize = Size(constraints.maxWidth, constraints.maxHeight);
+              return widget.buildWidget(vm, context);
+            },
+          );
         },
       ),
     );

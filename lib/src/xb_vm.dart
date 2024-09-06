@@ -8,6 +8,18 @@ class XBVM<T> extends ChangeNotifier {
 
   late XBWidgetState state;
 
+  Size _widgetSize = Size.zero;
+  Size get widgetSize => _widgetSize;
+  set widgetSize(Size newValue) {
+    if (_widgetSize == newValue) {
+      return;
+    }
+    _widgetSize = newValue;
+    widgetSizeDidChanged();
+  }
+
+  void widgetSizeDidChanged() {}
+
   XBVM({required this.context});
 
   bool _disposed = false;
