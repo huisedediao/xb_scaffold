@@ -518,3 +518,7 @@
 
 - 添加获取XBWidget宽高方法
 
+## 0.0.132
+
+- 新增XBTextField
+

@@ -53,6 +53,8 @@ export 'src/configs/xb_def.dart';
 export 'src/common/xb_bg.dart';
 export 'src/common/xb_gradient_widget.dart';
 export 'src/common/xb_disable.dart';
+export 'src/common/xb_text_field/xb_text_field.dart';
+export 'src/common/xb_text_field/xb_text_input_formatter.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
