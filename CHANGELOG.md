@@ -534,3 +534,7 @@
 
 - 去除设置xbGlobalContext接口、优化endEditing、XBImage新增ui.Image支持
 
+## 0.0.136
+
+- 新增设置tempContext接口
+

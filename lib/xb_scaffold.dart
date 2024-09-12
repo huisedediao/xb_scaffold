@@ -68,7 +68,9 @@ Stream<XBStackChangedEvent> get xbRouteStackStream =>
 
 /// 全局BuildContext
 late BuildContext _xbGlobalContext;
-BuildContext get xbGlobalContext => _xbGlobalContext;
+BuildContext get xbGlobalContext => tempContext ?? _xbGlobalContext;
+
+BuildContext? tempContext;
 
 /// 结束输入框编辑
 void endEditing({BuildContext? context}) =>
