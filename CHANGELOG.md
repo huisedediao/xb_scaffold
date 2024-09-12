@@ -522,3 +522,15 @@
 
 - 新增XBTextField
 
+## 0.0.133
+
+- XBImage新增isInPackage变量
+
+## 0.0.134
+
+- 新增设置xbGlobalContext接口
+
+## 0.0.135
+
+- 去除设置xbGlobalContext接口、优化endEditing、XBImage新增ui.Image支持
+

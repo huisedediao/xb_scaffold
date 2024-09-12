@@ -95,7 +95,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () {
-          endEditing;
+          endEditing(context: context);
         },
         child: _themeConsumerWidget(vm));
   }

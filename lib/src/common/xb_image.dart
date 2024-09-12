@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_file_image.dart';
 import 'package:xb_scaffold/src/xb_sys_config.dart';
 import '../configs/xb_color_config.dart';
+import 'dart:ui' as ui;
 
 /*
  * 自动适配网络图片或者本地图片的image
@@ -17,6 +18,7 @@ class XBImage extends StatelessWidget {
   final BoxFit? fit;
   final Widget? placeholderWidget;
   final Widget? errWidget;
+  final bool isInPackage;
 
   const XBImage(this.img,
       {super.key,
@@ -24,6 +26,7 @@ class XBImage extends StatelessWidget {
       this.width,
       this.placeholderWidget,
       this.errWidget,
+      this.isInPackage = false,
       this.fit});
 
   @override
@@ -42,6 +45,15 @@ class XBImage extends StatelessWidget {
   Widget _create() {
     if (img == "" || img == null) {
       return _def();
+    }
+
+    if (img is ui.Image) {
+      return RawImage(
+        image: img,
+        width: width,
+        height: height,
+        fit: fit,
+      );
     }
 
     if (img is File) {
@@ -65,6 +77,15 @@ class XBImage extends StatelessWidget {
     }
 
     if (img is String) {
+      if (isInPackage) {
+        return Image(
+          image: AssetImage(img),
+          width: width,
+          height: height,
+          fit: fit,
+          gaplessPlayback: true,
+        );
+      }
       if (img.startsWith("http")) {
         if (isHarmony) {
           return Image.network(

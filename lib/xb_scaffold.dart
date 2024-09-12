@@ -71,7 +71,8 @@ late BuildContext _xbGlobalContext;
 BuildContext get xbGlobalContext => _xbGlobalContext;
 
 /// 结束输入框编辑
-void get endEditing => FocusScope.of(xbGlobalContext).requestFocus(FocusNode());
+void endEditing({BuildContext? context}) =>
+    FocusScope.of(context ?? xbGlobalContext).requestFocus(FocusNode());
 
 /// 用于外部控制loading要长什么样
 typedef XBLoadingBuilder = Widget Function(BuildContext context, String? msg);
