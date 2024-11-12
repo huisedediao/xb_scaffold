@@ -68,7 +68,14 @@ Stream<XBStackChangedEvent> get xbRouteStackStream =>
 
 /// 全局BuildContext
 late BuildContext _xbGlobalContext;
-BuildContext get xbGlobalContext => tempContext ?? _xbGlobalContext;
+bool _isInitXBScaffold = false;
+BuildContext get xbGlobalContext {
+  if (_isInitXBScaffold) {
+    return _xbGlobalContext;
+  }
+  assert(tempContext != null, "请初始化XBScaffold或者设置tempContext");
+  return tempContext!;
+}
 
 BuildContext? tempContext;
 
@@ -129,6 +136,7 @@ class _MyWidgetState extends State<XBScaffold> {
   @override
   Widget build(BuildContext context) {
     _xbGlobalContext = context;
+    _isInitXBScaffold = true;
     return widget.child;
   }
 }
