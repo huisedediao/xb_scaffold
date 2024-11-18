@@ -41,14 +41,21 @@ Widget xbSpaceWidth(double width) => xbSpace(width: width);
 class XBBottomLine extends StatelessWidget {
   final Widget child;
   final bool isShow;
-  const XBBottomLine({required this.child, this.isShow = true, super.key});
+  final double? lineWidth;
+  final Color? lineColor;
+  const XBBottomLine(
+      {required this.child,
+      this.isShow = true,
+      this.lineWidth,
+      this.lineColor,
+      super.key});
 
   @override
   Widget build(BuildContext context) {
     if (!isShow) return child;
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [child, xbLine()],
+      children: [child, xbLine(width: lineWidth, color: lineColor)],
     );
   }
 }

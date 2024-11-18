@@ -14,6 +14,24 @@ class XBNumberTextInputFormatter extends TextInputFormatter {
   }
 }
 
+/// 限制只能输入数字和小数点
+class XBDoubleTextInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    // 保留数字和小数点，并限制为有效的双精度格式
+    String text = newValue.text;
+    // 使用正则表达式确保内容是有效的数字或小数格式
+    final isValid = RegExp(r'^\d*\.?\d*$').hasMatch(text);
+    if (!isValid) {
+      // 如果新内容无效，则保持旧值
+      return oldValue;
+    }
+    return newValue.copyWith(
+        text: text, selection: TextSelection.collapsed(offset: text.length));
+  }
+}
+
 /// 限制最大最小值
 class XBNumberLimitTextInputFormatter extends TextInputFormatter {
   final int min;
