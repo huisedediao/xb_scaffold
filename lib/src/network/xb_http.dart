@@ -61,7 +61,7 @@ class XBHttp {
       Map<String, dynamic>? headers,
       CancelToken? cancelToken,
       bool needLog = true}) async {
-    return await XBHttp.request(url,
+    return XBHttp.request(url,
         queryParams: queryParams,
         headers: headers,
         cancelToken: cancelToken,
@@ -75,7 +75,7 @@ class XBHttp {
       CancelToken? cancelToken,
       Interceptor? inter,
       bool needLog = true}) async {
-    return await XBHttp.request(url,
+    return XBHttp.request(url,
         method: 'POST',
         queryParams: queryParams,
         bodyParams: bodyParams,
@@ -91,7 +91,7 @@ class XBHttp {
       CancelToken? cancelToken,
       Interceptor? inter,
       bool needLog = true}) async {
-    return await XBHttp.request(url,
+    return XBHttp.request(url,
         method: 'PUT',
         queryParams: queryParams,
         bodyParams: bodyParams,
@@ -107,7 +107,7 @@ class XBHttp {
       CancelToken? cancelToken,
       Interceptor? inter,
       bool needLog = true}) async {
-    return await XBHttp.request(url,
+    return XBHttp.request(url,
         method: 'DELETE',
         queryParams: queryParams,
         bodyParams: bodyParams,
@@ -150,36 +150,40 @@ class XBHttp {
     bool needLog = true,
     CancelToken? cancelToken,
   }) async {
-    final options = Options(headers: headers);
+    try {
+      final options = Options(headers: headers);
 
-    /// 创建Dio
-    Dio dio = Dio();
+      /// 创建Dio
+      Dio dio = Dio();
 
-    Map<String, dynamic> map = {};
-    map["file"] = multipartFile;
+      Map<String, dynamic> map = {};
+      map["file"] = multipartFile;
 
-    /// 通过FormData
-    FormData formData = FormData.fromMap(map);
+      /// 通过FormData
+      FormData formData = FormData.fromMap(map);
 
-    /// 发送post
-    Response response = await dio.post(
-      url, data: formData, options: options,
-      cancelToken: cancelToken,
+      /// 发送post
+      Response response = await dio.post(
+        url, data: formData, options: options,
+        cancelToken: cancelToken,
 
-      /// 这里是发送请求回调函数
-      /// [progress] 当前的进度
-      /// [total] 总进度
-      onSendProgress: (int progress, int total) {
-        _print(info: "当前进度是 $progress 总进度是 $total", needLog: needLog);
-      },
-    );
+        /// 这里是发送请求回调函数
+        /// [progress] 当前的进度
+        /// [total] 总进度
+        onSendProgress: (int progress, int total) {
+          _print(info: "当前进度是 $progress 总进度是 $total", needLog: needLog);
+        },
+      );
 
-    /// 服务器响应结果
-    var data = response.data;
+      /// 服务器响应结果
+      var data = response.data;
 
-    _print(info: "fileUpload response.data : $data", needLog: needLog);
+      _print(info: "fileUpload response.data : $data", needLog: needLog);
 
-    return data;
+      return data;
+    } catch (e) {
+      return Future.error(e);
+    }
   }
 
   static _print({required String info, bool needLog = true}) {
