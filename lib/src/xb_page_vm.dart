@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_scaffold/src/utils/xb_import.dart'
+    if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
 
 class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   XBPageVM({required super.context}) {
@@ -17,11 +19,19 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
   @override
   void didCreated() {
     super.didCreated();
+    final title = (widget as XBPage).setTitle(this);
+    if (title.isNotEmpty) {
+      _lastHtmlTitle = getDocumentTitle();
+      setDocumentTitle(title);
+    }
     _pushNotifyAnimationTimer.once(
         duration:
             Duration(milliseconds: _castWidget.pushAnimationMilliseconds(this)),
         onTick: didFinishedPushAnimation);
   }
+
+  /// 记录上一个网页的标题
+  String? _lastHtmlTitle;
 
   XBPage get _castWidget => widget as XBPage;
 
@@ -152,6 +162,14 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
         });
       }
     } catch (e) {}
+  }
+
+  @override
+  void willDispose() {
+    super.willDispose();
+    if (_lastHtmlTitle != null) {
+      setDocumentTitle(_lastHtmlTitle!);
+    }
   }
 
   @override
