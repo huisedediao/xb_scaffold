@@ -55,6 +55,8 @@ export 'src/common/xb_gradient_widget.dart';
 export 'src/common/xb_disable.dart';
 export 'src/common/xb_text_field/xb_text_field.dart';
 export 'src/common/xb_text_field/xb_text_input_formatter.dart';
+export 'package:xb_scaffold/src/utils/xb_import.dart'
+    if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
 
 /// 路由栈监听
 XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
