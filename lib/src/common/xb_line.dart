@@ -43,11 +43,13 @@ class XBBottomLine extends StatelessWidget {
   final bool isShow;
   final double? lineWidth;
   final Color? lineColor;
+  final double? padding;
   const XBBottomLine(
       {required this.child,
       this.isShow = true,
       this.lineWidth,
       this.lineColor,
+      this.padding,
       super.key});
 
   @override
@@ -55,7 +57,13 @@ class XBBottomLine extends StatelessWidget {
     if (!isShow) return child;
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [child, xbLine(width: lineWidth, color: lineColor)],
+      children: [
+        child,
+        Padding(
+          padding: EdgeInsets.only(left: padding ?? 0, right: padding ?? 0),
+          child: xbLine(width: lineWidth, color: lineColor),
+        )
+      ],
     );
   }
 }
