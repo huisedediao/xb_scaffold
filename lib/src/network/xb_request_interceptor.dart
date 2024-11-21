@@ -1,17 +1,21 @@
 import 'dart:convert';
-
 import 'package:dio/dio.dart';
-
 import '../xb_print.dart';
 import 'xb_dio_config.dart';
+export 'xb_dio_config.dart';
 
 class XBRequestInterceptor extends Interceptor {
   @override
   void onRequest(
       RequestOptions options, RequestInterceptorHandler handler) async {
-    if (printLog) {
-      options.headers
-          .addAll({'requestId': DateTime.now().microsecondsSinceEpoch});
+    options.headers
+        .addAll({'requestId': DateTime.now().microsecondsSinceEpoch});
+    bool needSuperLog = true;
+    Map<String, dynamic> requestHeaders = options.headers;
+    if (requestHeaders.containsKey(needSuperLogKey)) {
+      needSuperLog = requestHeaders[needSuperLogKey];
+    }
+    if (printLog && needSuperLog) {
       try {
         xbLog("request start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
             "method: ${options.method}\n"

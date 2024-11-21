@@ -1,14 +1,18 @@
 import 'dart:convert';
-
 import 'package:dio/dio.dart';
-
 import '../xb_print.dart';
 import 'xb_dio_config.dart';
+export 'xb_dio_config.dart';
 
 class XBResponseInterceptor extends Interceptor {
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    if (printLog) {
+    bool needSuperLog = true;
+    Map<String, dynamic> requestHeaders = response.requestOptions.headers;
+    if (requestHeaders.containsKey(needSuperLogKey)) {
+      needSuperLog = requestHeaders[needSuperLogKey];
+    }
+    if (printLog && needSuperLog) {
       try {
         xbLog(
             "response start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
@@ -20,7 +24,7 @@ class XBResponseInterceptor extends Interceptor {
             "request queryParameters: ${jsonEncode(response.requestOptions.queryParameters)}\n"
             "statusCode: ${response.statusCode}\n"
             "response data: ${jsonEncode(response.data)}\n"
-            // "header: ${response.headers}"
+            "response header: \n${response.headers}\n"
             "response end-------\n");
       } catch (e) {
         xbLog("打印响应的时候出错了：$e");
@@ -31,7 +35,12 @@ class XBResponseInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    if (printLog) {
+    bool needSuperLog = true;
+    Map<String, dynamic> requestHeaders = err.requestOptions.headers;
+    if (requestHeaders.containsKey(needSuperLogKey)) {
+      needSuperLog = requestHeaders[needSuperLogKey];
+    }
+    if (printLog && needSuperLog) {
       try {
         xbLog("error start  ${DateTime.now().microsecondsSinceEpoch}-------\n"
             "method: ${err.requestOptions.method}\n"
@@ -41,7 +50,6 @@ class XBResponseInterceptor extends Interceptor {
             "request data: ${jsonEncode(err.requestOptions.data)}\n"
             "request queryParameters: ${jsonEncode(err.requestOptions.queryParameters)}\n"
             "response: ${err.response.toString()}\n"
-            // "header: ${response.headers}"
             "error end-------\n");
       } catch (e) {
         xbLog("打印错误的时候出错了：$e");

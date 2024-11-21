@@ -8,6 +8,8 @@ int get _timeout => kDebugMode ? 20 : 20;
 bool _printLog = true;
 bool get printLog => _printLog;
 
+String needSuperLogKey = 'needSuperLog';
+
 class XBDioConfig {
   static Dio? _dio;
   static Dio get dio {

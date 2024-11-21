@@ -34,24 +34,16 @@ class XBHttp {
           queryParameters: queryParams,
           data: bodyParams);
       if (response.data is String) {
-        _print(info: "response.data is String", needLog: needLog);
-        if (response.data == "ok" || response.data.length == 0) {
-          _print(info: "response.data is String 1", needLog: needLog);
+        try {
+          return json.decode(response.data);
+        } catch (e) {
           return response.data;
-        } else {
-          _print(info: "response.data is String 2", needLog: needLog);
-          try {
-            return json.decode(response.data);
-          } catch (e) {
-            return response.data;
-          }
         }
       } else {
-        _print(info: "response.data is not String", needLog: needLog);
         return response.data;
       }
     } on DioException catch (e) {
-      _print(info: "捕捉到错误：$e", needLog: needLog);
+      _print(info: "request err：$e", needLog: needLog);
       return Future.error(e);
     }
   }
