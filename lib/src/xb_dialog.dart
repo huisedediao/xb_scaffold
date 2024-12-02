@@ -19,50 +19,58 @@ dialogContent(
     required List<String> btnTitles,
     Color? btnHighLightColor,
     Color? btnDefaultColor,
-    required ValueChanged<int> onSelected}) {
-  dialogWidget(Padding(
-    padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        color: Colors.white,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: spaces.gapDef,
-            ),
-            Text(
-              title,
-              style: titleStyle ??
-                  TextStyle(
-                      fontSize: fontSizes.s18,
-                      fontWeight: fontWeights.semiBold),
-            ),
-            Padding(
-              padding: EdgeInsets.only(
-                  left: spaces.gapDef,
-                  right: spaces.gapDef,
-                  top: spaces.gapLess,
-                  bottom: spaces.gapDef),
-              child: content,
-            ),
-            Container(
-              height: onePixel,
-              color: lineColor,
-            ),
-            Row(
-              children: _setupBtns(
-                  btnTitles: btnTitles,
-                  onSelected: onSelected,
-                  btnHighLightColor: btnHighLightColor,
-                  btnDefaultColor: btnDefaultColor),
-            )
-          ],
-        ),
+    required ValueChanged<int> onSelected,
+    double? maxWidth}) {
+  Widget child = ClipRRect(
+    borderRadius: BorderRadius.circular(10),
+    child: Container(
+      color: Colors.white,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: spaces.gapDef,
+          ),
+          Text(
+            title,
+            style: titleStyle ??
+                TextStyle(
+                    fontSize: fontSizes.s18, fontWeight: fontWeights.semiBold),
+          ),
+          Padding(
+            padding: EdgeInsets.only(
+                left: spaces.gapDef,
+                right: spaces.gapDef,
+                top: spaces.gapLess,
+                bottom: spaces.gapDef),
+            child: content,
+          ),
+          Container(
+            height: onePixel,
+            color: lineColor,
+          ),
+          Row(
+            children: _setupBtns(
+                btnTitles: btnTitles,
+                onSelected: onSelected,
+                btnHighLightColor: btnHighLightColor,
+                btnDefaultColor: btnDefaultColor),
+          )
+        ],
       ),
     ),
-  ));
+  );
+  if (maxWidth != null) {
+    if (maxWidth > screenW - spaces.gapDef * 2) {
+      maxWidth = screenW - spaces.gapDef * 2;
+    }
+    dialogWidget(SizedBox(width: maxWidth, child: child));
+  } else {
+    dialogWidget(Padding(
+      padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
+      child: child,
+    ));
+  }
 }
 
 dialog(
@@ -72,7 +80,8 @@ dialog(
     required List<String> btnTitles,
     Color? btnHighLightColor,
     Color? btnDefaultColor,
-    required ValueChanged<int> onSelected}) {
+    required ValueChanged<int> onSelected,
+    double? maxWidth}) {
   dialogContent(
       title: title,
       titleStyle: titleStyle,
@@ -80,7 +89,8 @@ dialog(
       btnTitles: btnTitles,
       onSelected: onSelected,
       btnHighLightColor: btnHighLightColor,
-      btnDefaultColor: btnDefaultColor);
+      btnDefaultColor: btnDefaultColor,
+      maxWidth: maxWidth);
 }
 
 _dialogWidget({
