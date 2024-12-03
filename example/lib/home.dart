@@ -54,6 +54,27 @@ class Home extends XBPage<HomeVM> {
           );
         }
         if (index == 1) {
+          return XBCellTitleSubtitle(
+            contentBorderRadius: BorderRadius.circular(6),
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            backgroundColor: Colors.green,
+            titleStyle: const TextStyle(color: Colors.white),
+            subtitleStyle: TextStyle(color: Colors.white.withAlpha(150)),
+            contentHeight: 70,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            title: title,
+            titleMaxLines: 2,
+            titleOverflow: TextOverflow.ellipsis,
+            maxTitleWidth: screenW * 0.5,
+            subtitle: "subtitle",
+            onTap: () {},
+          );
+        }
+        if (index == 2) {
           return XBCellCenterTitle(
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(

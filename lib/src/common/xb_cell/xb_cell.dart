@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
 export 'xb_cell_title_subtitle_arrow.dart';
+export 'xb_cell_title_subtitle.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
