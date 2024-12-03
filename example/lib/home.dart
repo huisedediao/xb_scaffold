@@ -108,7 +108,7 @@ class Home extends XBPage<HomeVM> {
           );
         }
         if (index == 4) {
-          return XBCellTitleImageArrow(
+          return XBCellTitleIconArrow(
             contentBorderRadius: BorderRadius.circular(6),
             image: "assets/images/icon_inspectionPlan.png",
             margin: EdgeInsets.only(

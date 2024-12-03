@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBCellTitleImageArrow extends XBCell {
+class XBCellTitleIconArrow extends XBCell {
   final String image;
   final Size? imageSize;
   final double? titleRightPadding;
@@ -13,7 +13,7 @@ class XBCellTitleImageArrow extends XBCell {
   final TextOverflow? titleOverflow;
   final Color? arrowColor;
   final double? arrowLeftPadding;
-  const XBCellTitleImageArrow(
+  const XBCellTitleIconArrow(
       {required this.image,
       this.imageSize,
       required this.title,
