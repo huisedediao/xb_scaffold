@@ -8,6 +8,7 @@ class HomeVM extends XBPageVM<Home> {
         "XBCellTitleSubtitleArrow",
         "XBCellTitleSubtitle",
         "XBCellCenterTitle",
-        "XBCellIconTitleArrow"
+        "XBCellIconTitleArrow",
+        "XBCellTitleImageArrow"
       ];
 }

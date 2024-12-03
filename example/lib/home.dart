@@ -107,6 +107,24 @@ class Home extends XBPage<HomeVM> {
             arrowColor: Colors.white,
           );
         }
+        if (index == 4) {
+          return XBCellTitleImageArrow(
+            contentBorderRadius: BorderRadius.circular(6),
+            image: "assets/images/icon_inspectionPlan.png",
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 40,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            title: title,
+            titleStyle: const TextStyle(color: Colors.white),
+            // imageSize: const Size(20, 20),
+            backgroundColor: Colors.teal,
+            arrowColor: Colors.white,
+          );
+        }
         return Container(
           color: colors.randColor,
           height: 50,
