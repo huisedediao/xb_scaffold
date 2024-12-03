@@ -39,10 +39,12 @@ class XBCellIconTitleSelect extends XBCell {
   Widget buildContent() {
     return Row(
       children: [
-        XBImage(
-          icon,
+        SizedBox(
           width: iconSize?.width ?? 15,
           height: iconSize?.height ?? 15,
+          child: XBImage(
+            icon,
+          ),
         ),
         SizedBox(width: iconRightPadding ?? spaces.gapLess),
         SizedBox(

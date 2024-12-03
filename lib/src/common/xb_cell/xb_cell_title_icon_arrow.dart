@@ -47,10 +47,12 @@ class XBCellTitleIconArrow extends XBCell {
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
         const Spacer(),
-        XBImage(
-          icon,
+        SizedBox(
           width: iconSize?.width ?? 50,
           height: iconSize?.height ?? 50,
+          child: XBImage(
+            icon,
+          ),
         ),
         SizedBox(width: arrowLeftPadding ?? 5),
         XBCellArrow(
