@@ -60,7 +60,7 @@ class Home extends XBPage<HomeVM> {
               left: spaces.gapDef,
               right: spaces.gapDef,
             ),
-            backgroundColor: Colors.green,
+            backgroundColor: Colors.blue,
             titleStyle: const TextStyle(color: Colors.white),
             subtitleStyle: TextStyle(color: Colors.white.withAlpha(150)),
             contentHeight: 70,
@@ -87,6 +87,24 @@ class Home extends XBPage<HomeVM> {
             padding: const EdgeInsets.only(top: 10, bottom: 10),
             title: title,
             onTap: () {},
+          );
+        }
+        if (index == 3) {
+          return XBCellIconTitleArrow(
+            contentBorderRadius: BorderRadius.circular(6),
+            icon: "assets/images/icon_inspectionPlan.png",
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 40,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            title: title,
+            titleStyle: const TextStyle(color: Colors.white),
+            iconSize: const Size(20, 20),
+            backgroundColor: Colors.purple,
+            arrowColor: Colors.white,
           );
         }
         return Container(

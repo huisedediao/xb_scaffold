@@ -3,6 +3,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
 export 'xb_cell_title_subtitle_arrow.dart';
 export 'xb_cell_title_subtitle.dart';
+export 'xb_cell_icon_title_arrow.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
