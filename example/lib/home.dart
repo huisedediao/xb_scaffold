@@ -110,7 +110,7 @@ class Home extends XBPage<HomeVM> {
         if (index == 4) {
           return XBCellTitleIconArrow(
             contentBorderRadius: BorderRadius.circular(6),
-            image: "assets/images/icon_inspectionPlan.png",
+            icon: "assets/images/icon_inspectionPlan.png",
             margin: EdgeInsets.only(
               left: spaces.gapDef,
               right: spaces.gapDef,
@@ -202,6 +202,28 @@ class Home extends XBPage<HomeVM> {
             onTap: vm.onSelectChange,
             icon: 'assets/images/icon_inspectionPlan.png',
             iconSize: const Size(20, 20),
+          );
+        }
+        if (index == 9) {
+          return Container(
+            alignment: Alignment.center,
+            child: XBCellIconTitleTb(
+              title: title,
+              contentBorderRadius: BorderRadius.circular(6),
+              margin: EdgeInsets.only(
+                left: spaces.gapDef,
+                right: spaces.gapDef,
+              ),
+              padding: EdgeInsets.only(
+                  left: spaces.gapDef,
+                  right: spaces.gapDef,
+                  top: 10,
+                  bottom: 10),
+              backgroundColor: Colors.white,
+              icon: 'assets/images/icon_inspectionPlan.png',
+              iconSize: const Size(50, 50),
+              gap: 10,
+            ),
           );
         }
 

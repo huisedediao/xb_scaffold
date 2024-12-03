@@ -3,8 +3,8 @@ import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellTitleIconArrow extends XBCell {
-  final String image;
-  final Size? imageSize;
+  final String icon;
+  final Size? iconSize;
   final double? titleRightPadding;
   final String title;
   final TextStyle? titleStyle;
@@ -14,8 +14,8 @@ class XBCellTitleIconArrow extends XBCell {
   final Color? arrowColor;
   final double? arrowLeftPadding;
   const XBCellTitleIconArrow(
-      {required this.image,
-      this.imageSize,
+      {required this.icon,
+      this.iconSize,
       required this.title,
       this.titleRightPadding,
       this.titleStyle,
@@ -48,9 +48,9 @@ class XBCellTitleIconArrow extends XBCell {
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
         const Spacer(),
         XBImage(
-          image,
-          width: imageSize?.width ?? 50,
-          height: imageSize?.height ?? 50,
+          icon,
+          width: iconSize?.width ?? 50,
+          height: iconSize?.height ?? 50,
         ),
         SizedBox(width: arrowLeftPadding ?? 5),
         XBCellArrow(
