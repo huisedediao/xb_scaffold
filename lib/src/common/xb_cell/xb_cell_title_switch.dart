@@ -9,11 +9,11 @@ class XBCellTitleSwitch extends XBCell {
   final double? maxTitleWidth;
   final int? titleMaxLines;
   final TextOverflow? titleOverflow;
-  final bool isSelected;
+  final bool isOn;
   final Color activeColor;
   const XBCellTitleSwitch(
       {required this.title,
-      required this.isSelected,
+      required this.isOn,
       this.titleStyle,
       this.titleRightPadding,
       this.maxTitleWidth,
@@ -48,7 +48,7 @@ class XBCellTitleSwitch extends XBCell {
         const Spacer(),
         CupertinoSwitch(
             activeColor: activeColor,
-            value: isSelected,
+            value: isOn,
             onChanged: (newValue) {
               onTap?.call();
             })

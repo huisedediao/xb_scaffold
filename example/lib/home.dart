@@ -171,7 +171,7 @@ class Home extends XBPage<HomeVM> {
         if (index == 7) {
           return XBCellTitleSwitch(
             title: title,
-            isSelected: vm.isSelected,
+            isOn: vm.isSelected,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
