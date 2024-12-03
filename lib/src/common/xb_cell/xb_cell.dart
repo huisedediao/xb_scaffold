@@ -6,6 +6,7 @@ export 'xb_cell_title_subtitle.dart';
 export 'xb_cell_icon_title_arrow.dart';
 export 'xb_cell_title_image_arrow.dart';
 export 'xb_cell_title_select.dart';
+export 'xb_cell_icon_title_select.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;

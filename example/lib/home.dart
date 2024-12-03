@@ -146,6 +146,28 @@ class Home extends XBPage<HomeVM> {
               unSelectedColor: Colors.green,
               onTap: vm.onSelectChange);
         }
+        if (index == 6) {
+          return XBCellIconTitleSelect(
+              icon: "assets/images/icon_inspectionPlan.png",
+              contentBorderRadius: BorderRadius.circular(6),
+              title: title,
+              isSelected: vm.isSelected,
+              margin: EdgeInsets.only(
+                left: spaces.gapDef,
+                right: spaces.gapDef,
+              ),
+              contentHeight: 40,
+              padding: EdgeInsets.only(
+                  left: spaces.gapDef,
+                  right: spaces.gapDef,
+                  top: 10,
+                  bottom: 10),
+              iconSize: const Size(20, 20),
+              backgroundColor: Colors.white,
+              selectedColor: Colors.green,
+              unSelectedColor: Colors.green,
+              onTap: vm.onSelectChange);
+        }
         return Container(
           color: colors.randColor,
           height: 50,
