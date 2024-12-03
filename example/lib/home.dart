@@ -168,6 +168,23 @@ class Home extends XBPage<HomeVM> {
               unSelectedColor: Colors.green,
               onTap: vm.onSelectChange);
         }
+        if (index == 7) {
+          return XBCellTitleSwitch(
+            title: title,
+            isSelected: vm.isSelected,
+            contentBorderRadius: BorderRadius.circular(6),
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 40,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            backgroundColor: Colors.white,
+            activeColor: Colors.green,
+            onTap: vm.onSelectChange,
+          );
+        }
         return Container(
           color: colors.randColor,
           height: 50,

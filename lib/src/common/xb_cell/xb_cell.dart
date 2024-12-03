@@ -7,6 +7,7 @@ export 'xb_cell_icon_title_arrow.dart';
 export 'xb_cell_title_image_arrow.dart';
 export 'xb_cell_title_select.dart';
 export 'xb_cell_icon_title_select.dart';
+export 'xb_cell_title_switch.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
@@ -24,25 +25,31 @@ abstract class XBCell extends StatelessWidget {
       this.contentBorderRadius = BorderRadius.zero,
       super.key});
 
+  bool get isNeedBtn => true;
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: margin ?? const EdgeInsets.all(0),
-      child: XBButton(
+    Widget child = ClipRRect(
+      borderRadius: contentBorderRadius,
+      child: Container(
+        color: backgroundColor,
+        child: Padding(
+          padding: padding ?? const EdgeInsets.all(0),
+          child: SizedBox(height: contentHeight, child: buildContent()),
+        ),
+      ),
+    );
+    if (isNeedBtn) {
+      child = XBButton(
         preventMultiTapMilliseconds: 0,
         onTap: onTap,
         coverTransparentWhileOpacity: true,
-        child: ClipRRect(
-          borderRadius: contentBorderRadius,
-          child: Container(
-            color: backgroundColor,
-            child: Padding(
-              padding: padding ?? const EdgeInsets.all(0),
-              child: SizedBox(height: contentHeight, child: buildContent()),
-            ),
-          ),
-        ),
-      ),
+        child: child,
+      );
+    }
+    return Padding(
+      padding: margin ?? const EdgeInsets.all(0),
+      child: child,
     );
   }
 
