@@ -5,6 +5,7 @@ export 'xb_cell_title_subtitle_arrow.dart';
 export 'xb_cell_title_subtitle.dart';
 export 'xb_cell_icon_title_arrow.dart';
 export 'xb_cell_title_image_arrow.dart';
+export 'xb_cell_title_select.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
@@ -27,6 +28,7 @@ abstract class XBCell extends StatelessWidget {
     return Padding(
       padding: margin ?? const EdgeInsets.all(0),
       child: XBButton(
+        preventMultiTapMilliseconds: 0,
         onTap: onTap,
         coverTransparentWhileOpacity: true,
         child: ClipRRect(

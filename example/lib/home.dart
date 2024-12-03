@@ -125,6 +125,27 @@ class Home extends XBPage<HomeVM> {
             arrowColor: Colors.white,
           );
         }
+        if (index == 5) {
+          return XBCellTitleSelect(
+              contentBorderRadius: BorderRadius.circular(6),
+              title: title,
+              isSelected: vm.isSelected,
+              margin: EdgeInsets.only(
+                left: spaces.gapDef,
+                right: spaces.gapDef,
+              ),
+              contentHeight: 40,
+              padding: EdgeInsets.only(
+                  left: spaces.gapDef,
+                  right: spaces.gapDef,
+                  top: 10,
+                  bottom: 10),
+              // imageSize: const Size(20, 20),
+              backgroundColor: Colors.white,
+              selectedColor: Colors.green,
+              unSelectedColor: Colors.green,
+              onTap: vm.onSelectChange);
+        }
         return Container(
           color: colors.randColor,
           height: 50,
