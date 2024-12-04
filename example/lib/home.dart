@@ -246,6 +246,24 @@ class Home extends XBPage<HomeVM> {
             pointColor: Colors.orange,
           );
         }
+        if (index == 11) {
+          return XBCellTitlePointArrow(
+            title: title,
+            contentBorderRadius: BorderRadius.circular(6),
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 50,
+            padding: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            backgroundColor: Colors.white,
+            pointSize: 10,
+            pointColor: Colors.orange,
+          );
+        }
 
         return Container(
           color: colors.randColor,
