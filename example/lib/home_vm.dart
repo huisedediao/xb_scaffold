@@ -16,7 +16,8 @@ class HomeVM extends XBPageVM<Home> {
         "XBCellIconTitleSwitch",
         "XBCellIconTitleTb",
         "XBCellIconTitleSubtitleArrow",
-        "XBCellTitlePointArrow"
+        "XBCellTitlePointArrow",
+        "XBCellTitleSubtitleLeftArrow"
       ];
 
   bool isSelected = false;
