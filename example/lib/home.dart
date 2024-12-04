@@ -226,6 +226,26 @@ class Home extends XBPage<HomeVM> {
             ),
           );
         }
+        if (index == 10) {
+          return XBCellIconTitlePointArrow(
+            title: title,
+            contentBorderRadius: BorderRadius.circular(6),
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 50,
+            padding: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            backgroundColor: Colors.white,
+            icon: 'assets/images/icon_inspectionPlan.png',
+            iconSize: const Size(20, 20),
+            pointSize: 10,
+            pointColor: Colors.orange,
+          );
+        }
 
         return Container(
           color: colors.randColor,
