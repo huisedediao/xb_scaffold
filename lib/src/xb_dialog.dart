@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/configs/xb_color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
-export 'common/dialog_input.dart';
+export 'common/xb_dialog_input.dart';
 
 dialogWidget(Widget widget) {
   try {

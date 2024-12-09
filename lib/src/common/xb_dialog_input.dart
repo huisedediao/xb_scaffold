@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
-class DialogInput extends XBWidget<InputDoubleAsVM> {
+class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final String title;
   final String? placeholder;
   final String? initValue;
@@ -12,7 +12,7 @@ class DialogInput extends XBWidget<InputDoubleAsVM> {
   final List<TextInputFormatter>? inputFormatters;
   final double? maxWidth;
   final double? bottomMargin;
-  const DialogInput(
+  const XBDialogInput(
       {required this.title,
       this.placeholder,
       this.initValue,
@@ -114,7 +114,7 @@ class DialogInput extends XBWidget<InputDoubleAsVM> {
   }
 }
 
-class InputDoubleAsVM extends XBVM<DialogInput> {
+class InputDoubleAsVM extends XBVM<XBDialogInput> {
   InputDoubleAsVM({required super.context}) {
     value = widget.initValue ?? "";
   }
