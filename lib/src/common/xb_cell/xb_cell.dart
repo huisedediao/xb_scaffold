@@ -4,6 +4,7 @@ export 'xb_cell_center_title.dart';
 export 'xb_cell_title_subtitle_arrow.dart';
 export 'xb_cell_title_subtitle_left_arrow.dart';
 export 'xb_cell_title_subtitle.dart';
+export 'xb_cell_title_subtitle_left.dart';
 export 'xb_cell_icon_title_arrow.dart';
 export 'xb_cell_title_icon_arrow.dart';
 export 'xb_cell_title_select.dart';
