@@ -594,3 +594,11 @@
 
 - 新增cell
 
+## 0.1.3
+
+- 添加XBTable、优化XBTip
+
+## 0.1.4
+
+- 到处XBTable
+

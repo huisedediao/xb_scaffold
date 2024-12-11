@@ -43,6 +43,7 @@ export './src/xb_print.dart';
 export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
 export 'src/common/xb_tip.dart';
+export 'src/common/xb_table/xb_table.dart';
 export 'src/utils/xb_parse.dart';
 export './src/network/xb_http.dart';
 export 'src/common/xb_cell/xb_cell.dart';

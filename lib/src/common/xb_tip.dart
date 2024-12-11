@@ -8,6 +8,9 @@ class XBTip extends StatefulWidget {
   final Color? bgColor;
   final double maxWidth;
   final double paddingH;
+
+  /// 0下 1上
+  final int type;
   const XBTip({
     Key? key,
     this.child,
@@ -16,6 +19,7 @@ class XBTip extends StatefulWidget {
     this.bgColor,
     this.maxWidth = 280,
     this.paddingH = 10,
+    this.type = 0,
   }) : super(key: key);
 
   @override
@@ -65,7 +69,7 @@ class _XBTipState extends State<XBTip> {
             context,
             Offset(
               position.dx + box.size.width / 2,
-              position.dy + box.size.height,
+              widget.type == 0 ? position.dy + box.size.height : position.dy,
             ),
           );
         },
@@ -109,7 +113,10 @@ class _XBTipState extends State<XBTip> {
             Positioned(
               //让tips居中
               left: contentLeft,
-              top: position.dy,
+              top: widget.type == 0 ? position.dy : null,
+              bottom: widget.type == 1
+                  ? (screenH - position.dy + arrowHeight)
+                  : null,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -142,13 +149,15 @@ class _XBTipState extends State<XBTip> {
               ),
             ),
             Positioned(
-              top: position.dy + 1,
+              top: widget.type == 0
+                  ? position.dy + 1
+                  : position.dy - arrowHeight - 1,
               child: Padding(
                 padding: EdgeInsets.only(left: arrowStart),
                 child: CustomPaint(
                   size: Size(arrowWidth,
                       arrowHeight), //You can Replace this with your desired WIDTH and HEIGHT
-                  painter: RPSCustomPainter(color: bgColor),
+                  painter: RPSCustomPainter(color: bgColor, type: widget.type),
                 ),
               ),
             ),
@@ -187,7 +196,8 @@ class _XBTipState extends State<XBTip> {
 
 class RPSCustomPainter extends CustomPainter {
   Color color;
-  RPSCustomPainter({required this.color});
+  int type;
+  RPSCustomPainter({required this.color, required this.type});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -197,10 +207,19 @@ class RPSCustomPainter extends CustomPainter {
       ..strokeWidth = 1.0;
 
     Path path_0 = Path();
-    path_0.moveTo(size.width * 0.50, 0);
-    path_0.lineTo(size.width * 1.00, size.height);
-    path_0.lineTo(0, size.height);
-    path_0.lineTo(size.width * 0.50, 0);
+    if (type == 0) {
+      // type 为 0 时，保持当前样式
+      path_0.moveTo(size.width * 0.50, 0);
+      path_0.lineTo(size.width * 1.00, size.height);
+      path_0.lineTo(0, size.height);
+      path_0.lineTo(size.width * 0.50, 0);
+    } else {
+      // type 为 1 时，箭头方向上下翻转
+      path_0.moveTo(size.width * 0.50, size.height);
+      path_0.lineTo(size.width * 1.00, 0);
+      path_0.lineTo(0, 0);
+      path_0.lineTo(size.width * 0.50, size.height);
+    }
     path_0.close();
 
     canvas.drawPath(path_0, paint_0);
