@@ -600,5 +600,9 @@
 
 ## 0.1.4
 
-- 到处XBTable
+- 导出XBTable
+
+## 0.1.5
+
+- 导出XBTable
 

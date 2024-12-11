@@ -3,6 +3,10 @@ import 'xb_table_header.dart';
 import 'xb_table_index.dart';
 import 'xb_table_typedef.dart';
 
+export 'xb_table_header.dart';
+export 'xb_table_index.dart';
+export 'xb_table_typedef.dart';
+
 class XBTable extends StatefulWidget {
   /// 每列的宽度比例
   final List<int>? flexs;
