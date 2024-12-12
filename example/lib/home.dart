@@ -55,7 +55,7 @@ class Home extends XBPage<HomeVM> {
         }
         if (index == 1) {
           return XBTip(
-            // type: 1,
+            type: 1,
             tip:
                 "提示  提示 XBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitle",
             child: XBDisable(
@@ -312,6 +312,71 @@ class Home extends XBPage<HomeVM> {
             // maxTitleWidth: screenW * 0.5,
             subtitle: "subtitle",
             onTap: () {},
+          );
+        }
+
+        if (index == 14) {
+          return Row(
+            children: [
+              Spacer(),
+              XBMenu(
+                items: [
+                  "111111111111111111111111111111111111111111111111111111",
+                  "222222",
+                  "333333",
+                  "444444",
+                  "555555",
+                  "666666"
+                ],
+                onItemSelected: (value) {
+                  xbLog(value);
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: colors.randColor,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+
+        if (index == 15) {
+          return Row(
+            children: [
+              XBMenu(
+                type: 1,
+                items: [
+                  "111111",
+                  "222222",
+                  "333333",
+                  "444444",
+                  "555555",
+                  "666666"
+                ],
+                onItemSelected: (value) {
+                  xbLog(value);
+                },
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: colors.randColor,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+              Spacer(),
+            ],
           );
         }
 
