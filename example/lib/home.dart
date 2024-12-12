@@ -97,7 +97,13 @@ class Home extends XBPage<HomeVM> {
             contentHeight: 50,
             padding: const EdgeInsets.only(top: 10, bottom: 10),
             title: title,
-            onTap: () {},
+            onTap: () {
+              dialogWidget(XBDialogInput(
+                  title: title,
+                  onDone: (value) {
+                    xbLog(value);
+                  }));
+            },
           );
         }
         if (index == 3) {

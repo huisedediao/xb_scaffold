@@ -12,6 +12,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final List<TextInputFormatter>? inputFormatters;
   final double? maxWidth;
   final double? bottomMargin;
+  final String? notEmptyTip;
   const XBDialogInput(
       {required this.title,
       this.placeholder,
@@ -22,6 +23,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
       required this.onDone,
       this.maxWidth,
       this.bottomMargin,
+      this.notEmptyTip,
       super.key});
 
   @override
@@ -55,18 +57,37 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                     right: spaces.gapDef,
                     top: spaces.gapDef),
                 child: XBBG(
-                  paddingH: spaces.gapDef,
+                  // paddingH: spaces.gapDef,
                   borderColor: Colors.grey.withAlpha(80),
                   borderWidth: onePixel,
                   defAllRadius: 6,
-                  child: XBTextField(
-                    focused: true,
-                    initValue: initValue,
-                    placeholder: placeholder,
-                    inputFormatters: inputFormatters,
-                    onChanged: (value) {
-                      vm.value = value;
-                    },
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: XBTextField(
+                            key: ValueKey(vm.inputKey),
+                            focused: true,
+                            initValue: vm.value,
+                            placeholder: placeholder,
+                            inputFormatters: inputFormatters,
+                            onChanged: (value) {
+                              vm.value = value;
+                            },
+                          ),
+                        ),
+                      ),
+                      XBButton(
+                        onTap: vm.clear,
+                        coverTransparentWhileOpacity: true,
+                        child: const Padding(
+                          padding: EdgeInsets.all(6.0),
+                          child:
+                              Icon(Icons.close, size: 20, color: Colors.grey),
+                        ),
+                      )
+                    ],
                   ),
                 ),
               ),
@@ -99,6 +120,11 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                           titleStyle: const TextStyle(color: Colors.blue),
                           title: confirmTitle ?? "确定",
                           onTap: () {
+                            if (vm.value.isEmpty) {
+                              toast(notEmptyTip ?? "请输入内容",
+                                  bottom: screenH * 0.6);
+                              return;
+                            }
                             pop();
                             onDone(vm.value);
                           }),
@@ -120,4 +146,12 @@ class InputDoubleAsVM extends XBVM<XBDialogInput> {
   }
 
   late String value;
+
+  int inputKey = 0;
+
+  void clear() {
+    value = "";
+    inputKey++;
+    notify();
+  }
 }

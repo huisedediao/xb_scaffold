@@ -606,3 +606,7 @@
 
 - 导出XBTable
 
+## 0.1.6
+
+- XBDialogInput新增notEmptyTip和清空功能
+
