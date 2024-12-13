@@ -319,8 +319,8 @@ class Home extends XBPage<HomeVM> {
           return Row(
             children: [
               Spacer(),
-              XBMenu(
-                items: [
+              XBFloatMenuTitle(
+                items: const [
                   "111111111111111111111111111111111111111111111111111111",
                   "222222",
                   "333333",
@@ -328,7 +328,7 @@ class Home extends XBPage<HomeVM> {
                   "555555",
                   "666666"
                 ],
-                onItemSelected: (value) {
+                onTapItem: (value) {
                   xbLog(value);
                 },
                 child: Container(

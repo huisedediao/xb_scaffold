@@ -57,7 +57,7 @@ class XBFloatMenuTitle extends StatelessWidget {
         );
       },
       separatorBuilder: (index) {
-        return xbLine(color: separatorColor);
+        return xbLine(color: separatorColor, startPadding: 5, endPadding: 5);
       },
       child: child,
     );
