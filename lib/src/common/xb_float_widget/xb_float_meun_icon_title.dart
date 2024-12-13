@@ -23,6 +23,7 @@ class XBFloatMenuIconTitle extends StatelessWidget {
   final Color? separatorColor;
   final double? gap;
   final CrossAxisAlignment crossAxisAlignment;
+  final int type;
   const XBFloatMenuIconTitle(
       {super.key,
       required this.child,
@@ -36,7 +37,8 @@ class XBFloatMenuIconTitle extends StatelessWidget {
       this.titleOverflow,
       this.separatorColor,
       this.gap,
-      this.crossAxisAlignment = CrossAxisAlignment.start});
+      this.crossAxisAlignment = CrossAxisAlignment.start,
+      this.type = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +46,7 @@ class XBFloatMenuIconTitle extends StatelessWidget {
       crossAxisAlignment: crossAxisAlignment,
       bgColor: bgColor,
       width: width,
-      type: 1,
+      type: type,
       itemCount: items.length,
       itemBuilder: (index, hide) {
         return Padding(
