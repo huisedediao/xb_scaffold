@@ -13,6 +13,18 @@ class XBFloatWidget extends StatefulWidget {
     this.type = 0,
   }) : super(key: key);
 
+  Widget buildContent(double contentLeft, double contentWidth, bool isAbove) {
+    return Container(
+      width: contentWidth,
+      height: 100,
+      color: Colors.red,
+      child: const Text(
+        '请重写buildContent',
+        style: TextStyle(color: Colors.white),
+      ),
+    );
+  }
+
   @override
   State<XBFloatWidget> createState() => _XBFloatWidgetState();
 }
@@ -65,15 +77,7 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
   }
 
   Widget buildContent(double contentLeft, double contentWidth, bool isAbove) {
-    return Container(
-      width: contentWidth,
-      height: 100,
-      color: Colors.red,
-      child: const Text(
-        '请重写buildContent',
-        style: TextStyle(color: Colors.white),
-      ),
-    );
+    return widget.buildContent(contentLeft, contentWidth, isAbove);
   }
 
   ///显示一个Tips的方法
