@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBFloatMenuText extends StatelessWidget {
+class XBFloatMenuTitle extends StatelessWidget {
   final Widget child;
   final List<String> items;
   final ValueChanged<int> onTapItem;
@@ -13,7 +13,7 @@ class XBFloatMenuText extends StatelessWidget {
   final TextStyle? textStyle;
   final TextOverflow? textOverflow;
   final Color? separatorColor;
-  const XBFloatMenuText(
+  const XBFloatMenuTitle(
       {super.key,
       required this.child,
       required this.items,

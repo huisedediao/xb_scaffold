@@ -350,7 +350,7 @@ class Home extends XBPage<HomeVM> {
         if (index == 15) {
           return Row(
             children: [
-              XBFloatMenuText(
+              XBFloatMenuTitle(
                 // bgColor: Colors.white,
                 // textStyle: const TextStyle(color: Colors.black),
                 // textOverflow: TextOverflow.ellipsis,
