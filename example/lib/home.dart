@@ -350,17 +350,13 @@ class Home extends XBPage<HomeVM> {
         if (index == 15) {
           return Row(
             children: [
-              XBMenu(
-                type: 1,
-                items: [
-                  "111111",
-                  "222222",
-                  "333333",
-                  "444444",
-                  "555555",
-                  "666666"
-                ],
-                onItemSelected: (value) {
+              XBFloatMenuText(
+                // bgColor: Colors.white,
+                // textStyle: const TextStyle(color: Colors.black),
+                // textOverflow: TextOverflow.ellipsis,
+                // separatorColor: Colors.red,
+                items: vm.items,
+                onTapItem: (value) {
                   xbLog(value);
                 },
                 child: Container(
@@ -406,6 +402,7 @@ class Home extends XBPage<HomeVM> {
           return Row(
             children: [
               XBTip(
+                tipStyle: const TextStyle(color: Colors.orange),
                 // type: 1,
                 tip: "提示提示提示提示提示提示提示提示提示提示提示提示提示提示提示",
                 child: Container(

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/view/xb_arrow_painter.dart';
-import 'package:xb_scaffold/src/utils/xb_text_size_util.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBMenu extends StatefulWidget {

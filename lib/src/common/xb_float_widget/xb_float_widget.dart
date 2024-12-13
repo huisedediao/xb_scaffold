@@ -18,7 +18,8 @@ class XBFloatWidget extends StatefulWidget {
 
   double get contentWidth => 280;
 
-  Widget buildContent(Offset position, double contentLeft, bool isAbove) {
+  Widget buildContent(
+      Offset position, double contentLeft, bool isAbove, Function hide) {
     return Container(
       width: contentWidth,
       height: 100,
@@ -80,7 +81,7 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
   }
 
   Widget buildContent(Offset position, double contentLeft, bool isAbove) {
-    return widget.buildContent(position, contentLeft, isAbove);
+    return widget.buildContent(position, contentLeft, isAbove, hide);
   }
 
   Widget _buildContent(Offset position, double contentLeft, bool isAbove) {
@@ -89,10 +90,10 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
         onTap: () {
           hide();
         },
-        child: widget.buildContent(position, contentLeft, isAbove),
+        child: widget.buildContent(position, contentLeft, isAbove, hide),
       );
     }
-    return widget.buildContent(position, contentLeft, isAbove);
+    return widget.buildContent(position, contentLeft, isAbove, hide);
   }
 
   _showContent(BuildContext context, Offset position) {

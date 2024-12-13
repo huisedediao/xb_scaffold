@@ -31,4 +31,10 @@ class HomeVM extends XBPageVM<Home> {
     isSelected = !isSelected;
     notify();
   }
+
+  List<String> get items => [
+        "item1",
+        "item2",
+        "item3",
+      ];
 }
