@@ -14,6 +14,7 @@ export 'xb_cell_icon_title_switch.dart';
 export 'xb_cell_icon_title_tb.dart';
 export 'xb_cell_icon_title_point_arrow.dart';
 export 'xb_cell_title_point_arrow.dart';
+export 'xb_cell_icon_title.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;

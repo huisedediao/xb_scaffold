@@ -355,7 +355,7 @@ class Home extends XBPage<HomeVM> {
                 // textStyle: const TextStyle(color: Colors.black),
                 // textOverflow: TextOverflow.ellipsis,
                 // separatorColor: Colors.red,
-                items: vm.items,
+                items: vm.textItems,
                 onTapItem: (value) {
                   xbLog(value);
                 },
@@ -421,6 +421,56 @@ class Home extends XBPage<HomeVM> {
               // SizedBox(
               //   width: 80,
               // )
+            ],
+          );
+        }
+
+        if (index == 18) {
+          return Container(
+            width: 200,
+            alignment: Alignment.center,
+            color: colors.randColor,
+            child: Container(
+              width: 200,
+              height: 50,
+              color: colors.randColor,
+              child: XBCellIconTitle(
+                title: title,
+                icon: 'assets/images/icon_inspectionPlan.png',
+                iconSize: const Size(20, 20),
+              ),
+            ),
+          );
+        }
+
+        if (index == 19) {
+          return Row(
+            children: [
+              XBFloatMenuIconTitle(
+                // bgColor: Colors.white,
+                // textStyle: const TextStyle(color: Colors.black),
+                // textOverflow: TextOverflow.ellipsis,
+                // separatorColor: Colors.red,
+                items: vm.iconItems,
+                onTapItem: (value) {
+                  xbLog(value);
+                },
+                // crossAxisAlignment: CrossAxisAlignment.center,
+                paddingLeft: 15,
+                width: 100,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: colors.randColor,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+              Spacer(),
             ],
           );
         }

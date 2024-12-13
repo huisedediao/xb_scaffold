@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+export 'xb_float_meun_icon_title.dart';
+export 'xb_float_menu_title.dart';
+export 'xb_float_widget_arrow.dart';
+export 'xb_float_menu.dart';
+export 'xb_tip.dart';
 
 class XBFloatWidget extends StatefulWidget {
   final Widget child;

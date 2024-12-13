@@ -23,6 +23,8 @@ class HomeVM extends XBPageVM<Home> {
         "XBMenu 2",
         "XBFloatWidget",
         "XBFloatTip",
+        "XBCellIconTitle",
+        "XBFloatMenuIconTitle",
         "def"
       ];
 
@@ -32,9 +34,18 @@ class HomeVM extends XBPageVM<Home> {
     notify();
   }
 
-  List<String> get items => [
+  List<String> get textItems => [
         "item1",
         "item2",
         "item3",
+      ];
+
+  List<XBFloatMenuIconTitleItem> get iconItems => [
+        XBFloatMenuIconTitleItem(
+            "item1", "assets/images/icon_inspectionPlan.png"),
+        XBFloatMenuIconTitleItem(
+            "item2", "assets/images/icon_inspectionPlan.png"),
+        XBFloatMenuIconTitleItem(
+            "item3", "assets/images/icon_inspectionPlan.png"),
       ];
 }

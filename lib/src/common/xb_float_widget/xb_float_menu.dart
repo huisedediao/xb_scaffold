@@ -8,7 +8,7 @@ class XBFloatMenu extends XBFloatWidgetArrow {
   final XBFloatMenuItemBuilder itemBuilder;
   final Widget Function(int index) separatorBuilder;
   final double width;
-
+  final CrossAxisAlignment crossAxisAlignment;
   const XBFloatMenu({
     super.key,
     required super.child,
@@ -19,6 +19,7 @@ class XBFloatMenu extends XBFloatWidgetArrow {
     super.tapContentHide = true,
     super.bgColor,
     super.type,
+    this.crossAxisAlignment = CrossAxisAlignment.start,
   });
 
   @override
@@ -33,9 +34,11 @@ class XBFloatMenu extends XBFloatWidgetArrow {
         width: width,
         color: bgColor ?? Colors.black,
         child: Column(
+          crossAxisAlignment: crossAxisAlignment,
           children: [
             for (int i = 0; i < itemCount; i++)
               Column(
+                crossAxisAlignment: crossAxisAlignment,
                 children: [
                   itemBuilder(i, hide),
                   if (i < itemCount - 1) separatorBuilder(i),
