@@ -610,3 +610,7 @@
 
 - XBDialogInput新增notEmptyTip和清空功能
 
+## 0.1.7
+
+- 新增浮动菜单
+
