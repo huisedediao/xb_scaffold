@@ -380,9 +380,32 @@ class Home extends XBPage<HomeVM> {
           );
         }
 
+        if (index == 16) {
+          return Row(
+            children: [
+              XBFloatWidget(
+                type: 1,
+                contentWidth: 100,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: colors.randColor,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+              Spacer(),
+            ],
+          );
+        }
+
         return Container(
           color: colors.randColor,
-          height: 50,
+          height: 200,
         );
       },
     );

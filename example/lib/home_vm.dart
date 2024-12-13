@@ -21,6 +21,8 @@ class HomeVM extends XBPageVM<Home> {
         "XBCellTitleSubtitleLeft",
         "XBMenu 1",
         "XBMenu 2",
+        "XBFloatWidget",
+        "def"
       ];
 
   bool isSelected = false;
