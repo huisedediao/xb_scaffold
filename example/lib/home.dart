@@ -385,7 +385,6 @@ class Home extends XBPage<HomeVM> {
             children: [
               XBFloatWidget(
                 type: 1,
-                contentWidth: 100,
                 child: Container(
                   width: 40,
                   height: 40,
@@ -406,9 +405,9 @@ class Home extends XBPage<HomeVM> {
         if (index == 17) {
           return Row(
             children: [
-              XBFloatTip(
-                tip: "提示",
-                contentWidth: 100,
+              XBTip(
+                // type: 1,
+                tip: "提示提示提示提示提示提示提示提示提示提示提示提示提示提示提示",
                 child: Container(
                   width: 40,
                   height: 40,
@@ -422,6 +421,9 @@ class Home extends XBPage<HomeVM> {
                 ),
               ),
               Spacer(),
+              // SizedBox(
+              //   width: 80,
+              // )
             ],
           );
         }

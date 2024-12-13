@@ -3,18 +3,20 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBFloatWidget extends StatefulWidget {
   final Widget child;
-  final double contentWidth;
   final int type;
+
+  /// 内容到屏幕边缘的最小距离
+  final double minGapToBorder = 5;
 
   const XBFloatWidget({
     Key? key,
     required this.child,
-    required this.contentWidth,
     this.type = 0,
   }) : super(key: key);
 
-  Widget buildContent(
-      Offset position, double contentLeft, double contentWidth, bool isAbove) {
+  double get contentWidth => 280;
+
+  Widget buildContent(Offset position, double contentLeft, bool isAbove) {
     return Container(
       width: contentWidth,
       height: 100,
@@ -34,8 +36,6 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
   final GlobalKey childKey = GlobalKey();
   final GlobalKey<XBFadeWidgetState> animationKey = GlobalKey();
   OverlayEntry? tipsOverlay;
-
-  final double contentPadding = 5;
 
   bool isShow() {
     return tipsOverlay != null;
@@ -77,9 +77,8 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
     );
   }
 
-  Widget buildContent(
-      Offset position, double contentLeft, double contentWidth, bool isAbove) {
-    return widget.buildContent(position, contentLeft, contentWidth, isAbove);
+  Widget buildContent(Offset position, double contentLeft, bool isAbove) {
+    return widget.buildContent(position, contentLeft, isAbove);
   }
 
   _showContent(BuildContext context, Offset position) {
@@ -87,10 +86,10 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
 
     /// 判断左右是否超出边界，并调整位置
     double contentLeft = position.dx - contentWidth / 2;
-    if (contentLeft < contentPadding) {
-      contentLeft = contentPadding;
-    } else if (contentLeft + contentWidth > screenW - contentPadding) {
-      contentLeft = screenW - contentPadding - contentWidth;
+    if (contentLeft < widget.minGapToBorder) {
+      contentLeft = widget.minGapToBorder;
+    } else if (contentLeft + contentWidth > screenW - widget.minGapToBorder) {
+      contentLeft = screenW - widget.minGapToBorder - contentWidth;
     }
 
     tipsOverlay = OverlayEntry(builder: (ctx) {
@@ -112,12 +111,10 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
                 ),
               )),
               Positioned(
-                //居中
                 left: contentLeft,
                 top: widget.type == 0 ? position.dy : null,
                 bottom: widget.type == 1 ? (screenH - position.dy) : null,
-                child: buildContent(
-                    position, contentLeft, contentWidth, widget.type == 1),
+                child: buildContent(position, contentLeft, widget.type == 1),
               ),
             ],
           ),
