@@ -22,6 +22,7 @@ class HomeVM extends XBPageVM<Home> {
         "XBMenu 1",
         "XBMenu 2",
         "XBFloatWidget",
+        "XBFloatTip",
         "def"
       ];
 

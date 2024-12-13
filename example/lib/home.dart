@@ -403,6 +403,29 @@ class Home extends XBPage<HomeVM> {
           );
         }
 
+        if (index == 17) {
+          return Row(
+            children: [
+              XBFloatTip(
+                tip: "提示",
+                contentWidth: 100,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: colors.randColor,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 1,
+                    height: 40,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+              Spacer(),
+            ],
+          );
+        }
+
         return Container(
           color: colors.randColor,
           height: 200,

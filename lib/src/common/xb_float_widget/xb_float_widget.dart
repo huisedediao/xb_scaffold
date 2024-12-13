@@ -13,7 +13,8 @@ class XBFloatWidget extends StatefulWidget {
     this.type = 0,
   }) : super(key: key);
 
-  Widget buildContent(double contentLeft, double contentWidth, bool isAbove) {
+  Widget buildContent(
+      Offset position, double contentLeft, double contentWidth, bool isAbove) {
     return Container(
       width: contentWidth,
       height: 100,
@@ -76,11 +77,11 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
     );
   }
 
-  Widget buildContent(double contentLeft, double contentWidth, bool isAbove) {
-    return widget.buildContent(contentLeft, contentWidth, isAbove);
+  Widget buildContent(
+      Offset position, double contentLeft, double contentWidth, bool isAbove) {
+    return widget.buildContent(position, contentLeft, contentWidth, isAbove);
   }
 
-  ///显示一个Tips的方法
   _showContent(BuildContext context, Offset position) {
     double contentWidth = widget.contentWidth;
 
@@ -115,8 +116,8 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
                 left: contentLeft,
                 top: widget.type == 0 ? position.dy : null,
                 bottom: widget.type == 1 ? (screenH - position.dy) : null,
-                child:
-                    buildContent(contentLeft, contentWidth, widget.type == 1),
+                child: buildContent(
+                    position, contentLeft, contentWidth, widget.type == 1),
               ),
             ],
           ),
