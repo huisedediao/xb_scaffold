@@ -4,6 +4,7 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBFloatWidget extends StatefulWidget {
   final Widget child;
   final int type;
+  final bool tapContentHide;
 
   /// 内容到屏幕边缘的最小距离
   final double minGapToBorder = 5;
@@ -12,6 +13,7 @@ class XBFloatWidget extends StatefulWidget {
     Key? key,
     required this.child,
     this.type = 0,
+    this.tapContentHide = false,
   }) : super(key: key);
 
   double get contentWidth => 280;
@@ -81,6 +83,18 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
     return widget.buildContent(position, contentLeft, isAbove);
   }
 
+  Widget _buildContent(Offset position, double contentLeft, bool isAbove) {
+    if (widget.tapContentHide) {
+      return GestureDetector(
+        onTap: () {
+          hide();
+        },
+        child: widget.buildContent(position, contentLeft, isAbove),
+      );
+    }
+    return widget.buildContent(position, contentLeft, isAbove);
+  }
+
   _showContent(BuildContext context, Offset position) {
     double contentWidth = widget.contentWidth;
 
@@ -114,7 +128,7 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
                 left: contentLeft,
                 top: widget.type == 0 ? position.dy : null,
                 bottom: widget.type == 1 ? (screenH - position.dy) : null,
-                child: buildContent(position, contentLeft, widget.type == 1),
+                child: _buildContent(position, contentLeft, widget.type == 1),
               ),
             ],
           ),

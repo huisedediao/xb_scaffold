@@ -13,6 +13,7 @@ class XBTip extends XBFloatWidget {
     required super.child,
     required this.tip,
     super.type,
+    super.tapContentHide = true,
     this.tipStyle,
     this.bgColor,
     this.paddingH = 10,
