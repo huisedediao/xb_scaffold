@@ -318,7 +318,7 @@ class Home extends XBPage<HomeVM> {
         if (index == 14) {
           return Row(
             children: [
-              Spacer(),
+              const Spacer(),
               XBFloatMenuTitle(
                 items: const [
                   "111111111111111111111111111111111111111111111111111111",
@@ -328,6 +328,7 @@ class Home extends XBPage<HomeVM> {
                   "555555",
                   "666666"
                 ],
+                type: 1,
                 onTapItem: (value) {
                   xbLog(value);
                 },
@@ -371,7 +372,7 @@ class Home extends XBPage<HomeVM> {
                   ),
                 ),
               ),
-              Spacer(),
+              const Spacer(),
             ],
           );
         }
@@ -393,7 +394,7 @@ class Home extends XBPage<HomeVM> {
                   ),
                 ),
               ),
-              Spacer(),
+              const Spacer(),
             ],
           );
         }
@@ -417,7 +418,7 @@ class Home extends XBPage<HomeVM> {
                   ),
                 ),
               ),
-              Spacer(),
+              const Spacer(),
               // SizedBox(
               //   width: 80,
               // )
@@ -455,6 +456,7 @@ class Home extends XBPage<HomeVM> {
                 onTapItem: (value) {
                   xbLog(value);
                 },
+                type: 1,
                 // crossAxisAlignment: CrossAxisAlignment.center,
                 paddingLeft: 15,
                 width: 100,
@@ -470,7 +472,7 @@ class Home extends XBPage<HomeVM> {
                   ),
                 ),
               ),
-              Spacer(),
+              const Spacer(),
             ],
           );
         }
