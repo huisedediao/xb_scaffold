@@ -80,6 +80,7 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
             ),
           );
         },
+        coverTransparentWhileOpacity: true,
         child: Container(key: childKey, child: widget.child),
       ),
     );
