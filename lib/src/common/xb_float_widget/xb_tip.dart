@@ -36,11 +36,7 @@ class XBTip extends XBFloatWidgetArrow {
         constraints: BoxConstraints(maxWidth: contentWidth),
         alignment: Alignment.center,
         child: Padding(
-          padding: EdgeInsets.only(
-              left: paddingH - onePixel,
-              right: paddingH - onePixel,
-              top: 5,
-              bottom: 5),
+          padding: const EdgeInsets.only(top: 5, bottom: 6),
           child: Text(
             tip,
             style: _tipsStyle,
