@@ -141,9 +141,13 @@ class XBHttp {
     Map<String, dynamic>? headers,
     bool needLog = true,
     CancelToken? cancelToken,
+    Duration? sendTimeout,
+    Duration? receiveTimeout,
   }) async {
-    try {
-      final options = Options(headers: headers);
+    final options = Options(
+        headers: headers,
+        sendTimeout: sendTimeout ?? const Duration(seconds: 60),
+        receiveTimeout: receiveTimeout ?? const Duration(seconds: 60));
 
       /// 创建Dio
       Dio dio = Dio();
