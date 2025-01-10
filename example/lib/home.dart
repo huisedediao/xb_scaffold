@@ -321,7 +321,7 @@ class Home extends XBPage<HomeVM> {
               const Spacer(),
               XBFloatMenuTitle(
                 items: const [
-                  "111111111111111111111111111111111111111111111111111111",
+                  "Average stay duration",
                   "222222",
                   "333333",
                   "444444",

@@ -10,6 +10,7 @@ class XBFloatMenuTitle extends StatelessWidget {
   final double maxWidth;
   final double minWidth;
   final double paddingH;
+  final double paddingV;
   final TextStyle? textStyle;
   final TextOverflow? textOverflow;
   final Color? separatorColor;
@@ -23,6 +24,7 @@ class XBFloatMenuTitle extends StatelessWidget {
       this.maxWidth = 280,
       this.minWidth = 80,
       this.paddingH = 10,
+      this.paddingV = 10,
       this.textStyle,
       this.textOverflow,
       this.separatorColor,
@@ -52,7 +54,7 @@ class XBFloatMenuTitle extends StatelessWidget {
             hide();
             onTapItem(index);
           },
-          padding: const EdgeInsets.all(10),
+          padding: EdgeInsets.only(top: paddingV, bottom: paddingV),
           title: items[index],
           titleStyle: _textStyle,
           titleOverflow: textOverflow,

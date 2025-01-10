@@ -144,10 +144,11 @@ class XBHttp {
     Duration? sendTimeout,
     Duration? receiveTimeout,
   }) async {
-    final options = Options(
-        headers: headers,
-        sendTimeout: sendTimeout ?? const Duration(seconds: 60),
-        receiveTimeout: receiveTimeout ?? const Duration(seconds: 60));
+    try {
+      final options = Options(
+          headers: headers,
+          sendTimeout: sendTimeout ?? const Duration(seconds: 60),
+          receiveTimeout: receiveTimeout ?? const Duration(seconds: 60));
 
       /// 创建Dio
       Dio dio = Dio();
