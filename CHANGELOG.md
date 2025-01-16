@@ -630,3 +630,7 @@
 
 - optimized
 
+## 0.1.12
+
+- 新增dialog的msgStyle参数
+

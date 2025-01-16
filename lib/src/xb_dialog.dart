@@ -78,6 +78,7 @@ dialog(
     {required String title,
     TextStyle? titleStyle,
     required String msg,
+    TextStyle? msgStyle,
     required List<String> btnTitles,
     Color? btnHighLightColor,
     Color? btnDefaultColor,
@@ -86,7 +87,7 @@ dialog(
   dialogContent(
       title: title,
       titleStyle: titleStyle,
-      content: Text(msg),
+      content: Text(msg, style: msgStyle),
       btnTitles: btnTitles,
       onSelected: onSelected,
       btnHighLightColor: btnHighLightColor,
