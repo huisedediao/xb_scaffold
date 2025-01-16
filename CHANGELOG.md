@@ -638,3 +638,7 @@
 
 - 新增dialog的btnFontSize参数
 
+## 0.1.14
+
+- 新增dialog的默认msgStyle
+

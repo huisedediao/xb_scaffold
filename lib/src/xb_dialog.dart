@@ -90,7 +90,10 @@ dialog(
   dialogContent(
       title: title,
       titleStyle: titleStyle,
-      content: Text(msg, style: msgStyle),
+      content: Text(msg,
+          style: msgStyle ??
+              TextStyle(
+                  fontSize: fontSizes.s15, color: const Color(0xFF808080))),
       btnTitles: btnTitles,
       onSelected: onSelected,
       btnHighLightColor: btnHighLightColor,
