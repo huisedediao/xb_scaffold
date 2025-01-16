@@ -20,6 +20,7 @@ dialogContent(
     required List<String> btnTitles,
     Color? btnHighLightColor,
     Color? btnDefaultColor,
+    double? btnFontSize,
     required ValueChanged<int> onSelected,
     double? maxWidth}) {
   Widget child = ClipRRect(
@@ -36,7 +37,7 @@ dialogContent(
             title,
             style: titleStyle ??
                 TextStyle(
-                    fontSize: fontSizes.s18, fontWeight: fontWeights.semiBold),
+                    fontSize: fontSizes.s18, fontWeight: fontWeights.medium),
           ),
           Padding(
             padding: EdgeInsets.only(
@@ -55,7 +56,8 @@ dialogContent(
                 btnTitles: btnTitles,
                 onSelected: onSelected,
                 btnHighLightColor: btnHighLightColor,
-                btnDefaultColor: btnDefaultColor),
+                btnDefaultColor: btnDefaultColor,
+                fontSize: btnFontSize ?? fontSizes.s16),
           )
         ],
       ),
@@ -82,6 +84,7 @@ dialog(
     required List<String> btnTitles,
     Color? btnHighLightColor,
     Color? btnDefaultColor,
+    double? btnFontSize,
     required ValueChanged<int> onSelected,
     double? maxWidth}) {
   dialogContent(
@@ -92,6 +95,7 @@ dialog(
       onSelected: onSelected,
       btnHighLightColor: btnHighLightColor,
       btnDefaultColor: btnDefaultColor,
+      btnFontSize: btnFontSize,
       maxWidth: maxWidth);
 }
 
@@ -122,17 +126,18 @@ List<Widget> _setupBtns({
   required ValueChanged<int> onSelected,
   required Color? btnHighLightColor,
   required Color? btnDefaultColor,
+  required double fontSize,
 }) {
   if (btnTitles.length == 1) {
     return [
-      _buildBtn(btnTitles[0], btnHighLightColor ?? Colors.blue, () {
+      _buildBtn(btnTitles[0], btnHighLightColor ?? Colors.blue, fontSize, () {
         pop();
         onSelected(0);
       })
     ];
   } else {
     return [
-      _buildBtn(btnTitles[0], btnDefaultColor ?? Colors.black, () {
+      _buildBtn(btnTitles[0], btnDefaultColor ?? Colors.black, fontSize, () {
         pop();
         onSelected(0);
       }),
@@ -141,7 +146,7 @@ List<Widget> _setupBtns({
         width: onePixel,
         color: lineColor,
       ),
-      _buildBtn(btnTitles[1], btnHighLightColor ?? Colors.blue, () {
+      _buildBtn(btnTitles[1], btnHighLightColor ?? Colors.blue, fontSize, () {
         pop();
         onSelected(1);
       })
@@ -149,7 +154,8 @@ List<Widget> _setupBtns({
   }
 }
 
-Widget _buildBtn(String title, Color color, VoidCallback onTap) {
+Widget _buildBtn(
+    String title, Color color, double fontSize, VoidCallback onTap) {
   return Expanded(
       child: XBButton(
           effect: XBButtonTapEffect.cover,
@@ -159,7 +165,7 @@ Widget _buildBtn(String title, Color color, VoidCallback onTap) {
             alignment: Alignment.center,
             child: Text(
               title,
-              style: TextStyle(color: color),
+              style: TextStyle(color: color, fontSize: fontSize),
             ),
           )));
 }
