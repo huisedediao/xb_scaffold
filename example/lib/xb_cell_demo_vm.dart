@@ -1,8 +1,8 @@
-import 'package:example/home.dart';
+import 'package:example/xb_cell_demo.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class HomeVM extends XBPageVM<Home> {
-  HomeVM({required super.context});
+class XBCellDemoVM extends XBPageVM<XBCellDemo> {
+  XBCellDemoVM({required super.context});
 
   List<String> get titles => [
         "XBCellTitleSubtitleArrow",

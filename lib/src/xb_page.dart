@@ -129,6 +129,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _buildLoadingContent(T vm) {
     Widget scaffold = Scaffold(
+      key: vm.scaffoldKey,
+      drawer: drawer(vm),
+      endDrawer: endDrawer(vm),
       primary: _primary(vm),
       backgroundColor: backgroundColor(vm),
       resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
@@ -252,6 +255,16 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// 构建navigationBar右侧widget
   List<Widget>? actions(T vm) {
+    return null;
+  }
+
+  /// 构建drawer
+  Widget? drawer(T vm) {
+    return null;
+  }
+
+  /// 构建endDrawer
+  Widget? endDrawer(T vm) {
     return null;
   }
 }

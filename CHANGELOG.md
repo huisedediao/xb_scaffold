@@ -642,3 +642,7 @@
 
 - 新增dialog的默认msgStyle
 
+## 0.1.15
+
+- 新增drawer和endDrawer
+

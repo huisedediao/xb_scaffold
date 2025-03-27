@@ -1,4 +1,4 @@
-import 'package:example/home.dart';
+import 'package:example/choose_page.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -18,7 +18,8 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       navigatorObservers: [xbRouteObserver],
-      home: const XBScaffold(imgPrefixs: ["assets/images"], child: Home()),
+      home:
+          const XBScaffold(imgPrefixs: ["assets/images"], child: ChoosePage()),
     );
   }
 }

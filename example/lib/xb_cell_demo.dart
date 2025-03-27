@@ -1,27 +1,27 @@
-import 'package:example/home_vm.dart';
+import 'package:example/xb_cell_demo_vm.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
-class Home extends XBPage<HomeVM> {
-  const Home({super.key});
+class XBCellDemo extends XBPage<XBCellDemoVM> {
+  const XBCellDemo({super.key});
 
   @override
   generateVM(BuildContext context) {
-    return HomeVM(context: context);
+    return XBCellDemoVM(context: context);
   }
 
   @override
-  String setTitle(HomeVM vm) {
+  String setTitle(XBCellDemoVM vm) {
     return "XBCellDemo";
   }
 
   @override
-  Widget? leading(HomeVM vm) {
+  Widget? leading(XBCellDemoVM vm) {
     return null;
   }
 
   @override
-  Widget buildPage(HomeVM vm, BuildContext context) {
+  Widget buildPage(XBCellDemoVM vm, BuildContext context) {
     return ListView.separated(
       itemCount: vm.titles.length,
       separatorBuilder: (context, index) {

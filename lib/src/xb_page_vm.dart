@@ -1,4 +1,4 @@
-// ignore_for_file: empty_catches
+// ignore_for_file: empty_catches, unnecessary_import
 
 import 'dart:async';
 import 'dart:io';
@@ -29,6 +29,8 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
             Duration(milliseconds: _castWidget.pushAnimationMilliseconds(this)),
         onTick: didFinishedPushAnimation);
   }
+
+  final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// 记录上一个网页的标题
   String? _lastHtmlTitle;
@@ -162,6 +164,22 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
         });
       }
     } catch (e) {}
+  }
+
+  openDrawer() {
+    scaffoldKey.currentState?.openDrawer();
+  }
+
+  closeDrawer() {
+    scaffoldKey.currentState?.closeDrawer();
+  }
+
+  openEndDrawer() {
+    scaffoldKey.currentState?.openEndDrawer();
+  }
+
+  closeEndDrawer() {
+    scaffoldKey.currentState?.closeEndDrawer();
   }
 
   @override
