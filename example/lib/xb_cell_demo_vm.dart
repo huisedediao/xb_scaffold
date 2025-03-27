@@ -44,8 +44,8 @@ class XBCellDemoVM extends XBPageVM<XBCellDemo> {
         XBFloatMenuIconTitleItem(
             "item1", "assets/images/icon_inspectionPlan.png"),
         XBFloatMenuIconTitleItem(
-            "item2", "assets/images/icon_inspectionPlan.png"),
+            "item2222222", "assets/images/icon_inspectionPlan.png"),
         XBFloatMenuIconTitleItem(
-            "item3", "assets/images/icon_inspectionPlan.png"),
+            "item3222", "assets/images/icon_inspectionPlan.png"),
       ];
 }

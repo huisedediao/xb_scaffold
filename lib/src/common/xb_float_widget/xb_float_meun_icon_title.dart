@@ -22,8 +22,8 @@ class XBFloatMenuIconTitle extends StatelessWidget {
   final TextOverflow? titleOverflow;
   final Color? separatorColor;
   final double? gap;
-  final CrossAxisAlignment crossAxisAlignment;
   final int type;
+  final double? contentHeight;
   const XBFloatMenuIconTitle(
       {super.key,
       required this.child,
@@ -37,32 +37,43 @@ class XBFloatMenuIconTitle extends StatelessWidget {
       this.titleOverflow,
       this.separatorColor,
       this.gap,
-      this.crossAxisAlignment = CrossAxisAlignment.start,
-      this.type = 0});
+      this.type = 0,
+      this.contentHeight});
 
   @override
   Widget build(BuildContext context) {
     return XBFloatMenu(
-      crossAxisAlignment: crossAxisAlignment,
       bgColor: bgColor,
       width: width,
       type: type,
       itemCount: items.length,
       itemBuilder: (index, hide) {
-        return Padding(
-          padding: EdgeInsets.only(left: paddingLeft),
-          child: XBCellIconTitle(
-            contentHeight: 40,
-            icon: items[index].icon,
-            iconSize: iconSize,
-            iconRightPadding: gap,
-            onTap: () {
-              hide();
-              onTapItem(index);
-            },
-            title: items[index].title,
-            titleStyle: _textStyle,
-            titleOverflow: titleOverflow,
+        return XBButton(
+          onTap: () {
+            hide();
+            onTapItem(index);
+          },
+          coverTransparentWhileOpacity: true,
+          child: SizedBox(
+            height: contentHeight ?? 40,
+            child: Padding(
+              padding: EdgeInsets.only(left: paddingLeft),
+              child: Row(
+                children: [
+                  XBImage(
+                    items[index].icon,
+                    width: iconSize.width,
+                    height: iconSize.height,
+                  ),
+                  SizedBox(width: gap ?? spaces.gapLess),
+                  Text(
+                    items[index].title,
+                    style: _textStyle,
+                    overflow: titleOverflow,
+                  ),
+                ],
+              ),
+            ),
           ),
         );
       },

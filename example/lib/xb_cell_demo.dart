@@ -448,18 +448,20 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           return Row(
             children: [
               XBFloatMenuIconTitle(
-                // bgColor: Colors.white,
-                // textStyle: const TextStyle(color: Colors.black),
-                // textOverflow: TextOverflow.ellipsis,
-                // separatorColor: Colors.red,
+                bgColor: Colors.white,
+                titleStyle: const TextStyle(color: Colors.black),
+                titleOverflow: TextOverflow.ellipsis,
+                contentHeight: 60,
+                separatorColor: Colors.red,
+                gap: 20,
+                iconSize: const Size(20, 20),
                 items: vm.iconItems,
                 onTapItem: (value) {
                   xbLog(value);
                 },
-                type: 1,
-                // crossAxisAlignment: CrossAxisAlignment.center,
+                // type: 1,
                 paddingLeft: 15,
-                width: 100,
+                width: 160,
                 child: Container(
                   width: 40,
                   height: 40,
