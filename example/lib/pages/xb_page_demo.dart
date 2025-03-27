@@ -18,6 +18,19 @@ class XBPageDemo extends XBPage<XBPageDemoVM> {
   }
 
   @override
+  Widget? leading(XBPageDemoVM vm) {
+    return Container(
+      height: 30,
+      color: colors.randColor,
+    );
+  }
+
+  @override
+  double? leadingWidth(XBPageDemoVM vm) {
+    return 100;
+  }
+
+  @override
   Widget? endDrawer(XBPageDemoVM vm) {
     return Container(
       width: 200,

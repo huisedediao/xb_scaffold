@@ -646,3 +646,7 @@
 
 - 新增drawer和endDrawer
 
+## 0.1.16
+
+- 新增leading宽度设置
+

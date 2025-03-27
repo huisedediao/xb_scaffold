@@ -88,6 +88,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 页面push动画时间
   int pushAnimationMilliseconds(T vm) => 450;
 
+  /// leading的宽度
+  double? leadingWidth(T vm) => null;
+
   /// -------------------- build widgets --------------------
 
   @override
@@ -227,6 +230,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       centerTitle: true,
       actions: actions(vm),
       leading: leading(vm),
+      leadingWidth: leadingWidth(vm),
       title: buildTitle(vm) ?? _defaultTitle(vm),
     );
   }
