@@ -658,3 +658,7 @@
 
 - optimized
 
+## 0.1.19
+
+- 新增XBCellTitleArrow
+

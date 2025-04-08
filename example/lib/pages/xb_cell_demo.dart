@@ -479,6 +479,26 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
 
+        if (index == 20) {
+          return XBCellTitleArrow(
+            contentBorderRadius: BorderRadius.circular(6),
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            backgroundColor: Colors.green,
+            titleStyle: const TextStyle(color: Colors.white),
+            contentHeight: 70,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            title: title + "title" + title + "title" + title + "title" + title,
+            titleMaxLines: 2,
+            titleOverflow: TextOverflow.ellipsis,
+            arrowColor: Colors.white,
+            onTap: () {},
+          );
+        }
+
         return Container(
           color: colors.randColor,
           height: 200,
