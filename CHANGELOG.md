@@ -654,3 +654,7 @@
 
 - bug fixed
 
+## 0.1.18
+
+- optimized
+
