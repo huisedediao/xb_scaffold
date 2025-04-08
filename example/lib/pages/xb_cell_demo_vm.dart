@@ -1,4 +1,4 @@
-import 'package:example/xb_cell_demo.dart';
+import 'package:example/pages/xb_cell_demo.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellDemoVM extends XBPageVM<XBCellDemo> {

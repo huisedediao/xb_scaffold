@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final String title;
+  final String? subTitle;
+  final TextStyle? subTitleStyle;
   final String? placeholder;
   final String? initValue;
   final String? cancelTitle;
@@ -15,6 +17,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final String? notEmptyTip;
   const XBDialogInput(
       {required this.title,
+      this.subTitle,
+      this.subTitleStyle,
       this.placeholder,
       this.initValue,
       this.inputFormatters,
@@ -51,6 +55,17 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                 style: TextStyle(
                     fontSize: fontSizes.s16, fontWeight: fontWeights.semiBold),
               ),
+              if (subTitle != null)
+                Padding(
+                  padding: EdgeInsets.only(
+                      left: spaces.gapDef,
+                      right: spaces.gapDef,
+                      top: spaces.gapDef),
+                  child: Text(subTitle ?? "",
+                      style: subTitleStyle ??
+                          TextStyle(
+                              fontSize: fontSizes.s14, color: Colors.grey)),
+                ),
               Padding(
                 padding: EdgeInsets.only(
                     left: spaces.gapDef,

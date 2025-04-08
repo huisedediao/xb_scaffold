@@ -1,4 +1,4 @@
-import 'package:example/xb_cell_demo_vm.dart';
+import 'package:example/pages/xb_cell_demo_vm.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
