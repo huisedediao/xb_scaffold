@@ -250,6 +250,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
         if (index == 10) {
           return XBCellIconTitleSubtitlePoint(
+            // subtitleAlignment: XBCellAlignment.left,
             title: title,
             subtitle: "222",
             contentBorderRadius: BorderRadius.circular(6),
