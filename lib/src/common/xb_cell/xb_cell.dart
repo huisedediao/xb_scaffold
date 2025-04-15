@@ -1,22 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
+import 'package:xb_scaffold/src/common/xb_cell/xb_cell_arrow.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
-export 'xb_cell_title_subtitle_arrow.dart';
-export 'xb_cell_title_subtitle_left_arrow.dart';
 export 'xb_cell_title_subtitle.dart';
 export 'xb_cell_title_subtitle_left.dart';
-export 'xb_cell_icon_title_arrow.dart';
-export 'xb_cell_title_icon_arrow.dart';
 export 'xb_cell_title_select.dart';
 export 'xb_cell_icon_title_select.dart';
 export 'xb_cell_title_switch.dart';
 export 'xb_cell_icon_title_switch.dart';
 export 'xb_cell_icon_title_tb.dart';
-export 'xb_cell_icon_title_point_arrow.dart';
-export 'xb_cell_title_point_arrow.dart';
+export 'xb_cell_icon_title_subtitle_point.dart';
 export 'xb_cell_icon_title.dart';
-export 'xb_cell_title_arrow.dart';
+export 'xb_cell_title.dart';
+export 'xb_cell_title_image.dart';
+export 'xb_cell_title_subtitle_point.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
@@ -28,6 +25,7 @@ abstract class XBCell extends StatelessWidget {
   final Color? arrowColor;
   final bool isShowArrow;
   final double? arrowLeftPadding;
+  final double? arrowSize;
   const XBCell(
       {this.margin,
       this.padding,
@@ -38,6 +36,7 @@ abstract class XBCell extends StatelessWidget {
       this.arrowColor,
       this.isShowArrow = false,
       this.arrowLeftPadding,
+      this.arrowSize,
       super.key});
 
   bool get isNeedBtn => true;
@@ -57,7 +56,7 @@ abstract class XBCell extends StatelessWidget {
                   leftWidget(),
                   Expanded(child: buildContent()),
                   rightWidget(),
-                  rightArrowWidget(),
+                  arrowWidget(),
                 ],
               )),
         ),
@@ -87,7 +86,7 @@ abstract class XBCell extends StatelessWidget {
     return Container();
   }
 
-  Widget rightArrowWidget() {
+  Widget arrowWidget() {
     if (!isShowArrow) {
       return Container();
     }
@@ -95,6 +94,7 @@ abstract class XBCell extends StatelessWidget {
       padding: EdgeInsets.only(left: arrowLeftPadding ?? 5),
       child: XBCellArrow(
         color: arrowColor,
+        size: arrowSize,
       ),
     );
   }

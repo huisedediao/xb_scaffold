@@ -32,7 +32,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
       itemBuilder: (context, index) {
         String title = vm.titles[index];
         if (index == 0) {
-          return XBCellTitleSubtitleArrow(
+          return XBCellTitleSubtitle(
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
@@ -51,6 +51,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             subtitle: "subtitle",
             arrowColor: Colors.white,
             onTap: () {},
+            isShowArrow: true,
           );
         }
         if (index == 1) {
@@ -107,7 +108,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
         if (index == 3) {
-          return XBCellIconTitleArrow(
+          return XBCellIconTitle(
             contentBorderRadius: BorderRadius.circular(6),
             icon: "assets/images/icon_inspectionPlan.png",
             margin: EdgeInsets.only(
@@ -122,24 +123,28 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             iconSize: const Size(20, 20),
             backgroundColor: Colors.purple,
             arrowColor: Colors.white,
+            isShowArrow: true,
           );
         }
         if (index == 4) {
-          return XBCellTitleIconArrow(
+          return XBCellTitleImage(
             contentBorderRadius: BorderRadius.circular(6),
-            icon: "assets/images/icon_inspectionPlan.png",
+            img: "assets/images/icon_inspectionPlan.png",
             margin: EdgeInsets.only(
               left: spaces.gapDef,
               right: spaces.gapDef,
             ),
-            contentHeight: 40,
+            // contentHeight: 40,
             padding: EdgeInsets.only(
                 left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
             title: title,
             titleStyle: const TextStyle(color: Colors.white),
-            // imageSize: const Size(20, 20),
+            imgSize: const Size(30, 30),
+            imgRadius: 15,
             backgroundColor: Colors.teal,
             arrowColor: Colors.white,
+            arrowLeftPadding: 10,
+            isShowArrow: true,
           );
         }
         if (index == 5) {
@@ -244,8 +249,9 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
         if (index == 10) {
-          return XBCellIconTitlePointArrow(
+          return XBCellIconTitleSubtitlePoint(
             title: title,
+            subtitle: "222",
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
@@ -261,11 +267,14 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             iconSize: const Size(20, 20),
             pointSize: 10,
             pointColor: Colors.orange,
+            isShowArrow: true,
           );
         }
         if (index == 11) {
-          return XBCellTitlePointArrow(
+          return XBCellTitleSubtitlePoint(
             title: title,
+            subtitle: "222",
+            pointLeftPadding: 20,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
@@ -279,10 +288,11 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             backgroundColor: Colors.white,
             pointSize: 10,
             pointColor: Colors.orange,
+            isShowArrow: true,
           );
         }
         if (index == 12) {
-          return XBCellTitleSubtitleLeftArrow(
+          return XBCellTitleSubtitleLeft(
             title: title,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(left: spaces.gapDef, right: spaces.gapDef),
@@ -291,6 +301,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             backgroundColor: Colors.white,
             subtitle: 'subtitle',
             maxTitleWidth: 100,
+            isShowArrow: true,
           );
         }
         if (index == 13) {
@@ -480,7 +491,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
 
         if (index == 20) {
-          return XBCellTitleArrow(
+          return XBCellTitle(
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
@@ -496,6 +507,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             titleOverflow: TextOverflow.ellipsis,
             arrowColor: Colors.white,
             onTap: () {},
+            isShowArrow: true,
           );
         }
 

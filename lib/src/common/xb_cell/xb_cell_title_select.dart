@@ -43,13 +43,16 @@ class XBCellTitleSelect extends XBCell {
           ),
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
-        const Spacer(),
-        Icon(
-            isSelected
-                ? Icons.check_circle_outline_rounded
-                : Icons.radio_button_unchecked_rounded,
-            color: isSelected ? selectedColor : unSelectedColor)
       ],
     );
+  }
+
+  @override
+  Widget rightWidget() {
+    return Icon(
+        isSelected
+            ? Icons.check_circle_outline_rounded
+            : Icons.radio_button_unchecked_rounded,
+        color: isSelected ? selectedColor : unSelectedColor);
   }
 }

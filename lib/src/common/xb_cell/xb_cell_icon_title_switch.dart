@@ -59,14 +59,17 @@ class XBCellIconTitleSwitch extends XBCell {
           ),
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
-        const Spacer(),
-        CupertinoSwitch(
-            activeColor: activeColor,
-            value: isSelected,
-            onChanged: (newValue) {
-              onTap?.call();
-            })
       ],
     );
+  }
+
+  @override
+  Widget rightWidget() {
+    return CupertinoSwitch(
+        activeColor: activeColor,
+        value: isSelected,
+        onChanged: (newValue) {
+          onTap?.call();
+        });
   }
 }

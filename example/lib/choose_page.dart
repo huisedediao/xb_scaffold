@@ -28,7 +28,7 @@ class ChoosePage extends XBPage<ChoosePageVM> {
       },
       itemBuilder: (context, index) {
         String title = vm.titles[index];
-        return XBCellTitleSubtitleArrow(
+        return XBCellTitleSubtitle(
           backgroundColor: colors.randColor,
           padding: EdgeInsets.all(spaces.gapDef),
           title: title,
@@ -36,6 +36,7 @@ class ChoosePage extends XBPage<ChoosePageVM> {
             vm.onTapIndex(index);
           },
           subtitle: '',
+          isShowArrow: true,
         );
       },
     );

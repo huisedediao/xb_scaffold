@@ -1,38 +1,36 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBCellTitlePointArrow extends XBCell {
+class XBCellTitleImage extends XBCell {
+  final double? titleRightPadding;
   final String title;
   final TextStyle? titleStyle;
-  final double? titleRightPadding;
   final double? maxTitleWidth;
   final int? titleMaxLines;
   final TextOverflow? titleOverflow;
-  final double? pointSize;
-  final Color? pointColor;
-  final Color? arrowColor;
-  final double? arrowLeftPadding;
-  const XBCellTitlePointArrow(
+  final String? img;
+  final Size? imgSize;
+  final double? imgRadius;
+  const XBCellTitleImage(
       {required this.title,
-      this.titleStyle,
       this.titleRightPadding,
+      this.titleStyle,
       this.maxTitleWidth,
       this.titleMaxLines,
       this.titleOverflow,
-      this.pointSize,
-      this.pointColor,
-      this.arrowColor,
-      this.arrowLeftPadding,
       super.contentHeight,
+      this.img,
+      this.imgSize,
+      this.imgRadius,
       super.margin,
       super.padding,
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.isShowArrow,
+      super.arrowColor,
+      super.arrowLeftPadding,
       super.key});
-
-  double get _pointW => pointSize ?? 6;
 
   @override
   Widget buildContent() {
@@ -48,20 +46,24 @@ class XBCellTitlePointArrow extends XBCell {
           ),
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
-        const Spacer(),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(_pointW * 0.5),
-          child: Container(
-            width: _pointW,
-            height: _pointW,
-            color: pointColor ?? Colors.red,
-          ),
-        ),
-        SizedBox(width: arrowLeftPadding ?? 5),
-        XBCellArrow(
-          color: arrowColor,
-        ),
       ],
+    );
+  }
+
+  @override
+  Widget rightWidget() {
+    if (img == null) {
+      return Container();
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(imgRadius ?? 0),
+      child: SizedBox(
+        width: imgSize?.width ?? 50,
+        height: imgSize?.height ?? 50,
+        child: XBImage(
+          img,
+        ),
+      ),
     );
   }
 }

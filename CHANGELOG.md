@@ -662,3 +662,7 @@
 
 - 新增XBCellTitleArrow
 
+## 0.1.20
+
+- XBCell模块化
+

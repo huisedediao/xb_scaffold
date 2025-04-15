@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBCellTitleSubtitleLeftArrow extends XBCell {
+class XBCellTitleSubtitlePoint extends XBCell {
   final String title;
   final TextStyle? titleStyle;
   final double? titleRightPadding;
@@ -14,9 +13,10 @@ class XBCellTitleSubtitleLeftArrow extends XBCell {
   final TextOverflow? subtitleOverflow;
   final double? maxSubtitleWidth;
   final int? subtitleMaxLines;
-  final Color? arrowColor;
-  final double? arrowLeftPadding;
-  const XBCellTitleSubtitleLeftArrow(
+  final double? pointSize;
+  final Color? pointColor;
+  final double? pointLeftPadding;
+  const XBCellTitleSubtitlePoint(
       {required this.title,
       this.titleStyle,
       this.titleRightPadding,
@@ -28,15 +28,21 @@ class XBCellTitleSubtitleLeftArrow extends XBCell {
       this.subtitleOverflow,
       this.maxSubtitleWidth,
       this.subtitleMaxLines,
-      this.arrowColor,
-      this.arrowLeftPadding,
+      this.pointSize,
+      this.pointColor,
+      this.pointLeftPadding,
       super.contentHeight,
       super.margin,
       super.padding,
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.isShowArrow,
+      super.arrowColor,
+      super.arrowLeftPadding,
       super.key});
+
+  double get _pointW => pointSize ?? 6;
 
   @override
   Widget buildContent() {
@@ -52,6 +58,7 @@ class XBCellTitleSubtitleLeftArrow extends XBCell {
           ),
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
+        const Spacer(),
         SizedBox(
           width: maxSubtitleWidth,
           child: Text(
@@ -60,13 +67,23 @@ class XBCellTitleSubtitleLeftArrow extends XBCell {
             style: subtitleStyle ?? const TextStyle(color: Colors.grey),
             maxLines: subtitleMaxLines,
           ),
-        ),
-        const Spacer(),
-        SizedBox(width: arrowLeftPadding ?? 5),
-        XBCellArrow(
-          color: arrowColor,
-        ),
+        )
       ],
+    );
+  }
+
+  @override
+  Widget rightWidget() {
+    return Padding(
+      padding: EdgeInsets.only(left: pointLeftPadding ?? 5),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(_pointW * 0.5),
+        child: Container(
+          width: _pointW,
+          height: _pointW,
+          color: pointColor ?? Colors.red,
+        ),
+      ),
     );
   }
 }
