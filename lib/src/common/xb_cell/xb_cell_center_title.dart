@@ -15,6 +15,10 @@ class XBCellCenterTitle extends XBCell {
       super.padding,
       super.onTap,
       super.contentBorderRadius,
+      super.arrowColor,
+      super.isShowArrow,
+      super.arrowLeftPadding,
+      super.arrowSize,
       super.key});
 
   @override

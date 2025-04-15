@@ -40,6 +40,7 @@ class XBCellTitleSubtitlePoint extends XBCell {
       super.isShowArrow,
       super.arrowColor,
       super.arrowLeftPadding,
+      super.arrowSize,
       super.key});
 
   double get _pointW => pointSize ?? 6;

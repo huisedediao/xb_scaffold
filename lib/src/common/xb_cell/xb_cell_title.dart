@@ -22,6 +22,7 @@ class XBCellTitle extends XBCell {
       super.isShowArrow,
       super.arrowColor,
       super.arrowLeftPadding,
+      super.arrowSize,
       super.key});
 
   @override

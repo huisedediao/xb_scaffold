@@ -33,6 +33,10 @@ class XBCellIconTitleSelect extends XBCell {
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.arrowColor,
+      super.isShowArrow = false,
+      super.arrowLeftPadding,
+      super.arrowSize,
       super.key});
 
   @override

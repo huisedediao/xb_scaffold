@@ -22,6 +22,11 @@ class XBCellIconTitleTb extends XBCell {
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.contentHeight,
+      super.arrowColor,
+      super.isShowArrow = false,
+      super.arrowLeftPadding,
+      super.arrowSize,
       super.key});
 
   @override
