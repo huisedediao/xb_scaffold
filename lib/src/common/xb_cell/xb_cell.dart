@@ -3,7 +3,6 @@ import 'package:xb_scaffold/src/common/xb_cell/xb_cell_arrow.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
 export 'xb_cell_title_subtitle.dart';
-export 'xb_cell_title_subtitle_left.dart';
 export 'xb_cell_title_select.dart';
 export 'xb_cell_icon_title_select.dart';
 export 'xb_cell_title_switch.dart';

@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
+enum XBCellAlignment {
+  left,
+  right,
+}
+
 class XBCellTitleSubtitle extends XBCell {
   final String title;
   final TextStyle? titleStyle;
@@ -13,6 +18,7 @@ class XBCellTitleSubtitle extends XBCell {
   final TextOverflow? subtitleOverflow;
   final double? maxSubtitleWidth;
   final int? subtitleMaxLines;
+  final XBCellAlignment subtitleAlignment;
   const XBCellTitleSubtitle(
       {required this.title,
       this.titleStyle,
@@ -25,6 +31,7 @@ class XBCellTitleSubtitle extends XBCell {
       this.subtitleOverflow,
       this.maxSubtitleWidth,
       this.subtitleMaxLines,
+      this.subtitleAlignment = XBCellAlignment.right,
       super.contentHeight,
       super.margin,
       super.padding,
@@ -51,6 +58,27 @@ class XBCellTitleSubtitle extends XBCell {
           ),
         ),
         SizedBox(width: titleRightPadding ?? spaces.gapLess),
+        ..._buildSubtitle()
+      ],
+    );
+  }
+
+  List<Widget> _buildSubtitle() {
+    if (subtitleAlignment == XBCellAlignment.left) {
+      return [
+        SizedBox(
+          width: maxSubtitleWidth,
+          child: Text(
+            subtitle,
+            overflow: subtitleOverflow,
+            style: subtitleStyle ?? const TextStyle(color: Colors.grey),
+            maxLines: subtitleMaxLines,
+          ),
+        ),
+        const Spacer(),
+      ];
+    } else {
+      return [
         const Spacer(),
         SizedBox(
           width: maxSubtitleWidth,
@@ -61,7 +89,7 @@ class XBCellTitleSubtitle extends XBCell {
             maxLines: subtitleMaxLines,
           ),
         )
-      ],
-    );
+      ];
+    }
   }
 }

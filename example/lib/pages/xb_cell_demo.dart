@@ -292,8 +292,9 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
         if (index == 12) {
-          return XBCellTitleSubtitleLeft(
+          return XBCellTitleSubtitle(
             title: title,
+            subtitleAlignment: XBCellAlignment.left,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(left: spaces.gapDef, right: spaces.gapDef),
             padding: EdgeInsets.only(
@@ -305,7 +306,8 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
         if (index == 13) {
-          return XBCellTitleSubtitleLeft(
+          return XBCellTitleSubtitle(
+            subtitleAlignment: XBCellAlignment.left,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
