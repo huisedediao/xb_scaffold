@@ -2,17 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_cell/xb_cell_arrow.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
-export 'xb_cell_title_subtitle.dart';
-export 'xb_cell_title_select.dart';
-export 'xb_cell_icon_title_select.dart';
-export 'xb_cell_title_switch.dart';
-export 'xb_cell_icon_title_switch.dart';
-export 'xb_cell_icon_title_tb.dart';
-export 'xb_cell_icon_title_subtitle_point.dart';
-export 'xb_cell_icon_title.dart';
-export 'xb_cell_title.dart';
-export 'xb_cell_title_image.dart';
-export 'xb_cell_title_subtitle_point.dart';
+export 'xb_cell_title_subtitle/xb_cell_title_subtitle.dart';
+export 'xb_cell_title/xb_cell_title_select.dart';
+export 'xb_cell_icon_title/xb_cell_icon_title_select.dart';
+export 'xb_cell_title/xb_cell_title_switch.dart';
+export 'xb_cell_icon_title/xb_cell_icon_title_switch.dart';
+export 'xb_cell_top_icon_bottom_title.dart';
+export 'xb_cell_title_subtitle/xb_cell_icon_title_subtitle_point.dart';
+export 'xb_cell_icon_title/xb_cell_icon_title.dart';
+export 'xb_cell_title/xb_cell_title.dart';
+export 'xb_cell_title/xb_cell_title_image.dart';
+export 'xb_cell_title_subtitle/xb_cell_title_subtitle_point.dart';
 
 abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? margin;

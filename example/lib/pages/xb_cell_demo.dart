@@ -229,7 +229,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         if (index == 9) {
           return Container(
             alignment: Alignment.center,
-            child: XBCellIconTitleTb(
+            child: XBCellTopIconBottomTitle(
               title: title,
               contentBorderRadius: BorderRadius.circular(6),
               margin: EdgeInsets.only(

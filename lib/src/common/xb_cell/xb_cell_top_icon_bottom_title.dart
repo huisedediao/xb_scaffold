@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBCellIconTitleTb extends XBCell {
+class XBCellTopIconBottomTitle extends XBCell {
   final String icon;
   final Size? iconSize;
   final String title;
@@ -9,7 +9,7 @@ class XBCellIconTitleTb extends XBCell {
   final int? titleMaxLines;
   final TextOverflow? titleOverflow;
   final double? gap;
-  const XBCellIconTitleTb(
+  const XBCellTopIconBottomTitle(
       {required this.icon,
       required this.title,
       this.iconSize,
