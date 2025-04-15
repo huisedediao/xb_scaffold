@@ -272,6 +272,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
         if (index == 11) {
           return XBCellTitleSubtitlePoint(
+            // subtitleAlignment: XBCellAlignment.left,
             title: title,
             subtitle: "222",
             pointLeftPadding: 20,
