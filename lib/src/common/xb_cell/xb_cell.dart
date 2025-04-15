@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/src/common/xb_cell/xb_right_icon.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 export 'xb_cell_center_title.dart';
 export 'xb_cell_title_subtitle_arrow.dart';
@@ -24,6 +25,9 @@ abstract class XBCell extends StatelessWidget {
   final Color? backgroundColor;
   final double? contentHeight;
   final BorderRadiusGeometry contentBorderRadius;
+  final Color? arrowColor;
+  final bool isShowArrow;
+  final double? arrowLeftPadding;
   const XBCell(
       {this.margin,
       this.padding,
@@ -31,6 +35,9 @@ abstract class XBCell extends StatelessWidget {
       this.backgroundColor,
       this.contentHeight,
       this.contentBorderRadius = BorderRadius.zero,
+      this.arrowColor,
+      this.isShowArrow = false,
+      this.arrowLeftPadding,
       super.key});
 
   bool get isNeedBtn => true;
@@ -43,7 +50,16 @@ abstract class XBCell extends StatelessWidget {
         color: backgroundColor,
         child: Padding(
           padding: padding ?? const EdgeInsets.all(0),
-          child: SizedBox(height: contentHeight, child: buildContent()),
+          child: SizedBox(
+              height: contentHeight,
+              child: Row(
+                children: [
+                  leftWidget(),
+                  Expanded(child: buildContent()),
+                  rightWidget(),
+                  rightArrowWidget(),
+                ],
+              )),
         ),
       ),
     );
@@ -62,4 +78,24 @@ abstract class XBCell extends StatelessWidget {
   }
 
   Widget buildContent();
+
+  Widget leftWidget() {
+    return Container();
+  }
+
+  Widget rightWidget() {
+    return Container();
+  }
+
+  Widget rightArrowWidget() {
+    if (!isShowArrow) {
+      return Container();
+    }
+    return Padding(
+      padding: EdgeInsets.only(left: arrowLeftPadding ?? 5),
+      child: XBCellArrow(
+        color: arrowColor,
+      ),
+    );
+  }
 }
