@@ -149,24 +149,23 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
         if (index == 5) {
           return XBCellTitleSelect(
-              contentBorderRadius: BorderRadius.circular(6),
-              title: title,
-              isSelected: vm.isSelected,
-              margin: EdgeInsets.only(
-                left: spaces.gapDef,
-                right: spaces.gapDef,
-              ),
-              contentHeight: 40,
-              padding: EdgeInsets.only(
-                  left: spaces.gapDef,
-                  right: spaces.gapDef,
-                  top: 10,
-                  bottom: 10),
-              // imageSize: const Size(20, 20),
-              backgroundColor: Colors.white,
-              selectedColor: Colors.green,
-              unSelectedColor: Colors.green,
-              onTap: vm.onSelectChange);
+            contentBorderRadius: BorderRadius.circular(6),
+            title: title,
+            isSelected: vm.isSelected,
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 40,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            // imageSize: const Size(20, 20),
+            backgroundColor: Colors.white,
+            selectedColor: Colors.green,
+            unSelectedColor: Colors.green,
+            onTap: vm.onSelectChange,
+            // isShowArrow: true,
+          );
         }
         if (index == 6) {
           return XBCellIconTitleSelect(
@@ -205,6 +204,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             backgroundColor: Colors.white,
             activeColor: Colors.green,
             onTap: vm.onSelectChange,
+            // isShowArrow: true,
           );
         }
         if (index == 8) {

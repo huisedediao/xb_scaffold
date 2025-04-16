@@ -1,27 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
-class XBCellTitleImage extends XBCell {
-  final double? titleRightPadding;
-  final String title;
-  final TextStyle? titleStyle;
-  final double? maxTitleWidth;
-  final int? titleMaxLines;
-  final TextOverflow? titleOverflow;
+class XBCellTitleImage extends XBCellTitle {
   final String? img;
   final Size? imgSize;
   final double? imgRadius;
   const XBCellTitleImage(
-      {required this.title,
-      this.titleRightPadding,
-      this.titleStyle,
-      this.maxTitleWidth,
-      this.titleMaxLines,
-      this.titleOverflow,
-      super.contentHeight,
+      {required super.title,
       this.img,
       this.imgSize,
       this.imgRadius,
+      super.titleRightPadding,
+      super.titleStyle,
+      super.maxTitleWidth,
+      super.titleMaxLines,
+      super.titleOverflow,
+      super.contentHeight,
       super.margin,
       super.padding,
       super.onTap,
@@ -32,24 +26,6 @@ class XBCellTitleImage extends XBCell {
       super.arrowLeftPadding,
       super.arrowSize,
       super.key});
-
-  @override
-  Widget buildContent() {
-    return Row(
-      children: [
-        SizedBox(
-          width: maxTitleWidth,
-          child: Text(
-            title,
-            overflow: titleOverflow,
-            style: titleStyle,
-            maxLines: titleMaxLines,
-          ),
-        ),
-        SizedBox(width: titleRightPadding ?? spaces.gapLess),
-      ],
-    );
-  }
 
   @override
   Widget rightWidget() {

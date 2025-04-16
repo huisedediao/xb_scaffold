@@ -8,11 +8,15 @@ class XBCellTitle extends XBCell {
   final TextStyle? titleStyle;
   final int? titleMaxLines;
   final TextOverflow? titleOverflow;
+  final double? titleRightPadding;
+  final double? maxTitleWidth;
   const XBCellTitle(
       {required this.title,
       this.titleStyle,
       this.titleMaxLines,
       this.titleOverflow,
+      this.titleRightPadding,
+      this.maxTitleWidth,
       super.contentHeight,
       super.margin,
       super.padding,
@@ -27,11 +31,19 @@ class XBCellTitle extends XBCell {
 
   @override
   Widget buildContent() {
-    return Text(
-      title,
-      overflow: titleOverflow,
-      style: titleStyle,
-      maxLines: titleMaxLines,
+    return Row(
+      children: [
+        SizedBox(
+          width: maxTitleWidth,
+          child: Text(
+            title,
+            overflow: titleOverflow,
+            style: titleStyle,
+            maxLines: titleMaxLines,
+          ),
+        ),
+        SizedBox(width: titleRightPadding ?? spaces.gapLess),
+      ],
     );
   }
 }
