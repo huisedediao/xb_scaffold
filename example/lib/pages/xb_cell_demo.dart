@@ -169,25 +169,24 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
         if (index == 6) {
           return XBCellIconTitleSelect(
-              icon: "assets/images/icon_inspectionPlan.png",
-              contentBorderRadius: BorderRadius.circular(6),
-              title: title,
-              isSelected: vm.isSelected,
-              margin: EdgeInsets.only(
-                left: spaces.gapDef,
-                right: spaces.gapDef,
-              ),
-              contentHeight: 40,
-              padding: EdgeInsets.only(
-                  left: spaces.gapDef,
-                  right: spaces.gapDef,
-                  top: 10,
-                  bottom: 10),
-              iconSize: const Size(20, 20),
-              backgroundColor: Colors.white,
-              selectedColor: Colors.green,
-              unSelectedColor: Colors.green,
-              onTap: vm.onSelectChange);
+            icon: "assets/images/icon_inspectionPlan.png",
+            contentBorderRadius: BorderRadius.circular(6),
+            title: title,
+            isSelected: vm.isSelected,
+            margin: EdgeInsets.only(
+              left: spaces.gapDef,
+              right: spaces.gapDef,
+            ),
+            contentHeight: 40,
+            padding: EdgeInsets.only(
+                left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
+            iconSize: const Size(20, 20),
+            backgroundColor: Colors.white,
+            selectedColor: Colors.green,
+            unSelectedColor: Colors.green,
+            onTap: vm.onSelectChange,
+            // isShowArrow: true,
+          );
         }
         if (index == 7) {
           return XBCellTitleSwitch(
@@ -210,7 +209,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         if (index == 8) {
           return XBCellIconTitleSwitch(
             title: title,
-            isSelected: vm.isSelected,
+            isOn: vm.isSelected,
             contentBorderRadius: BorderRadius.circular(6),
             margin: EdgeInsets.only(
               left: spaces.gapDef,
@@ -223,7 +222,9 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             activeColor: Colors.green,
             onTap: vm.onSelectChange,
             icon: 'assets/images/icon_inspectionPlan.png',
+            iconRightPadding: 10,
             iconSize: const Size(20, 20),
+            // isShowArrow: true,
           );
         }
         if (index == 9) {
