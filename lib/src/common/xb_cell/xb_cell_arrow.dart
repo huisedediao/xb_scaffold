@@ -9,7 +9,7 @@ class XBCellArrow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Icon(
       Icons.arrow_forward_ios,
-      color: color ?? Colors.black54,
+      color: color ?? Colors.black26,
       size: size ?? 15,
     );
   }

@@ -339,6 +339,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             children: [
               const Spacer(),
               XBFloatMenuTitle(
+                // separatorColor: Colors.red,
                 items: const [
                   "Average stay duration",
                   "222222",
