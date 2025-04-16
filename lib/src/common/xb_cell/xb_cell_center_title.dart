@@ -22,7 +22,7 @@ class XBCellCenterTitle extends XBCell {
       super.key});
 
   @override
-  Widget buildContent() {
+  Widget content() {
     return Container(
       alignment: Alignment.center,
       child: Text(

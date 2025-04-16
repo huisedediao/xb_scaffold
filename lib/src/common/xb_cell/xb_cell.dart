@@ -53,7 +53,7 @@ abstract class XBCell extends StatelessWidget {
               child: Row(
                 children: [
                   leftWidget(),
-                  Expanded(child: buildContent()),
+                  Expanded(child: content()),
                   rightWidget(),
                   arrowWidget(),
                 ],
@@ -75,7 +75,7 @@ abstract class XBCell extends StatelessWidget {
     );
   }
 
-  Widget buildContent();
+  Widget content();
 
   Widget leftWidget() {
     return Container();

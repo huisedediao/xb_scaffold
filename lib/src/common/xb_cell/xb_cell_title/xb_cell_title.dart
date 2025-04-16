@@ -30,7 +30,7 @@ class XBCellTitle extends XBCell {
       super.key});
 
   @override
-  Widget buildContent() {
+  Widget content() {
     return Row(
       children: [
         SizedBox(

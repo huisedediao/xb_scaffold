@@ -30,7 +30,7 @@ class XBCellTopIconBottomTitle extends XBCell {
       super.key});
 
   @override
-  Widget buildContent() {
+  Widget content() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
