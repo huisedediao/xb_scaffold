@@ -47,32 +47,39 @@ abstract class XBCell extends StatelessWidget {
       borderRadius: contentBorderRadius,
       child: Container(
         color: backgroundColor,
-        child: Padding(
-          padding: padding ?? const EdgeInsets.all(0),
-          child: SizedBox(
-              height: contentHeight,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Row(
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: backgroundWidget(),
+            ),
+            Padding(
+              padding: padding ?? const EdgeInsets.all(0),
+              child: SizedBox(
+                  height: contentHeight,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      leftWidget(),
-                      Expanded(
-                          child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                      Row(
                         children: [
-                          content(),
-                          bottomContent(),
+                          leftWidget(),
+                          Expanded(
+                              child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              content(),
+                              bottomContent(),
+                            ],
+                          )),
+                          rightWidget(),
+                          arrowWidget(),
                         ],
-                      )),
-                      rightWidget(),
-                      arrowWidget(),
+                      ),
+                      bottomWidget(),
                     ],
-                  ),
-                  bottomWidget(),
-                ],
-              )),
+                  )),
+            ),
+          ],
         ),
       ),
     );
@@ -88,6 +95,10 @@ abstract class XBCell extends StatelessWidget {
       padding: margin ?? const EdgeInsets.all(0),
       child: child,
     );
+  }
+
+  Widget backgroundWidget() {
+    return Container();
   }
 
   Widget content();
