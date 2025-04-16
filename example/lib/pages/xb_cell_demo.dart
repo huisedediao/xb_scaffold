@@ -115,7 +115,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
               left: spaces.gapDef,
               right: spaces.gapDef,
             ),
-            contentHeight: 40,
+            // contentHeight: 40,
             padding: EdgeInsets.only(
                 left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
             title: title,

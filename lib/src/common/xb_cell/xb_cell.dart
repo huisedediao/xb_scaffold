@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_cell/xb_cell_arrow.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
@@ -50,12 +51,26 @@ abstract class XBCell extends StatelessWidget {
           padding: padding ?? const EdgeInsets.all(0),
           child: SizedBox(
               height: contentHeight,
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  leftWidget(),
-                  Expanded(child: content()),
-                  rightWidget(),
-                  arrowWidget(),
+                  Row(
+                    children: [
+                      leftWidget(),
+                      Expanded(
+                          child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          content(),
+                          bottomContent(),
+                        ],
+                      )),
+                      rightWidget(),
+                      arrowWidget(),
+                    ],
+                  ),
+                  bottomWidget(),
                 ],
               )),
         ),
@@ -77,6 +92,10 @@ abstract class XBCell extends StatelessWidget {
 
   Widget content();
 
+  Widget bottomContent() {
+    return Container();
+  }
+
   Widget leftWidget() {
     return Container();
   }
@@ -96,5 +115,9 @@ abstract class XBCell extends StatelessWidget {
         size: arrowSize,
       ),
     );
+  }
+
+  Widget bottomWidget() {
+    return Container();
   }
 }
