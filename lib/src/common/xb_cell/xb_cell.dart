@@ -20,10 +20,11 @@ abstract class XBCell extends StatelessWidget {
   final EdgeInsetsGeometry? padding;
   final VoidCallback? onTap;
   final Color? backgroundColor;
+  final Widget? backgroundWidget;
   final double? contentHeight;
   final BorderRadiusGeometry contentBorderRadius;
-  final Color? arrowColor;
   final bool isShowArrow;
+  final Color? arrowColor;
   final double? arrowLeftPadding;
   final double? arrowSize;
   const XBCell(
@@ -31,10 +32,11 @@ abstract class XBCell extends StatelessWidget {
       this.padding,
       this.onTap,
       this.backgroundColor,
+      this.backgroundWidget,
       this.contentHeight,
       this.contentBorderRadius = BorderRadius.zero,
-      this.arrowColor,
       this.isShowArrow = false,
+      this.arrowColor,
       this.arrowLeftPadding,
       this.arrowSize,
       super.key});
@@ -49,9 +51,10 @@ abstract class XBCell extends StatelessWidget {
         color: backgroundColor,
         child: Stack(
           children: [
-            Positioned.fill(
-              child: backgroundWidget(),
-            ),
+            if (backgroundWidget != null)
+              Positioned.fill(
+                child: backgroundWidget!,
+              ),
             Padding(
               padding: padding ?? const EdgeInsets.all(0),
               child: SizedBox(
@@ -95,10 +98,6 @@ abstract class XBCell extends StatelessWidget {
       padding: margin ?? const EdgeInsets.all(0),
       child: child,
     );
-  }
-
-  Widget backgroundWidget() {
-    return Container();
   }
 
   Widget content();

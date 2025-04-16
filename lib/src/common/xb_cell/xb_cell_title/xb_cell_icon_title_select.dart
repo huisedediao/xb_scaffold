@@ -24,8 +24,9 @@ class XBCellIconTitleSelect extends XBCellTitleSelect {
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.backgroundWidget,
+      super.isShowArrow,
       super.arrowColor,
-      super.isShowArrow = false,
       super.arrowLeftPadding,
       super.arrowSize,
       super.key});

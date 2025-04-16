@@ -22,9 +22,10 @@ class XBCellTopIconBottomTitle extends XBCell {
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.backgroundWidget,
       super.contentHeight,
+      super.isShowArrow,
       super.arrowColor,
-      super.isShowArrow = false,
       super.arrowLeftPadding,
       super.arrowSize,
       super.key});

@@ -124,6 +124,9 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             backgroundColor: Colors.purple,
             arrowColor: Colors.white,
             isShowArrow: true,
+            backgroundWidget: Container(
+              color: Colors.red.withAlpha(150),
+            ),
           );
         }
         if (index == 4) {

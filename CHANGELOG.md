@@ -681,3 +681,7 @@
 ## 0.1.24
 
 - XBCell新增backgroundWidget
+
+## 0.1.25
+
+- optimized

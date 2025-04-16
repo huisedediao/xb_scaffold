@@ -17,6 +17,7 @@ class XBCellIconTitle extends XBCellTitle {
       super.onTap,
       super.contentBorderRadius,
       super.backgroundColor,
+      super.backgroundWidget,
       super.isShowArrow,
       super.arrowColor,
       super.arrowLeftPadding,
