@@ -23,7 +23,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   bool needRebuildWhileOrientationChanged(T vm) => false;
 
   /// 是否需要监听主题变化，默认否
-  bool needRebuildWhileAppThemeChanged(T vm) => false;
+  bool needRebuildWhileAppThemeChanged(T vm) => true;
 
   /// 是否需要输入框跟随键盘移动
   bool needAdaptKeyboard(T vm) => false;
@@ -105,9 +105,11 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _themeConsumerWidget(T vm) {
     if (needRebuildWhileAppThemeChanged(vm)) {
-      return Consumer(builder: (ctx, XBThemeVM value, child) {
-        return _orientaionWidget(vm);
-      });
+      return ChangeNotifierProvider(
+          create: (ctx) => XBThemeVM(),
+          child: Consumer(builder: (ctx, XBThemeVM value, child) {
+            return _orientaionWidget(vm);
+          }));
     } else {
       return _orientaionWidget(vm);
     }
