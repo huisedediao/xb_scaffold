@@ -14,12 +14,20 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color.fromARGB(255, 76, 27, 162)),
         useMaterial3: true,
       ),
       navigatorObservers: [xbRouteObserver],
-      home:
-          const XBScaffold(imgPrefixs: ["assets/images"], child: ChoosePage()),
+      home: XBScaffold(themeConfigs: [
+        XBThemeConfig(
+          primaryColor: Color.fromARGB(255, 88, 18, 13),
+          imagesPath: "assets/images",
+        ),
+        XBThemeConfig(
+            primaryColor: Color.fromARGB(255, 21, 123, 164),
+            imagesPath: "assets/images")
+      ], child: const ChoosePage()),
     );
   }
 }

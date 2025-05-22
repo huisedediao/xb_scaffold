@@ -106,7 +106,7 @@ class XBScaffold extends StatefulWidget {
   final Widget child;
 
   /// 图片路径，区分主题
-  final List<String> imgPrefixs;
+  final List<XBThemeConfig> themeConfigs;
 
   /// loading要长什么样
   final XBLoadingBuilder? loadingBuilder;
@@ -119,7 +119,7 @@ class XBScaffold extends StatefulWidget {
 
   const XBScaffold(
       {required this.child,
-      required this.imgPrefixs,
+      required this.themeConfigs,
       this.loadingBuilder,
       this.toastBackgroundColor,
       this.maxPageLogLen,
@@ -136,7 +136,7 @@ class _MyWidgetState extends State<XBScaffold> {
     _xbLoadingBuilder = widget.loadingBuilder;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
     _maxPageLogLen = widget.maxPageLogLen;
-    _initXBScaffold(imgPrefixs: widget.imgPrefixs);
+    _initXBScaffold(configs: widget.themeConfigs);
   }
 
   @override
@@ -149,9 +149,14 @@ class _MyWidgetState extends State<XBScaffold> {
 
 /// 初始化
 /// imgPrefixs图片的前缀，每个主题使用的图片不同，如果没有设置，则使用"assets/images/default/"
-_initXBScaffold({required List<String> imgPrefixs}) async {
-  for (int i = 0; i < imgPrefixs.length; i++) {
-    XBThemeVM().setThemeForIndex(XBTheme(imagesPath: imgPrefixs[i]), i);
+_initXBScaffold({required List<XBThemeConfig> configs}) async {
+  for (int i = 0; i < configs.length; i++) {
+    XBThemeVM().setThemeForIndex(
+        XBTheme(
+            config: XBThemeConfig(
+                imagesPath: configs[i].imagesPath,
+                primaryColor: configs[i].primaryColor)),
+        i);
   }
   return Future.value(1);
 }

@@ -17,27 +17,31 @@ class XBButtonDemo extends XBPage<XBButtonDemoVM> {
 
   @override
   Widget buildPage(XBButtonDemoVM vm, BuildContext context) {
-    return Container(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          XBButtonText(text: "点击", onTap: () {}),
-          XBButtonText(
-              text: "点击",
-              borderColor: Colors.red,
-              borderRadius: 10,
-              backgroundColor: Colors.orange,
-              style: TextStyle(color: Colors.white, fontSize: fontSizes.s12),
-              width: double.infinity,
-              padding: EdgeInsets.only(
-                  left: spaces.gapLarge,
-                  right: spaces.gapLarge,
-                  top: 10,
-                  bottom: 10),
-              onTap: () {}),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        XBButtonText(text: "点击", onTap: () {}),
+        XBButtonText(
+            text: "点击",
+            borderColor: Colors.red,
+            borderRadius: 10,
+            backgroundColor: colors.primary,
+            style: TextStyle(color: Colors.white, fontSize: fontSizes.s12),
+            // width: double.infinity,
+            padding: EdgeInsets.only(
+                left: spaces.gapLarge,
+                right: spaces.gapLarge,
+                top: 10,
+                bottom: 10),
+            onTap: () {
+              if (XBThemeVM().themeIndex == 0) {
+                XBThemeVM().changeTheme(1);
+              } else {
+                XBThemeVM().changeTheme(0);
+              }
+            }),
+      ],
     );
   }
 }
