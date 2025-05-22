@@ -22,11 +22,11 @@ class MyApp extends StatelessWidget {
       home: XBScaffold(themeConfigs: [
         XBThemeConfig(
           primaryColor: Color.fromARGB(255, 88, 18, 13),
-          imagesPath: "assets/images",
+          imgPrefix: "assets/images",
         ),
         XBThemeConfig(
             primaryColor: Color.fromARGB(255, 21, 123, 164),
-            imagesPath: "assets/images")
+            imgPrefix: "assets/images")
       ], child: const ChoosePage()),
     );
   }

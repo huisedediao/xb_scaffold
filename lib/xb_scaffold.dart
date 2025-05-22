@@ -154,7 +154,7 @@ _initXBScaffold({required List<XBThemeConfig> configs}) async {
     XBThemeVM().setThemeForIndex(
         XBTheme(
             config: XBThemeConfig(
-                imagesPath: configs[i].imagesPath,
+                imgPrefix: configs[i].imgPrefix,
                 primaryColor: configs[i].primaryColor)),
         i);
   }

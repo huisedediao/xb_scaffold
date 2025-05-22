@@ -14,9 +14,9 @@ export 'xb_theme_space.dart';
 
 class XBThemeConfig {
   final Color primaryColor;
-  final String imagesPath;
+  final String imgPrefix;
 
-  XBThemeConfig({required this.primaryColor, required this.imagesPath});
+  XBThemeConfig({required this.primaryColor, required this.imgPrefix});
 }
 
 /// 要替换原来主题中的内容，继承相应的类，在创建主题的时候传入
@@ -34,5 +34,5 @@ class XBTheme {
         spaces = XBThemeSpace(),
         fontSizes = XBThemeFontSize(),
         fontWeights = XBThemeFontWeight(),
-        images = XBThemeImage(prefix: config?.imagesPath);
+        images = XBThemeImage(prefix: config?.imgPrefix);
 }
