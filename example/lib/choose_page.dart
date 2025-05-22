@@ -1,3 +1,4 @@
+import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
 import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_cell_demo.dart';
@@ -50,6 +51,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
     "XBCell demo",
     "XBPage demo",
     "XBDialogInput demo",
+    "XBButton demo",
   ];
 
   void onTapIndex(int index) {
@@ -59,6 +61,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
       push(const XBPageDemo());
     } else if (index == 2) {
       push(const XBDialogInputDemo());
+    } else if (index == 3) {
+      push(const XBButtonDemo());
     }
   }
 }
