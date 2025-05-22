@@ -132,7 +132,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                       child: XBCellCenterTitle(
                           contentHeight: 50,
                           contentBorderRadius: BorderRadius.circular(6),
-                          titleStyle: const TextStyle(color: Colors.blue),
+                          titleStyle: TextStyle(color: colors.primary),
                           title: confirmTitle ?? "确定",
                           onTap: () {
                             if (vm.value.isEmpty) {

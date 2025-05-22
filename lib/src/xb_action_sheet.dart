@@ -71,7 +71,7 @@ actionSheet({
       child: XBActionSheetCell(
         title: titles[index],
         titleColor: selectedIndex == index
-            ? (selectedColor ?? Colors.blue)
+            ? (selectedColor ?? colors.primary)
             : Colors.black,
         showLine: !isLast,
         onTap: () {

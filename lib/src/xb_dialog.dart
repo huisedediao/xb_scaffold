@@ -133,7 +133,8 @@ List<Widget> _setupBtns({
 }) {
   if (btnTitles.length == 1) {
     return [
-      _buildBtn(btnTitles[0], btnHighLightColor ?? Colors.blue, fontSize, () {
+      _buildBtn(btnTitles[0], btnHighLightColor ?? colors.primary, fontSize,
+          () {
         pop();
         onSelected(0);
       })
@@ -149,7 +150,8 @@ List<Widget> _setupBtns({
         width: onePixel,
         color: lineColor,
       ),
-      _buildBtn(btnTitles[1], btnHighLightColor ?? Colors.blue, fontSize, () {
+      _buildBtn(btnTitles[1], btnHighLightColor ?? colors.primary, fontSize,
+          () {
         pop();
         onSelected(1);
       })

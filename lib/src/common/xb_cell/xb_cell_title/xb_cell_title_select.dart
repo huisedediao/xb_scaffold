@@ -3,13 +3,13 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellTitleSelect extends XBCellTitle {
   final bool isSelected;
-  final Color selectedColor;
-  final Color unSelectedColor;
+  final Color? selectedColor;
+  final Color? unSelectedColor;
   const XBCellTitleSelect(
       {required super.title,
       required this.isSelected,
-      this.selectedColor = Colors.blue,
-      this.unSelectedColor = Colors.blue,
+      this.selectedColor,
+      this.unSelectedColor,
       super.titleStyle,
       super.titleRightPadding,
       super.maxTitleWidth,
@@ -34,6 +34,8 @@ class XBCellTitleSelect extends XBCellTitle {
         isSelected
             ? Icons.check_circle_outline_rounded
             : Icons.radio_button_unchecked_rounded,
-        color: isSelected ? selectedColor : unSelectedColor);
+        color: isSelected
+            ? (selectedColor ?? colors.primary)
+            : (unSelectedColor ?? colors.primary));
   }
 }

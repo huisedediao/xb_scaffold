@@ -1,14 +1,13 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellTitleSwitch extends XBCellTitle {
   final bool isOn;
-  final Color activeColor;
+  final Color? activeColor;
   const XBCellTitleSwitch(
       {required super.title,
       required this.isOn,
-      this.activeColor = Colors.blue,
+      this.activeColor,
       super.titleStyle,
       super.titleRightPadding,
       super.maxTitleWidth,
@@ -33,7 +32,7 @@ class XBCellTitleSwitch extends XBCellTitle {
   @override
   Widget rightWidget() {
     return CupertinoSwitch(
-        activeColor: activeColor,
+        activeColor: activeColor ?? colors.primary,
         value: isOn,
         onChanged: (newValue) {
           onTap?.call();

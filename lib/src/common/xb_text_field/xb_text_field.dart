@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 /*
  * initValue只有在创建的时候有效，如果需要清除内容，请使用
@@ -47,7 +48,7 @@ class XBTextField extends StatefulWidget {
       this.obscureText = false,
       this.keyboardType,
       this.textInputAction = TextInputAction.done,
-      this.cursorColor = Colors.blue,
+      this.cursorColor,
       this.cursorWidth = 1,
       this.cursorRadius,
       this.inputFormatters,
@@ -110,7 +111,7 @@ class XBTextFieldState extends State<XBTextField> {
       focusNode: _focusNode,
       textAlign: widget.textAlign,
       controller: _ctl,
-      cursorColor: widget.cursorColor,
+      cursorColor: widget.cursorColor ?? colors.primary,
       cursorRadius: widget.cursorRadius,
       cursorWidth: widget.cursorWidth,
       inputFormatters: widget.inputFormatters,
