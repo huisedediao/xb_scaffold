@@ -105,8 +105,8 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _themeConsumerWidget(T vm) {
     if (needRebuildWhileAppThemeChanged(vm)) {
-      return ChangeNotifierProvider(
-          create: (ctx) => XBThemeVM(),
+      return ChangeNotifierProvider.value(
+          value: XBThemeVM(),
           child: Consumer(builder: (ctx, XBThemeVM value, child) {
             return _orientaionWidget(vm);
           }));
