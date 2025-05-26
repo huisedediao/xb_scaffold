@@ -713,3 +713,7 @@
 ## 0.1.32
 
 - bug fixed
+
+## 0.1.33
+
+- optimized
