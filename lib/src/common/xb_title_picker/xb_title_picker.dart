@@ -33,6 +33,22 @@ class _XBTitlePickerState extends State<XBTitlePicker> {
     _currentIndex = widget.initIndex;
   }
 
+  @override
+  void didUpdateWidget(XBTitlePicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 只有当initIndex真的发生变化时才更新
+    if (widget.initIndex != oldWidget.initIndex &&
+        widget.initIndex != _currentIndex) {
+      _currentIndex = widget.initIndex;
+      // 使用animateToItem来平滑滚动到新位置
+      _controller.animateToItem(
+        widget.initIndex,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
   final Color _lineColor = const Color(0xFFCCCCCC);
 
   @override
