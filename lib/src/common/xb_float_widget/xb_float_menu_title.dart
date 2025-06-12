@@ -12,10 +12,12 @@ class XBFloatMenuTitle extends StatelessWidget {
   final double paddingH;
   final double paddingV;
   final TextStyle? textStyle;
+  final TextStyle? selectedTextStyle;
   final TextOverflow? textOverflow;
   final Color? separatorColor;
   final int type;
   final Color? shadowColor;
+  final int selectedIndex;
   const XBFloatMenuTitle(
       {super.key,
       required this.child,
@@ -27,15 +29,17 @@ class XBFloatMenuTitle extends StatelessWidget {
       this.paddingH = 10,
       this.paddingV = 10,
       this.textStyle,
+      this.selectedTextStyle,
       this.textOverflow,
       this.separatorColor,
       this.shadowColor,
-      this.type = 0});
+      this.type = 0,
+      this.selectedIndex = 0});
 
   double get _width {
     double width = 0;
     for (var item in items) {
-      double tempWidth = _textSize(item).width;
+      double tempWidth = _textSize(item, items.indexOf(item)).width;
       if (tempWidth > width) {
         width = tempWidth;
       }
@@ -59,7 +63,7 @@ class XBFloatMenuTitle extends StatelessWidget {
           },
           padding: EdgeInsets.only(top: paddingV, bottom: paddingV),
           title: items[index],
-          titleStyle: _textStyle,
+          titleStyle: _textStyle(index),
           titleOverflow: textOverflow,
         );
       },
@@ -73,11 +77,18 @@ class XBFloatMenuTitle extends StatelessWidget {
     );
   }
 
-  TextStyle get _textStyle => textStyle ?? const TextStyle(color: Colors.white);
+  TextStyle _textStyle(int index) {
+    if (selectedIndex == index) {
+      return selectedTextStyle ??
+          textStyle ??
+          const TextStyle(color: Colors.white);
+    }
+    return textStyle ?? const TextStyle(color: Colors.white);
+  }
 
-  Size _textSize(String text) {
+  Size _textSize(String text, int index) {
     final TextPainter textPainter = TextPainter(
-      text: TextSpan(text: text, style: _textStyle),
+      text: TextSpan(text: text, style: _textStyle(index)),
       maxLines: 1,
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth - paddingH * 2);
