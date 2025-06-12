@@ -9,6 +9,7 @@ class XBTitlePickerMulti extends StatefulWidget {
   final Widget? selectedBG;
   final TextStyle? norStyle;
   final TextStyle? selectedStyle;
+  final List<int> flexs;
 
   const XBTitlePickerMulti(
       {super.key,
@@ -17,7 +18,8 @@ class XBTitlePickerMulti extends StatefulWidget {
       this.selectedBG,
       this.onSelected,
       this.norStyle,
-      this.selectedStyle})
+      this.selectedStyle,
+      this.flexs = const [1, 1, 1]})
       : assert(mulTitles.length > 0, "mulTitles元素个数不能为0"),
         assert(selecteds.length == mulTitles.length,
             "mulTitles和selecteds的元素个数必须相同");
@@ -60,6 +62,7 @@ class _XBTitlePickerMultiState extends State<XBTitlePickerMulti> {
     return Row(
       children: List.generate(widget.mulTitles.length, (column) {
         return Expanded(
+          flex: widget.flexs[column],
           child: XBTitlePicker(
             selectedStyle: widget.selectedStyle,
             norStyle: widget.norStyle,
