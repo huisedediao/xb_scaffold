@@ -9,6 +9,7 @@ class XBFloatMenu extends XBFloatWidgetArrow {
   final Widget Function(int index) separatorBuilder;
   final double width;
   final CrossAxisAlignment crossAxisAlignment;
+  final Color? shadowColor;
   const XBFloatMenu({
     super.key,
     required super.child,
@@ -20,6 +21,7 @@ class XBFloatMenu extends XBFloatWidgetArrow {
     super.bgColor,
     super.type,
     this.crossAxisAlignment = CrossAxisAlignment.start,
+    this.shadowColor,
   });
 
   @override
@@ -28,23 +30,26 @@ class XBFloatMenu extends XBFloatWidgetArrow {
   @override
   Widget buildContentWithoutArrow(
       Offset position, double contentLeft, bool isAbove, Function hide) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        width: width,
-        color: bgColor ?? Colors.black,
-        child: Column(
-          crossAxisAlignment: crossAxisAlignment,
-          children: [
-            for (int i = 0; i < itemCount; i++)
-              Column(
-                crossAxisAlignment: crossAxisAlignment,
-                children: [
-                  itemBuilder(i, hide),
-                  if (i < itemCount - 1) separatorBuilder(i),
-                ],
-              ),
-          ],
+    return XBShadowContainer(
+      shadowColor: shadowColor ?? Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          width: width,
+          color: bgColor ?? Colors.black,
+          child: Column(
+            crossAxisAlignment: crossAxisAlignment,
+            children: [
+              for (int i = 0; i < itemCount; i++)
+                Column(
+                  crossAxisAlignment: crossAxisAlignment,
+                  children: [
+                    itemBuilder(i, hide),
+                    if (i < itemCount - 1) separatorBuilder(i),
+                  ],
+                ),
+            ],
+          ),
         ),
       ),
     );

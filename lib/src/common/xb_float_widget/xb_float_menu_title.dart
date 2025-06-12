@@ -15,6 +15,7 @@ class XBFloatMenuTitle extends StatelessWidget {
   final TextOverflow? textOverflow;
   final Color? separatorColor;
   final int type;
+  final Color? shadowColor;
   const XBFloatMenuTitle(
       {super.key,
       required this.child,
@@ -28,6 +29,7 @@ class XBFloatMenuTitle extends StatelessWidget {
       this.textStyle,
       this.textOverflow,
       this.separatorColor,
+      this.shadowColor,
       this.type = 0});
 
   double get _width {
@@ -48,6 +50,7 @@ class XBFloatMenuTitle extends StatelessWidget {
       width: _width,
       type: type,
       itemCount: items.length,
+      shadowColor: shadowColor,
       itemBuilder: (index, hide) {
         return XBCellCenterTitle(
           onTap: () {
