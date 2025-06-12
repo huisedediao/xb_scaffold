@@ -8,6 +8,8 @@ class XBTitlePicker extends StatefulWidget {
   final Widget? selectedBG;
   final TextStyle? norStyle;
   final TextStyle? selectedStyle;
+  final AlignmentGeometry? alignment;
+  final EdgeInsetsGeometry? padding;
 
   const XBTitlePicker(
       {super.key,
@@ -16,7 +18,9 @@ class XBTitlePicker extends StatefulWidget {
       this.initIndex = 0,
       this.onSelected,
       this.norStyle,
-      this.selectedStyle});
+      this.selectedStyle,
+      this.alignment,
+      this.padding});
 
   @override
   State createState() => _XBTitlePickerState();
@@ -72,12 +76,16 @@ class _XBTitlePickerState extends State<XBTitlePicker> {
           }
         },
         children: List.generate(widget.titles.length, (index) {
-          return Center(
-            child: Text(
-              widget.titles[index],
-              style: index == _currentIndex
-                  ? (widget.selectedStyle ?? const TextStyle(fontSize: 14))
-                  : (widget.norStyle ?? const TextStyle(fontSize: 14)),
+          return Container(
+            alignment: widget.alignment ?? Alignment.center,
+            child: Padding(
+              padding: widget.padding ?? EdgeInsets.zero,
+              child: Text(
+                widget.titles[index],
+                style: index == _currentIndex
+                    ? (widget.selectedStyle ?? const TextStyle(fontSize: 14))
+                    : (widget.norStyle ?? const TextStyle(fontSize: 14)),
+              ),
             ),
           );
         }));
