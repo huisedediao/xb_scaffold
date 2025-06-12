@@ -40,12 +40,6 @@ class XBFloatWidgetArrow extends XBFloatWidget {
 
     return Stack(
       children: [
-        type == 0
-            ? Positioned(
-                top: 1,
-                child: arrow(position, arrowHeight, arrowStart, arrowWidth),
-              )
-            : const SizedBox(),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -62,6 +56,12 @@ class XBFloatWidgetArrow extends XBFloatWidget {
                 : const SizedBox(),
           ],
         ),
+        type == 0
+            ? Positioned(
+                top: 1,
+                child: arrow(position, arrowHeight, arrowStart, arrowWidth),
+              )
+            : const SizedBox(),
         type == 1
             ? Positioned(
                 bottom: 1,

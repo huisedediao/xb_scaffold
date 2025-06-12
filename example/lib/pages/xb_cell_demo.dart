@@ -376,6 +376,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
                 // textStyle: const TextStyle(color: Colors.black),
                 // textOverflow: TextOverflow.ellipsis,
                 // separatorColor: Colors.red,
+                shadowColor: Colors.red,
                 items: vm.textItems,
                 onTapItem: (value) {
                   xbLog(value);
