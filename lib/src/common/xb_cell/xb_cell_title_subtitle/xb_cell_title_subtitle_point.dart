@@ -32,6 +32,7 @@ class XBCellTitleSubtitlePoint extends XBCellTitleSubtitle {
       super.arrowColor,
       super.arrowLeftPadding,
       super.arrowSize,
+      super.isNeedBtn,
       super.key});
 
   double get _pointW => pointSize ?? 6;

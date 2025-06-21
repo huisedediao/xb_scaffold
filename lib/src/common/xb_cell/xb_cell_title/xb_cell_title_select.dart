@@ -26,6 +26,7 @@ class XBCellTitleSelect extends XBCellTitle {
       super.arrowColor,
       super.arrowLeftPadding,
       super.arrowSize,
+      super.isNeedBtn,
       super.key});
 
   @override

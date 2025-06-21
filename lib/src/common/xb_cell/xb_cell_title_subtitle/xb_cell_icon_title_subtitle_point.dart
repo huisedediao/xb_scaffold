@@ -35,6 +35,7 @@ class XBCellIconTitleSubtitlePoint extends XBCellTitleSubtitlePoint {
     super.arrowColor,
     super.arrowLeftPadding,
     super.arrowSize,
+    super.isNeedBtn,
     super.key,
   });
 

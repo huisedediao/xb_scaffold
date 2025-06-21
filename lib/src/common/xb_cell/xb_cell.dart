@@ -27,6 +27,7 @@ abstract class XBCell extends StatelessWidget {
   final Color? arrowColor;
   final double? arrowLeftPadding;
   final double? arrowSize;
+  final bool isNeedBtn;
   const XBCell(
       {this.margin,
       this.padding,
@@ -39,9 +40,8 @@ abstract class XBCell extends StatelessWidget {
       this.arrowColor,
       this.arrowLeftPadding,
       this.arrowSize,
+      this.isNeedBtn = true,
       super.key});
-
-  bool get isNeedBtn => true;
 
   @override
   Widget build(BuildContext context) {

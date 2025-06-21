@@ -741,3 +741,7 @@
 ## 0.1.39
 
 - optimized
+
+## 0.1.40
+
+- optimized

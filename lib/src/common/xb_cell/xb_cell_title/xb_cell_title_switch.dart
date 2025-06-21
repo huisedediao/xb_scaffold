@@ -24,10 +24,8 @@ class XBCellTitleSwitch extends XBCellTitle {
       super.arrowColor,
       super.arrowLeftPadding,
       super.arrowSize,
+      super.isNeedBtn = false,
       super.key});
-
-  @override
-  bool get isNeedBtn => false;
 
   @override
   Widget rightWidget() {

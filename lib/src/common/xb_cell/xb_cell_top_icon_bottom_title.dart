@@ -28,6 +28,7 @@ class XBCellTopIconBottomTitle extends XBCell {
       super.arrowColor,
       super.arrowLeftPadding,
       super.arrowSize,
+      super.isNeedBtn,
       super.key});
 
   @override

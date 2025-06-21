@@ -26,6 +26,7 @@ class XBCellIconTitle extends XBCellTitle {
       super.maxTitleWidth,
       super.titleMaxLines,
       super.titleOverflow,
+      super.isNeedBtn,
       super.key});
 
   @override

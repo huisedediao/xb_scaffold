@@ -29,6 +29,7 @@ class XBCellIconTitleSwitch extends XBCellTitleSwitch {
       super.arrowColor,
       super.arrowLeftPadding,
       super.arrowSize,
+      super.isNeedBtn,
       super.key});
 
   @override
