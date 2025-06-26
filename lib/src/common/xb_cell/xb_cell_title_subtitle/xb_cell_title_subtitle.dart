@@ -73,6 +73,7 @@ class XBCellTitleSubtitle extends XBCell {
           child: Text(
             subtitle,
             overflow: subtitleOverflow,
+            textAlign: TextAlign.start,
             style: subtitleStyle ?? const TextStyle(color: Colors.grey),
             maxLines: subtitleMaxLines,
           ),
@@ -87,6 +88,7 @@ class XBCellTitleSubtitle extends XBCell {
           child: Text(
             subtitle,
             overflow: subtitleOverflow,
+            textAlign: TextAlign.end,
             style: subtitleStyle ?? const TextStyle(color: Colors.grey),
             maxLines: subtitleMaxLines,
           ),
