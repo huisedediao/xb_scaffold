@@ -11,6 +11,7 @@ export './src/xb_page_vm.dart';
 export './src/xb_widget.dart';
 export './src/xb_vmless_widget.dart';
 export './src/xb_vm.dart';
+export './src/xb_vm_extensions.dart';
 export './src/xb_theme/xb_theme_vm.dart';
 export './src/common/xb_animation_rotate.dart';
 export 'src/common/xb_button/xb_button.dart';

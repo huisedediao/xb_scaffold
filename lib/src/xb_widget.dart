@@ -14,6 +14,16 @@ abstract class XBWidget<T extends XBVM> extends StatefulWidget {
   /// 保持页面状态
   bool get wantKeepAlive => false;
 
+  /// 获取vm实例（不监听变化）
+  T vmOf(BuildContext context) {
+    return Provider.of<T>(context, listen: false);
+  }
+
+  /// 获取vm实例（监听变化，会触发rebuild）
+  T vmWatchOf(BuildContext context) {
+    return Provider.of<T>(context, listen: true);
+  }
+
   @override
   XBWidgetState createState() => XBWidgetState<T>();
 }
@@ -22,6 +32,12 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
     with AutomaticKeepAliveClientMixin {
   /// 在外部使用时，不应该保存vm，避免生命周期问题
   late T vm;
+
+  /// 获取当前vm实例（不监听变化）
+  T get vmInstance => vm;
+
+  /// 获取当前vm实例（监听变化）
+  T get vmWatch => Provider.of<T>(context, listen: true);
 
   /// 重置vm，所有状态回到初始状态，然后刷新ui
   /// 重置引起的vm的dispose，不会触发XBPageVm的willDispose

@@ -207,17 +207,21 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _buildBodyContent(T vm) {
-    Widget content = buildPage(vm, vm.context);
-    if (needPageContentAdaptTabbar(vm)) {
-      content = Padding(
-        padding: EdgeInsets.only(bottom: tabbarHeight(vm) + safeAreaBottom),
-        child: content,
-      );
-    }
-    if (needSafeArea(vm)) {
-      content = SafeArea(child: content);
-    }
-    return Container(color: backgroundColor(vm), child: content);
+    return Builder(
+      builder: (context) {
+        Widget content = buildPage(vm, context);
+        if (needPageContentAdaptTabbar(vm)) {
+          content = Padding(
+            padding: EdgeInsets.only(bottom: tabbarHeight(vm) + safeAreaBottom),
+            child: content,
+          );
+        }
+        if (needSafeArea(vm)) {
+          content = SafeArea(child: content);
+        }
+        return Container(color: backgroundColor(vm), child: content);
+      },
+    );
   }
 
   /// 构建主体
