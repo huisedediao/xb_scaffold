@@ -5,6 +5,7 @@ import 'package:example/pages/xb_cell_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
 import 'package:example/pages/xb_wait_task_demo.dart';
 import 'package:example/pages/vm_access_demo.dart';
+import 'package:example/pages/tf_test.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -58,6 +59,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
     "XBToast demo",
     "XBWaitTask demo",
     "VM访问演示",
+    "TFTest"
   ];
 
   void onTapIndex(int index) {
@@ -75,6 +77,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
       push(const XBWaitTaskDemo());
     } else if (index == 6) {
       push(const VMAccessDemo());
+    } else if (index == 7) {
+      push(const TFTest());
     }
   }
 }

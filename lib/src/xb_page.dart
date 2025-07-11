@@ -56,6 +56,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 是否需要loading
   bool needLoading(T vm) => false;
 
+  /// 是否在触摸时结束编辑
+  bool needEndEditingWhileTouch(T vm) => true;
+
   /// notify是否需要在push动画完成之后
   bool notifyNeedAfterPushAnimation(T vm) => false;
 
@@ -88,6 +91,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 页面push动画时间
   int pushAnimationMilliseconds(T vm) => 450;
 
+  /// 长按时间阈值（毫秒），超过此时间认为是长按，不触发endEditing
+  int longPressThresholdMilliseconds(T vm) => 500;
+
   /// leading的宽度
   double? leadingWidth(T vm) => null;
 
@@ -95,12 +101,11 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   @override
   Widget buildWidget(T vm, BuildContext context) {
-    return Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) {
-          endEditing(context: context);
-        },
-        child: _themeConsumerWidget(vm));
+    return _XBPageTouchHandler<T>(
+      page: this,
+      vm: vm,
+      child: _themeConsumerWidget(vm),
+    );
   }
 
   Widget _themeConsumerWidget(T vm) {
@@ -276,5 +281,58 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 构建endDrawer
   Widget? endDrawer(T vm) {
     return null;
+  }
+}
+
+/// 处理触摸事件的StatefulWidget，用于区分长按和普通点击
+class _XBPageTouchHandler<T extends XBPageVM> extends StatefulWidget {
+  final XBPage<T> page;
+  final T vm;
+  final Widget child;
+
+  const _XBPageTouchHandler({
+    required this.page,
+    required this.vm,
+    required this.child,
+  });
+
+  @override
+  State<_XBPageTouchHandler<T>> createState() => _XBPageTouchHandlerState<T>();
+}
+
+class _XBPageTouchHandlerState<T extends XBPageVM>
+    extends State<_XBPageTouchHandler<T>> {
+  DateTime? _pointerDownTime;
+  bool _isLongPress = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        _pointerDownTime = DateTime.now();
+        _isLongPress = false;
+      },
+      onPointerUp: (event) {
+        if (_pointerDownTime != null) {
+          final duration = DateTime.now().difference(_pointerDownTime!);
+          _isLongPress = duration.inMilliseconds >=
+              widget.page.longPressThresholdMilliseconds(widget.vm);
+        }
+
+        // 只有在不是长按的情况下才触发endEditing
+        if (!_isLongPress && widget.page.needEndEditingWhileTouch(widget.vm)) {
+          endEditing(context: context);
+        }
+
+        _pointerDownTime = null;
+        _isLongPress = false;
+      },
+      onPointerCancel: (_) {
+        _pointerDownTime = null;
+        _isLongPress = false;
+      },
+      child: widget.child,
+    );
   }
 }
