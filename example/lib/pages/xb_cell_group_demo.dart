@@ -18,7 +18,7 @@ class XBCellGroupDemo extends XBPage<XBCellGroupDemoVM> {
           XBCellTitleSelect(title: "2", isSelected: true),
           XBCellTitleSwitch(title: "3", isOn: true),
         ],
-        separatedBuilder: (value) {
+        separatorBuilder: (value) {
           return xbLine(startPadding: value * 15);
         },
         backgroundColor: Colors.orange,

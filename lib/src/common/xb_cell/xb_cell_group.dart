@@ -4,39 +4,39 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 class XBCellGroup extends StatelessWidget {
   final List<Widget> children; // 子组件
   final double? radius; // 圆角
-  final double? topPadding; // 顶部内间距
-  final double? bottomPadding; // 底部内间距
-  final double? leftPadding; // 左侧内间距
-  final double? rightPadding; // 右侧内间距
-  final double? topMargin; // 顶部外间距
-  final double? bottomMargin; // 底部外间距
-  final double? leftMargin; // 左侧外间距
-  final double? rightMargin; // 右侧外间距
+  final double? paddingTop; // 顶部内间距
+  final double? paddingBottom; // 底部内间距
+  final double? paddingLeft; // 左侧内间距
+  final double? paddingRight; // 右侧内间距
+  final double? marginTop; // 顶部外间距
+  final double? marginBottom; // 底部外间距
+  final double? marginLeft; // 左侧外间距
+  final double? marginRight; // 右侧外间距
   final Color? backgroundColor; // 背景颜色
-  final XBValueGetter<Widget, int>? separatedBuilder; // 分割线
+  final XBValueGetter<Widget, int>? separatorBuilder; // 分割线
   const XBCellGroup(
       {super.key,
       required this.children,
       this.radius,
-      this.topPadding,
-      this.bottomPadding,
-      this.leftPadding,
-      this.rightPadding,
-      this.topMargin,
-      this.bottomMargin,
-      this.leftMargin,
-      this.rightMargin,
+      this.paddingTop,
+      this.paddingBottom,
+      this.paddingLeft,
+      this.paddingRight,
+      this.marginTop,
+      this.marginBottom,
+      this.marginLeft,
+      this.marginRight,
       this.backgroundColor,
-      this.separatedBuilder});
+      this.separatorBuilder});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        top: topMargin ?? 0,
-        bottom: bottomMargin ?? 0,
-        left: leftMargin ?? 0,
-        right: rightMargin ?? 0,
+        top: marginTop ?? 0,
+        bottom: marginBottom ?? 0,
+        left: marginLeft ?? 0,
+        right: marginRight ?? 0,
       ),
       child: Container(
         decoration: BoxDecoration(
@@ -45,10 +45,10 @@ class XBCellGroup extends StatelessWidget {
         ),
         child: Padding(
           padding: EdgeInsets.only(
-            top: topPadding ?? 0,
-            bottom: bottomPadding ?? 0,
-            left: leftPadding ?? 0,
-            right: rightPadding ?? 0,
+            top: paddingTop ?? 0,
+            bottom: paddingBottom ?? 0,
+            left: paddingLeft ?? 0,
+            right: paddingRight ?? 0,
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: _children),
         ),
@@ -61,8 +61,8 @@ class XBCellGroup extends StatelessWidget {
     for (int i = 0; i < children.length; i++) {
       ret.add(children[i]);
       if (i < children.length - 1) {
-        if (separatedBuilder != null) {
-          ret.add(separatedBuilder!(i));
+        if (separatorBuilder != null) {
+          ret.add(separatorBuilder!(i));
         } else {
           ret.add(xbLine());
         }
