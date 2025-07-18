@@ -2,6 +2,7 @@ import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
 import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_cell_demo.dart';
+import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
 import 'package:example/pages/xb_wait_task_demo.dart';
 import 'package:example/pages/vm_access_demo.dart';
@@ -53,6 +54,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
 
   List<String> titles = [
     "XBCell demo",
+    "XBCellGroup demo",
     "XBPage demo",
     "XBDialogInput demo",
     "XBButton demo",
@@ -66,18 +68,20 @@ class ChoosePageVM extends XBPageVM<ChoosePage> {
     if (index == 0) {
       push(const XBCellDemo());
     } else if (index == 1) {
-      push(const XBPageDemo());
+      push(const XBCellGroupDemo());
     } else if (index == 2) {
-      push(const XBDialogInputDemo());
+      push(const XBPageDemo());
     } else if (index == 3) {
-      push(const XBButtonDemo());
+      push(const XBDialogInputDemo());
     } else if (index == 4) {
-      push(const XBToastDemo());
+      push(const XBButtonDemo());
     } else if (index == 5) {
-      push(const XBWaitTaskDemo());
+      push(const XBToastDemo());
     } else if (index == 6) {
-      push(const VMAccessDemo());
+      push(const XBWaitTaskDemo());
     } else if (index == 7) {
+      push(const VMAccessDemo());
+    } else if (index == 8) {
       push(const TFTest());
     }
   }
