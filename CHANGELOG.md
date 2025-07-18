@@ -765,3 +765,7 @@
 ## 0.1.45
 
 - 添加XBCellGroup
+
+## 0.1.46
+
+- optimized

@@ -33,10 +33,10 @@ class XBCellGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        top: topMargin ?? 15,
-        bottom: bottomMargin ?? 15,
-        left: leftMargin ?? 10,
-        right: rightMargin ?? 10,
+        top: topMargin ?? 0,
+        bottom: bottomMargin ?? 0,
+        left: leftMargin ?? 0,
+        right: rightMargin ?? 0,
       ),
       child: Container(
         decoration: BoxDecoration(
@@ -45,10 +45,10 @@ class XBCellGroup extends StatelessWidget {
         ),
         child: Padding(
           padding: EdgeInsets.only(
-            top: topPadding ?? 15,
-            bottom: bottomPadding ?? 15,
-            left: leftPadding ?? 10,
-            right: rightPadding ?? 10,
+            top: topPadding ?? 0,
+            bottom: bottomPadding ?? 0,
+            left: leftPadding ?? 0,
+            right: rightPadding ?? 0,
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: _children),
         ),
