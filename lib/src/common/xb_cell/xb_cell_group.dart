@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellGroup extends StatelessWidget {
+  final ValueGetter<Widget>? headerBuilder;
+  final double? headerBottomPadding;
+  final ValueGetter<Widget>? footerBuilder;
+  final double? footerTopPadding;
   final List<Widget> children; // 子组件
   final double? radius; // 圆角
   final double? paddingTop; // 顶部内间距
@@ -17,6 +21,10 @@ class XBCellGroup extends StatelessWidget {
   const XBCellGroup(
       {super.key,
       required this.children,
+      this.headerBuilder,
+      this.headerBottomPadding,
+      this.footerBuilder,
+      this.footerTopPadding,
       this.radius,
       this.paddingTop,
       this.paddingBottom,
@@ -38,20 +46,35 @@ class XBCellGroup extends StatelessWidget {
         left: marginLeft ?? 0,
         right: marginRight ?? 0,
       ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: backgroundColor ?? Colors.white,
-          borderRadius: BorderRadius.circular(radius ?? 6),
-        ),
-        child: Padding(
-          padding: EdgeInsets.only(
-            top: paddingTop ?? 0,
-            bottom: paddingBottom ?? 0,
-            left: paddingLeft ?? 0,
-            right: paddingRight ?? 0,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: EdgeInsets.only(bottom: headerBottomPadding ?? 0),
+            child: headerBuilder != null ? headerBuilder!() : Container(),
           ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: _children),
-        ),
+          Container(
+            decoration: BoxDecoration(
+              color: backgroundColor ?? Colors.white,
+              borderRadius: BorderRadius.circular(radius ?? 6),
+            ),
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: paddingTop ?? 0,
+                bottom: paddingBottom ?? 0,
+                left: paddingLeft ?? 0,
+                right: paddingRight ?? 0,
+              ),
+              child:
+                  Column(mainAxisSize: MainAxisSize.min, children: _children),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.only(top: footerTopPadding ?? 0),
+            child: footerBuilder != null ? footerBuilder!() : Container(),
+          ),
+        ],
       ),
     );
   }

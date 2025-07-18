@@ -22,6 +22,14 @@ class XBCellGroupDemo extends XBPage<XBCellGroupDemoVM> {
           return xbLine(startPadding: value * 15);
         },
         backgroundColor: Colors.orange,
+        headerBuilder: () {
+          return Text("header");
+        },
+        marginTop: spaces.gapLess,
+        marginBottom: spaces.gapLess,
+        marginLeft: spaces.gapDef,
+        marginRight: spaces.gapDef,
+        headerBottomPadding: 10,
       ),
     );
   }
