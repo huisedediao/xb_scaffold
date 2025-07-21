@@ -15,6 +15,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final double? maxWidth;
   final double? bottomMargin;
   final String? notEmptyTip;
+  final Widget? clearLeftWidget;
+  final Widget? clearRightWidget;
   final Widget? unit;
   const XBDialogInput(
       {required this.title,
@@ -29,6 +31,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
       this.maxWidth,
       this.bottomMargin,
       this.notEmptyTip,
+      this.clearLeftWidget,
+      this.clearRightWidget,
       this.unit,
       super.key});
 
@@ -99,6 +103,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                                 ),
                               ),
                             ),
+                            if (clearLeftWidget != null) clearLeftWidget!,
                             XBButton(
                               onTap: vm.clear,
                               coverTransparentWhileOpacity: true,
@@ -107,7 +112,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                                 child: Icon(Icons.close,
                                     size: 20, color: Colors.grey),
                               ),
-                            )
+                            ),
+                            if (clearRightWidget != null) clearRightWidget!,
                           ],
                         ),
                       ),

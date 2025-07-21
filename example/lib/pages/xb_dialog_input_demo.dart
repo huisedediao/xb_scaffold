@@ -36,6 +36,14 @@ class XBDialogInputDemoVM extends XBPageVM<XBDialogInputDemo> {
           padding: EdgeInsets.only(left: spaces.gapDef, right: spaces.gapDef),
           child: const Text("unit"),
         ),
+        clearLeftWidget: Padding(
+          padding: EdgeInsets.only(left: spaces.gapDef),
+          child: const Text("unit"),
+        ),
+        clearRightWidget: Padding(
+          padding: EdgeInsets.only(right: spaces.gapDef),
+          child: const Text("unit"),
+        ),
         onDone: (value) {
           xbLog(value);
         },
