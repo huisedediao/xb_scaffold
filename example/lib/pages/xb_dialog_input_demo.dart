@@ -32,6 +32,10 @@ class XBDialogInputDemoVM extends XBPageVM<XBDialogInputDemo> {
         title: "title",
         // subTitle: "subTitle",
         placeholder: "placeholder",
+        unit: Padding(
+          padding: EdgeInsets.only(left: spaces.gapDef, right: spaces.gapDef),
+          child: const Text("unit"),
+        ),
         onDone: (value) {
           xbLog(value);
         },

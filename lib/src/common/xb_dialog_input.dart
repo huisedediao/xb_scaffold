@@ -15,6 +15,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final double? maxWidth;
   final double? bottomMargin;
   final String? notEmptyTip;
+  final Widget? unit;
   const XBDialogInput(
       {required this.title,
       this.subTitle,
@@ -28,6 +29,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
       this.maxWidth,
       this.bottomMargin,
       this.notEmptyTip,
+      this.unit,
       super.key});
 
   @override
@@ -69,41 +71,49 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
               Padding(
                 padding: EdgeInsets.only(
                     left: spaces.gapDef,
-                    right: spaces.gapDef,
+                    right: unit == null ? spaces.gapDef : 0,
                     top: spaces.gapDef),
-                child: XBBG(
-                  // paddingH: spaces.gapDef,
-                  borderColor: Colors.grey.withAlpha(80),
-                  borderWidth: onePixel,
-                  defAllRadius: 6,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 10),
-                          child: XBTextField(
-                            key: ValueKey(vm.inputKey),
-                            focused: true,
-                            initValue: vm.value,
-                            placeholder: placeholder,
-                            inputFormatters: inputFormatters,
-                            onChanged: (value) {
-                              vm.value = value;
-                            },
-                          ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: XBBG(
+                        // paddingH: spaces.gapDef,
+                        borderColor: Colors.grey.withAlpha(80),
+                        borderWidth: onePixel,
+                        defAllRadius: 6,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 10),
+                                child: XBTextField(
+                                  key: ValueKey(vm.inputKey),
+                                  focused: true,
+                                  initValue: vm.value,
+                                  placeholder: placeholder,
+                                  inputFormatters: inputFormatters,
+                                  onChanged: (value) {
+                                    vm.value = value;
+                                  },
+                                ),
+                              ),
+                            ),
+                            XBButton(
+                              onTap: vm.clear,
+                              coverTransparentWhileOpacity: true,
+                              child: const Padding(
+                                padding: EdgeInsets.all(6.0),
+                                child: Icon(Icons.close,
+                                    size: 20, color: Colors.grey),
+                              ),
+                            )
+                          ],
                         ),
                       ),
-                      XBButton(
-                        onTap: vm.clear,
-                        coverTransparentWhileOpacity: true,
-                        child: const Padding(
-                          padding: EdgeInsets.all(6.0),
-                          child:
-                              Icon(Icons.close, size: 20, color: Colors.grey),
-                        ),
-                      )
-                    ],
-                  ),
+                    ),
+                    if (unit != null) unit!,
+                  ],
                 ),
               ),
               xbSpace(height: spaces.gapDef),

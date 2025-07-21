@@ -777,3 +777,7 @@
 ## 0.1.48
 
 - optimized
+
+## 0.1.49
+
+- 优化XBDialogInput
