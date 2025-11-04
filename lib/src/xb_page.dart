@@ -35,6 +35,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
    * */
   bool needShowContentFromScreenTop(T vm) => false;
 
+  /// 是否需要沉浸式导航栏
+  bool needImmersiveAppbar(T vm) => false;
+
   /// 是否启动iOS侧滑返回
   bool needIosGestureBack(T vm) => true;
 
@@ -65,6 +68,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
+
+  /// 页面背景
+  Widget? backgroundWidget(T vm) => null;
 
   /// 页面背景颜色
   Color? backgroundColor(T vm) => viewBG;
@@ -145,7 +151,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       primary: _primary(vm),
       backgroundColor: backgroundColor(vm),
       resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
-      appBar: _primary(vm) == false ? const XBEmptyAppBar() : buildAppBar(vm),
+      appBar: const XBEmptyAppBar(),
       body: _buildBodyContent(vm),
     );
     if (!needLoading(vm)) {
@@ -215,6 +221,15 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return Builder(
       builder: (context) {
         Widget content = buildPage(vm, context);
+        Widget appBar;
+        if (needShowContentFromScreenTop(vm) == false) {
+          appBar = buildAppBar(vm);
+        } else {
+          appBar = Container(width: double.infinity);
+        }
+        content = Column(
+          children: [appBar, Expanded(child: content)],
+        );
         if (needPageContentAdaptTabbar(vm)) {
           content = Padding(
             padding: EdgeInsets.only(bottom: tabbarHeight(vm) + safeAreaBottom),
@@ -223,6 +238,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
         }
         if (needSafeArea(vm)) {
           content = SafeArea(child: content);
+        }
+        final bgWidget = backgroundWidget(vm);
+        if (bgWidget != null) {
+          return Stack(
+            children: [Positioned.fill(child: bgWidget), content],
+          );
         }
         return Container(color: backgroundColor(vm), child: content);
       },
@@ -235,7 +256,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   PreferredSizeWidget buildAppBar(T vm) {
     return AppBar(
-      backgroundColor: navigationBarBGColor(vm),
+      backgroundColor: needImmersiveAppbar(vm)
+          ? Colors.transparent
+          : navigationBarBGColor(vm),
       scrolledUnderElevation: 0.0,
       elevation: 0,
       centerTitle: true,
