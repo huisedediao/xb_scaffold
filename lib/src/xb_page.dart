@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
 import 'configs/xb_color_config.dart';
+
+enum XBStatusBarStyle { light, dark }
 
 abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   const XBPage({super.key});
@@ -68,6 +71,10 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   bool _primary(T vm) => !needShowContentFromScreenTop(vm);
 
   /// -------------------- build params --------------------
+
+  /// 状态栏风格
+  /// needShowContentFromScreenTop为true时设置无效
+  XBStatusBarStyle? statusBarStyle(T vm) => null;
 
   /// 页面背景
   Widget? backgroundWidget(T vm) => null;
@@ -151,7 +158,10 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       primary: _primary(vm),
       backgroundColor: backgroundColor(vm),
       resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
-      appBar: const XBEmptyAppBar(),
+      appBar: needImmersiveAppbar(vm)
+          ? const XBEmptyAppBar()
+          : (_primary(vm) == false ? const XBEmptyAppBar() : buildAppBar(vm)),
+      extendBodyBehindAppBar: needImmersiveAppbar(vm),
       body: _buildBodyContent(vm),
     );
     if (!needLoading(vm)) {
@@ -222,7 +232,8 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       builder: (context) {
         Widget content = buildPage(vm, context);
         Widget appBar;
-        if (needShowContentFromScreenTop(vm) == false) {
+        if (needImmersiveAppbar(vm) &&
+            needShowContentFromScreenTop(vm) == false) {
           appBar = buildAppBar(vm);
         } else {
           appBar = Container(width: double.infinity);
@@ -266,7 +277,26 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       leading: leading(vm),
       leadingWidth: leadingWidth(vm),
       title: buildTitle(vm) ?? _defaultTitle(vm),
+      systemOverlayStyle: _statusBarStyle(vm),
     );
+  }
+
+  _statusBarStyle(vm) {
+    if (statusBarStyle(vm) == XBStatusBarStyle.dark) {
+      return const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark, // Android 图标颜色
+        statusBarBrightness: Brightness.light, // iOS 状态栏颜色
+      );
+    } else if (statusBarStyle(vm) == XBStatusBarStyle.light) {
+      return const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light, // Android 图标颜色
+        statusBarBrightness: Brightness.dark, // iOS 状态栏颜色
+      );
+    } else {
+      return null;
+    }
   }
 
   /// 构建navigationBar左侧widget
