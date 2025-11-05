@@ -33,10 +33,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /*
    * 返回true，则从屏幕顶部开始展示页面（而不是从状态栏下面开始）
-   * 如果返回true，则buildAppBar不可以重写
    * 返回true，没有appbar
    * */
-  bool needShowContentFromScreenTop(T vm) => false;
+  bool needHideAppbar(T vm) => false;
 
   /// 是否需要沉浸式导航栏
   bool needImmersiveAppbar(T vm) => false;
@@ -68,12 +67,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// notify是否需要在push动画完成之后
   bool notifyNeedAfterPushAnimation(T vm) => false;
 
-  bool _primary(T vm) => !needShowContentFromScreenTop(vm);
+  bool _primary(T vm) => !needHideAppbar(vm);
 
   /// -------------------- build params --------------------
 
   /// 状态栏风格
-  /// needShowContentFromScreenTop为true时设置无效
+  /// needHideAppbar为true时设置无效
   XBStatusBarStyle? statusBarStyle(T vm) => null;
 
   /// 页面背景
@@ -232,8 +231,7 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       builder: (context) {
         Widget content = buildPage(vm, context);
         Widget appBar;
-        if (needImmersiveAppbar(vm) &&
-            needShowContentFromScreenTop(vm) == false) {
+        if (needImmersiveAppbar(vm) && needHideAppbar(vm) == false) {
           appBar = buildAppBar(vm);
         } else {
           appBar = Container(width: double.infinity);

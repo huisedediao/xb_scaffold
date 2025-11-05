@@ -784,8 +784,12 @@
 
 ## 0.1.50
 
-- 沉浸式状态栏
+- 沉浸式导航栏
 
 ## 0.1.51
 
 - optimized
+
+## 0.1.52
+
+- 修改方法命名（needShowContentFromScreenTop -> needHideAppbar）
