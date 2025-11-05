@@ -87,41 +87,4 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const TFTest());
     }
   }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    xbRrouteObserver.subscribe(this, ModalRoute.of(context)!);
-  }
-
-  @override
-  void dispose() {
-    xbRrouteObserver.unsubscribe(this);
-    super.dispose();
-  }
-
-  @override
-  void didPush() {
-    // 页面已入栈（可访问 this 和 context）
-    xbError("didPush");
-  }
-
-  @override
-  void didPopNext() {
-    // 上一个页面出栈，当前页面重新可见
-    xbError("didPopNext");
-  }
-
-  /// Called when the current route has been popped off.
-  @override
-  void didPop() {
-    xbError("didPop");
-  }
-
-  /// Called when a new route has been pushed, and the current route is no
-  /// longer visible.
-  @override
-  void didPushNext() {
-    xbError("didPushNext");
-  }
 }

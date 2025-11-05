@@ -53,7 +53,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             onTap: () {
               // bool topIsXBCellDemoType = topIsType(XBCellDemo);
               // toast("topIsXBCellDemoType:$topIsXBCellDemoType");
-              bool topIsXBCellDemoWidget = topIsWidget(this);
+              bool topIsXBCellDemoWidget = vm.isTop;
               toast("topIsXBCellDemoWidget:$topIsXBCellDemoWidget");
             },
             isShowArrow: true,

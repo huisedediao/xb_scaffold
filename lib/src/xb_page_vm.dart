@@ -8,12 +8,17 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:xb_scaffold/src/utils/xb_import.dart'
     if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
 
-class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
+class XBPageVM<T> extends XBVM<T> with RouteAware {
   XBPageVM({required super.context}) {
     if (_castWidget.needInitLoading(this)) {
       _isShowLoadingWidget = true;
     }
-    _addStackListen();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    xbRrouteObserver.subscribe(this, ModalRoute.of(context)!);
   }
 
   @override
@@ -32,20 +37,13 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
 
   final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
 
+  /// 页面在栈顶
+  bool isTop = false;
+
   /// 记录上一个网页的标题
   String? _lastHtmlTitle;
 
   XBPage get _castWidget => widget as XBPage;
-
-  _addStackListen() {
-    _stackSubscription = xbRouteStackStream.listen((event) {
-      try {
-        handleStackChanged(event: event, widget: widget as Widget);
-      } catch (e) {
-        //
-      }
-    });
-  }
 
   @mustCallSuper
   didFinishedPushAnimation() {
@@ -99,8 +97,6 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
       //
     }
   }
-
-  late StreamSubscription _stackSubscription;
 
   bool _isShowLoadingWidget = false;
 
@@ -182,17 +178,41 @@ class XBPageVM<T> extends XBVM<T> with XBLifeCycleMixin {
     scaffoldKey.currentState?.closeEndDrawer();
   }
 
+  // 页面已入栈（可访问 this 和 context）
   @override
-  void willDispose() {
-    super.willDispose();
+  @mustCallSuper
+  void didPush() {
+    isTop = true;
+  }
+
+  /// Called when the current route has been popped off.
+  @override
+  @mustCallSuper
+  void didPop() {
     if (_lastHtmlTitle != null) {
       setDocumentTitle(_lastHtmlTitle!);
     }
+    isTop = false;
+  }
+
+  /// Called when a new route has been pushed, and the current route is no
+  /// longer visible.
+  @override
+  @mustCallSuper
+  void didPushNext() {
+    isTop = false;
+  }
+
+  // 上一个页面出栈，当前页面重新可见
+  @override
+  @mustCallSuper
+  void didPopNext() {
+    isTop = true;
   }
 
   @override
   void dispose() {
-    _stackSubscription.cancel();
+    xbRrouteObserver.unsubscribe(this);
     _pushNotifyAnimationTimer.cancel();
     super.dispose();
   }
