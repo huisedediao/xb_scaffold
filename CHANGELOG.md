@@ -793,3 +793,7 @@
 ## 0.1.52
 
 - 修改方法命名（needShowContentFromScreenTop -> needHideAppbar）
+
+## 0.1.53
+
+- 兼容getx
