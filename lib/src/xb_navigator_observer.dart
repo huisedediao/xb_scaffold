@@ -49,20 +49,20 @@ class XBNavigatorObserver extends NavigatorObserver {
     String typeStr = '$type';
     if (ignore == false) {
       final tempRoute = _stack[_stack.length - fixN];
-      return (_isXBRoute(tempRoute) &&
+      return ((_isXBRoute(tempRoute) || _isGetRoute(tempRoute)) &&
               (hsCode == null
                   ? true
                   : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) &&
-          tempRoute.settings.name == typeStr;
+          _getRouteName(tempRoute) == typeStr;
     }
     int routeIndex = 0;
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
-      if (_isXBRoute(tempRoute)) {
+      if (_isXBRoute(tempRoute) || _isGetRoute(tempRoute)) {
         if (routeIndex < n) {
           routeIndex++;
         } else {
-          if (tempRoute.settings.name == typeStr &&
+          if (_getRouteName(tempRoute) == typeStr &&
               (hsCode == null
                   ? true
                   : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) {
@@ -92,7 +92,7 @@ class XBNavigatorObserver extends NavigatorObserver {
           (hsCode == null
               ? true
               : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) {
-        if (tempRoute.settings.name == '$type') {
+        if (_getRouteName(tempRoute) == '$type') {
           return true;
         }
       }
@@ -122,6 +122,11 @@ class XBNavigatorObserver extends NavigatorObserver {
     return tempCategoryName != null &&
         tempCategoryName is String &&
         tempCategoryName == xbCategoryName;
+  }
+
+  /// 判断是否是GetRoute
+  bool _isGetRoute(Route route) {
+    return "${route.runtimeType}".startsWith("GetPageRoute");
   }
 
   /// 判断hashCode是否相等
@@ -175,11 +180,21 @@ class XBNavigatorObserver extends NavigatorObserver {
     if (route == null) {
       ret = "null";
     } else if (isXBRoute(route)) {
-      ret = route.settings.name!;
+      ret = _getRouteName(route);
     } else {
       ret = route.toString();
     }
     return ret;
+  }
+
+  String _getRouteName(Route route) {
+    if (_isXBRoute(route)) {
+      return route.settings.name!;
+    }
+    if (_isGetRoute(route)) {
+      return route.settings.name!.replaceFirst("/", "");
+    }
+    return "";
   }
 
   _logRouteInfo(XBStackChangedEvent info) {

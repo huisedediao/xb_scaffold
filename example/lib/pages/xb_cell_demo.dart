@@ -50,7 +50,10 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             maxTitleWidth: screenW * 0.5,
             subtitle: "subtitle",
             arrowColor: Colors.white,
-            onTap: () {},
+            onTap: () {
+              bool topIsXBCellDemo = topIsType(XBCellDemo);
+              toast("topIsXBCellDemo:$topIsXBCellDemo");
+            },
             isShowArrow: true,
           );
         }
