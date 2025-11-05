@@ -55,7 +55,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // 添加路由观察者
-      navigatorObservers: [xbRouteObserver],
+      navigatorObservers: [xbNavigatorObserver, xbRrouteObserver],
       home: XBScaffold(
         // 配置主题
         themeConfigs: [

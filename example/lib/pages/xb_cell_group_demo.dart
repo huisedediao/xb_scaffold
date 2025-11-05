@@ -1,3 +1,4 @@
+import 'package:example/pages/xb_cell_demo.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -17,6 +18,14 @@ class XBCellGroupDemo extends XBPage<XBCellGroupDemoVM> {
           XBCellTitle(title: "1"),
           XBCellTitleSelect(title: "2", isSelected: true),
           XBCellTitleSwitch(title: "3", isOn: true),
+          XBButton(
+              onTap: () {
+                bool topIsXBCellDemoWidget = vm.isTop;
+                toast("topIsXBCellGroupDemo instance:$topIsXBCellDemoWidget");
+                xbError(
+                    "stackContainType(XBCellDemo):${stackContainType(XBCellDemo)}");
+              },
+              child: Text("测试点击"))
         ],
         separatorBuilder: (value) {
           return xbLine(startPadding: value * 15);

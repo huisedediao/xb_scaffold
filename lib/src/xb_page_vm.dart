@@ -178,6 +178,30 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
     scaffoldKey.currentState?.closeEndDrawer();
   }
 
+  /// 即将隐藏，从展示状态变成被覆盖状态
+  @mustCallSuper
+  void willHide() {
+    String log = "$runtimeType willHide";
+    debugPrint(log);
+    recordPageLog(log);
+  }
+
+  /// 即将展示，从被覆盖状态变成展示状态
+  @mustCallSuper
+  void willShow() {
+    String log = "$runtimeType willShow";
+    debugPrint(log);
+    recordPageLog(log);
+  }
+
+  /// 即将销毁
+  @mustCallSuper
+  void willDispose() {
+    String log = "$runtimeType willDispose";
+    debugPrint(log);
+    recordPageLog(log);
+  }
+
   // 页面已入栈（可访问 this 和 context）
   @override
   @mustCallSuper
@@ -193,6 +217,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
       setDocumentTitle(_lastHtmlTitle!);
     }
     isTop = false;
+    willDispose();
   }
 
   /// Called when a new route has been pushed, and the current route is no
@@ -201,6 +226,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   @mustCallSuper
   void didPushNext() {
     isTop = false;
+    willHide();
   }
 
   // 上一个页面出栈，当前页面重新可见
@@ -208,6 +234,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   @mustCallSuper
   void didPopNext() {
     isTop = true;
+    willShow();
   }
 
   @override

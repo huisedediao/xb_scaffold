@@ -1,4 +1,6 @@
+import 'package:example/choose_page.dart';
 import 'package:example/pages/xb_cell_demo_vm.dart';
+import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -54,7 +56,12 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
               // bool topIsXBCellDemoType = topIsType(XBCellDemo);
               // toast("topIsXBCellDemoType:$topIsXBCellDemoType");
               bool topIsXBCellDemoWidget = vm.isTop;
-              toast("topIsXBCellDemoWidget:$topIsXBCellDemoWidget");
+              toast("topIsXBCellDemoWidget instance:$topIsXBCellDemoWidget");
+              xbError(
+                  "stackContainType(XBCellDemoWidget):${stackContainType(runtimeType)}");
+              xbError("topIsType(XBCellDemo):${topIsType(XBCellDemo)}");
+              xbError(
+                  "stackContainType(ChoosePage):${stackContainType(ChoosePage)}");
             },
             isShowArrow: true,
           );
@@ -104,6 +111,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             padding: const EdgeInsets.only(top: 10, bottom: 10),
             title: title,
             onTap: () {
+              push(XBCellGroupDemo());
               dialogWidget(XBDialogInput(
                   title: title,
                   onDone: (value) {
