@@ -63,9 +63,12 @@ export 'src/common/xb_text_field/xb_text_input_formatter.dart';
 export 'package:xb_scaffold/src/utils/xb_import.dart'
     if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
 
+final RouteObserver<ModalRoute<void>> xbRrouteObserver =
+    RouteObserver<ModalRoute<void>>();
+
 /// 路由栈监听
-XBNavigatorObserver _xbRouteObserver = XBNavigatorObserver();
-XBNavigatorObserver get xbRouteObserver => _xbRouteObserver;
+XBNavigatorObserver _xbNavigatorObserver = XBNavigatorObserver();
+XBNavigatorObserver get xbNavigatorObserver => _xbNavigatorObserver;
 final StreamController<XBStackChangedEvent> _xbRouteStackStreamController =
     StreamController<XBStackChangedEvent>.broadcast();
 StreamController<XBStackChangedEvent> get xbStackStreamController =>
