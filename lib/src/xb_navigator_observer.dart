@@ -17,10 +17,6 @@ class XBStackChangedEvent {
 class XBNavigatorObserver extends NavigatorObserver {
   final List<Route> _stack = [];
 
-  bool topIsWidget(Widget widget, [bool ignore = true]) {
-    return _topIsType(widget.runtimeType, ignore, widget.hashCode);
-  }
-
   bool topIsType(Type type, [bool ignore = true]) {
     return _topIsType(type, ignore);
   }
@@ -30,16 +26,6 @@ class XBNavigatorObserver extends NavigatorObserver {
   /// hsCode如果不为空，则再判断hashCode是否相等
   bool _topIsType(Type type, [bool ignore = true, int? hsCode]) {
     return _topNIsType(type, 0, ignore, hsCode);
-  }
-
-  /// 栈顶之下第一个是widget
-  bool topSecondIsWidget(Widget widget, [bool ignore = true]) {
-    return topNIsWidget(widget, 1, ignore);
-  }
-
-  /// 栈顶之下第n是widget
-  bool topNIsWidget(Widget widget, [int n = 0, bool ignore = true]) {
-    return _topNIsType(widget.runtimeType, n, ignore, widget.hashCode);
   }
 
   /// 栈顶之下第n是type类型
@@ -74,10 +60,6 @@ class XBNavigatorObserver extends NavigatorObserver {
       }
     }
     return false;
-  }
-
-  bool stackContainWidget(Widget widget) {
-    return _stackContainType(widget.runtimeType, widget.hashCode);
   }
 
   bool stackContainType(Type type, [int? hsCode]) {

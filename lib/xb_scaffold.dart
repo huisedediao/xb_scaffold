@@ -62,6 +62,7 @@ export 'src/common/xb_text_field/xb_text_input_formatter.dart';
 export 'package:xb_scaffold/src/utils/xb_import.dart'
     if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
 
+/// 页面展示隐藏监听
 final RouteObserver<ModalRoute<void>> xbRrouteObserver =
     RouteObserver<ModalRoute<void>>();
 

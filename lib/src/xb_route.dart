@@ -8,16 +8,6 @@ String xbCategoryNameKey = "xb_category";
 String xbCategoryName = "xb_route";
 String xbHashCodeKey = "xb_hash_code";
 
-/// 页面是否在栈顶
-bool topIsWidget(Widget widget) {
-  return xbNavigatorObserver.topIsWidget(widget);
-}
-
-/// 页面是否在栈顶之下的第一个
-bool topSecondIsWidget(Widget widget) {
-  return xbNavigatorObserver.topSecondIsWidget(widget);
-}
-
 /// 判断是否是XBRoute
 bool isXBRoute(Route route) {
   return xbNavigatorObserver.isXBRoute(route);
@@ -26,11 +16,6 @@ bool isXBRoute(Route route) {
 /// 栈顶是否是type类型
 bool topIsType(Type type) {
   return xbNavigatorObserver.topIsType(type);
-}
-
-/// 页面是否在栈里，如果是根节点，没办法判断是否在栈里
-bool stackContainWidget(Widget widget) {
-  return xbNavigatorObserver.stackContainWidget(widget);
 }
 
 /// 类型是否在栈里，如果是根节点，没办法判断是否在栈里
@@ -98,21 +83,6 @@ void popUntilType(Type type) {
       return true;
     }
     if (topIsType(type)) {
-      return true;
-    } else {
-      return false;
-    }
-  });
-}
-
-/// 回到最后一个Type类型的页面
-/// 如果找不到，则回到根页面
-void popUntilWidget(Widget widget) {
-  Navigator.of(xbGlobalContext).popUntil((route) {
-    if (route.isFirst) {
-      return true;
-    }
-    if (topIsWidget(widget)) {
       return true;
     } else {
       return false;
