@@ -19,7 +19,7 @@ class MyApp extends StatelessWidget {
             seedColor: const Color.fromARGB(255, 76, 27, 162)),
         useMaterial3: true,
       ),
-      navigatorObservers: [xbNavigatorObserver, xbRrouteObserver],
+      navigatorObservers: [xbNavigatorObserver, xbRouteObserver],
       home: XBScaffold(themeConfigs: [
         XBThemeConfig(
           primaryColor: Color.fromARGB(255, 88, 18, 13),

@@ -18,7 +18,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    xbRrouteObserver.subscribe(this, ModalRoute.of(context)!);
+    xbRouteObserver.subscribe(this, ModalRoute.of(context)!);
   }
 
   @override
@@ -239,7 +239,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
 
   @override
   void dispose() {
-    xbRrouteObserver.unsubscribe(this);
+    xbRouteObserver.unsubscribe(this);
     _pushNotifyAnimationTimer.cancel();
     super.dispose();
   }
