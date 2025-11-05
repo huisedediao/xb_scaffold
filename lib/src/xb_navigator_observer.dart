@@ -179,7 +179,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     String ret;
     if (route == null) {
       ret = "null";
-    } else if (isXBRoute(route)) {
+    } else if (isXBRoute(route) || _isGetRoute(route)) {
       ret = _getRouteName(route);
     } else {
       ret = route.toString();

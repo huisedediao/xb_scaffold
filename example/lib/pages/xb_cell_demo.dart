@@ -51,8 +51,10 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             subtitle: "subtitle",
             arrowColor: Colors.white,
             onTap: () {
-              bool topIsXBCellDemo = topIsType(XBCellDemo);
-              toast("topIsXBCellDemo:$topIsXBCellDemo");
+              // bool topIsXBCellDemoType = topIsType(XBCellDemo);
+              // toast("topIsXBCellDemoType:$topIsXBCellDemoType");
+              bool topIsXBCellDemoWidget = topIsWidget(this);
+              toast("topIsXBCellDemoWidget:$topIsXBCellDemoWidget");
             },
             isShowArrow: true,
           );
