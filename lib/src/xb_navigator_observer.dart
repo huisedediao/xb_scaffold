@@ -70,7 +70,7 @@ class XBNavigatorObserver extends NavigatorObserver {
     if (_stack.isEmpty) return false;
     for (int i = _stack.length - 1; i >= 0; i--) {
       Route tempRoute = _stack[i];
-      if (_isXBRoute(tempRoute) &&
+      if ((_isXBRoute(tempRoute) || _isGetRoute(tempRoute)) &&
           (hsCode == null
               ? true
               : _isEqualHashCode(route: tempRoute, hsCode: hsCode))) {
