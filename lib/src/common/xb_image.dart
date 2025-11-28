@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/common/xb_file_image.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 import '../configs/xb_color_config.dart';
 import 'dart:ui' as ui;
 
@@ -100,6 +101,11 @@ class XBImage extends StatelessWidget {
               errWidget ??
               Container(
                 color: viewBG,
+                alignment: Alignment.center,
+                child: Text(
+                  error.toString(),
+                  style: TextStyle(fontSize: fontSizes.s12, color: Colors.grey),
+                ),
               ),
         );
       } else {
