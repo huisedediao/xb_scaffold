@@ -157,9 +157,8 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       primary: _primary(vm),
       backgroundColor: backgroundColor(vm),
       resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
-      appBar: needImmersiveAppbar(vm)
-          ? const XBEmptyAppBar()
-          : (_primary(vm) == false ? const XBEmptyAppBar() : buildAppBar(vm)),
+      appBar:
+          needImmersiveAppbar(vm) ? null : (_primary(vm) == false ? null : buildAppBar(vm)),
       extendBodyBehindAppBar: needImmersiveAppbar(vm),
       body: _buildBodyContent(vm),
     );
