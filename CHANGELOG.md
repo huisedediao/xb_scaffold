@@ -813,3 +813,7 @@
 ## 0.1.57
 
 - 增加XBMaxHeightContainer和XBAdaptiveListView
+
+## 0.1.58
+
+- optimized
