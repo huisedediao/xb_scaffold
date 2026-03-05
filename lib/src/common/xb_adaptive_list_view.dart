@@ -8,8 +8,11 @@ class XBAdaptiveListView extends StatelessWidget {
   final IndexedWidgetBuilder itemBuilder;
   final IndexedWidgetBuilder? separatorBuilder;
 
+  /// 固定区（不随列表滚动）
   final Widget? header;
   final Widget? footer;
+
+  /// 空态显示在 header 和 footer 中间（属于滚动区内容）
   final Widget? emptyView;
 
   final EdgeInsetsGeometry? padding;
@@ -58,18 +61,38 @@ class XBAdaptiveListView extends StatelessWidget {
       duration: animationDuration,
       curve: Curves.easeInOut,
       child: ConstrainedBox(
+        // 整体也受 max/min 约束：header + listArea + footer 的总高度
         constraints: BoxConstraints(
           maxHeight: maxHeight,
           minHeight: minHeight ?? 0,
         ),
-        child: _buildList(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (header != null) header!,
+
+            // 中间滚动区：只让这里滚动，header/footer 固定
+            Flexible(
+              fit: FlexFit.loose,
+              child: _buildScrollableArea(),
+            ),
+
+            if (footer != null) footer!,
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildList() {
-    final totalCount = _calculateItemCount();
+  Widget _buildScrollableArea() {
+    // 空态：放在滚动区中间（在 header/footer 之间）
+    if (itemCount == 0) {
+      return _wrapScroll(
+        child: emptyView ?? const SizedBox.shrink(),
+      );
+    }
 
+    // 有数据：滚动区显示列表
     if (separatorBuilder != null) {
       return ListView.separated(
         controller: controller,
@@ -77,14 +100,9 @@ class XBAdaptiveListView extends StatelessWidget {
         physics: physics,
         reverse: reverse,
         shrinkWrap: true,
-        itemCount: totalCount,
-        itemBuilder: _itemBuilder,
-        separatorBuilder: (context, index) {
-          if (_isHeader(index) || _isFooter(index)) {
-            return const SizedBox.shrink();
-          }
-          return separatorBuilder!(context, _dataIndex(index));
-        },
+        itemCount: itemCount,
+        itemBuilder: itemBuilder,
+        separatorBuilder: separatorBuilder!,
       );
     }
 
@@ -94,57 +112,20 @@ class XBAdaptiveListView extends StatelessWidget {
       physics: physics,
       reverse: reverse,
       shrinkWrap: true,
-      itemCount: totalCount,
-      itemBuilder: _itemBuilder,
+      itemCount: itemCount,
+      itemBuilder: itemBuilder,
     );
   }
 
-  int _calculateItemCount() {
-    int count = 0;
-
-    if (header != null) count++;
-
-    if (itemCount == 0) {
-      if (emptyView != null) count++;
-    } else {
-      count += itemCount;
-    }
-
-    if (footer != null) count++;
-
-    return count;
-  }
-
-  bool _isHeader(int index) {
-    return header != null && index == 0;
-  }
-
-  bool _isFooter(int index) {
-    return footer != null && index == _calculateItemCount() - 1;
-  }
-
-  int _dataIndex(int index) {
-    if (header != null) {
-      return index - 1;
-    }
-    return index;
-  }
-
-  Widget _itemBuilder(BuildContext context, int index) {
-    if (_isHeader(index)) {
-      return header!;
-    }
-
-    if (_isFooter(index)) {
-      return footer!;
-    }
-
-    // emptyView
-    if (itemCount == 0) {
-      return emptyView ?? const SizedBox.shrink();
-    }
-
-    final dataIndex = _dataIndex(index);
-    return itemBuilder(context, dataIndex);
+  /// 让 emptyView 也具备“内容少自适应，内容多可滚动”的一致行为
+  /// （尤其 emptyView 可能很高，比如一堆说明文字/按钮）
+  Widget _wrapScroll({required Widget child}) {
+    return SingleChildScrollView(
+      controller: controller,
+      padding: padding,
+      physics: physics,
+      reverse: reverse,
+      child: child,
+    );
   }
 }

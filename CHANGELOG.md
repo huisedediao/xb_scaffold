@@ -825,3 +825,7 @@
 ## 0.1.60
 
 - optimized
+
+## 0.1.61
+
+- optimized
