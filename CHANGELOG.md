@@ -800,7 +800,7 @@
 
 ## 0.1.54
 
-- optimized
+- op
 
 ## 0.1.55
 
@@ -819,5 +819,9 @@
 - optimized
 
 ## 0.1.59
+
+- optimized
+
+## 0.1.60
 
 - optimized
