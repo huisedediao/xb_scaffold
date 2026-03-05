@@ -251,3 +251,46 @@ class XBLoadingPainter extends CustomPainter {
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
+
+class XBLoadingMask extends StatelessWidget {
+  final bool loading;
+  final Widget child;
+  final String? text;
+  final Color? bgColor;
+
+  const XBLoadingMask({
+    super.key,
+    required this.loading,
+    required this.child,
+    this.bgColor,
+    this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        if (loading)
+          Container(
+            color: bgColor,
+            child: XBLoading(text: text),
+          )
+      ],
+    );
+  }
+}
+
+class XBLoading extends StatelessWidget {
+  final String? text;
+
+  const XBLoading({super.key, this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    if (xbLoadingBuilder != null) {
+      return xbLoadingBuilder!(xbGlobalContext, text);
+    }
+    return XBLoadingWidget(msg: text);
+  }
+}
