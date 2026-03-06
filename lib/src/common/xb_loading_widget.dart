@@ -274,7 +274,7 @@ class XBLoadingMask extends StatelessWidget {
         if (loading)
           Positioned.fill(
             child: Container(
-              color: bgColor,
+              color: bgColor ?? Colors.transparent,
               alignment: Alignment.center,
               child: XBLoading(text: text),
             ),
