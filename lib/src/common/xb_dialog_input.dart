@@ -1,3 +1,5 @@
+import 'dart:nativewrappers/_internal/vm/lib/ffi_allocation_patch.dart';
+
 import 'package:flutter/services.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   final String? initValue;
   final String? cancelTitle;
   final String? confirmTitle;
+  final XBValueGetter<bool, String>? onWillDone;
   final ValueChanged<String> onDone;
   final List<TextInputFormatter>? inputFormatters;
   final double? maxWidth;
@@ -27,6 +30,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
       this.inputFormatters,
       this.cancelTitle,
       this.confirmTitle,
+      this.onWillDone,
       required this.onDone,
       this.maxWidth,
       this.bottomMargin,
@@ -156,8 +160,12 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                                   bottom: screenH * 0.6);
                               return;
                             }
-                            pop();
-                            onDone(vm.value);
+                            bool canContinue =
+                                onWillDone?.call(vm.value) ?? true;
+                            if (canContinue) {
+                              pop();
+                              onDone(vm.value);
+                            }
                           }),
                     ),
                   )
