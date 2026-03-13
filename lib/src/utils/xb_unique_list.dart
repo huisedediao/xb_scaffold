@@ -95,4 +95,13 @@ extension XBUniqueList<T> on List<T> {
       return this[index];
     }
   }
+
+  /// 返回可变拷贝数组，避免传入的是 const 数组被编辑的情况
+  List<T> mutableCopy() {
+    List<T> ret = [];
+    for (var element in this) {
+      ret.add(element);
+    }
+    return ret;
+  }
 }
