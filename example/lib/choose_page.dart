@@ -1,3 +1,4 @@
+import 'package:example/pages/hide_top_bar_test.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
 import 'package:example/pages/xb_page_demo.dart';
@@ -62,7 +63,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     "XBToast demo",
     "XBWaitTask demo",
     "VM访问演示",
-    "TFTest"
+    "TFTest",
+    "Hide top bar test"
   ];
 
   void onTapIndex(int index) {
@@ -85,6 +87,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const VMAccessDemo());
     } else if (index == 8) {
       push(const TFTest());
+    } else if (index == 9) {
+      push(const HideTopBarTest());
     }
   }
 }
