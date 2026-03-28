@@ -844,4 +844,8 @@
 
 ## 0.1.65
 
--  XBPage 增加 MediaQuery.removePadding 选项
+- XBPage 增加 MediaQuery.removePadding 选项
+
+## 0.1.66
+
+- 新增XBRootWidget
