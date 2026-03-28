@@ -40,6 +40,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 是否需要沉浸式导航栏
   bool needImmersiveAppbar(T vm) => false;
 
+  /// 是否需要 MediaQuery.removePadding
+  bool needRemovePadding(T vm) => true;
+
   /// 是否启动iOS侧滑返回
   bool needIosGestureBack(T vm) => true;
 
@@ -157,8 +160,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
       primary: _primary(vm),
       backgroundColor: backgroundColor(vm),
       resizeToAvoidBottomInset: needAdaptKeyboard(vm), //输入框抵住键盘
-      appBar:
-          needImmersiveAppbar(vm) ? null : (_primary(vm) == false ? null : buildAppBar(vm)),
+      appBar: needImmersiveAppbar(vm)
+          ? null
+          : (_primary(vm) == false ? null : buildAppBar(vm)),
       extendBodyBehindAppBar: needImmersiveAppbar(vm),
       body: _buildBodyContent(vm),
     );
@@ -229,6 +233,15 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
     return Builder(
       builder: (context) {
         Widget content = buildPage(vm, context);
+        if (needRemovePadding(vm)) {
+          content = MediaQuery.removePadding(
+              removeTop: true,
+              removeBottom: true,
+              removeLeft: true,
+              removeRight: true,
+              context: context,
+              child: content);
+        }
         Widget appBar;
         if (needImmersiveAppbar(vm) && needHideAppbar(vm) == false) {
           appBar = buildAppBar(vm);

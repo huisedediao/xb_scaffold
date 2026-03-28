@@ -841,3 +841,7 @@
 ## 0.1.64
 
 - 增加 List 的 mutable
+
+## 0.1.65
+
+-  XBPage 增加 MediaQuery.removePadding 选项
