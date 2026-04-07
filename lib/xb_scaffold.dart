@@ -6,64 +6,7 @@ import 'package:flutter/material.dart';
 import './src/xb_navigator_observer.dart';
 import 'src/xb_theme/xb_theme_vm.dart';
 
-export './src/xb_page.dart';
-export './src/xb_page_vm.dart';
-export './src/xb_widget.dart';
-export './src/xb_vmless_widget.dart';
-export './src/xb_vm.dart';
-export './src/xb_root_widget.dart';
-export './src/xb_vm_extensions.dart';
-export './src/xb_theme/xb_theme_vm.dart';
-export './src/common/xb_animation_rotate.dart';
-export 'src/common/xb_button/xb_button.dart';
-export 'src/common/xb_button/xb_button_text.dart';
-export './src/common/xb_empty_app_bar.dart';
-export './src/common/xb_fade_widget.dart';
-export './src/common/xb_image.dart';
-export './src/common/xb_file_image.dart';
-export './src/common/xb_shadow_container.dart';
-export './src/common/xb_loading_widget.dart';
-export './src/common/xb_navigator_back_btn.dart';
-export './src/common/xb_hovering_header_list/xb_hovering_header_list.dart';
-export './src/xb_theme/xb_theme_mixin.dart';
-export './src/xb_route.dart';
-
-export './src/utils/xb_unique_list.dart';
-export './src/utils/xb_stack_list.dart';
-export './src/utils/xb_select_model.dart';
-export './src/utils/xb_timer.dart';
-export './src/utils/xb_text_size_util.dart';
-export './src/utils/xb_img_size_util.dart';
-export 'src/utils/xb_prevent_multi_task.dart';
-export 'src/utils/xb_wait_task.dart';
-export 'src/utils/xb_event_bus.dart';
-export './src/utils/xb_refresh_task/xb_refresh_task_util.dart';
-export './src/xb_sys_config.dart';
-export './src/xb_sys_space.dart';
-export './src/xb_dialog.dart';
-export './src/xb_log.dart';
-export './src/xb_print.dart';
-export './src/xb_action_sheet.dart';
-export './src/xb_toast.dart';
-export 'src/common/xb_float_widget/xb_float_widget.dart';
-export 'src/common/xb_table/xb_table.dart';
-export 'src/utils/xb_parse.dart';
-export './src/network/xb_http.dart';
-export 'src/common/xb_cell/xb_cell.dart';
-export 'src/common/xb_line.dart';
-export 'src/common/xb_title_picker/xb_title_picker.dart';
-export 'src/common/xb_title_picker/xb_title_picker_index.dart';
-export 'src/common/xb_title_picker/xb_title_picker_multi.dart';
-export 'src/configs/xb_def.dart';
-export 'src/common/xb_bg.dart';
-export 'src/common/xb_gradient_widget.dart';
-export 'src/common/xb_disable.dart';
-export 'src/common/xb_text_field/xb_text_field.dart';
-export 'src/common/xb_text_field/xb_text_input_formatter.dart';
-export 'src/common/xb_max_height_container.dart';
-export 'src/common/xb_adaptive_list_view.dart';
-export 'package:xb_scaffold/src/utils/xb_import.dart'
-    if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';
+export 'xb_scaffold_export.dart';
 
 /// 页面展示隐藏监听
 final RouteObserver<ModalRoute<void>> xbRouteObserver =

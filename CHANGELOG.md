@@ -849,3 +849,7 @@
 ## 0.1.66
 
 - 新增XBRootWidget
+
+## 0.1.67
+
+- 新增XBCellCustom
