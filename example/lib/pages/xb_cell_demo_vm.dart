@@ -26,7 +26,8 @@ class XBCellDemoVM extends XBPageVM<XBCellDemo> {
         "XBFloatTip",
         "XBCellIconTitle",
         "XBFloatMenuIconTitle",
-        "def"
+        "def",
+        "XBCellCustom"
       ];
 
   bool isSelected = false;

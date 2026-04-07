@@ -534,6 +534,34 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           );
         }
 
+        if (index == 21) {
+          return XBCellCustom(
+            contentOverride: Container(
+              child: Column(
+                children: [Text("data"), Text("1")],
+              ),
+            ),
+            bottomContentOverride: Container(
+              height: 30,
+              color: colors.randColor,
+            ),
+            bottomWidgetOverride: Container(
+              height: 10,
+              color: colors.randColor,
+            ),
+            leftWidgetOverride: Container(
+              width: 50,
+              height: 180,
+              color: colors.randColor,
+            ),
+            rightWidgetOverride: Container(
+              width: 80,
+              height: 80,
+              color: colors.randColor,
+            ),
+          );
+        }
+
         return Container(
           color: colors.randColor,
           height: 200,
