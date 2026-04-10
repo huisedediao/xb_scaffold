@@ -853,3 +853,7 @@
 ## 0.1.67
 
 - 新增XBCellCustom
+
+## 0.1.68
+
+- 新增XBLogsUtil
