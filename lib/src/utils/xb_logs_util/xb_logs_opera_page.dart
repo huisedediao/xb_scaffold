@@ -194,10 +194,22 @@ class ViewLogDialog extends XBWidget<ViewLogDialogVM> {
                     Container(
                       width: 64,
                     ),
-                    Text("logs"),
-                    Container(
-                      width: 64,
-                      child: Text("关闭"),
+                    Text(
+                      "logs",
+                      style: TextStyle(
+                          fontSize: fontSizes.s20,
+                          fontWeight: fontWeights.semiBold),
+                    ),
+                    XBButton(
+                      onTap: () {
+                        pop();
+                      },
+                      child: Container(
+                        width: 64,
+                        height: naviBarH,
+                        alignment: Alignment.center,
+                        child: Text("关闭"),
+                      ),
                     ),
                   ],
                 ),
