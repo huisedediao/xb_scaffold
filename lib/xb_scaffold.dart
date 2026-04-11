@@ -139,22 +139,9 @@ class _XBSafeContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Builder(
-      builder: (context) {
-        try {
-          return child;
-        } catch (e, s) {
-          XBErrorHandler.handle(e, s);
-          return errorWidget ??
-              XBErrorView(
-                message: '页面加载失败，请稍后重试',
-                onRetry: () {
-                  // todo
-                },
-              );
-        }
-      },
-    );
+    // 子树 build 阶段异常由 FlutterError.onError/ErrorWidget.builder 处理，
+    // 这里直接返回 child，避免误导性的 try-catch。
+    return child;
   }
 }
 
