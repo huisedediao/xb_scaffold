@@ -9,4 +9,6 @@ export 'xb_wait_task.dart';
 export 'xb_event_bus.dart';
 export 'xb_refresh_task/xb_refresh_task_util.dart';
 export 'xb_parse.dart';
-export 'xb_logs_util.dart';
+export 'xb_time_util.dart';
+export 'xb_logs_util/xb_logs_util.dart';
+export 'xb_logs_util/xb_logs_opera_page.dart';

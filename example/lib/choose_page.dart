@@ -68,7 +68,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     "TFTest",
     "Hide top bar test",
     "XBLogsUtil demo",
-    "Error catch test"
+    "Error catch test",
+    "查看日志页面"
   ];
 
   void onTapIndex(int index) {
@@ -97,6 +98,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const XbLogDemo());
     } else if (index == 11) {
       push(const ErrorTestPage());
+    } else if (index == 12) {
+      push(const XBLogsOperaPage());
     }
   }
 }
