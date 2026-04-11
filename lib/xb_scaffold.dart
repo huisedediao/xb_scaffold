@@ -62,12 +62,14 @@ int? get maxPageLogLen => _maxPageLogLen;
 /// 对外暴露：初始化全局异常处理
 void initXBErrorHandler({
   XBErrorReporter? reporter,
+  XBErrorWidgetBuilder? errorWidgetBuilder,
   bool dumpFlutterErrorToConsole = true,
   bool enableErrorWidget = true,
   bool enableIsolateError = false,
 }) {
   XBErrorHandler.init(
     reporter: reporter,
+    errorWidgetBuilder: errorWidgetBuilder,
     dumpFlutterErrorToConsole: dumpFlutterErrorToConsole,
     enableErrorWidget: enableErrorWidget,
     enableIsolateError: enableIsolateError,

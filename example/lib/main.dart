@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:example/choose_page.dart';
+import 'package:example/pages/error_test_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
@@ -14,6 +15,47 @@ void main() {
       XBLogsUtil.writeText(errMsg
           .replaceAll('\n', '<br>')
           .replaceAll('<asynchronous suspension>', ''));
+    },
+    errorWidgetBuilder: (context, details, routeName) {
+      final normalizedRouteName =
+          routeName?.replaceFirst('/', '') ?? 'UnknownRoute';
+      if (normalizedRouteName == 'ErrorTestPage') {
+        return XBErrorView(
+          error: details.exception,
+          stackTrace: details.stack,
+          message: 'ErrorTestPage 发生异常',
+          retryText: '刷新当前页',
+          onRetry: () {
+            replace(const ErrorTestPage());
+          },
+          backText: '返回上一页',
+          onBack: () {
+            if (Navigator.of(context).canPop()) {
+              pop();
+            } else {
+              popToRoot();
+            }
+          },
+        );
+      }
+
+      return XBErrorView(
+        error: details.exception,
+        stackTrace: details.stack,
+        message: '$normalizedRouteName 页面发生异常',
+        retryText: '回到首页',
+        onRetry: () {
+          popToRoot();
+        },
+        backText: '返回上一页',
+        onBack: () {
+          if (Navigator.of(context).canPop()) {
+            pop();
+          } else {
+            popToRoot();
+          }
+        },
+      );
     },
     dumpFlutterErrorToConsole: true,
     enableErrorWidget: true,

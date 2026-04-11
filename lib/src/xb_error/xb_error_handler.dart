@@ -9,10 +9,17 @@ typedef XBErrorReporter = FutureOr<void> Function(
   StackTrace? stackTrace,
 );
 
+typedef XBErrorWidgetBuilder = Widget? Function(
+  BuildContext context,
+  FlutterErrorDetails details,
+  String? routeName,
+);
+
 class XBErrorHandler {
   XBErrorHandler._();
 
   static XBErrorReporter? _reporter;
+  static XBErrorWidgetBuilder? _errorWidgetBuilder;
   static bool _inited = false;
 
   /// 防止重复上报同一类异常
@@ -20,6 +27,7 @@ class XBErrorHandler {
 
   static void init({
     XBErrorReporter? reporter,
+    XBErrorWidgetBuilder? errorWidgetBuilder,
     bool dumpFlutterErrorToConsole = true,
     bool enableErrorWidget = true,
     bool enableIsolateError = false,
@@ -28,6 +36,7 @@ class XBErrorHandler {
     _inited = true;
 
     _reporter = reporter;
+    _errorWidgetBuilder = errorWidgetBuilder;
 
     /// Flutter 框架异常
     FlutterError.onError = (FlutterErrorDetails details) {
@@ -51,10 +60,18 @@ class XBErrorHandler {
           details.exception,
           details.stack,
         );
-        return XBErrorView(
-          error: details.exception,
-          stackTrace: details.stack,
-        );
+        return Builder(builder: (context) {
+          final routeName = ModalRoute.of(context)?.settings.name;
+          final customErrorWidget =
+              _errorWidgetBuilder?.call(context, details, routeName);
+          if (customErrorWidget != null) {
+            return customErrorWidget;
+          }
+          return XBErrorView(
+            error: details.exception,
+            stackTrace: details.stack,
+          );
+        });
       };
     }
 

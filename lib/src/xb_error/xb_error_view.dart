@@ -5,6 +5,9 @@ class XBErrorView extends StatelessWidget {
   final StackTrace? stackTrace;
   final String message;
   final VoidCallback? onRetry;
+  final String retryText;
+  final VoidCallback? onBack;
+  final String backText;
 
   const XBErrorView({
     super.key,
@@ -12,6 +15,9 @@ class XBErrorView extends StatelessWidget {
     this.stackTrace,
     this.message = '页面发生异常，请稍后重试',
     this.onRetry,
+    this.retryText = 'retry',
+    this.onBack,
+    this.backText = 'back',
   });
 
   @override
@@ -40,11 +46,22 @@ class XBErrorView extends StatelessWidget {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                if (onRetry != null) ...[
+                if (onRetry != null || onBack != null) ...[
                   const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: onRetry,
-                    child: const Text('retry'),
+                  Wrap(
+                    spacing: 12,
+                    children: [
+                      if (onRetry != null)
+                        ElevatedButton(
+                          onPressed: onRetry,
+                          child: Text(retryText),
+                        ),
+                      if (onBack != null)
+                        OutlinedButton(
+                          onPressed: onBack,
+                          child: Text(backText),
+                        ),
+                    ],
                   ),
                 ],
               ],
