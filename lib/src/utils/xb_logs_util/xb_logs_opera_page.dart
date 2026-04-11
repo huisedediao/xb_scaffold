@@ -391,18 +391,20 @@ class ViewLogDialog extends XBWidget<ViewLogDialogVM> {
 
   @override
   Widget buildWidget(ViewLogDialogVM vm, BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height * 0.75;
     return Padding(
       padding: EdgeInsets.only(left: spaces.gapDef, right: spaces.gapDef),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Container(
           color: Colors.white,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
@@ -427,9 +429,15 @@ class ViewLogDialog extends XBWidget<ViewLogDialogVM> {
                     ),
                   ],
                 ),
-                SelectableText(vm.content),
-              ],
-            ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: SelectableText(vm.content),
+                ),
+              ),
+            ],
           ),
         ),
       ),
