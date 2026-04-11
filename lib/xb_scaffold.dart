@@ -89,16 +89,12 @@ class XBScaffold extends StatefulWidget {
   /// max page log len，默认 30
   final int? maxPageLogLen;
 
-  /// 页面异常时展示的组件
-  final Widget? errorWidget;
-
   const XBScaffold({
     required this.child,
     required this.themeConfigs,
     this.loadingBuilder,
     this.toastBackgroundColor,
     this.maxPageLogLen,
-    this.errorWidget,
     super.key,
   });
 
@@ -120,28 +116,7 @@ class _XBScaffoldState extends State<XBScaffold> {
   Widget build(BuildContext context) {
     _xbGlobalContext = context;
     _isInitXBScaffold = true;
-
-    return _XBSafeContainer(
-      errorWidget: widget.errorWidget,
-      child: widget.child,
-    );
-  }
-}
-
-class _XBSafeContainer extends StatelessWidget {
-  final Widget child;
-  final Widget? errorWidget;
-
-  const _XBSafeContainer({
-    required this.child,
-    this.errorWidget,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // 子树 build 阶段异常由 FlutterError.onError/ErrorWidget.builder 处理，
-    // 这里直接返回 child，避免误导性的 try-catch。
-    return child;
+    return widget.child;
   }
 }
 
