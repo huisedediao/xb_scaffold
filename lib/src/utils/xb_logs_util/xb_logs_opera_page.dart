@@ -107,19 +107,26 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
                     itemCount: vm.logs.length,
                     itemBuilder: (context, index) {
                       XBLogFileInfo logFileInfo = vm.logs[index];
-                      return GestureDetector(
-                        onLongPress: () {
-                          vm.open(index);
-                        },
-                        child: XBCellTitleSelect(
-                          padding: EdgeInsets.only(
-                              left: spaces.gapDef, right: spaces.gapDef),
-                          contentHeight: 40,
-                          title: logFileInfo.name,
-                          isSelected: vm.isSelected(index),
-                          onTap: () {
-                            vm.onTapIndex(index);
+                      return Padding(
+                        padding: EdgeInsets.only(
+                            bottom: index == vm.logs.length - 1
+                                ? (spaces.gapLess + safeAreaBottom)
+                                : 0,
+                            top: index == 0 ? spaces.gapLess : 0),
+                        child: GestureDetector(
+                          onLongPress: () {
+                            vm.open(index);
                           },
+                          child: XBCellTitleSelect(
+                            padding: EdgeInsets.only(
+                                left: spaces.gapDef, right: spaces.gapDef),
+                            contentHeight: 50,
+                            title: logFileInfo.name,
+                            isSelected: vm.isSelected(index),
+                            onTap: () {
+                              vm.onTapIndex(index);
+                            },
+                          ),
                         ),
                       );
                     },
@@ -333,7 +340,14 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
 
   void switchFilterMode(bool monthMode) {
     if (byMonth == monthMode) return;
+    final wasMonthMode = byMonth;
     byMonth = monthMode;
+    if (wasMonthMode && !monthMode) {
+      dateTime = DateTime.now();
+    } else if (!wasMonthMode && monthMode) {
+      final now = DateTime.now();
+      dateTime = DateTime(now.year, now.month, 1);
+    }
     _query();
   }
 
