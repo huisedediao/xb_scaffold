@@ -59,7 +59,7 @@ class XBLogsUtil {
       final now = DateTime.now();
 
       final dateFolderName = _formatDate(now);
-      final finalFileName = fileName ?? '${_formatDateTimeWithMs(now)}.txt';
+      final finalFileName = fileName ?? '${_formatDateTimeForFile(now)}.txt';
 
       final dirPath = '$rootPath/$folderName/$dateFolderName';
       final dir = Directory(dirPath);
@@ -188,19 +188,38 @@ class XBLogsUtil {
 
       final encoder = ZipFileEncoder();
       encoder.create(zipPath);
+      final usedArchiveNames = <String>{};
+      final selectedCount = logPaths.length;
+      int addedCount = 0;
+      int skippedMissingCount = 0;
+      int skippedDuplicateCount = 0;
 
       for (final logPath in logPaths) {
         final file = File(logPath);
-        if (!await file.exists()) continue;
+        if (!await file.exists()) {
+          skippedMissingCount++;
+          continue;
+        }
 
-        final parentDirName = p.basename(p.dirname(logPath));
-        final fileName = p.basename(logPath);
-        final archiveName = '$parentDirName/$fileName';
+        final parentDirName =
+            _sanitizeArchiveSegment(p.basename(p.dirname(logPath)));
+        final fileName = _sanitizeArchiveSegment(p.basename(logPath));
+        final baseArchiveName = '$parentDirName/$fileName';
+        final archiveName = _ensureUniqueArchiveName(
+          baseArchiveName,
+          usedArchiveNames,
+        );
+        if (archiveName != baseArchiveName) {
+          skippedDuplicateCount++;
+        }
 
         encoder.addFile(file, archiveName);
+        addedCount++;
       }
 
       encoder.close();
+      debugPrint(
+          'XBLogUtil zipSelectedLogs summary: selected=$selectedCount, added=$addedCount, skippedMissing=$skippedMissingCount, renamedForDuplicate=$skippedDuplicateCount');
       return zipPath;
     } catch (e, s) {
       debugPrint('XBLogUtil zipSelectedLogs error: $e');
@@ -388,18 +407,6 @@ class XBLogsUtil {
     return '$y-$m-$d';
   }
 
-  static String _formatDateTimeWithMs(DateTime time) {
-    final y = time.year.toString().padLeft(4, '0');
-    final m = time.month.toString().padLeft(2, '0');
-    final d = time.day.toString().padLeft(2, '0');
-    final h = time.hour.toString().padLeft(2, '0');
-    final min = time.minute.toString().padLeft(2, '0');
-    final s = time.second.toString().padLeft(2, '0');
-    final ms = time.millisecond.toString().padLeft(3, '0');
-
-    return '$y-$m-$d $h:$min:$s-$ms';
-  }
-
   static String _formatDateTimeForFile(DateTime time) {
     final y = time.year.toString().padLeft(4, '0');
     final m = time.month.toString().padLeft(2, '0');
@@ -410,5 +417,44 @@ class XBLogsUtil {
     final ms = time.millisecond.toString().padLeft(3, '0');
 
     return '${y}${m}${d}_${h}${min}${s}_$ms';
+  }
+
+  static String _sanitizeArchiveSegment(String value) {
+    final invalidChars = RegExp(r'[<>:"/\\|?*\x00-\x1F]');
+    var result = value.replaceAll(invalidChars, '_').trim();
+    if (result.isEmpty) {
+      result = 'unknown';
+    }
+    return result;
+  }
+
+  static String _ensureUniqueArchiveName(
+    String archiveName,
+    Set<String> usedArchiveNames,
+  ) {
+    if (!usedArchiveNames.contains(archiveName)) {
+      usedArchiveNames.add(archiveName);
+      return archiveName;
+    }
+
+    final splitIndex = archiveName.lastIndexOf('/');
+    final dir = splitIndex >= 0 ? archiveName.substring(0, splitIndex) : '';
+    final rawName =
+        splitIndex >= 0 ? archiveName.substring(splitIndex + 1) : archiveName;
+    final ext = p.extension(rawName);
+    final base = ext.isEmpty
+        ? rawName
+        : rawName.substring(0, rawName.length - ext.length);
+
+    var seq = 2;
+    while (true) {
+      final candidateName = '${base}_$seq$ext';
+      final candidate = dir.isEmpty ? candidateName : '$dir/$candidateName';
+      if (!usedArchiveNames.contains(candidate)) {
+        usedArchiveNames.add(candidate);
+        return candidate;
+      }
+      seq++;
+    }
   }
 }
