@@ -186,13 +186,14 @@ class XBLogsUtil {
           zipFileName ?? 'logs_${_formatDateTimeForFile(now)}.zip';
       final zipPath = '${exportDir.path}/$finalZipFileName';
 
-      final encoder = ZipFileEncoder();
-      encoder.create(zipPath);
+      final archive = Archive();
       final usedArchiveNames = <String>{};
       final selectedCount = logPaths.length;
       int addedCount = 0;
       int skippedMissingCount = 0;
       int skippedDuplicateCount = 0;
+      int skippedReadErrorCount = 0;
+      final addedArchiveNames = <String>[];
 
       for (final logPath in logPaths) {
         final file = File(logPath);
@@ -213,14 +214,31 @@ class XBLogsUtil {
           skippedDuplicateCount++;
         }
 
-        encoder.addFile(file, archiveName);
-        addedCount++;
+        try {
+          final bytes = await file.readAsBytes();
+          archive.addFile(ArchiveFile(archiveName, bytes.length, bytes));
+          addedArchiveNames.add(archiveName);
+          addedCount++;
+        } catch (e, s) {
+          skippedReadErrorCount++;
+          debugPrint('XBLogUtil zipSelectedLogs read file error: $logPath, $e');
+          debugPrint('$s');
+        }
       }
 
-      encoder.close();
+      final zipBytes = ZipEncoder().encode(archive);
+      if (zipBytes == null) {
+        debugPrint('XBLogUtil zipSelectedLogs error: ZipEncoder encode failed');
+        return null;
+      }
+
+      final zipFile = File(zipPath);
+      await zipFile.writeAsBytes(zipBytes, flush: true);
+
       final zippedEntryCount = await _countZipFileEntries(zipPath);
       debugPrint(
-          'XBLogUtil zipSelectedLogs summary: selected=$selectedCount, added=$addedCount, skippedMissing=$skippedMissingCount, renamedForDuplicate=$skippedDuplicateCount, zippedEntryCount=$zippedEntryCount, zipPath=$zipPath');
+          'XBLogUtil zipSelectedLogs summary: selected=$selectedCount, added=$addedCount, skippedMissing=$skippedMissingCount, skippedReadError=$skippedReadErrorCount, renamedForDuplicate=$skippedDuplicateCount, zippedEntryCount=$zippedEntryCount, zipPath=$zipPath');
+      debugPrint('XBLogUtil zipSelectedLogs addedEntries: $addedArchiveNames');
       return zipPath;
     } catch (e, s) {
       debugPrint('XBLogUtil zipSelectedLogs error: $e');
