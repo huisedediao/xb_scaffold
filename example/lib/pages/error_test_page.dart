@@ -39,18 +39,9 @@ class ErrorTestPage extends StatelessWidget {
   }
 
   /// 1️⃣ Flutter UI 构建异常
+  // ErrorTestPage 内
   void _flutterBuildError() {
-    runApp(
-      MaterialApp(
-        home: Scaffold(
-          body: Builder(
-            builder: (context) {
-              throw Exception("🔥 Flutter build error");
-            },
-          ),
-        ),
-      ),
-    );
+    push(const CrashPage());
   }
 
   /// 2️⃣ 同步异常
@@ -121,5 +112,14 @@ class ErrorTestPage extends StatelessWidget {
   void _realThrow() {
     Map<String, dynamic> map = jsonDecode("hh + 22");
     xbError(map);
+  }
+}
+
+class CrashPage extends StatelessWidget {
+  const CrashPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    throw Exception('🔥 CrashPage build error');
   }
 }
