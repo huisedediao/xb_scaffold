@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:isolate';
 
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 class ErrorTestPage extends StatelessWidget {
   const ErrorTestPage({super.key});
@@ -20,6 +22,7 @@ class ErrorTestPage extends StatelessWidget {
           _btn("5. Timer 异常", _timerError),
           _btn("6. isolate 异常", _isolateError),
           _btn("7. 手动抛异常", _manualThrow),
+          _btn("8. 测试真实异常", _realThrow),
         ],
       ),
     );
@@ -77,7 +80,28 @@ class ErrorTestPage extends StatelessWidget {
 
   /// 6️⃣ isolate 异常（重点）
   void _isolateError() async {
-    await Isolate.spawn(_isolateEntry, "test");
+    late final RawReceivePort errorPort;
+    errorPort = RawReceivePort((dynamic pair) async {
+      try {
+        final list = pair as List<dynamic>;
+        final error = list.isNotEmpty ? list[0] : 'Unknown isolate error';
+        final stack = list.length > 1
+            ? StackTrace.fromString(list[1].toString())
+            : StackTrace.current;
+        await XBErrorHandler.handle(error, stack);
+      } catch (e, s) {
+        await XBErrorHandler.handle(e, s);
+      } finally {
+        errorPort.close();
+      }
+    });
+
+    await Isolate.spawn(
+      _isolateEntry,
+      "test",
+      onError: errorPort.sendPort,
+      errorsAreFatal: true,
+    );
   }
 
   static void _isolateEntry(String msg) {
@@ -91,5 +115,11 @@ class ErrorTestPage extends StatelessWidget {
     } catch (e, s) {
       Zone.current.handleUncaughtError(e, s);
     }
+  }
+
+  ///
+  void _realThrow() {
+    Map<String, dynamic> map = jsonDecode("hh + 22");
+    xbError(map);
   }
 }
