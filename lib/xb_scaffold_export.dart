@@ -24,5 +24,7 @@ export 'src/configs/xb_def.dart';
 export 'src/common/xb_common.dart';
 export 'src/utils/xb_utils.dart';
 
+export 'src/xb_error/xb_error.dart';
+
 export 'package:xb_scaffold/src/utils/xb_import.dart'
     if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';

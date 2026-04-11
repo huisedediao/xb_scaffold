@@ -1,10 +1,32 @@
+import 'dart:async';
+
 import 'package:example/choose_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 void main() {
-  runApp(const MyApp());
+  /// 1. 先初始化全局异常处理
+  initXBErrorHandler(
+    reporter: (error, stackTrace) async {
+      final errMsg = '$error\n$stackTrace';
+      debugPrint(errMsg);
+      XBLogsUtil.writeText(errMsg
+          .replaceAll('\n', '<br>')
+          .replaceAll('<asynchronous suspension>', ''));
+    },
+    dumpFlutterErrorToConsole: true,
+    enableErrorWidget: true,
+    enableIsolateError: true,
+  );
+
+  /// 2. Zone 兜底
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    runApp(const MyApp());
+  }, (error, stackTrace) async {
+    await XBErrorHandler.handle(error, stackTrace);
+  });
 }
 
 class MyApp extends StatelessWidget {
