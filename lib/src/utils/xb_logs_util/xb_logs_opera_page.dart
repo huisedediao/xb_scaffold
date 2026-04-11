@@ -21,13 +21,16 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
   List<Widget>? actions(XBLogsOperaPageVM vm) {
     return [
       XBButton(
-          onTap: () {
+          onTap: () async {
             final logPaths = vm.logPaths;
             if (logPaths.isEmpty) {
               toast("请先选中要分享的日志");
               return;
             }
-            XBLogsUtil.zipAndShareSelectedLogs(logPaths);
+            final zipPath = await XBLogsUtil.zipAndShareSelectedLogs(logPaths);
+            if (zipPath == null) {
+              toast("分享失败，请稍后重试");
+            }
           },
           coverTransparentWhileOpacity: true,
           child: Padding(

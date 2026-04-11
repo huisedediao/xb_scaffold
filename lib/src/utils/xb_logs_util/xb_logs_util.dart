@@ -218,8 +218,9 @@ class XBLogsUtil {
       }
 
       encoder.close();
+      final zippedEntryCount = await _countZipFileEntries(zipPath);
       debugPrint(
-          'XBLogUtil zipSelectedLogs summary: selected=$selectedCount, added=$addedCount, skippedMissing=$skippedMissingCount, renamedForDuplicate=$skippedDuplicateCount');
+          'XBLogUtil zipSelectedLogs summary: selected=$selectedCount, added=$addedCount, skippedMissing=$skippedMissingCount, renamedForDuplicate=$skippedDuplicateCount, zippedEntryCount=$zippedEntryCount, zipPath=$zipPath');
       return zipPath;
     } catch (e, s) {
       debugPrint('XBLogUtil zipSelectedLogs error: $e');
@@ -417,6 +418,20 @@ class XBLogsUtil {
     final ms = time.millisecond.toString().padLeft(3, '0');
 
     return '${y}${m}${d}_${h}${min}${s}_$ms';
+  }
+
+  static Future<int> _countZipFileEntries(String zipPath) async {
+    try {
+      final file = File(zipPath);
+      if (!await file.exists()) return 0;
+      final bytes = await file.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      return archive.files.where((f) => f.isFile).length;
+    } catch (e, s) {
+      debugPrint('XBLogUtil count zip entries error: $e');
+      debugPrint('$s');
+      return -1;
+    }
   }
 
   static String _sanitizeArchiveSegment(String value) {
