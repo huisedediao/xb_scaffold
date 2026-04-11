@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
@@ -32,7 +33,7 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
           child: Padding(
             padding: EdgeInsets.only(
                 left: spaces.gapDef, right: spaces.gapDef, top: 8, bottom: 8),
-            child: Text("分享选中日志"),
+            child: const Text("分享选中日志"),
           ))
     ];
   }
@@ -41,25 +42,13 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
   Widget buildPage(XBLogsOperaPageVM vm, BuildContext context) {
     return Column(
       children: [
-        // Container(
-        //   height: 55,
-        //   child: XBButton(
-        //       onTap: () {
-        //         XBLogsUtil.writeLog({
-        //           "name":
-        //               "test${XBTimeUtil.dateTime2Str(dateTime: DateTime.now())}"
-        //         });
-        //         vm._query();
-        //       },
-        //       child: Text("写日志")),
-        // ),
         Container(
           height: 55,
           padding: EdgeInsets.symmetric(horizontal: spaces.gapDef),
           child: Row(
             children: [
               ChoiceChip(
-                label: Text("按天"),
+                label: const Text("按天"),
                 selected: !vm.byMonth,
                 onSelected: (selected) {
                   if (selected) {
@@ -69,7 +58,7 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
               ),
               SizedBox(width: spaces.gapDef),
               ChoiceChip(
-                label: Text("按月"),
+                label: const Text("按月"),
                 selected: vm.byMonth,
                 onSelected: (selected) {
                   if (selected) {
@@ -88,7 +77,7 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
                       Text(vm.filterLabel),
                       Text(
                         vm.filterValue,
-                        style: TextStyle(color: Colors.blue),
+                        style: const TextStyle(color: Colors.blue),
                       )
                     ],
                   ),
@@ -101,7 +90,7 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
             child: vm.logs.isEmpty
                 ? Container(
                     alignment: Alignment.center,
-                    child: Text("暂无数据"),
+                    child: const Text("暂无数据"),
                   )
                 : ListView.separated(
                     itemCount: vm.logs.length,
@@ -172,6 +161,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
     final DateTime? picked = byMonth
         ? await _pickMonthByBottomSheet()
         : await showDatePicker(
+            // ignore: use_build_context_synchronously
             context: pageContext,
             initialDate: dateTime,
             firstDate: DateTime(2000), // 最早时间
@@ -231,7 +221,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                             fontWeight: fontWeights.semiBold,
                           ),
                         ),
-                        Spacer(),
+                        const Spacer(),
                         IconButton(
                           onPressed: selectedYear <= minYear
                               ? null
@@ -240,7 +230,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                                     selectedYear--;
                                   });
                                 },
-                          icon: Icon(Icons.keyboard_arrow_left),
+                          icon: const Icon(Icons.keyboard_arrow_left),
                         ),
                         Text(
                           "$selectedYear",
@@ -257,15 +247,16 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                                     selectedYear++;
                                   });
                                 },
-                          icon: Icon(Icons.keyboard_arrow_right),
+                          icon: const Icon(Icons.keyboard_arrow_right),
                         ),
                       ],
                     ),
                     GridView.builder(
                       shrinkWrap: true,
-                      physics: NeverScrollableScrollPhysics(),
+                      physics: const NeverScrollableScrollPhysics(),
                       itemCount: 12,
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 4,
                         mainAxisSpacing: 8,
                         crossAxisSpacing: 8,
@@ -290,6 +281,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                               border: Border.all(
                                 color: selected
                                     ? Theme.of(ctx).colorScheme.primary
+                                    // ignore: deprecated_member_use
                                     : Colors.grey.withOpacity(0.5),
                               ),
                             ),
@@ -313,7 +305,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                             onPressed: () {
                               Navigator.of(sheetContext).pop();
                             },
-                            child: Text("取消"),
+                            child: const Text("取消"),
                           ),
                         ),
                         SizedBox(width: spaces.gapDef),
@@ -323,7 +315,7 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
                               Navigator.of(sheetContext).pop(
                                   DateTime(selectedYear, selectedMonth, 1));
                             },
-                            child: Text("确定"),
+                            child: const Text("确定"),
                           ),
                         ),
                       ],
@@ -407,25 +399,40 @@ class ViewLogDialog extends XBWidget<ViewLogDialogVM> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      width: 64,
-                    ),
+                    const SizedBox(width: 64),
                     Text(
-                      "logs",
+                      "详情",
                       style: TextStyle(
-                          fontSize: fontSizes.s20,
-                          fontWeight: fontWeights.semiBold),
-                    ),
-                    XBButton(
-                      onTap: () {
-                        pop();
-                      },
-                      child: Container(
-                        width: 64,
-                        height: naviBarH,
-                        alignment: Alignment.center,
-                        child: Text("关闭"),
+                        fontSize: fontSizes.s20,
+                        fontWeight: fontWeights.semiBold,
                       ),
+                    ),
+                    Row(
+                      children: [
+                        XBButton(
+                          onTap: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: vm.content),
+                            );
+                            toast("已复制");
+                          },
+                          child: SizedBox(
+                            width: 64,
+                            height: naviBarH,
+                            child: const Center(child: Text("复制")),
+                          ),
+                        ),
+                        XBButton(
+                          onTap: () {
+                            pop();
+                          },
+                          child: SizedBox(
+                            width: 64,
+                            height: naviBarH,
+                            child: const Center(child: Text("关闭")),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
