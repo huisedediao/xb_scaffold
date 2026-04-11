@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
 class XBErrorView extends StatelessWidget {
@@ -8,6 +9,9 @@ class XBErrorView extends StatelessWidget {
   final String retryText;
   final VoidCallback? onBack;
   final String backText;
+  final bool showCopyButton;
+  final String copyButtonText;
+  final String copiedHintText;
 
   const XBErrorView({
     super.key,
@@ -18,7 +22,24 @@ class XBErrorView extends StatelessWidget {
     this.retryText = 'retry',
     this.onBack,
     this.backText = 'back',
+    this.showCopyButton = true,
+    this.copyButtonText = '复制异常',
+    this.copiedHintText = '已复制异常信息',
   });
+
+  String _buildCopyText() {
+    final buffer = StringBuffer();
+    if (message.isNotEmpty) {
+      buffer.writeln('message: $message');
+    }
+    if (error != null) {
+      buffer.writeln('error: $error');
+    }
+    if (stackTrace != null) {
+      buffer.writeln('stackTrace:\n$stackTrace');
+    }
+    return buffer.toString().trim();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +81,21 @@ class XBErrorView extends StatelessWidget {
                         OutlinedButton(
                           onPressed: onBack,
                           child: Text(backText),
+                        ),
+                      if (showCopyButton)
+                        TextButton(
+                          onPressed: () async {
+                            final text = _buildCopyText();
+                            if (text.isEmpty) return;
+                            final messenger =
+                                ScaffoldMessenger.maybeOf(context);
+                            await Clipboard.setData(ClipboardData(text: text));
+                            messenger?.hideCurrentSnackBar();
+                            messenger?.showSnackBar(
+                              SnackBar(content: Text(copiedHintText)),
+                            );
+                          },
+                          child: Text(copyButtonText),
                         ),
                     ],
                   ),
