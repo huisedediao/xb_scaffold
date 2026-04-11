@@ -55,19 +55,46 @@ class XBLogsOperaPage extends XBPage<XBLogsOperaPageVM> {
         // ),
         Container(
           height: 55,
-          child: XBButton(
-            onTap: () {
-              vm.pickDate();
-            },
-            child: Row(
-              children: [
-                Text("日期："),
-                Text(
-                  vm.dateTimeStr,
-                  style: TextStyle(color: Colors.blue),
-                )
-              ],
-            ),
+          padding: EdgeInsets.symmetric(horizontal: spaces.gapDef),
+          child: Row(
+            children: [
+              ChoiceChip(
+                label: Text("按天"),
+                selected: !vm.byMonth,
+                onSelected: (selected) {
+                  if (selected) {
+                    vm.switchFilterMode(false);
+                  }
+                },
+              ),
+              SizedBox(width: spaces.gapDef),
+              ChoiceChip(
+                label: Text("按月"),
+                selected: vm.byMonth,
+                onSelected: (selected) {
+                  if (selected) {
+                    vm.switchFilterMode(true);
+                  }
+                },
+              ),
+              SizedBox(width: spaces.gapDef),
+              Expanded(
+                child: XBButton(
+                  onTap: () {
+                    vm.pickDate();
+                  },
+                  child: Row(
+                    children: [
+                      Text(vm.filterLabel),
+                      Text(
+                        vm.filterValue,
+                        style: TextStyle(color: Colors.blue),
+                      )
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -109,32 +136,205 @@ class XBLogsOperaPageVM extends XBPageVM<XBLogsOperaPage> {
     _query();
   }
 
+  bool byMonth = false;
   List<XBLogFileInfo> logs = [];
 
   _query() async {
     selectedIndex.clear();
-    logs = await XBLogsUtil.getLogsByDate(dateTimeStr);
+    if (byMonth) {
+      final groupedLogs = await XBLogsUtil.getLogsByMonth(monthStr);
+      logs = groupedLogs.values.expand((element) => element).toList()
+        ..sort((a, b) => b.modifiedAt.compareTo(a.modifiedAt));
+    } else {
+      logs = await XBLogsUtil.getLogsByDate(dateTimeStr);
+    }
     notify();
   }
 
   String get dateTimeStr =>
       XBTimeUtil.dateTime2Str(dateTime: dateTime, format: XBTimeUtil.formatYMD);
+  String get monthStr =>
+      XBTimeUtil.dateTime2Str(dateTime: dateTime, format: XBTimeUtil.formatYM);
+  String get filterLabel => byMonth ? "月份：" : "日期：";
+  String get filterValue => byMonth ? monthStr : dateTimeStr;
 
   DateTime dateTime = DateTime.now();
 
   Future<void> pickDate() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(), // 默认选中今天
-      firstDate: DateTime(2000), // 最早时间
-      lastDate: DateTime(2100), // 最晚时间
-    );
+    final pageContext = context;
+    final DateTime? picked = byMonth
+        ? await _pickMonthByBottomSheet()
+        : await showDatePicker(
+            context: pageContext,
+            initialDate: dateTime,
+            firstDate: DateTime(2000), // 最早时间
+            lastDate: DateTime(2100), // 最晚时间
+          );
 
     if (picked != null) {
-      dateTime = picked;
+      if (byMonth) {
+        dateTime = DateTime(picked.year, picked.month, 1);
+      } else {
+        dateTime = picked;
+      }
       notify();
       _query();
     }
+  }
+
+  Future<DateTime?> _pickMonthByBottomSheet() async {
+    int selectedYear = dateTime.year;
+    int selectedMonth = dateTime.month;
+    const int minYear = 2000;
+    const int maxYear = 2100;
+    const List<String> monthLabels = [
+      '1月',
+      '2月',
+      '3月',
+      '4月',
+      '5月',
+      '6月',
+      '7月',
+      '8月',
+      '9月',
+      '10月',
+      '11月',
+      '12月',
+    ];
+
+    return showModalBottomSheet<DateTime>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (ctx, setState) {
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                    spaces.gapDef, spaces.gapDef, spaces.gapDef, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          "选择月份",
+                          style: TextStyle(
+                            fontSize: fontSizes.s18,
+                            fontWeight: fontWeights.semiBold,
+                          ),
+                        ),
+                        Spacer(),
+                        IconButton(
+                          onPressed: selectedYear <= minYear
+                              ? null
+                              : () {
+                                  setState(() {
+                                    selectedYear--;
+                                  });
+                                },
+                          icon: Icon(Icons.keyboard_arrow_left),
+                        ),
+                        Text(
+                          "$selectedYear",
+                          style: TextStyle(
+                            fontSize: fontSizes.s16,
+                            fontWeight: fontWeights.medium,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: selectedYear >= maxYear
+                              ? null
+                              : () {
+                                  setState(() {
+                                    selectedYear++;
+                                  });
+                                },
+                          icon: Icon(Icons.keyboard_arrow_right),
+                        ),
+                      ],
+                    ),
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                      itemCount: 12,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                        childAspectRatio: 2.2,
+                      ),
+                      itemBuilder: (context, index) {
+                        final month = index + 1;
+                        final selected = selectedMonth == month;
+                        return XBButton(
+                          onTap: () {
+                            setState(() {
+                              selectedMonth = month;
+                            });
+                          },
+                          child: Container(
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: selected
+                                  ? Theme.of(ctx).colorScheme.primary
+                                  : Colors.transparent,
+                              border: Border.all(
+                                color: selected
+                                    ? Theme.of(ctx).colorScheme.primary
+                                    : Colors.grey.withOpacity(0.5),
+                              ),
+                            ),
+                            child: Text(
+                              monthLabels[index],
+                              style: TextStyle(
+                                color: selected
+                                    ? Colors.white
+                                    : Theme.of(ctx).colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    SizedBox(height: spaces.gapDef),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.of(sheetContext).pop();
+                            },
+                            child: Text("取消"),
+                          ),
+                        ),
+                        SizedBox(width: spaces.gapDef),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.of(sheetContext).pop(
+                                  DateTime(selectedYear, selectedMonth, 1));
+                            },
+                            child: Text("确定"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void switchFilterMode(bool monthMode) {
+    if (byMonth == monthMode) return;
+    byMonth = monthMode;
+    _query();
   }
 
   List<int> selectedIndex = [];
