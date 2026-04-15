@@ -12,9 +12,6 @@ void main() {
     reporter: (error, stackTrace) async {
       final errMsg = '$error\n$stackTrace';
       debugPrint(errMsg);
-      XBLogsUtil.writeText(errMsg
-          .replaceAll('\n', '<br>')
-          .replaceAll('<asynchronous suspension>', ''));
     },
     errorWidgetBuilder: (context, details, routeName) {
       final normalizedRouteName =
