@@ -90,6 +90,12 @@ class MyApp extends StatelessWidget {
 }
 ```
 
+如果你使用的是 `GetMaterialApp` 或 `CupertinoApp`，请显式绑定：
+
+```dart
+navigatorKey: xbNavigatorKey
+```
+
 ### 2. 创建页面
 
 #### 使用 XBPage（推荐用于页面）
