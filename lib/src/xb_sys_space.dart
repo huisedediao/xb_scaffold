@@ -7,7 +7,7 @@ double _lastStateBarH = 0;
 // BuildContext get context;
 
 get queryData {
-  return MediaQuery.of(xbGlobalContext);
+  return MediaQuery.of(xbNavigatorContext);
 }
 
 get mediaQueryData => queryData;

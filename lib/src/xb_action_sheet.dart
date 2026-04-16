@@ -42,7 +42,7 @@ _actionSheetWidget({
   bool enableDrag = true,
 }) {
   showModalBottomSheet(
-    context: xbGlobalContext,
+    context: xbNavigatorContext,
     isScrollControlled: isScrollControlled,
     backgroundColor: Colors.transparent,
     isDismissible: isDismissible,
@@ -75,7 +75,7 @@ actionSheet({
             : Colors.black,
         showLine: !isLast,
         onTap: () {
-          Navigator.of(xbGlobalContext, rootNavigator: false).pop();
+          xbNavigatorState.pop();
           onSelected(index);
         },
       ),
@@ -96,7 +96,7 @@ actionSheet({
         titleFontSize: dismissTitleFontSize ?? 14,
         showLine: false,
         onTap: () {
-          Navigator.of(xbGlobalContext, rootNavigator: false).pop();
+          xbNavigatorState.pop();
           if (onTapDismiss != null) {
             onTapDismiss();
           }

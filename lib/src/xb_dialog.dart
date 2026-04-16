@@ -107,7 +107,7 @@ _dialogWidget({
 }) {
   showDialog(
     barrierDismissible: false,
-    context: xbGlobalContext,
+    context: xbNavigatorContext,
     builder: (BuildContext context) {
       return WillPopScope(
         onWillPop: () async {

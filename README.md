@@ -48,14 +48,12 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return XBMaterialApp(
       title: 'XB Scaffold Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      // 添加路由观察者
-      navigatorObservers: [xbNavigatorObserver, xbRouteObserver],
       home: XBScaffold(
         // 配置主题
         themeConfigs: [

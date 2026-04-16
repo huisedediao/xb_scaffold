@@ -39,21 +39,25 @@ Future<T?> push<T extends Object?>(Widget newPage, [int style = 0]) {
         xbHashCodeKey: newPage.hashCode
       });
   if (style == 0) {
-    return Navigator.push(
-        xbGlobalContext,
-        CupertinoPageRoute<T>(
-            settings: routeSetting, builder: (context) => newPage));
+    return xbNavigatorState.push(
+      CupertinoPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+    );
   } else {
-    return Navigator.push(
-        xbGlobalContext,
-        MaterialPageRoute<T>(
-            settings: routeSetting, builder: (context) => newPage));
+    return xbNavigatorState.push(
+      MaterialPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+    );
   }
 }
 
 /// 回到上一页
 void pop<O extends Object?>([O? result]) {
-  Navigator.of(xbGlobalContext, rootNavigator: false).pop(result);
+  xbNavigatorState.pop(result);
 }
 
 /// 用新页面替换当前页
@@ -64,7 +68,7 @@ Future<T?> replace<T extends Object?>(Widget newPage, [int style = 0]) {
 
 /// 回到根页面
 void popToRoot() {
-  Navigator.of(xbGlobalContext).popUntil((route) => route.isFirst);
+  xbNavigatorState.popUntil((route) => route.isFirst);
 }
 
 /// 进入新页面，并且清除栈中的页面
@@ -78,7 +82,7 @@ Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
 /// 回到最后一个Type类型的页面
 /// 如果找不到，则回到根页面
 void popUntilType(Type type) {
-  Navigator.of(xbGlobalContext).popUntil((route) {
+  xbNavigatorState.popUntil((route) {
     if (route.isFirst) {
       return true;
     }

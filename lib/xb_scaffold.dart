@@ -27,23 +27,92 @@ StreamController<XBStackChangedEvent> get xbStackStreamController =>
 Stream<XBStackChangedEvent> get xbRouteStackStream =>
     _xbRouteStackStreamController.stream;
 
-/// 全局 BuildContext
-late BuildContext _xbGlobalContext;
-bool _isInitXBScaffold = false;
+final GlobalKey<NavigatorState> _xbDefaultNavigatorKey =
+    GlobalKey<NavigatorState>(debugLabel: 'xb_scaffold_navigator_key');
+GlobalKey<NavigatorState>? _xbInjectedNavigatorKey;
+NavigatorState? _xbFallbackNavigatorState;
 
-BuildContext get xbGlobalContext {
-  if (_isInitXBScaffold) {
-    return _xbGlobalContext;
-  }
-  assert(tempContext != null, "请初始化XBScaffold或者设置tempContext");
-  return tempContext!;
+/// XBScaffold 默认使用的 NavigatorKey
+GlobalKey<NavigatorState> get xbNavigatorKey =>
+    _xbInjectedNavigatorKey ?? _xbDefaultNavigatorKey;
+
+void _bindXBNavigatorKey(GlobalKey<NavigatorState>? key) {
+  if (key == null) return;
+  _xbInjectedNavigatorKey = key;
 }
 
+void _syncXBFallbackNavigatorState(BuildContext context) {
+  final navigator = Navigator.maybeOf(context, rootNavigator: true);
+  if (navigator != null) {
+    _xbFallbackNavigatorState = navigator;
+  }
+}
+
+NavigatorState? get _aliveFallbackNavigatorState {
+  final state = _xbFallbackNavigatorState;
+  if (state != null && state.mounted) {
+    return state;
+  }
+  return null;
+}
+
+/// 全局 NavigatorState（根导航）
+NavigatorState get xbNavigatorState {
+  final state = xbNavigatorKey.currentState ?? _aliveFallbackNavigatorState;
+  assert(
+    state != null,
+    "XBScaffold navigator is not ready.\n"
+    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
+  );
+  return state!;
+}
+
+/// 全局 Navigator Context（用于 showDialog/showModalBottomSheet 等）
+BuildContext get xbNavigatorContext {
+  final context =
+      xbNavigatorKey.currentContext ?? _aliveFallbackNavigatorState?.context;
+  assert(
+    context != null,
+    "XBScaffold navigator context is not ready.\n"
+    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
+  );
+  return context!;
+}
+
+/// 全局 OverlayState（用于 toast/loading 等 OverlayEntry 场景）
+OverlayState get xbOverlayState {
+  final overlay = xbNavigatorKey.currentState?.overlay ??
+      _aliveFallbackNavigatorState?.overlay;
+  assert(
+    overlay != null,
+    "XBScaffold overlay is not ready.\n"
+    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
+  );
+  return overlay!;
+}
+
+@Deprecated("Use xbNavigatorContext instead.")
+BuildContext get xbGlobalContext {
+  return xbNavigatorContext;
+}
+
+@Deprecated("No longer required.")
 BuildContext? tempContext;
 
 /// 结束输入框编辑
-void endEditing({BuildContext? context}) =>
-    FocusScope.of(context ?? xbGlobalContext).requestFocus(FocusNode());
+void endEditing({BuildContext? context}) {
+  if (context != null) {
+    FocusScope.of(context).requestFocus(FocusNode());
+    return;
+  }
+  final navigatorContext =
+      xbNavigatorKey.currentContext ?? _aliveFallbackNavigatorState?.context;
+  if (navigatorContext != null) {
+    FocusScope.of(navigatorContext).requestFocus(FocusNode());
+    return;
+  }
+  FocusManager.instance.primaryFocus?.unfocus();
+}
 
 /// 用于外部控制 loading 样式
 typedef XBLoadingBuilder = Widget Function(BuildContext context, String? msg);
@@ -116,8 +185,7 @@ class _XBScaffoldState extends State<XBScaffold> {
 
   @override
   Widget build(BuildContext context) {
-    _xbGlobalContext = context;
-    _isInitXBScaffold = true;
+    _syncXBFallbackNavigatorState(context);
     return widget.child;
   }
 }
@@ -135,6 +203,101 @@ Future<void> _initXBScaffold({
         ),
       ),
       i,
+    );
+  }
+}
+
+class XBMaterialApp extends StatelessWidget {
+  final GlobalKey<NavigatorState>? navigatorKey;
+  final Widget? home;
+  final Map<String, WidgetBuilder> routes;
+  final String? initialRoute;
+  final RouteFactory? onGenerateRoute;
+  final InitialRouteListFactory? onGenerateInitialRoutes;
+  final RouteFactory? onUnknownRoute;
+  final TransitionBuilder? builder;
+  final String title;
+  final GenerateAppTitle? onGenerateTitle;
+  final Color? color;
+  final ThemeData? theme;
+  final ThemeData? darkTheme;
+  final ThemeMode themeMode;
+  final Locale? locale;
+  final Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates;
+  final LocaleListResolutionCallback? localeListResolutionCallback;
+  final LocaleResolutionCallback? localeResolutionCallback;
+  final Iterable<Locale> supportedLocales;
+  final bool debugShowCheckedModeBanner;
+  final List<NavigatorObserver> navigatorObservers;
+  final GlobalKey<ScaffoldMessengerState>? scaffoldMessengerKey;
+  final ScrollBehavior? scrollBehavior;
+
+  const XBMaterialApp({
+    super.key,
+    this.navigatorKey,
+    this.home,
+    this.routes = const <String, WidgetBuilder>{},
+    this.initialRoute,
+    this.onGenerateRoute,
+    this.onGenerateInitialRoutes,
+    this.onUnknownRoute,
+    this.builder,
+    this.title = '',
+    this.onGenerateTitle,
+    this.color,
+    this.theme,
+    this.darkTheme,
+    this.themeMode = ThemeMode.system,
+    this.locale,
+    this.localizationsDelegates,
+    this.localeListResolutionCallback,
+    this.localeResolutionCallback,
+    this.supportedLocales = const <Locale>[Locale('en', 'US')],
+    this.debugShowCheckedModeBanner = true,
+    this.navigatorObservers = const <NavigatorObserver>[],
+    this.scaffoldMessengerKey,
+    this.scrollBehavior,
+  });
+
+  List<NavigatorObserver> _buildObservers() {
+    final observers = <NavigatorObserver>[...navigatorObservers];
+    if (!observers.contains(xbNavigatorObserver)) {
+      observers.add(xbNavigatorObserver);
+    }
+    if (!observers.contains(xbRouteObserver)) {
+      observers.add(xbRouteObserver);
+    }
+    return observers;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final key = navigatorKey ?? _xbDefaultNavigatorKey;
+    _bindXBNavigatorKey(key);
+    return MaterialApp(
+      navigatorKey: key,
+      home: home,
+      routes: routes,
+      initialRoute: initialRoute,
+      onGenerateRoute: onGenerateRoute,
+      onGenerateInitialRoutes: onGenerateInitialRoutes,
+      onUnknownRoute: onUnknownRoute,
+      builder: builder,
+      title: title,
+      onGenerateTitle: onGenerateTitle,
+      color: color,
+      theme: theme,
+      darkTheme: darkTheme,
+      themeMode: themeMode,
+      locale: locale,
+      localizationsDelegates: localizationsDelegates,
+      localeListResolutionCallback: localeListResolutionCallback,
+      localeResolutionCallback: localeResolutionCallback,
+      supportedLocales: supportedLocales,
+      debugShowCheckedModeBanner: debugShowCheckedModeBanner,
+      navigatorObservers: _buildObservers(),
+      scaffoldMessengerKey: scaffoldMessengerKey,
+      scrollBehavior: scrollBehavior,
     );
   }
 }

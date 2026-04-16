@@ -50,7 +50,7 @@ toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
 
 _toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
   _hideLast();
-  final overlay = Overlay.of(xbGlobalContext);
+  final overlay = xbOverlayState;
   final GlobalKey<XBFadeWidgetState> key = GlobalKey();
   final overlayEntry = OverlayEntry(
     builder: (context) => Positioned(

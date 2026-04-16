@@ -80,7 +80,7 @@ _showLoadingGlobal({
   required bool contentEnable,
 }) {
   _hideLast();
-  final overlay = Overlay.of(xbGlobalContext);
+  final overlay = xbOverlayState;
   final GlobalKey<XBFadeWidgetState> key = GlobalKey();
   final overlayEntry = OverlayEntry(
     builder: (context) => XBFadeWidget(
@@ -134,7 +134,7 @@ _exeTask() {
       if (task.widget != null) {
         loadingBody = task.widget!;
       } else if (xbLoadingBuilder != null) {
-        loadingBody = xbLoadingBuilder!(xbGlobalContext, task.msg);
+        loadingBody = xbLoadingBuilder!(xbNavigatorContext, task.msg);
       } else {
         loadingBody = XBLoadingWidget(
           msg: task.msg,
@@ -292,7 +292,7 @@ class XBLoading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (xbLoadingBuilder != null) {
-      return xbLoadingBuilder!(xbGlobalContext, text);
+      return xbLoadingBuilder!(context, text);
     }
     return XBLoadingWidget(msg: text);
   }
