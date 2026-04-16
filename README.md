@@ -22,7 +22,7 @@
 
 ```yaml
 dependencies:
-  xb_scaffold: ^0.1.42
+  xb_scaffold: ^1.0.0
 ```
 
 然后运行：
@@ -55,7 +55,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       // 添加路由观察者
-      navigatorObservers: [xbNavigatorObserver, xbRrouteObserver],
+      navigatorObservers: [xbNavigatorObserver, xbRouteObserver],
       home: XBScaffold(
         // 配置主题
         themeConfigs: [
@@ -178,7 +178,7 @@ class HomePageVM extends XBPageVM<HomePage> {
   }
 
   void showToast(String message) {
-    xbToast(message);
+    toast(message);
   }
 
   void openSettings() {
@@ -262,9 +262,12 @@ Widget buildPage(HomePageVM vm, BuildContext context) {
 
 ```dart
 Widget _buildCounter(BuildContext context) {
-  final vm = vmOf(context); // 不监听变化
-  final vmWatch = vmWatchOf(context); // 监听变化
-  return Text('计数: ${vm.counter}');
+  final vm = context.vmOf<HomePageVM>(); // 不监听变化
+  final vmWatch = context.vmWatch<HomePageVM>(); // 监听变化
+  return ElevatedButton(
+    onPressed: vm.increment,
+    child: Text('计数: ${vmWatch.counter}'),
+  );
 }
 ```
 
@@ -327,13 +330,10 @@ pop('result');
 popToRoot();
 
 // 返回到指定类型的页面
-popUtilType<HomePage>();
-
-// 返回到指定页面实例
-popUtilWidget(homePage);
+popUntilType(HomePage);
 
 // 检查顶部页面类型
-if (topIsType<HomePage>()) {
+if (topIsType(HomePage)) {
   // 当前顶部是 HomePage
 }
 ```
@@ -345,7 +345,7 @@ if (topIsType<HomePage>()) {
 XBThemeVM().changeTheme(1);
 
 // 获取当前主题
-final theme = XBThemeVM().currentTheme;
+final theme = XBThemeVM().theme;
 
 // 在组件中使用主题颜色
 Container(
@@ -364,43 +364,43 @@ extension CustomColors on XBThemeColor {
 
 ```dart
 // 显示确认对话框
-xbDialog(
+dialog(
   title: '提示',
   msg: '确定要删除吗？',
-  onConfirm: () {
-    // 确认操作
+  btnTitles: ['取消', '确定'],
+  onSelected: (index) {
+    if (index == 1) {
+      // 确认操作
+    }
   },
 );
 
 // 显示输入对话框
-xbDialogInput(
-  title: '输入',
-  hint: '请输入内容',
-  onConfirm: (text) {
-    print('输入的内容: $text');
-  },
+dialogWidget(
+  XBDialogInput(
+    title: '输入',
+    placeholder: '请输入内容',
+    onDone: (text) {
+      print('输入的内容: $text');
+    },
+  ),
 );
 
 // 显示 ActionSheet
-xbActionSheet(
-  actions: [
-    XBActionSheetAction(
-      title: '拍照',
-      onTap: () {
-        // 拍照操作
-      },
-    ),
-    XBActionSheetAction(
-      title: '从相册选择',
-      onTap: () {
-        // 选择照片操作
-      },
-    ),
-  ],
+actionSheet(
+  titles: ['拍照', '从相册选择'],
+  onSelected: (index) {
+    if (index == 0) {
+      // 拍照操作
+    } else {
+      // 选择照片操作
+    }
+  },
+  dismissTitle: '取消',
 );
 
 // 显示 Toast
-xbToast('操作成功');
+toast('操作成功');
 ```
 
 ### Loading 管理
@@ -431,19 +431,19 @@ bool needInitLoading(MyPageVM vm) => true; // 页面初始化时显示 Loading
 
 ```dart
 // 配置网络请求
-XBHttp.instance.init(
+XBDioConfig.init(
   baseUrl: 'https://api.example.com',
-  connectTimeout: 5000,
-  receiveTimeout: 3000,
+  connectTimeout: 5, // 秒
+  receiveTimeout: 3, // 秒
 );
 
 // GET 请求
-final response = await XBHttp.instance.get('/users');
+final users = await XBHttp.get<List<dynamic>>('/users');
 
 // POST 请求
-final response = await XBHttp.instance.post(
+final createResp = await XBHttp.post<Map<String, dynamic>>(
   '/users',
-  data: {'name': 'John', 'age': 30},
+  bodyParams: {'name': 'John', 'age': 30},
 );
 
 // 在 VM 中使用
@@ -453,13 +453,11 @@ class UserListVM extends XBPageVM<UserListPage> {
   Future<void> loadUsers() async {
     showLoading();
     try {
-      final response = await XBHttp.instance.get('/users');
-      users = (response.data as List)
-          .map((json) => User.fromJson(json))
-          .toList();
+      final response = await XBHttp.get<List<dynamic>>('/users');
+      users = response.map((json) => User.fromJson(json)).toList();
       notify();
     } catch (e) {
-      xbToast('加载失败: $e');
+      toast('加载失败: $e');
     } finally {
       hideLoading();
     }
@@ -523,14 +521,14 @@ timer.cancel();
 #### 防重复点击
 
 ```dart
-XBPreventMultiTask.run(
-  key: 'submit_button',
-  task: () async {
-    // 提交操作
-    await submitData();
+final preventMultiTask = XBPreventMultiTask(intervalMilliseconds: 1000);
+
+preventMultiTask.execute(
+  () {
+    submitData();
   },
   onError: () {
-    xbToast('请勿重复点击');
+    toast('请勿重复点击');
   },
 );
 ```
@@ -540,14 +538,24 @@ XBPreventMultiTask.run(
 ```dart
 final waitTask = XBWaitTask();
 
-// 等待多个异步任务完成
-waitTask.wait([
-  loadUserData(),
-  loadConfigData(),
-  loadNotifications(),
-]).then((_) {
+final result = await waitTask.execute<dynamic>(
+  task: () async {
+    await Future.wait([
+      loadUserData(),
+      loadConfigData(),
+      loadNotifications(),
+    ]);
+    return true;
+  },
+  param: null,
+  milliseconds: 5000,
+);
+
+if (result == XBWaitTask.timeout) {
+  print('任务超时');
+} else {
   print('所有任务完成');
-});
+}
 ```
 
 ## 高级功能
@@ -556,21 +564,21 @@ waitTask.wait([
 
 ```dart
 XBHoveringHeaderList(
-  itemCount: items.length,
-  headerBuilder: (context, section) {
+  itemCounts: sections.map((e) => e.items.length).toList(),
+  sectionHeaderBuild: (context, section) {
     return Container(
       height: 40,
       color: Colors.grey[200],
       child: Text('分组 $section'),
     );
   },
-  itemBuilder: (context, indexPath) {
+  headerHeightForSection: (section) => 40,
+  itemBuilder: (context, indexPath, itemHeight) {
     return ListTile(
       title: Text('项目 ${indexPath.item}'),
     );
   },
-  sectionCount: sections.length,
-  itemCountInSection: (section) => sections[section].items.length,
+  itemHeightForIndexPath: (indexPath) => 56,
 )
 ```
 
@@ -579,15 +587,15 @@ XBHoveringHeaderList(
 #### 按钮组件
 
 ```dart
-XBButton(
+XBButtonText(
   text: '点击按钮',
   onTap: () {
     print('按钮被点击');
   },
   backgroundColor: Colors.blue,
-  textColor: Colors.white,
+  style: TextStyle(color: Colors.white),
   borderRadius: 8,
-  disable: false, // 是否禁用
+  enable: true, // 是否可点击
 )
 ```
 
@@ -595,11 +603,12 @@ XBButton(
 
 ```dart
 XBImage(
-  imageUrl: 'https://example.com/image.jpg',
+  'https://example.com/image.jpg',
   width: 100,
   height: 100,
-  placeholder: CircularProgressIndicator(),
-  errorWidget: Icon(Icons.error),
+  placeholderWidget: CircularProgressIndicator(),
+  errWidget: Icon(Icons.error),
+  fit: BoxFit.cover,
 )
 ```
 
@@ -689,14 +698,14 @@ class ApiService {
     try {
       return await request();
     } catch (e) {
-      xbToast('网络请求失败: $e');
+      toast('网络请求失败: $e');
       rethrow;
     }
   }
 }
 
 // 使用
-await ApiService.safeRequest(() => XBHttp.instance.get('/api/data'));
+await ApiService.safeRequest(() => XBHttp.get('/api/data'));
 ```
 
 ### 3. 状态管理
@@ -786,4 +795,3 @@ Container(color: colors.customPrimary)
 ## 支持
 
 如果这个项目对您有帮助，请给它一个 ⭐️！
-
