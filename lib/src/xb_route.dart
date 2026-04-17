@@ -62,8 +62,27 @@ void pop<O extends Object?>([O? result]) {
 
 /// 用新页面替换当前页
 Future<T?> replace<T extends Object?>(Widget newPage, [int style = 0]) {
-  pop();
-  return push(newPage, style);
+  final routeSetting = RouteSettings(
+      name: "${newPage.runtimeType}",
+      arguments: {
+        xbCategoryNameKey: xbCategoryName,
+        xbHashCodeKey: newPage.hashCode
+      });
+  if (style == 0) {
+    return xbNavigatorState.pushReplacement<T, Object?>(
+      CupertinoPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+    );
+  } else {
+    return xbNavigatorState.pushReplacement<T, Object?>(
+      MaterialPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+    );
+  }
 }
 
 /// 回到根页面
@@ -75,8 +94,29 @@ void popToRoot() {
 /// style：0 iOS风格；1 material风格
 Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
     [int style = 0]) {
-  popToRoot();
-  return push(newPage, style);
+  final routeSetting = RouteSettings(
+      name: "${newPage.runtimeType}",
+      arguments: {
+        xbCategoryNameKey: xbCategoryName,
+        xbHashCodeKey: newPage.hashCode
+      });
+  if (style == 0) {
+    return xbNavigatorState.pushAndRemoveUntil<T>(
+      CupertinoPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+      (route) => route.isFirst,
+    );
+  } else {
+    return xbNavigatorState.pushAndRemoveUntil<T>(
+      MaterialPageRoute<T>(
+        settings: routeSetting,
+        builder: (context) => newPage,
+      ),
+      (route) => route.isFirst,
+    );
+  }
 }
 
 /// 回到最后一个Type类型的页面
