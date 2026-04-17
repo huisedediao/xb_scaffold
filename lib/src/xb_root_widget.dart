@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
+import 'common/xb_legacy_pop_scope.dart';
 
 class XBRootWidget extends XBWidget<XBRootWidgetVM> {
   final Widget child;
@@ -26,7 +27,7 @@ class XBRootWidget extends XBWidget<XBRootWidgetVM> {
 
   @override
   Widget buildWidget(XBRootWidgetVM vm, BuildContext context) {
-    return WillPopScope(onWillPop: vm.onWillPop, child: child);
+    return XBLegacyPopScope(onWillPop: vm.onWillPop, child: child);
   }
 }
 

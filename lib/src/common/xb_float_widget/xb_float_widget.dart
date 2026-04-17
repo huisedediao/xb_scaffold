@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import '../xb_legacy_pop_scope.dart';
 export 'xb_float_meun_icon_title.dart';
 export 'xb_float_menu_title.dart';
 export 'xb_float_widget_arrow.dart';
@@ -58,8 +59,7 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // ignore: deprecated_member_use
-    return WillPopScope(
+    return XBLegacyPopScope(
       onWillPop: () async {
         if (isShow()) {
           hide();

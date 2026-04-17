@@ -109,10 +109,8 @@ _dialogWidget({
     barrierDismissible: false,
     context: xbNavigatorContext,
     builder: (BuildContext context) {
-      return WillPopScope(
-        onWillPop: () async {
-          return false;
-        },
+      return PopScope(
+        canPop: false,
         child: Padding(
           padding: const EdgeInsets.only(bottom: 50),
           child: Material(

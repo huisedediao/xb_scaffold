@@ -269,7 +269,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
     return true;
   }
 
-  /// ios如果用WillPopScope的onWillPop不为null，则返回手势失效，可以用这个控制iOS是否能够返回
+  /// iOS 侧滑返回：当 PopScope 需要拦截返回（canPop=false）时，系统侧滑返回会失效，可通过该逻辑控制
   /// 返回结果无影响，因为只要设置了就不能滑动返回
   Future<bool> _iosOnWillPop() async {
     return false;

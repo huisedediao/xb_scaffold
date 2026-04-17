@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
+import 'common/xb_legacy_pop_scope.dart';
 import 'configs/xb_color_config.dart';
 
 enum XBStatusBarStyle { light, dark }
@@ -146,8 +147,15 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _rootWidget(T vm) {
-    return WillPopScope(
-      onWillPop: vm.onWillPop(),
+    final onWillPop = vm.onWillPop();
+    if (onWillPop == null) {
+      return PopScope(
+        canPop: true,
+        child: _buildLoadingContent(vm),
+      );
+    }
+    return XBLegacyPopScope(
+      onWillPop: onWillPop as Future<bool> Function(),
       child: _buildLoadingContent(vm),
     );
   }
