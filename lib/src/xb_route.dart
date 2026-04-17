@@ -8,6 +8,26 @@ String xbCategoryNameKey = "xb_category";
 String xbCategoryName = "xb_route";
 String xbHashCodeKey = "xb_hash_code";
 
+Route<T> _buildRoute<T extends Object?>(Widget newPage, [int style = 0]) {
+  final routeSetting = RouteSettings(
+      name: "${newPage.runtimeType}",
+      arguments: {
+        xbCategoryNameKey: xbCategoryName,
+        xbHashCodeKey: newPage.hashCode
+      });
+  if (style == 0) {
+    return CupertinoPageRoute<T>(
+      settings: routeSetting,
+      builder: (context) => newPage,
+    );
+  } else {
+    return MaterialPageRoute<T>(
+      settings: routeSetting,
+      builder: (context) => newPage,
+    );
+  }
+}
+
 /// 判断是否是XBRoute
 bool isXBRoute(Route route) {
   return xbNavigatorObserver.isXBRoute(route);
@@ -32,27 +52,7 @@ bool routeIsMapWidget({required Route route, required Widget widget}) {
 /// 进入新页面
 /// style：0 iOS风格；1 material风格
 Future<T?> push<T extends Object?>(Widget newPage, [int style = 0]) {
-  final routeSetting = RouteSettings(
-      name: "${newPage.runtimeType}",
-      arguments: {
-        xbCategoryNameKey: xbCategoryName,
-        xbHashCodeKey: newPage.hashCode
-      });
-  if (style == 0) {
-    return xbNavigatorState.push(
-      CupertinoPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-    );
-  } else {
-    return xbNavigatorState.push(
-      MaterialPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-    );
-  }
+  return xbNavigatorState.push(_buildRoute<T>(newPage, style));
 }
 
 /// 回到上一页
@@ -62,27 +62,8 @@ void pop<O extends Object?>([O? result]) {
 
 /// 用新页面替换当前页
 Future<T?> replace<T extends Object?>(Widget newPage, [int style = 0]) {
-  final routeSetting = RouteSettings(
-      name: "${newPage.runtimeType}",
-      arguments: {
-        xbCategoryNameKey: xbCategoryName,
-        xbHashCodeKey: newPage.hashCode
-      });
-  if (style == 0) {
-    return xbNavigatorState.pushReplacement<T, Object?>(
-      CupertinoPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-    );
-  } else {
-    return xbNavigatorState.pushReplacement<T, Object?>(
-      MaterialPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-    );
-  }
+  return xbNavigatorState
+      .pushReplacement<T, Object?>(_buildRoute<T>(newPage, style));
 }
 
 /// 回到根页面
@@ -94,29 +75,10 @@ void popToRoot() {
 /// style：0 iOS风格；1 material风格
 Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
     [int style = 0]) {
-  final routeSetting = RouteSettings(
-      name: "${newPage.runtimeType}",
-      arguments: {
-        xbCategoryNameKey: xbCategoryName,
-        xbHashCodeKey: newPage.hashCode
-      });
-  if (style == 0) {
-    return xbNavigatorState.pushAndRemoveUntil<T>(
-      CupertinoPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-      (route) => route.isFirst,
-    );
-  } else {
-    return xbNavigatorState.pushAndRemoveUntil<T>(
-      MaterialPageRoute<T>(
-        settings: routeSetting,
-        builder: (context) => newPage,
-      ),
-      (route) => route.isFirst,
-    );
-  }
+  return xbNavigatorState.pushAndRemoveUntil<T>(
+    _buildRoute<T>(newPage, style),
+    (route) => route.isFirst,
+  );
 }
 
 /// 回到最后一个Type类型的页面
