@@ -84,14 +84,23 @@ Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
 /// 回到最后一个Type类型的页面
 /// 如果找不到，则回到根页面
 void popUntilType(Type type) {
+  final expected = '$type';
   xbNavigatorState.popUntil((route) {
     if (route.isFirst) {
       return true;
     }
-    if (topIsType(type)) {
-      return true;
-    } else {
+
+    final routeName = route.settings.name;
+    if (routeName == null || routeName.isEmpty) {
       return false;
     }
+
+    if (routeName == expected || routeName == '/$expected') {
+      return true;
+    }
+
+    final normalized =
+        routeName.startsWith('/') ? routeName.substring(1) : routeName;
+    return normalized == expected;
   });
 }
