@@ -56,39 +56,48 @@ NavigatorState? get _aliveFallbackNavigatorState {
   return null;
 }
 
+String _buildNavigatorNotReadyMessage(String target) {
+  return "XBScaffold $target is not ready.\n"
+      "Fix:\n"
+      "1) Use XBMaterialApp as your app root, or\n"
+      "2) pass navigatorKey: xbNavigatorKey to MaterialApp/GetMaterialApp/CupertinoApp.\n"
+      "3) Ensure XBScaffold is mounted before calling global APIs (push/dialog/toast/loading).";
+}
+
+NavigatorState? get xbNavigatorStateOrNull =>
+    xbNavigatorKey.currentState ?? _aliveFallbackNavigatorState;
+
+BuildContext? get xbNavigatorContextOrNull =>
+    xbNavigatorKey.currentContext ?? _aliveFallbackNavigatorState?.context;
+
+OverlayState? get xbOverlayStateOrNull =>
+    xbNavigatorKey.currentState?.overlay ?? _aliveFallbackNavigatorState?.overlay;
+
 /// 全局 NavigatorState（根导航）
 NavigatorState get xbNavigatorState {
-  final state = xbNavigatorKey.currentState ?? _aliveFallbackNavigatorState;
-  assert(
-    state != null,
-    "XBScaffold navigator is not ready.\n"
-    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
-  );
-  return state!;
+  final state = xbNavigatorStateOrNull;
+  if (state == null) {
+    throw StateError(_buildNavigatorNotReadyMessage("navigator state"));
+  }
+  return state;
 }
 
 /// 全局 Navigator Context（用于 showDialog/showModalBottomSheet 等）
 BuildContext get xbNavigatorContext {
-  final context =
-      xbNavigatorKey.currentContext ?? _aliveFallbackNavigatorState?.context;
-  assert(
-    context != null,
-    "XBScaffold navigator context is not ready.\n"
-    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
-  );
-  return context!;
+  final context = xbNavigatorContextOrNull;
+  if (context == null) {
+    throw StateError(_buildNavigatorNotReadyMessage("navigator context"));
+  }
+  return context;
 }
 
 /// 全局 OverlayState（用于 toast/loading 等 OverlayEntry 场景）
 OverlayState get xbOverlayState {
-  final overlay = xbNavigatorKey.currentState?.overlay ??
-      _aliveFallbackNavigatorState?.overlay;
-  assert(
-    overlay != null,
-    "XBScaffold overlay is not ready.\n"
-    "Use XBMaterialApp, or pass navigatorKey: xbNavigatorKey to MaterialApp.",
-  );
-  return overlay!;
+  final overlay = xbOverlayStateOrNull;
+  if (overlay == null) {
+    throw StateError(_buildNavigatorNotReadyMessage("overlay"));
+  }
+  return overlay;
 }
 
 @Deprecated("Use xbNavigatorContext instead.")
@@ -105,8 +114,7 @@ void endEditing({BuildContext? context}) {
     FocusScope.of(context).requestFocus(FocusNode());
     return;
   }
-  final navigatorContext =
-      xbNavigatorKey.currentContext ?? _aliveFallbackNavigatorState?.context;
+  final navigatorContext = xbNavigatorContextOrNull;
   if (navigatorContext != null) {
     FocusScope.of(navigatorContext).requestFocus(FocusNode());
     return;
