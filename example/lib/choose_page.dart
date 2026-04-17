@@ -3,6 +3,7 @@ import 'package:example/pages/hide_top_bar_test.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
 import 'package:example/pages/xb_page_demo.dart';
+import 'package:example/pages/xb_route_test_page.dart';
 import 'package:example/pages/xb_cell_demo.dart';
 import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
@@ -67,6 +68,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     "TFTest",
     "Hide top bar test",
     "Error catch test",
+    "XBRoute 功能测试",
   ];
 
   void onTapIndex(int index) {
@@ -93,6 +95,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const HideTopBarTest());
     } else if (index == 10) {
       push(const ErrorTestPage());
+    } else if (index == 11) {
+      push(const XBRouteTestPage());
     }
   }
 }
