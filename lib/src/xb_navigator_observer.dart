@@ -17,6 +17,37 @@ class XBStackChangedEvent {
 class XBNavigatorObserver extends NavigatorObserver {
   final List<Route> _stack = [];
 
+  int _indexOfRoute(Route route) {
+    for (int i = _stack.length - 1; i >= 0; i--) {
+      if (identical(_stack[i], route)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  void _safeRemoveRoute({required Route route, required String source}) {
+    if (_stack.isEmpty) {
+      xbError("$source: stack empty, route=${_routeInfo(route)}");
+      return;
+    }
+
+    if (identical(_stack.last, route)) {
+      _stack.removeLast();
+      return;
+    }
+
+    final routeIndex = _indexOfRoute(route);
+    if (routeIndex >= 0) {
+      _stack.removeAt(routeIndex);
+      xbError(
+          "$source: stack drift fixed, removedAt=$routeIndex, route=${_routeInfo(route)}");
+      return;
+    }
+
+    xbError("$source: route not found, route=${_routeInfo(route)}");
+  }
+
   bool topIsType(Type type, [bool ignore = true]) {
     return _topIsType(type, ignore);
   }
@@ -152,9 +183,58 @@ class XBNavigatorObserver extends NavigatorObserver {
     final changedInfo = XBStackChangedEvent(
         type: 1, route: route, previousRoute: previousRoute);
     _logRouteInfo(changedInfo);
-    _stack.removeLast();
+    _safeRemoveRoute(route: route, source: "didPop");
     debugPrint("_stack len:${_stack.length}");
     xbStackStreamController.add(changedInfo);
+  }
+
+  @override
+  void didRemove(Route route, Route? previousRoute) {
+    super.didRemove(route, previousRoute);
+    String log =
+        "didRemove:${_routeInfo(route)},previous:${_routeInfo(previousRoute)}";
+    xbError(log);
+    recordPageLog(log);
+    _safeRemoveRoute(route: route, source: "didRemove");
+    debugPrint("_stack len:${_stack.length}");
+  }
+
+  @override
+  void didReplace({Route? newRoute, Route? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    String log =
+        "didReplace:new=${_routeInfo(newRoute)},old=${_routeInfo(oldRoute)}";
+    xbError(log);
+    recordPageLog(log);
+
+    if (oldRoute == null) {
+      if (newRoute != null) {
+        _stack.add(newRoute);
+        xbError("didReplace: oldRoute is null, append new route.");
+      }
+      debugPrint("_stack len:${_stack.length}");
+      return;
+    }
+
+    final oldRouteIndex = _indexOfRoute(oldRoute);
+    if (oldRouteIndex < 0) {
+      if (newRoute != null) {
+        _stack.add(newRoute);
+        xbError("didReplace: oldRoute not found, append new route.");
+      } else {
+        xbError("didReplace: oldRoute not found and newRoute is null.");
+      }
+      debugPrint("_stack len:${_stack.length}");
+      return;
+    }
+
+    if (newRoute == null) {
+      _stack.removeAt(oldRouteIndex);
+    } else {
+      _stack[oldRouteIndex] = newRoute;
+    }
+
+    debugPrint("_stack len:${_stack.length}");
   }
 
   String _routeInfo(Route? route) {

@@ -784,6 +784,26 @@ extension MyThemeColors on XBThemeColor {
 Container(color: colors.customPrimary)
 ```
 
+### Q: 为什么在 `testWidgets` 里使用 `xbRouteStackStream.listen` 会卡住？
+
+A: 在 Flutter 的 `testWidgets`（fake async）环境中，直接监听全局路由流可能导致测试进程不退出。  
+建议把监听/取消放到 `tester.runAsync` 中执行：
+
+```dart
+testWidgets('route stream test', (tester) async {
+  await tester.pumpWidget(const MyApp());
+
+  await tester.runAsync(() async {
+    final sub = xbRouteStackStream.listen((event) {
+      // assert / collect event
+    });
+    await sub.cancel();
+  });
+});
+```
+
+如果只是做路由 API 覆盖测试，优先通过页面状态断言（如 `find.text`、`canPop`）验证，避免不必要的全局流监听。
+
 ## 更新日志
 
 查看 [CHANGELOG.md](CHANGELOG.md) 了解详细的版本更新信息。
