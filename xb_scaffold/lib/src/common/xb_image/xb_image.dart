@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -25,15 +26,17 @@ class XBImage extends StatelessWidget {
   final bool isInPackage;
   final Color? svgColor;
 
-  const XBImage(this.img,
-      {super.key,
-      this.height,
-      this.width,
-      this.placeholderWidget,
-      this.errWidget,
-      this.isInPackage = false,
-      this.svgColor,
-      this.fit});
+  const XBImage(
+    this.img, {
+    super.key,
+    this.height,
+    this.width,
+    this.placeholderWidget,
+    this.errWidget,
+    this.isInPackage = false,
+    this.svgColor,
+    this.fit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -54,12 +57,7 @@ class XBImage extends StatelessWidget {
     }
 
     if (img is ui.Image) {
-      return RawImage(
-        image: img,
-        width: width,
-        height: height,
-        fit: fit,
-      );
+      return RawImage(image: img, width: width, height: height, fit: fit);
     }
 
     if (isXBFile(img)) {
@@ -211,10 +209,7 @@ class XBImage extends StatelessWidget {
   bool _isSvgBytes(Uint8List bytes) {
     if (bytes.isEmpty) return false;
     final length = bytes.length < 512 ? bytes.length : 512;
-    final prefix = utf8.decode(
-      bytes.sublist(0, length),
-      allowMalformed: true,
-    );
+    final prefix = utf8.decode(bytes.sublist(0, length), allowMalformed: true);
     return _isSvgXml(prefix);
   }
 

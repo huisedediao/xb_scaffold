@@ -2,8 +2,10 @@ extension XBUniqueList<T> on List<T> {
   /// obj1为新添加的对象（也就是obj），obj2为原来已经存在的对象
   /// 返回值为null，表示为添加
   /// 返回值不为null，表示替换，返回的值为被替换的对象
-  T? replaceOrAdd(
-      {required T obj, required bool Function(T newObj, T oldObj) equal}) {
+  T? replaceOrAdd({
+    required T obj,
+    required bool Function(T newObj, T oldObj) equal,
+  }) {
     int index = -1;
     for (int i = 0; i < length; i++) {
       T temp = this[i];
@@ -24,12 +26,13 @@ extension XBUniqueList<T> on List<T> {
 
   /// obj1为list中的对象，obj2为原来已经存在的对象
   /// 返回所有被替换掉的对象
-  List<T> replaceOrAddAll(
-      {required List<T> list,
-      required bool Function(T newObj, T oldObj) equal}) {
+  List<T> replaceOrAddAll({
+    required List<T> list,
+    required bool Function(T newObj, T oldObj) equal,
+  }) {
     List<T> ret = [];
     for (var element in list) {
-      final replaceOrAddRet = this.replaceOrAdd(obj: element, equal: equal);
+      final replaceOrAddRet = replaceOrAdd(obj: element, equal: equal);
       if (replaceOrAddRet != null) {
         ret.add(replaceOrAddRet);
       }

@@ -25,9 +25,11 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
       setDocumentTitle(title);
     }
     _pushNotifyAnimationTimer.once(
-        duration: Duration(
-            milliseconds: _castWidget.pushAnimationMilliseconds(context)),
-        onTick: didFinishedPushAnimation);
+      duration: Duration(
+        milliseconds: _castWidget.pushAnimationMilliseconds(context),
+      ),
+      onTick: didFinishedPushAnimation,
+    );
   }
 
   final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
@@ -253,12 +255,6 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
           return null;
         }
         return _iosOnWillPop;
-
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return null;
 
       default:
         if (isHarmony) {
