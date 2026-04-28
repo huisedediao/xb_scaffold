@@ -2,6 +2,7 @@ import 'package:example/choose_page.dart';
 import 'package:example/pages/xb_cell_demo_vm.dart';
 import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
 import 'package:flutter/material.dart';
 
 class XBCellDemo extends XBPage<XBCellDemoVM> {
@@ -13,17 +14,18 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
   }
 
   @override
-  String setTitle(XBCellDemoVM vm) {
+  String setTitle(BuildContext context) {
     return "XBCellDemo";
   }
 
   @override
-  Widget? leading(XBCellDemoVM vm) {
+  Widget? leading(BuildContext context) {
     return null;
   }
 
   @override
-  Widget buildPage(XBCellDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return ListView.separated(
       itemCount: vm.titles.length,
       separatorBuilder: (context, index) {
@@ -111,7 +113,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             padding: const EdgeInsets.only(top: 10, bottom: 10),
             title: title,
             onTap: () {
-              push(XBCellGroupDemo());
+              push(const XBCellGroupDemo());
               dialogWidget(XBDialogInput(
                   title: title,
                   onDone: (value) {
@@ -525,7 +527,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             contentHeight: 70,
             padding: EdgeInsets.only(
                 left: spaces.gapDef, right: spaces.gapDef, top: 10, bottom: 10),
-            title: title + "title" + title + "title" + title + "title" + title,
+            title: "${title}title${title}title${title}title$title",
             titleMaxLines: 2,
             titleOverflow: TextOverflow.ellipsis,
             arrowColor: Colors.white,
@@ -536,10 +538,8 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
 
         if (index == 21) {
           return XBCellCustom(
-            contentOverride: Container(
-              child: Column(
-                children: [Text("data"), Text("1")],
-              ),
+            contentOverride: const Column(
+              children: [Text("data"), Text("1")],
             ),
             bottomContentOverride: Container(
               height: 30,

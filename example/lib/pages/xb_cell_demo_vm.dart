@@ -1,5 +1,4 @@
 import 'package:example/pages/xb_cell_demo.dart';
-import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBCellDemoVM extends XBPageVM<XBCellDemo> {
@@ -43,11 +42,11 @@ class XBCellDemoVM extends XBPageVM<XBCellDemo> {
       ];
 
   List<XBFloatMenuIconTitleItem> get iconItems => [
-        XBFloatMenuIconTitleItem(
+        const XBFloatMenuIconTitleItem(
             "item1", "assets/images/icon_inspectionPlan.png"),
-        XBFloatMenuIconTitleItem(
+        const XBFloatMenuIconTitleItem(
             "item2222222", "assets/images/icon_inspectionPlan.png"),
-        XBFloatMenuIconTitleItem(
+        const XBFloatMenuIconTitleItem(
             "item3222", "assets/images/icon_inspectionPlan.png"),
       ];
 

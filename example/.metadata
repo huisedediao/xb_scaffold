@@ -4,8 +4,8 @@
 # This file should be version controlled and should not be manually edited.
 
 version:
-  revision: "9e1c857886f07d342cf106f2cd588bcd5e031bb2"
-  channel: "stable"
+  revision: "0b72369f357bdc224a8eccf07a86459acf87566c"
+  channel: "[user-branch]"
 
 project_type: app
 
@@ -13,26 +13,29 @@ project_type: app
 migration:
   platforms:
     - platform: root
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: android
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: ios
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: linux
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: macos
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: web
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
     - platform: windows
-      create_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
-      base_revision: 9e1c857886f07d342cf106f2cd588bcd5e031bb2
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+    - platform: ohos
+      create_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
+      base_revision: 0b72369f357bdc224a8eccf07a86459acf87566c
 
   # User provided section
 

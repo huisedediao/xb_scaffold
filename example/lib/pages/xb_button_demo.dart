@@ -11,12 +11,13 @@ class XBButtonDemo extends XBPage<XBButtonDemoVM> {
   }
 
   @override
-  Color? backgroundColor(XBButtonDemoVM vm) {
+  Color? backgroundColor(BuildContext context) {
     return Colors.white;
   }
 
   @override
-  Widget buildPage(XBButtonDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisAlignment: MainAxisAlignment.center,

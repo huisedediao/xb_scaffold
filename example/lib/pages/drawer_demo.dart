@@ -10,7 +10,8 @@ class DrawerDemo extends XBPage<DrawerDemoVM> {
   }
 
   @override
-  Widget buildPage(DrawerDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('侧边菜单示例'),

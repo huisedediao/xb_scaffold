@@ -11,10 +11,11 @@ class VMAccessDemo extends XBPage<VMAccessDemoVM> {
   }
 
   @override
-  String setTitle(VMAccessDemoVM vm) => "VM访问演示";
+  String setTitle(BuildContext context) => "VM访问演示";
 
   @override
-  Widget buildPage(VMAccessDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -30,14 +31,14 @@ class VMAccessDemo extends XBPage<VMAccessDemoVM> {
                   Text("计数器: ${vm.counter}"),
                   ElevatedButton(
                     onPressed: vm.increment,
-                    child: Text("增加"),
+                    child: const Text("增加"),
                   ),
                 ],
               ),
             ),
           ),
 
-          SizedBox(height: 16),
+          const SizedBox(height: 16),
 
           // 新方式1：使用XBWidget的vmOf方法
           Card(
@@ -101,11 +102,11 @@ class VMAccessDemo extends XBPage<VMAccessDemoVM> {
           children: [
             ElevatedButton(
               onPressed: vm.increment,
-              child: Text("vmOf +"),
+              child: const Text("vmOf +"),
             ),
             ElevatedButton(
               onPressed: vm.decrement,
-              child: Text("vmOf -"),
+              child: const Text("vmOf -"),
             ),
           ],
         ),
@@ -147,15 +148,15 @@ class CounterControls extends StatelessWidget {
       children: [
         ElevatedButton(
           onPressed: vm.increment,
-          child: Text("context.vmOf +"),
+          child: const Text("context.vmOf +"),
         ),
         ElevatedButton(
           onPressed: vm.decrement,
-          child: Text("context.vmOf -"),
+          child: const Text("context.vmOf -"),
         ),
         ElevatedButton(
           onPressed: vm.reset,
-          child: Text("重置"),
+          child: const Text("重置"),
         ),
       ],
     );

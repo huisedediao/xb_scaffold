@@ -11,26 +11,25 @@ class XBToastDemo extends XBPage<XBToastDemoVM> {
   }
 
   @override
-  Widget buildPage(XBToastDemoVM vm, BuildContext context) {
-    return Container(
-      child: Column(
-        children: [
-          XBButton(
-              onTap: () {
-                toast("msg");
-              },
-              child: Text("toast")),
-          XBButton(
-              onTap: () {
-                toastWidget(
-                    widget: Container(
-                  color: Colors.green,
-                  child: Text("success"),
-                ));
-              },
-              child: Text("toast success"))
-        ],
-      ),
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
+    return Column(
+      children: [
+        XBButton(
+            onTap: () {
+              toast("msg");
+            },
+            child: const Text("toast")),
+        XBButton(
+            onTap: () {
+              toastWidget(
+                  widget: Container(
+                color: Colors.green,
+                child: const Text("success"),
+              ));
+            },
+            child: const Text("toast success"))
+      ],
     );
   }
 }

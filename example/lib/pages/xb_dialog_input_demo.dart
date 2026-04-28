@@ -10,7 +10,8 @@ class XBDialogInputDemo extends XBPage<XBDialogInputDemoVM> {
   }
 
   @override
-  Widget buildPage(XBDialogInputDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Container(
       alignment: Alignment.center,
       child: XBButton(

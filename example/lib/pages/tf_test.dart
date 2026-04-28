@@ -10,18 +10,19 @@ class TFTest extends XBPage<TFTestVM> {
   }
 
   // @override
-  // bool needEndEditingWhileTouch(TFTestVM vm) {
+  // bool needEndEditingWhileTouch(BuildContext context) {
   //   return false;
   // }
 
   @override
-  Widget buildPage(TFTestVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Container(
           alignment: Alignment.center,
-          child: XBTextField(
+          child: const XBTextField(
             placeholder: "type msg here",
           ),
         ),
@@ -29,7 +30,7 @@ class TFTest extends XBPage<TFTestVM> {
         Container(
           width: 200,
           height: 100,
-          color: Colors.blue.withOpacity(0.3),
+          color: Colors.blue.withValues(alpha: 0.3),
           child: GestureDetector(
             onLongPress: () {
               vm.showToast("长按触发了！");

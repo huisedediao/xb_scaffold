@@ -32,7 +32,9 @@ dependencies:
     sdk: flutter
   # xb_scaffold: ^0.0.144
   xb_scaffold: 
-    path: ../
+    path: ../xb_scaffold
+  xb_simple_router:
+    path: ../xb_simple_router
   get: ^4.6.6
 
   # The following adds the Cupertino Icons font to your application.

@@ -10,7 +10,8 @@ class XBWaitTaskDemo extends XBPage<XBWaitTaskDemoVM> {
   }
 
   @override
-  Widget buildPage(XBWaitTaskDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return XBButton(
         onTap: () {
           vm.test();

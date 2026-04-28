@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
 
 void main() {
   testWidgets('xb_route API coverage test', (WidgetTester tester) async {
@@ -12,7 +13,7 @@ void main() {
     await tester.pumpWidget(const _RouteTestApp());
     await waitRouteTransition();
 
-    final pageA = const _RoutePageA();
+    const pageA = _RoutePageA();
     push(pageA, 1);
     await waitRouteTransition();
     expect(topIsType(_RoutePageA), isTrue); // topIsType
@@ -65,11 +66,11 @@ void main() {
 
     push(const _RoutePageAfterClear(), 1);
     await waitRouteTransition();
-    expect(xbNavigatorState.canPop(), isTrue);
+    expect(xbSimpleNavigatorState.canPop(), isTrue);
 
     popToRoot(); // popToRoot
     await waitRouteTransition();
-    expect(xbNavigatorState.canPop(), isFalse);
+    expect(xbSimpleNavigatorState.canPop(), isFalse);
     expect(find.text('route-home'), findsOneWidget);
   });
 }
@@ -80,6 +81,11 @@ class _RouteTestApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return XBMaterialApp(
+      navigatorKey: xbSimpleNavigatorKey,
+      navigatorObservers: [
+        xbSimpleNavigatorObserver,
+        xbSimpleRouteObserver,
+      ],
       home: XBScaffold(
         themeConfigs: [XBThemeConfig(primaryColor: Colors.blue, imgPrefix: '')],
         child: const _RouteHomePage(),

@@ -5,13 +5,14 @@ import 'package:example/pages/error_test_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
 
 void main() {
   /// 1. 先初始化全局异常处理
   initXBErrorHandler(
     reporter: (error, stackTrace) async {
       final errMsg = '$error\n$stackTrace';
-      debugPrint(errMsg);
+      xbError(errMsg);
     },
     errorWidgetBuilder: (context, details, routeName) {
       final normalizedRouteName =
@@ -74,21 +75,25 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      navigatorKey: xbNavigatorKey,
+      navigatorKey: xbSimpleNavigatorKey,
       title: 'Flutter Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
             seedColor: const Color.fromARGB(255, 76, 27, 162)),
         useMaterial3: true,
       ),
-      navigatorObservers: [xbNavigatorObserver, xbRouteObserver],
+      navigatorObservers: [
+        xbSimpleNavigatorObserver,
+        xbSimpleRouteObserver,
+        xbRouteObserver,
+      ],
       home: XBScaffold(themeConfigs: [
         XBThemeConfig(
-          primaryColor: Color.fromARGB(255, 88, 18, 13),
+          primaryColor: const Color.fromARGB(255, 88, 18, 13),
           imgPrefix: "assets/images",
         ),
         XBThemeConfig(
-            primaryColor: Color.fromARGB(255, 21, 123, 164),
+            primaryColor: const Color.fromARGB(255, 21, 123, 164),
             imgPrefix: "assets/images")
       ], child: const ChoosePage()),
     );

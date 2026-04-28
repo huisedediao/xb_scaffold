@@ -10,7 +10,8 @@ class XBPageDemo extends XBPage<XBPageDemoVM> {
   }
 
   @override
-  Widget? drawer(XBPageDemoVM vm) {
+  Widget? drawer(BuildContext context) {
+    final vm = vmOf(context);
     return Container(
       width: 200,
       color: Colors.red,
@@ -18,7 +19,8 @@ class XBPageDemo extends XBPage<XBPageDemoVM> {
   }
 
   @override
-  Widget? leading(XBPageDemoVM vm) {
+  Widget? leading(BuildContext context) {
+    final vm = vmOf(context);
     return Container(
       height: 30,
       color: colors.randColor,
@@ -26,12 +28,13 @@ class XBPageDemo extends XBPage<XBPageDemoVM> {
   }
 
   @override
-  double? leadingWidth(XBPageDemoVM vm) {
+  double? leadingWidth(BuildContext context) {
+    final vm = vmOf(context);
     return 100;
   }
 
   @override
-  Widget? endDrawer(XBPageDemoVM vm) {
+  Widget? endDrawer(BuildContext context) {
     return Container(
       width: 200,
       color: Colors.blue,
@@ -39,7 +42,8 @@ class XBPageDemo extends XBPage<XBPageDemoVM> {
   }
 
   @override
-  Widget buildPage(XBPageDemoVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Container(
       alignment: Alignment.center,
       child: Column(

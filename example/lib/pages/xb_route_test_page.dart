@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
 
 class XBRouteTestPage extends StatefulWidget {
   const XBRouteTestPage({super.key});
@@ -90,7 +90,7 @@ class _XBRouteTestPageState extends State<XBRouteTestPage> {
             replace(const RouteReplacePage(), 1);
           }),
           _btn('3. pop()', () {
-            if (xbNavigatorState.canPop()) {
+            if (xbSimpleNavigatorState.canPop()) {
               pop();
             } else {
               _addLog('当前不可 pop');
@@ -185,11 +185,6 @@ class RouteUntilCPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return XBButton(
-        onTap: () {
-          popUntilType(XBRouteTestPage);
-        },
-        child: Text("test"));
     return const _RouteSimplePage(title: 'RouteUntilCPage');
   }
 }

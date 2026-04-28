@@ -11,23 +11,26 @@ class HideTopBarTest extends XBPage<HideTopBarTestVM> {
   }
 
   @override
-  bool needImmersiveAppbar(HideTopBarTestVM vm) {
+  bool needImmersiveAppbar(BuildContext context) {
+    final vm = vmOf(context);
     return true;
   }
 
   @override
-  Widget? buildTitle(HideTopBarTestVM vm) {
+  Widget? buildTitle(BuildContext context) {
+    final vm = vmOf(context);
     return SwitchTitleWidget(
-      titles: ["1", "2"],
+      titles: const ["1", "2"],
       selectedIndex: 0,
       onSelectedIndex: (index) {},
     );
   }
 
   @override
-  Widget buildPage(HideTopBarTestVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return PageView(
-      children: [SubPage(), SubPage()],
+      children: const [SubPage(), SubPage()],
     );
   }
 }
@@ -45,12 +48,13 @@ class SubPage extends XBPage<SubPageVM> {
   }
 
   @override
-  bool needHideAppbar(SubPageVM vm) {
+  bool needHideAppbar(BuildContext context) {
     return true;
   }
 
   @override
-  Widget buildPage(SubPageVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return Container(
       color: colors.randColor,
       child: Column(

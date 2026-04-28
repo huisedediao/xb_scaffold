@@ -2,6 +2,7 @@ import 'package:example/pages/error_test_page.dart';
 import 'package:example/pages/hide_top_bar_test.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
+import 'package:example/pages/xb_image_test_page.dart';
 import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_route_test_page.dart';
 import 'package:example/pages/xb_cell_demo.dart';
@@ -12,6 +13,7 @@ import 'package:example/pages/vm_access_demo.dart';
 import 'package:example/pages/tf_test.dart';
 import 'package:get/get.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
 import 'package:flutter/material.dart';
 
 class ChoosePage extends XBPage<ChoosePageVM> {
@@ -23,12 +25,13 @@ class ChoosePage extends XBPage<ChoosePageVM> {
   }
 
   @override
-  Widget? leading(ChoosePageVM vm) {
+  Widget? leading(BuildContext context) {
     return null;
   }
 
   @override
-  Widget buildPage(ChoosePageVM vm, BuildContext context) {
+  Widget buildPage(BuildContext context) {
+    final vm = vmOf(context);
     return ListView.separated(
       itemCount: vm.titles.length,
       separatorBuilder: (context, index) {
@@ -69,6 +72,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     "Hide top bar test",
     "Error catch test",
     "XBRoute 功能测试",
+    "XBImageTestPage"
   ];
 
   void onTapIndex(int index) {
@@ -97,6 +101,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const ErrorTestPage());
     } else if (index == 11) {
       push(const XBRouteTestPage());
+    } else if (index == 12) {
+      push(const XBImageTestPage());
     }
   }
 }

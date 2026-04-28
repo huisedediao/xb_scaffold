@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'package:xb_simple_router/xb_simple_router.dart';
+
+import 'error_test_isolate_stub.dart'
+    if (dart.library.io) 'error_test_isolate_io.dart';
 
 class ErrorTestPage extends StatelessWidget {
   const ErrorTestPage({super.key});
@@ -71,32 +74,7 @@ class ErrorTestPage extends StatelessWidget {
 
   /// 6️⃣ isolate 异常（重点）
   void _isolateError() async {
-    late final RawReceivePort errorPort;
-    errorPort = RawReceivePort((dynamic pair) async {
-      try {
-        final list = pair as List<dynamic>;
-        final error = list.isNotEmpty ? list[0] : 'Unknown isolate error';
-        final stack = list.length > 1
-            ? StackTrace.fromString(list[1].toString())
-            : StackTrace.current;
-        await XBErrorHandler.handle(error, stack);
-      } catch (e, s) {
-        await XBErrorHandler.handle(e, s);
-      } finally {
-        errorPort.close();
-      }
-    });
-
-    await Isolate.spawn(
-      _isolateEntry,
-      "test",
-      onError: errorPort.sendPort,
-      errorsAreFatal: true,
-    );
-  }
-
-  static void _isolateEntry(String msg) {
-    throw Exception("🔥 Isolate error: $msg");
+    await triggerIsolateError();
   }
 
   /// 7️⃣ 手动抛异常（测试上报）
