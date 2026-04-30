@@ -14,7 +14,7 @@
 - 🔄 **生命周期管理**：完整的页面和组件生命周期
 - 🌐 **跨平台支持**：支持 iOS、Android、Web、Desktop
 - 📋 **悬浮列表**：支持分组头部悬浮的 ListView
-- 🛠️ **工具集合**：网络请求、事件总线、定时器等实用工具
+- 🛠️ **工具集合**：事件总线、定时器等实用工具
 
 ## 安装
 
@@ -293,6 +293,12 @@ import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 void main() {
+  initXBErrorHandler(
+    // 可选：上报到你的监控系统
+    reporter: (error, stack) {
+      debugPrint('Captured error: $error');
+    },
+  );
   runApp(const MyApp());
 }
 
@@ -342,6 +348,52 @@ class MyApp extends StatelessWidget {
   }
 }
 ```
+
+`initXBErrorHandler` 建议在 `runApp` 前调用一次，用于统一接管异常捕获和上报。
+
+参数说明（与源码一致）：
+
+- `reporter`：自定义异常上报回调，签名是 `FutureOr<void> Function(Object error, StackTrace? stackTrace)`
+- `errorWidgetBuilder`：自定义页面构建异常时的兜底 Widget
+- `dumpFlutterErrorToConsole`：是否打印 Flutter 框架异常到控制台，默认 `true`
+- `enableErrorWidget`：是否启用页面构建异常兜底 UI，默认 `true`
+- `enablePlatformDispatcherError`：是否启用 root isolate 未捕获异常兜底，默认 `true`
+- `enableIsolateError`：是否监听 isolate 异常，默认 `false`
+
+更完整的初始化示例：
+
+```dart
+void main() {
+  initXBErrorHandler(
+    reporter: (error, stack) async {
+      // 例如：上报到 Sentry / Firebase Crashlytics / 自建日志平台
+      debugPrint('report error => $error');
+      if (stack != null) {
+        debugPrint('stack => $stack');
+      }
+    },
+    errorWidgetBuilder: (context, details, routeName) {
+      return Material(
+        child: Center(
+          child: Text('页面异常：${routeName ?? 'unknown'}'),
+        ),
+      );
+    },
+    dumpFlutterErrorToConsole: true,
+    enableErrorWidget: true,
+    enablePlatformDispatcherError: true,
+    enableIsolateError: false,
+  );
+
+  runApp(const MyApp());
+}
+```
+
+注意：
+
+- `initXBErrorHandler` 内部有防重复初始化，重复调用只有第一次生效
+- 如果你要自定义异常页面，确保 `errorWidgetBuilder` 返回的 Widget 不再抛异常
+- 生产环境建议保留 `reporter` 并接入你的监控平台
 
 如果你使用的是 `GetMaterialApp` 或 `CupertinoApp`，请显式绑定：
 
@@ -441,7 +493,7 @@ class HomePageVM extends XBPageVM<HomePage> {
   }
 
   void openSettings() {
-    push(const SettingsPage());
+    // todo
   }
 }
 ```
@@ -569,41 +621,6 @@ Widget build(BuildContext context) {
 }
 ```
 
-### 路由管理
-
-架构边界（重要）：
-- 本框架路由能力仅适用于单 `Navigator` 场景
-- 如果项目存在多 `Navigator`，或者使用三方路由（例如 `go_router`），请不要使用框架内路由能力
-- 在上述场景中，`xb_route.dart` 中的所有方法都不适用
-
-```dart
-// 跳转到新页面
-push(const DetailPage());
-
-// 带参数跳转
-push(DetailPage(id: 123));
-
-// 替换当前页面
-replace(const NewPage());
-
-// 返回上一页
-pop();
-
-// 返回并传递结果
-pop('result');
-
-// 返回到根页面
-popToRoot();
-
-// 返回到指定类型的页面
-popUntilType(HomePage);
-
-// 检查顶部页面类型
-if (topIsType(HomePage)) {
-  // 当前顶部是 HomePage
-}
-```
-
 ### 主题管理
 
 ```dart
@@ -691,44 +708,6 @@ bool needLoading(BuildContext context) => true;
 
 @override
 bool needInitLoading(BuildContext context) => true; // 页面初始化时显示 Loading
-```
-
-### 网络请求
-
-```dart
-// 配置网络请求
-XBDioConfig.init(
-  baseUrl: 'https://api.example.com',
-  connectTimeout: 5, // 秒
-  receiveTimeout: 3, // 秒
-);
-
-// GET 请求
-final users = await XBHttp.get<List<dynamic>>('/users');
-
-// POST 请求
-final createResp = await XBHttp.post<Map<String, dynamic>>(
-  '/users',
-  bodyParams: {'name': 'John', 'age': 30},
-);
-
-// 在 VM 中使用
-class UserListVM extends XBPageVM<UserListPage> {
-  List<User> users = [];
-
-  Future<void> loadUsers() async {
-    showLoading();
-    try {
-      final response = await XBHttp.get<List<dynamic>>('/users');
-      users = response.map((json) => User.fromJson(json)).toList();
-      notify();
-    } catch (e) {
-      toast('加载失败: $e');
-    } finally {
-      hideLoading();
-    }
-  }
-}
 ```
 
 ### 事件总线
@@ -956,25 +935,7 @@ class MyPageVM extends XBPageVM<MyPage> {
 }
 ```
 
-### 2. 错误处理
-
-```dart
-class ApiService {
-  static Future<T> safeRequest<T>(Future<T> Function() request) async {
-    try {
-      return await request();
-    } catch (e) {
-      toast('网络请求失败: $e');
-      rethrow;
-    }
-  }
-}
-
-// 使用
-await ApiService.safeRequest(() => XBHttp.get('/api/data'));
-```
-
-### 3. 状态管理
+### 2. 状态管理
 
 ```dart
 class UserVM extends XBVM<UserWidget> {
@@ -1015,21 +976,6 @@ class ChildWidget extends StatelessWidget {
     return Text(parentVM.someData);
   }
 }
-```
-
-### Q: 如何处理页面间的数据传递？
-
-A: 可以通过构造函数、路由参数或事件总线：
-
-```dart
-// 方式1: 构造函数
-push(DetailPage(userId: 123));
-
-// 方式2: 事件总线
-XBEventBus.fire(DataUpdateEvent(data));
-
-// 方式3: 返回结果
-final result = await push(SelectPage());
 ```
 
 ### Q: 如何自定义主题？

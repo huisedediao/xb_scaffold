@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+
 import 'xb_request_interceptor.dart';
 import 'xb_response_interceptor.dart';
 
@@ -16,7 +17,7 @@ class XBDioConfig {
   static bool get isInitialized => _dio != null;
 
   static Dio get dio {
-    assert(_dio != null, "请先调用init方法");
+    assert(_dio != null, '请先调用init方法');
     return _dio!;
   }
 

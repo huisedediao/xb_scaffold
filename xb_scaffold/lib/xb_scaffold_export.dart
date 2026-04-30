@@ -16,7 +16,6 @@ export './src/xb_log.dart';
 export './src/xb_print.dart';
 export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
-export './src/network/xb_http.dart';
 
 export 'src/configs/xb_def.dart';
 

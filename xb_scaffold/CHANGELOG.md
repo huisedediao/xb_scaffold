@@ -882,3 +882,7 @@
 - 修复 XBHttp 请求级拦截器未生效、GET 拼参冗余、上传未复用全局 Dio 配置等问题。
 - 优化获取 vm 的方式，不再传值而是使用 context 获取。
 - 增加 命令 xb.page、xb.widget、xb.parsemodel、xb.newmodel、xb.updateimg、xb.extension。
+
+## 1.0.3
+
+- 移除 network 模块，独立成 xb_network 
