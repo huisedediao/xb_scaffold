@@ -120,7 +120,9 @@ class XBSimpleNavigatorObserver extends NavigatorObserver {
       return false;
     }
     final tempHashCode = arg[xbHashCodeKey];
-    return tempHashCode != null && tempHashCode is int && tempHashCode == hsCode;
+    return tempHashCode != null &&
+        tempHashCode is int &&
+        tempHashCode == hsCode;
   }
 
   String _getRouteName(Route route) {
@@ -182,7 +184,8 @@ class XBSimpleNavigatorObserver extends NavigatorObserver {
 final XBSimpleNavigatorObserver xbSimpleNavigatorObserver =
     XBSimpleNavigatorObserver();
 
-final StreamController<XBStackChangedEvent> _xbSimpleRouteStackStreamController =
+final StreamController<XBStackChangedEvent>
+    _xbSimpleRouteStackStreamController =
     StreamController<XBStackChangedEvent>.broadcast();
 
 StreamController<XBStackChangedEvent> get xbSimpleStackStreamController =>
@@ -229,7 +232,8 @@ abstract class XBRouteDriver {
   void pop<O extends Object?>([O? result]);
   Future<T?> replace<T extends Object?>(Widget newPage, [int style = 0]);
   void popToRoot();
-  Future<T?> pushAndClearStack<T extends Object?>(Widget newPage, [int style = 0]);
+  Future<T?> pushAndClearStack<T extends Object?>(Widget newPage,
+      [int style = 0]);
   void popUntilType(Type type);
   bool isXBRoute(Route route);
   bool topIsType(Type type);
@@ -241,12 +245,14 @@ typedef XBPushFn = Future<Object?> Function(Widget newPage, int style);
 typedef XBPopFn = void Function(Object? result);
 typedef XBReplaceFn = Future<Object?> Function(Widget newPage, int style);
 typedef XBPopToRootFn = void Function();
-typedef XBPushAndClearStackFn = Future<Object?> Function(Widget newPage, int style);
+typedef XBPushAndClearStackFn = Future<Object?> Function(
+    Widget newPage, int style);
 typedef XBPopUntilTypeFn = void Function(Type type);
 typedef XBRouteJudgeFn = bool Function(Route route);
 typedef XBTopIsTypeFn = bool Function(Type type);
 typedef XBStackContainTypeFn = bool Function(Type type);
-typedef XBRouteIsMapWidgetFn = bool Function({required Route route, required Widget widget});
+typedef XBRouteIsMapWidgetFn = bool Function(
+    {required Route route, required Widget widget});
 
 class XBInjectedRouteDriver implements XBRouteDriver {
   final XBPushFn onPush;

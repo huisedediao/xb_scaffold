@@ -1,7 +1,13 @@
 name: xb_simple_router
 description: Simple injectable router abstraction for Flutter with optional go_router adaptation.
 version: 0.1.0
-publish_to: none
+homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_simple_router
+repository: https://github.com/huisedediao/xb_scaffold/tree/main/xb_simple_router
+issue_tracker: https://github.com/huisedediao/xb_scaffold/issues
+topics:
+  - flutter
+  - navigation
+  - router
 
 environment:
   sdk: '>=3.1.0 <4.0.0'
