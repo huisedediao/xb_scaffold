@@ -1,10 +1,12 @@
 import 'package:example/pages/error_test_page.dart';
 import 'package:example/pages/hide_top_bar_test.dart';
+import 'package:example/pages/xb_network_test_page.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
 import 'package:example/pages/xb_image_test_page.dart';
 import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_route_test_page.dart';
+import 'package:example/pages/xb_simple_router_test_page.dart';
 import 'package:example/pages/xb_cell_demo.dart';
 import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
@@ -72,7 +74,9 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     "Hide top bar test",
     "Error catch test",
     "XBRoute 功能测试",
-    "XBImageTestPage"
+    "XBImageTestPage",
+    "xb_simple_router 测试页",
+    "xb_network 测试页",
   ];
 
   void onTapIndex(int index) {
@@ -103,6 +107,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       push(const XBRouteTestPage());
     } else if (index == 12) {
       push(const XBImageTestPage());
+    } else if (index == 13) {
+      push(const XBSimpleRouterTestPage());
+    } else if (index == 14) {
+      push(const XBNetworkTestPage());
     }
   }
 }
