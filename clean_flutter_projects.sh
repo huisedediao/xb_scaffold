@@ -8,6 +8,7 @@ PROJECTS=(
   "xb_scaffold"
   "xb_simple_router"
   "xb_network"
+  "xb_analytics_plus"
 )
 
 for project in "${PROJECTS[@]}"; do

@@ -1,0 +1,24 @@
+name: xb_analytics_plus
+description: Cross-platform analytics toolkit for XBScaffold with queueing, local persistence, export, and debug viewer.
+version: 0.1.0
+homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_analytics_plus
+repository: https://github.com/huisedediao/xb_scaffold/tree/main/xb_analytics_plus
+issue_tracker: https://github.com/huisedediao/xb_scaffold/issues
+topics:
+  - flutter
+  - analytics
+  - tracking
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+  flutter: '>=3.12.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0

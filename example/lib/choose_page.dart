@@ -1,5 +1,6 @@
 import 'package:example/pages/error_test_page.dart';
 import 'package:example/pages/hide_top_bar_test.dart';
+import 'package:example/pages/xb_analytics_test_page.dart';
 import 'package:example/pages/xb_network_test_page.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
@@ -122,6 +123,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'xb_network 测试页',
       pageBuilder: _buildXBNetworkTestPage,
     ),
+    const _ChooseMenuItem(
+      title: 'xb_analytics_plus 测试页',
+      pageBuilder: _buildXBAnalyticsTestPage,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -154,6 +159,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBSimpleRouterTestPage() =>
       const XBSimpleRouterTestPage();
   static Widget _buildXBNetworkTestPage() => const XBNetworkTestPage();
+  static Widget _buildXBAnalyticsTestPage() => const XBAnalyticsTestPage();
 }
 
 enum _ChooseNavMode {

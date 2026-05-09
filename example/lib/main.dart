@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:example/choose_page.dart';
 import 'package:example/pages/error_test_page.dart';
 import 'package:flutter/material.dart';
@@ -58,15 +56,11 @@ void main() {
     dumpFlutterErrorToConsole: true,
     enableErrorWidget: true,
     enableIsolateError: true,
+    appRunner: () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      runApp(const MyApp());
+    },
   );
-
-  /// 2. Zone 兜底
-  runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
-    runApp(const MyApp());
-  }, (error, stackTrace) async {
-    await XBErrorHandler.handle(error, stackTrace);
-  });
 }
 
 class MyApp extends StatelessWidget {

@@ -131,6 +131,7 @@ void initXBErrorHandler({
   bool enableErrorWidget = true,
   bool enablePlatformDispatcherError = true,
   bool enableIsolateError = false,
+  FutureOr<void> Function()? appRunner,
 }) {
   XBErrorHandler.init(
     reporter: reporter,
@@ -140,6 +141,14 @@ void initXBErrorHandler({
     enablePlatformDispatcherError: enablePlatformDispatcherError,
     enableIsolateError: enableIsolateError,
   );
+
+  if (appRunner != null) {
+    runZonedGuarded(() async {
+      await appRunner();
+    }, (error, stackTrace) async {
+      await XBErrorHandler.handle(error, stackTrace);
+    });
+  }
 }
 
 class XBScaffold extends StatefulWidget {

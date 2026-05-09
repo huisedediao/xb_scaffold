@@ -37,6 +37,8 @@ dependencies:
     path: ../xb_simple_router
   xb_network:
     path: ../xb_network
+  xb_analytics_plus:
+    path: ../xb_analytics_plus
   get: ^4.6.6
 
   # The following adds the Cupertino Icons font to your application.
