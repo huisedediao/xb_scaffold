@@ -25,8 +25,6 @@ String xbTrackResolvePlatform() {
       return 'linux';
     case TargetPlatform.fuchsia:
       return 'fuchsia';
-    default:
-      return defaultTargetPlatform.name;
   }
 }
 
