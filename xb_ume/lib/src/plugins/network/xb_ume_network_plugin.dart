@@ -57,7 +57,7 @@ class _NetworkPanelState extends State<_NetworkPanel> {
 
         return Column(
           children: [
-            _buildToolbar(context, list.length),
+            _buildToolbar(context, list),
             const Divider(height: 1),
             Expanded(
               child: list.isEmpty
@@ -106,7 +106,8 @@ class _NetworkPanelState extends State<_NetworkPanel> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, int count) {
+  Widget _buildToolbar(
+      BuildContext context, List<XBUmeNetworkItem> filteredItems) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(
@@ -146,13 +147,13 @@ class _NetworkPanelState extends State<_NetworkPanel> {
                 ),
               ),
               Text(
-                'Count: $count',
+                'Count: ${filteredItems.length}',
                 style:
                     const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
               OutlinedButton(
                 onPressed: () async {
-                  final map = widget.controller.network
+                  final map = filteredItems
                       .map((e) => e.toJson())
                       .toList(growable: false);
                   final text = const JsonEncoder.withIndent('  ').convert(map);

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -52,7 +54,7 @@ class _ConsolePanelState extends State<_ConsolePanel> {
 
         return Column(
           children: [
-            _buildToolbar(context, logs.length),
+            _buildToolbar(context, logs),
             const Divider(height: 1),
             Expanded(
               child: logs.isEmpty
@@ -101,7 +103,7 @@ class _ConsolePanelState extends State<_ConsolePanel> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, int count) {
+  Widget _buildToolbar(BuildContext context, List<XBUmeLogItem> filteredLogs) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Column(
@@ -141,13 +143,15 @@ class _ConsolePanelState extends State<_ConsolePanel> {
                 ),
               ),
               Text(
-                'Count: $count',
+                'Count: ${filteredLogs.length}',
                 style:
                     const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
               OutlinedButton(
                 onPressed: () async {
-                  final data = widget.controller.exportAllAsPrettyJson();
+                  final data = const JsonEncoder.withIndent('  ').convert(
+                    filteredLogs.map((e) => e.toJson()).toList(growable: false),
+                  );
                   await Clipboard.setData(ClipboardData(text: data));
                   if (!context.mounted) return;
                   XBUmeNoticeService.instance
