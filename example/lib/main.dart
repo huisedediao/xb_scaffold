@@ -1,9 +1,12 @@
 import 'package:example/choose_page.dart';
 import 'package:example/pages/error_test_page.dart';
+import 'package:example/xb_test_ume_plugin.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:xb_simple_router/xb_simple_router.dart';
+import 'package:xb_ume/xb_ume.dart';
 
 void main() {
   /// 1. 先初始化全局异常处理
@@ -58,6 +61,30 @@ void main() {
     enableIsolateError: true,
     appRunner: () async {
       WidgetsFlutterBinding.ensureInitialized();
+      XBUmeBinding.ensureInitialized(
+        config: const XBUmeConfig(
+          enable: kDebugMode,
+          enablePerformance: false,
+          enableDevice: false,
+          enableInspector: false,
+          enableRoute: false,
+          persistenceEnabled: true,
+        ),
+        extraPlugins: <XBUmePlugin>[
+          XBTestUmePlugin(),
+        ],
+      );
+      XBUme.registerStorageAdapter(
+        XBUmeMapStorageAdapter(
+          id: 'example_memory_store',
+          data: <String, dynamic>{
+            'env': 'dev',
+            'version': '1.0.0+1',
+            'sample_token': 'demo-token',
+          },
+          allowWrite: true,
+        ),
+      );
       runApp(const MyApp());
     },
   );
@@ -70,6 +97,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       navigatorKey: xbSimpleNavigatorKey,
+      builder: XBUme.appBuilder(),
       title: 'Flutter Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -80,6 +108,7 @@ class MyApp extends StatelessWidget {
         xbSimpleNavigatorObserver,
         xbSimpleRouteObserver,
         xbRouteObserver,
+        XBUme.routeObserver,
       ],
       home: XBScaffold(themeConfigs: [
         XBThemeConfig(

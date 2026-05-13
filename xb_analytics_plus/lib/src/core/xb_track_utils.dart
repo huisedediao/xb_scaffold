@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -25,6 +26,13 @@ String xbTrackResolvePlatform() {
       return 'linux';
     case TargetPlatform.fuchsia:
       return 'fuchsia';
+    default:
+      {
+        if (Platform.operatingSystem == 'ohos') {
+          return 'harmony';
+        }
+        return 'unknown';
+      }
   }
 }
 

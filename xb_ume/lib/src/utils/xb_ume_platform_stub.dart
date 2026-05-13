@@ -1,0 +1,3 @@
+String xbUmeOperatingSystemImpl() {
+  return 'web';
+}

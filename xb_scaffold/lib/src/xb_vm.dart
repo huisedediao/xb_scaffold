@@ -8,6 +8,16 @@ class XBVM<T> extends ChangeNotifier {
 
   late XBWidgetState state;
 
+  XBRepository? _repo;
+
+  R? repo<R extends XBRepository>() => _repo as R?;
+
+  void setRepo(XBRepository? value) {
+    _repo?.dispose();
+    _repo = value;
+    _repo?.init();
+  }
+
   Size _widgetSize = Size.zero;
   Size get widgetSize => _widgetSize;
   set widgetSize(Size newValue) {
@@ -59,6 +69,7 @@ class XBVM<T> extends ChangeNotifier {
 
   @override
   void dispose() {
+    _repo?.dispose();
     String log = "$runtimeType dispose";
     debugPrint(log);
     recordPageLog(log);

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:xb_network/xb_network.dart';
+import 'package:xb_ume/xb_ume.dart';
 
 class XBNetworkTestPage extends StatefulWidget {
   const XBNetworkTestPage({super.key});
@@ -70,7 +71,11 @@ class _XBNetworkTestPageState extends State<XBNetworkTestPage> {
       sendTimeout: 10,
       force: true,
     );
+    final dio = XBDioConfig.dio;
+    dio.interceptors.removeWhere((e) => e is XBUmeDioInterceptor);
+    dio.interceptors.add(XBUmeDioInterceptor());
     _addLog('XBDioConfig.init 完成, baseUrl=$_demoBaseUrl');
+    _addLog('已接入 XBUmeDioInterceptor，Network 面板可查看请求记录');
   }
 
   void _resetDio() {
@@ -126,7 +131,7 @@ class _XBNetworkTestPageState extends State<XBNetworkTestPage> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            '说明：先 init，再执行 GET/POST。离开页面会自动 reset。',
+            '说明：先 init（会自动挂载 XBUmeDioInterceptor），再执行 GET/POST。离开页面会自动 reset。',
             style: TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 12),

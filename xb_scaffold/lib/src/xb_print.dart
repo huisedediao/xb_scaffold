@@ -1,16 +1,34 @@
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
-xbError(Object info) {
-  _handleInfo(info, 1);
+const int _maxChunkLen = 800;
+
+void xbError(Object info) {
+  _handleInfo(info, _XBPrintType.error);
 }
 
-xbLog(Object info) {
-  _handleInfo(info, 0);
+void xbLog(Object info) {
+  _handleInfo(info, _XBPrintType.log);
 }
 
-xbUnDisappear(Object info) {
-  _handleInfo(info, 2);
+void xbUnDisappear(Object info) {
+  _handleInfo(info, _XBPrintType.unDisappear);
+}
+
+void xbDebug(Object info) {
+  _handleInfo(info, _XBPrintType.debug);
+}
+
+void xbInfo(Object info) {
+  _handleInfo(info, _XBPrintType.info);
+}
+
+void xbWarn(Object info) {
+  _handleInfo(info, _XBPrintType.warn);
+}
+
+void xbFatal(Object info) {
+  _handleInfo(info, _XBPrintType.fatal);
 }
 
 final Logger _logger = Logger(
@@ -26,33 +44,63 @@ final Logger _logger = Logger(
   printEmojis: true,
 ));
 
-_handleInfo(Object info, [int type = 0]) {
-  int maxLen = 800;
-  String infoStr = info.toString();
-  int index = 0;
-  while ((infoStr.length - index * maxLen) > maxLen) {
-    String subStr = infoStr.substring(index * maxLen, index * maxLen + maxLen);
+void _handleInfo(Object info, [_XBPrintType type = _XBPrintType.log]) {
+  final infoStr = info.toString();
+  var index = 0;
+  while ((infoStr.length - index * _maxChunkLen) > _maxChunkLen) {
+    final subStr = infoStr.substring(
+      index * _maxChunkLen,
+      index * _maxChunkLen + _maxChunkLen,
+    );
     _print(subStr, type);
-    index++;
+    index += 1;
   }
-  if ((infoStr.length - index * maxLen) > 0) {
-    String subStr = infoStr.substring(index * maxLen);
+  if ((infoStr.length - index * _maxChunkLen) > 0) {
+    final subStr = infoStr.substring(index * _maxChunkLen);
     _print(subStr, type);
   }
 }
 
-void _print(Object info, int type) {
-  String timestamp = DateTime.now().toIso8601String();
-  String message = '[$timestamp] $info';
-  if (type == 0) {
-    if (kDebugMode) {
-      _logger.d(message);
-    }
-  } else if (type == 1) {
-    if (kDebugMode) {
+void _print(Object info, _XBPrintType type) {
+  final timestamp = DateTime.now().toIso8601String();
+  final message = '[$timestamp] $info';
+  switch (type) {
+    case _XBPrintType.log:
+    case _XBPrintType.debug:
+      if (kDebugMode) {
+        _logger.d(message);
+      }
+      return;
+    case _XBPrintType.error:
+      if (kDebugMode) {
+        _logger.e(message);
+      }
+      return;
+    case _XBPrintType.unDisappear:
       _logger.e(message);
-    }
-  } else {
-    _logger.e(message);
+      return;
+    case _XBPrintType.info:
+      if (kDebugMode) {
+        _logger.i(message);
+      }
+      return;
+    case _XBPrintType.warn:
+      if (kDebugMode) {
+        _logger.w(message);
+      }
+      return;
+    case _XBPrintType.fatal:
+      _logger.f(message);
+      return;
   }
+}
+
+enum _XBPrintType {
+  log,
+  error,
+  unDisappear,
+  debug,
+  info,
+  warn,
+  fatal,
 }

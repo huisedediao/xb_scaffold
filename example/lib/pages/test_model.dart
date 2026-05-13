@@ -1,5 +1,3 @@
-
-
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 class TestModel {
@@ -71,5 +69,3 @@ class TestModel {
     return retMap;
   }
 }
-
-
