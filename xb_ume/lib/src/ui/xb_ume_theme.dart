@@ -137,7 +137,7 @@ ThemeData buildXBUmeTheme() {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       ),
     ),
-    dialogTheme: const DialogTheme(
+    dialogTheme: const DialogThemeData(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.white,
       titleTextStyle: TextStyle(
