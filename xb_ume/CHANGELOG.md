@@ -11,3 +11,7 @@
   - Device info
   - Storage inspector
 - Includes persistence support and a runnable example.
+
+## 0.1.1
+
+- optimized.
