@@ -278,8 +278,8 @@ void _writeThemeExtensionFiles(String basePath) {
   final normalizedBase = (basePath.endsWith('/') || basePath.endsWith('\\'))
       ? basePath.substring(0, basePath.length - 1)
       : basePath;
-  final dir = Directory('$normalizedBase/$_themeExtensionDirName');
-  dir.createSync(recursive: true);
+  final targetDirPath = '$normalizedBase/$_themeExtensionDirName';
+  final dir = Directory(targetDirPath);
 
   final files = <String, String>{
     'app_theme_color.dart': """import 'package:flutter/material.dart';
@@ -321,6 +321,23 @@ extension AppThemeSpace on XBThemeSpace {
 """,
   };
 
+  final targetFiles = files.keys
+      .map((name) => File('$targetDirPath/$name'))
+      .toList(growable: false);
+  final existingFiles =
+      targetFiles.where((file) => file.existsSync()).toList(growable: false);
+  if (existingFiles.isNotEmpty) {
+    stderr.writeln(
+      'Target file already exists, skip generation to avoid any changes:',
+    );
+    for (final file in existingFiles) {
+      stderr.writeln('  ${file.path}');
+    }
+    exitCode = 1;
+    return;
+  }
+
+  dir.createSync(recursive: true);
   for (final entry in files.entries) {
     final file = File('${dir.path}/${entry.key}');
     file.writeAsStringSync(_withOuterBlankLines(entry.value));

@@ -75,28 +75,6 @@ class DetailPage extends StatelessWidget {
 }
 ```
 
-## go_router Integration
-
-```dart
-import 'package:go_router/go_router.dart';
-import 'package:xb_simple_router/xb_simple_router.dart';
-
-configureXBGoRouter(
-  router: appRouter,
-  locationForPage: (page) {
-    if (page is HomePage) return '/';
-    if (page is DetailPage) return '/detail';
-    throw ArgumentError('No location mapping for ${page.runtimeType}');
-  },
-  typeForLocation: (location) {
-    if (location == '/') return 'HomePage';
-    if (location.startsWith('/detail')) return 'DetailPage';
-    return 'UnknownPage';
-  },
-  stackLocations: () => <String>['/', '/detail'],
-);
-```
-
 ## Example
 
 See [`example/main.dart`](example/main.dart) for a runnable demo.

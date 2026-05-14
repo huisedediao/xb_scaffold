@@ -43,10 +43,13 @@ class XBUmeController extends ChangeNotifier {
       LinkedHashMap<String, XBUmeStorageAdapter>();
 
   final ValueNotifier<int> changeTick = ValueNotifier<int>(0);
+  final ValueNotifier<bool> panelVisible = ValueNotifier<bool>(false);
 
   Timer? _persistTimer;
   Timer? _performanceUiTimer;
+  Timer? _consoleUiTimer;
   bool _hasPendingPerformanceUiUpdate = false;
+  bool _hasPendingConsoleUiUpdate = false;
   int _idSeed = 0;
   bool _restored = false;
 
@@ -60,6 +63,17 @@ class XBUmeController extends ChangeNotifier {
       _storageAdapters.values.toList(growable: false);
 
   bool get restored => _restored;
+
+  void showPanel() => _setPanelVisible(true);
+
+  void hidePanel() => _setPanelVisible(false);
+
+  void togglePanel() => _setPanelVisible(!panelVisible.value);
+
+  void _setPanelVisible(bool visible) {
+    if (panelVisible.value == visible) return;
+    panelVisible.value = visible;
+  }
 
   bool registerPlugin(XBUmePlugin plugin) {
     if (!config.isPluginEnabled(plugin.id)) return false;
@@ -116,10 +130,13 @@ class XBUmeController extends ChangeNotifier {
         stack: stack == null ? null : _clip(stack),
       ),
     );
-    _emitChanged();
+    _emitConsoleChanged();
   }
 
   void clearLogs() {
+    _consoleUiTimer?.cancel();
+    _consoleUiTimer = null;
+    _hasPendingConsoleUiUpdate = false;
     _logs.clear();
     _emitChanged();
   }
@@ -396,6 +413,18 @@ class XBUmeController extends ChangeNotifier {
     });
   }
 
+  void _emitConsoleChanged() {
+    _hasPendingConsoleUiUpdate = true;
+    if (_consoleUiTimer != null) return;
+
+    _consoleUiTimer = Timer(config.consoleUiUpdateInterval, () {
+      _consoleUiTimer = null;
+      if (!_hasPendingConsoleUiUpdate) return;
+      _hasPendingConsoleUiUpdate = false;
+      _emitChanged();
+    });
+  }
+
   void _schedulePersist() {
     if (!config.persistenceEnabled) return;
     _persistTimer?.cancel();
@@ -472,9 +501,11 @@ class XBUmeController extends ChangeNotifier {
   void dispose() {
     _persistTimer?.cancel();
     _performanceUiTimer?.cancel();
+    _consoleUiTimer?.cancel();
     for (final plugin in _plugins.values) {
       plugin.onUnregister(this);
     }
+    panelVisible.dispose();
     changeTick.dispose();
     super.dispose();
   }

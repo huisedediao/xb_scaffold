@@ -180,7 +180,10 @@ class _StoragePanelState extends State<_StoragePanel> {
                       ),
                       subtitle: SelectableText(
                         xbUmePreview(entry.value),
-                        style: const TextStyle(fontSize: 12),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF111827),
+                        ),
                       ),
                       trailing: (adapter?.writable ?? false)
                           ? IconButton(

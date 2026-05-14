@@ -24,6 +24,7 @@ class XBUmeConfig {
   final int networkBodyMaxLength;
   final int maxInspectorNodes;
   final Duration performanceUiUpdateInterval;
+  final Duration consoleUiUpdateInterval;
   final bool inspectorAutoCaptureOnOpen;
 
   final Offset floatingInitialOffset;
@@ -58,6 +59,7 @@ class XBUmeConfig {
     this.networkBodyMaxLength = 65536,
     this.maxInspectorNodes = 1500,
     this.performanceUiUpdateInterval = const Duration(milliseconds: 240),
+    this.consoleUiUpdateInterval = const Duration(milliseconds: 120),
     this.inspectorAutoCaptureOnOpen = false,
     this.floatingInitialOffset = const Offset(16, 180),
     this.panelSize = const Size(980, 640),
@@ -107,6 +109,7 @@ class XBUmeConfig {
     int? networkBodyMaxLength,
     int? maxInspectorNodes,
     Duration? performanceUiUpdateInterval,
+    Duration? consoleUiUpdateInterval,
     bool? inspectorAutoCaptureOnOpen,
     Offset? floatingInitialOffset,
     Size? panelSize,
@@ -139,6 +142,8 @@ class XBUmeConfig {
       maxInspectorNodes: maxInspectorNodes ?? this.maxInspectorNodes,
       performanceUiUpdateInterval:
           performanceUiUpdateInterval ?? this.performanceUiUpdateInterval,
+      consoleUiUpdateInterval:
+          consoleUiUpdateInterval ?? this.consoleUiUpdateInterval,
       inspectorAutoCaptureOnOpen:
           inspectorAutoCaptureOnOpen ?? this.inspectorAutoCaptureOnOpen,
       floatingInitialOffset:

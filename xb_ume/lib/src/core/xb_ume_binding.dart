@@ -77,9 +77,6 @@ class XBUmeBinding {
   late final TimingsCallback _timingsCallback = _onFrameTimings;
 
   void _registerDefaultPlugins() {
-    if (config.enableConsole) {
-      controller.registerPlugin(XBUmeConsolePlugin());
-    }
     if (config.enableRoute) {
       controller.registerPlugin(XBUmeRoutePlugin());
     }
@@ -88,6 +85,9 @@ class XBUmeBinding {
     }
     if (config.enableNetwork) {
       controller.registerPlugin(XBUmeNetworkPlugin());
+    }
+    if (config.enableConsole) {
+      controller.registerPlugin(XBUmeConsolePlugin());
     }
     if (config.enableInspector) {
       controller.registerPlugin(XBUmeInspectorPlugin());

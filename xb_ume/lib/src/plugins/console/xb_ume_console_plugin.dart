@@ -219,8 +219,18 @@ class _ConsolePanelState extends State<_ConsolePanel> {
           title: const Text('Log Detail'),
           content: SizedBox(
             width: 720,
-            child: SingleChildScrollView(
-              child: SelectableText(lines.join('\n')),
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  lines.join('\n'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ),
             ),
           ),
           actions: [

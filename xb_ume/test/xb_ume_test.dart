@@ -23,6 +23,19 @@ void main() {
     binding.dispose();
   });
 
+  test('console plugin is registered after network', () {
+    final binding = XBUmeBinding.ensureInitialized(
+      config: const XBUmeConfig(enable: true, persistenceEnabled: false),
+    );
+
+    final ids = binding.controller.plugins.map((p) => p.id).toList();
+    expect(ids.indexOf('network'), isNonNegative);
+    expect(ids.indexOf('console'), isNonNegative);
+    expect(ids.indexOf('console'), greaterThan(ids.indexOf('network')));
+
+    binding.dispose();
+  });
+
   test('disable all default plugins via config booleans', () {
     final binding = XBUmeBinding.ensureInitialized(
       config: const XBUmeConfig(

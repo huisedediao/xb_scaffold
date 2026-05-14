@@ -3,3 +3,7 @@
 - Initial release extracted from `xb_scaffold`.
 - Includes injectable navigator route driver and route stack observer.
 - Includes optional `go_router` adapter and integration helpers.
+
+## 0.1.1
+
+- 移除 go_router 兼容

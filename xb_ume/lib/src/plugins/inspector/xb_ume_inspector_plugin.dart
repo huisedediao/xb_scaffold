@@ -291,7 +291,11 @@ class _InspectorPanelState extends State<_InspectorPanel> {
             child: SingleChildScrollView(
               child: SelectableText(
                 contextText,
-                style: const TextStyle(fontSize: 12, height: 1.35),
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: Color(0xFF111827),
+                ),
               ),
             ),
           ),
@@ -309,8 +313,18 @@ class _InspectorPanelState extends State<_InspectorPanel> {
           title: const Text('Inspector Node Detail'),
           content: SizedBox(
             width: 760,
-            child: SingleChildScrollView(
-              child: SelectableText(text),
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.45,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ),
             ),
           ),
           actions: [

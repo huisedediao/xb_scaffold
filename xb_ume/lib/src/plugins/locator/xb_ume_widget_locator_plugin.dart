@@ -190,7 +190,11 @@ class _WidgetLocatorPanelState extends State<_WidgetLocatorPanel> {
         const SizedBox(height: 8),
         SelectableText(
           details,
-          style: const TextStyle(fontSize: 12, height: 1.4),
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.4,
+            color: Color(0xFF111827),
+          ),
         ),
       ],
     );

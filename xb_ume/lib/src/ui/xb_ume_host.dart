@@ -9,6 +9,7 @@ import '../core/xb_ume_notice_service.dart';
 import '../core/xb_ume_widget_locator_resolver.dart';
 import '../core/xb_ume_widget_pick_service.dart';
 import 'xb_ume_panel.dart';
+import 'xb_ume_theme.dart';
 
 class XBUmeHost extends StatefulWidget {
   const XBUmeHost({
@@ -43,9 +44,11 @@ class _XbUmeHostState extends State<XBUmeHost> {
   void initState() {
     super.initState();
     _offset = widget.controller.config.floatingInitialOffset;
+    _panelVisible = widget.controller.panelVisible.value;
     _pickMode = _pickService.picking.value;
     _pickResult = _pickService.selectedResult.value;
     _notice = _noticeService.current.value;
+    widget.controller.panelVisible.addListener(_onPanelVisibleChanged);
     _pickService.picking.addListener(_onPickModeChanged);
     _pickService.selectedResult.addListener(_onPickResultChanged);
     _noticeService.current.addListener(_onNoticeChanged);
@@ -53,6 +56,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
 
   @override
   void dispose() {
+    widget.controller.panelVisible.removeListener(_onPanelVisibleChanged);
     _pickService.picking.removeListener(_onPickModeChanged);
     _pickService.selectedResult.removeListener(_onPickResultChanged);
     _noticeService.current.removeListener(_onNoticeChanged);
@@ -89,11 +93,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
             if (_panelVisible)
               Positioned.fill(
                 child: GestureDetector(
-                  onTap: () {
-                    _setStateSafely(() {
-                      _panelVisible = false;
-                    });
-                  },
+                  onTap: widget.controller.hidePanel,
                   child: Container(
                     color: Colors.black.withValues(alpha: 0.24),
                   ),
@@ -108,20 +108,19 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   child: SizedBox(
                     width: panelWidth,
                     height: panelHeight,
-                    child: HeroControllerScope.none(
-                      child: Navigator(
-                        onGenerateRoute: (_) {
-                          return MaterialPageRoute<void>(
-                            builder: (_) => XBUmePanel(
-                              controller: widget.controller,
-                              onClose: () {
-                                _setStateSafely(() {
-                                  _panelVisible = false;
-                                });
-                              },
-                            ),
-                          );
-                        },
+                    child: Theme(
+                      data: buildXBUmeTheme(),
+                      child: HeroControllerScope.none(
+                        child: Navigator(
+                          onGenerateRoute: (_) {
+                            return MaterialPageRoute<void>(
+                              builder: (_) => XBUmePanel(
+                                controller: widget.controller,
+                                onClose: widget.controller.hidePanel,
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -156,9 +155,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
                     _pickService.stop();
                     return;
                   }
-                  _setStateSafely(() {
-                    _panelVisible = !_panelVisible;
-                  });
+                  widget.controller.togglePanel();
                 },
                 child: _buildFloatingButton(context),
               ),
@@ -563,11 +560,18 @@ class _XbUmeHostState extends State<XBUmeHost> {
   }
 
   void _onPickModeChanged() {
+    final pickMode = _pickService.picking.value;
+    if (pickMode) {
+      widget.controller.hidePanel();
+    }
     _setStateSafely(() {
-      _pickMode = _pickService.picking.value;
-      if (_pickMode) {
-        _panelVisible = false;
-      }
+      _pickMode = pickMode;
+    });
+  }
+
+  void _onPanelVisibleChanged() {
+    _setStateSafely(() {
+      _panelVisible = widget.controller.panelVisible.value;
     });
   }
 

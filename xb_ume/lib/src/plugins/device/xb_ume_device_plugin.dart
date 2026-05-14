@@ -116,7 +116,10 @@ class _DevicePanelState extends State<_DevicePanel> {
                 ),
                 subtitle: SelectableText(
                   row.value,
-                  style: const TextStyle(fontSize: 12),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF111827),
+                  ),
                 ),
               );
             },
