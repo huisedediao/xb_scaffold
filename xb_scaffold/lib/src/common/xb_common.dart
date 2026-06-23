@@ -23,3 +23,4 @@ export 'xb_text_field/xb_text_field.dart';
 export 'xb_text_field/xb_text_input_formatter.dart';
 export 'xb_max_height_container.dart';
 export 'xb_adaptive_list_view.dart';
+export 'xb_ios_edge_back_gesture.dart';
