@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:logger/logger.dart';
 
 const int _maxChunkLen = 800;
 
@@ -31,19 +30,6 @@ void xbFatal(Object info) {
   _handleInfo(info, _XBPrintType.fatal);
 }
 
-final Logger _logger = Logger(
-    printer: PrettyPrinter(
-  methodCount: 0,
-  // number of method calls to be displayed
-  errorMethodCount: 8,
-  // number of method calls if stacktrace is provided
-  lineLength: 120,
-  // width of the output
-  colors: true,
-  // Colorful log messages
-  printEmojis: true,
-));
-
 void _handleInfo(Object info, [_XBPrintType type = _XBPrintType.log]) {
   final infoStr = info.toString();
   var index = 0;
@@ -63,44 +49,35 @@ void _handleInfo(Object info, [_XBPrintType type = _XBPrintType.log]) {
 
 void _print(Object info, _XBPrintType type) {
   final timestamp = DateTime.now().toIso8601String();
-  final message = '[$timestamp] $info';
+  final message = '$_ansiReset${type._ansiColor}[$timestamp] $info$_ansiReset';
   switch (type) {
     case _XBPrintType.log:
     case _XBPrintType.debug:
-      if (kDebugMode) {
-        _logger.d(message);
-      }
-      return;
     case _XBPrintType.error:
+    case _XBPrintType.info:
+    case _XBPrintType.warn:
       if (kDebugMode) {
-        _logger.e(message);
+        debugPrint(message);
       }
       return;
     case _XBPrintType.unDisappear:
-      _logger.e(message);
-      return;
-    case _XBPrintType.info:
-      if (kDebugMode) {
-        _logger.i(message);
-      }
-      return;
-    case _XBPrintType.warn:
-      if (kDebugMode) {
-        _logger.w(message);
-      }
-      return;
     case _XBPrintType.fatal:
-      _logger.f(message);
+      debugPrint(message);
       return;
   }
 }
 
+const _ansiReset = '\x1B[0m';
+
 enum _XBPrintType {
-  log,
-  error,
-  unDisappear,
-  debug,
-  info,
-  warn,
-  fatal,
+  log(''),
+  error('\x1B[31m'),
+  unDisappear('\x1B[31m'),
+  debug(''),
+  info('\x1B[34m'),
+  warn('\x1B[33m'),
+  fatal('\x1B[31m');
+
+  final String _ansiColor;
+  const _XBPrintType(this._ansiColor);
 }
