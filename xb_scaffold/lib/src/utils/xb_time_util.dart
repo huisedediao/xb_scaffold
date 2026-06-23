@@ -1,4 +1,4 @@
-import 'package:intl/intl.dart';
+import 'package:xb_scaffold/src/utils/xb_date_format.dart';
 
 class XBTimeUtil {
   static String formatYMDHMS = 'yyyy-MM-dd HH:mm:ss';
@@ -19,7 +19,7 @@ class XBTimeUtil {
 
   /// 格式化字符串
   static String dateTime2Str({required DateTime dateTime, String? format}) {
-    var formatter = DateFormat(format ?? formatYMDHMS);
+    var formatter = XBDateFormat(format ?? formatYMDHMS);
     String formatted = formatter.format(dateTime);
     return formatted;
   }
@@ -33,7 +33,7 @@ class XBTimeUtil {
 
   /// 日期字符串转成DateTime
   static DateTime? str2DateTime({required String dateTimeStr, String? format}) {
-    var formatter = DateFormat(format ?? formatYMDHMS);
+    var formatter = XBDateFormat(format ?? formatYMDHMS);
     DateTime dateTime = formatter.parse(dateTimeStr);
     return dateTime;
   }

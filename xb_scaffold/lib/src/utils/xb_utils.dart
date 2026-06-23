@@ -9,4 +9,5 @@ export 'xb_wait_task.dart';
 export 'xb_event_bus.dart';
 export 'xb_refresh_task/xb_refresh_task_util.dart';
 export 'xb_parse.dart';
+export 'xb_date_format.dart';
 export 'xb_time_util.dart';

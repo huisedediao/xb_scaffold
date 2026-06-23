@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 final List<String> _pageLogList = [];
@@ -9,7 +8,7 @@ int get _maxLogLen => maxPageLogLen ?? 30;
 
 void recordPageLog(String msg) {
   DateTime now = DateTime.now();
-  var formatter = DateFormat('yyyy-MM-dd HH:mm:ss');
+  const formatter = XBDateFormat('yyyy-MM-dd HH:mm:ss');
   String formattedTime =
       formatter.format(now.toUtc().add(const Duration(hours: 8)));
   msg = "$msg $formattedTime";
