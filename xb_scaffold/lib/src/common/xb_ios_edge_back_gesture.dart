@@ -25,7 +25,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.supportLeftEdge = true,
     this.supportRightEdge = true,
     this.edgeWidth = 32,
-    this.triggerDistance = 56,
+    this.triggerDistance = 40,
     this.triggerVelocity = 700,
     this.maxDragOffset = 40,
     this.indicatorSize = 44,
