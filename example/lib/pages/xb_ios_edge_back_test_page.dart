@@ -165,8 +165,8 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
     );
   }
 
-  Widget _sliderRow(
-      String label, double value, double min, double max, ValueChanged<double> onChanged) {
+  Widget _sliderRow(String label, double value, double min, double max,
+      ValueChanged<double> onChanged) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -182,8 +182,8 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
           ),
           SizedBox(
               width: 50,
-              child: Text(value.toStringAsFixed(0),
-                  textAlign: TextAlign.right)),
+              child:
+                  Text(value.toStringAsFixed(0), textAlign: TextAlign.right)),
         ],
       ),
     );
@@ -259,6 +259,7 @@ class _BackSubPage extends StatelessWidget {
         edgeWidth: edgeWidth,
         triggerDistance: triggerDistance,
         triggerVelocity: triggerVelocity,
+        maxDragOffset: 200,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
       ),
@@ -288,9 +289,7 @@ class _BackSubPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              depth > 1
-                  ? '从屏幕边缘右滑返回上一层'
-                  : '从屏幕左边缘右滑 / 右边缘左滑返回',
+              depth > 1 ? '从屏幕边缘右滑返回上一层' : '从屏幕左边缘右滑 / 右边缘左滑返回',
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 8),

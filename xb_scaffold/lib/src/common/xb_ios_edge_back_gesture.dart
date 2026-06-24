@@ -27,7 +27,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.edgeWidth = 32,
     this.triggerDistance = 56,
     this.triggerVelocity = 700,
-    this.maxIndicatorDistance = 72,
+    this.maxDragOffset = 40,
     this.indicatorSize = 44,
     this.indicatorColor,
     this.iconColor = Colors.white,
@@ -41,7 +41,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   final double edgeWidth;
   final double triggerDistance;
   final double triggerVelocity;
-  final double maxIndicatorDistance;
+  final double maxDragOffset;
   final double indicatorSize;
   final Color? indicatorColor;
   final Color iconColor;
@@ -122,7 +122,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         centerY: _indicatorCenterY,
                         dragDistance: _dragDistance,
                         triggerDistance: widget.triggerDistance,
-                        maxIndicatorDistance: widget.maxIndicatorDistance,
+                        maxDragOffset: widget.maxDragOffset,
                         size: widget.indicatorSize,
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
@@ -167,8 +167,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
       _XBIosBackEdge.right => math.max(0.0, -deltaX),
     };
     setState(() {
-      _dragDistance =
-          distance.clamp(0.0, widget.maxIndicatorDistance).toDouble();
+      _dragDistance = distance;
       _indicatorCenterY = details.localPosition.dy;
     });
   }
@@ -294,7 +293,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.centerY,
     required this.dragDistance,
     required this.triggerDistance,
-    required this.maxIndicatorDistance,
+    required this.maxDragOffset,
     required this.size,
     required this.maxHeight,
     required this.indicatorColor,
@@ -305,7 +304,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double centerY;
   final double dragDistance;
   final double triggerDistance;
-  final double maxIndicatorDistance;
+  final double maxDragOffset;
   final double size;
   final double maxHeight;
   final Color? indicatorColor;
@@ -317,18 +316,21 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double progress = triggerDistance <= 0
         ? 1
         : (dragDistance / triggerDistance).clamp(0.0, 1.0).toDouble();
-    final double leftProgress = maxIndicatorDistance <= 0
+    final double horizontalProgress = maxDragOffset <= 0
         ? 1
-        : (dragDistance / maxIndicatorDistance).clamp(0.0, 1.0).toDouble();
+        : (dragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
     final double height = maxHeight.isFinite ? maxHeight : size * 16;
-    final double handleHeight = size * (2.7 + leftProgress * 0.35);
-    final double handleWidth = size * (0.68 + leftProgress * 0.28);
+    final double handleHeight = size * 3.0 + dragDistance;
+    final double handleWidth = size * (0.68 + horizontalProgress * 0.28);
     final double maxTop = math.max(0.0, height - handleHeight);
     final double top =
         (centerY - handleHeight / 2).clamp(0.0, maxTop).toDouble();
     final double localCenterY = centerY - top;
     final double arrowSize = size * 0.72;
-    final double arrowInset = size * (0.08 + leftProgress * 0.12);
+    final double stretchedWidth =
+        handleWidth + horizontalProgress * (maxDragOffset - handleWidth);
+    final double arrowInset =
+        stretchedWidth * 0.5 - arrowSize / 2;
     final double arrowTop = (localCenterY - arrowSize / 2)
         .clamp(0.0, handleHeight - arrowSize)
         .toDouble();
@@ -343,7 +345,7 @@ class _XBIosBackIndicator extends StatelessWidget {
             left: isLeftEdge ? 0 : null,
             right: isLeftEdge ? null : 0,
             top: top,
-            width: handleWidth,
+            width: stretchedWidth,
             height: handleHeight,
             child: Opacity(
               opacity: opacity,
