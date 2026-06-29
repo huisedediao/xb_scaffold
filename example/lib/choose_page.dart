@@ -12,6 +12,7 @@ import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_route_test_page.dart';
 import 'package:example/pages/xb_simple_router_test_page.dart';
 import 'package:example/pages/xb_cell_demo.dart';
+import 'package:example/pages/xb_dialog_priority_test_page.dart';
 import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
 import 'package:example/pages/xb_wait_task_demo.dart';
@@ -142,6 +143,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBIosEdgeBackGesture 手势测试',
       pageBuilder: _buildXBIosEdgeBackTestPage,
     ),
+    const _ChooseMenuItem(
+      title: 'XBDialog 优先级测试',
+      pageBuilder: _buildXBDialogPriorityTestPage,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -179,6 +184,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBLogTestPage() => const XBLogTestPage();
   static Widget _buildXBIosEdgeBackTestPage() =>
       const XBIosEdgeBackTestPage();
+  static Widget _buildXBDialogPriorityTestPage() =>
+      const XBDialogPriorityTestPage();
 }
 
 enum _ChooseNavMode {

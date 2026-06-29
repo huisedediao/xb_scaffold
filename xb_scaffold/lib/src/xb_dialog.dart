@@ -1,16 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/src/configs/xb_color_config.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+import 'common/xb_dialog_manager.dart';
 export 'common/xb_dialog_input.dart';
 
-dialogWidget(Widget widget) {
-  try {
-    _dialogWidget(widget: widget);
-  } catch (e) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _dialogWidget(widget: widget);
-    });
-  }
+dialogWidget(Widget widget, {int priority = 0}) {
+  XBDialogManager().show(widget: widget, priority: priority);
 }
 
 dialogContent(
@@ -22,7 +17,8 @@ dialogContent(
     Color? btnDefaultColor,
     double? btnFontSize,
     required ValueChanged<int> onSelected,
-    double? maxWidth}) {
+    double? maxWidth,
+    int priority = 0}) {
   Widget child = ClipRRect(
     borderRadius: BorderRadius.circular(10),
     child: Container(
@@ -67,12 +63,12 @@ dialogContent(
     if (maxWidth > screenW - spaces.gapDef * 2) {
       maxWidth = screenW - spaces.gapDef * 2;
     }
-    dialogWidget(SizedBox(width: maxWidth, child: child));
+    dialogWidget(SizedBox(width: maxWidth, child: child), priority: priority);
   } else {
     dialogWidget(Padding(
       padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),
       child: child,
-    ));
+    ), priority: priority);
   }
 }
 
@@ -86,7 +82,8 @@ dialog(
     Color? btnDefaultColor,
     double? btnFontSize,
     required ValueChanged<int> onSelected,
-    double? maxWidth}) {
+    double? maxWidth,
+    int priority = 0}) {
   dialogContent(
       title: title,
       titleStyle: titleStyle,
@@ -99,27 +96,8 @@ dialog(
       btnHighLightColor: btnHighLightColor,
       btnDefaultColor: btnDefaultColor,
       btnFontSize: btnFontSize,
-      maxWidth: maxWidth);
-}
-
-_dialogWidget({
-  required Widget widget,
-}) {
-  showDialog(
-    barrierDismissible: false,
-    context: xbNavigatorContext,
-    builder: (BuildContext context) {
-      return PopScope(
-        canPop: false,
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 50),
-          child: Material(
-              type: MaterialType.transparency,
-              child: Container(alignment: Alignment.center, child: widget)),
-        ),
-      );
-    },
-  );
+      maxWidth: maxWidth,
+      priority: priority);
 }
 
 List<Widget> _setupBtns({
