@@ -1,4 +1,5 @@
 import 'package:example/pages/xb_button_demo_vm.dart';
+import 'package:example/xb_scaffold_extension/app_theme_image.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -42,6 +43,8 @@ class XBButtonDemo extends XBPage<XBButtonDemoVM> {
                 XBThemeVM().changeTheme(0);
               }
             }),
+        XBImage(images.icon_inspectionPlan),
+        XBImage(images.home_icon_dont_pre),
       ],
     );
   }

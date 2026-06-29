@@ -29,10 +29,10 @@ class XBTheme {
   final XBThemeFontWeight fontWeights;
   final XBThemeImage images;
 
-  XBTheme({XBThemeConfig? config})
+  XBTheme({XBThemeConfig? config, XBThemeImage? images})
       : colors = XBThemeColor(primaryColor: config?.primaryColor),
         spaces = XBThemeSpace(),
         fontSizes = XBThemeFontSize(),
         fontWeights = XBThemeFontWeight(),
-        images = XBThemeImage(prefix: config?.imgPrefix);
+        images = images ?? XBThemeImage(prefix: config?.imgPrefix);
 }

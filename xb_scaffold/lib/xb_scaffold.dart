@@ -3,6 +3,7 @@ library xb_scaffold;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'src/xb_error/xb_error.dart';
 import 'src/xb_theme/xb_theme_vm.dart';
@@ -200,17 +201,46 @@ class _XBScaffoldState extends State<XBScaffold> {
 Future<void> _initXBScaffold({
   required List<XBThemeConfig> configs,
 }) async {
+  // 加载 AssetManifest，获取所有已声明的 asset 资源
+  final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+  final allAssets = manifest.listAssets();
+
+  // 为每个主题构建 XBThemeImage 并扫描可用资源
+  final List<XBThemeImage> themeImages = [];
   for (int i = 0; i < configs.length; i++) {
     String imgPrefix = configs[i].imgPrefix;
     if (!imgPrefix.endsWith("/")) {
       imgPrefix = "$imgPrefix/";
     }
+    final themeImage = XBThemeImage(prefix: imgPrefix);
+
+    // 扫描该主题前缀下的所有 asset，提取相对文件名
+    final Set<String> availableAssets = {};
+    for (final key in allAssets) {
+      if (key.startsWith(imgPrefix)) {
+        availableAssets.add(key.substring(imgPrefix.length));
+      }
+    }
+    themeImage.setAvailableAssets(availableAssets);
+    themeImages.add(themeImage);
+  }
+
+  // 非默认主题设置 fallback 为默认主题（index 0）的 imgPrefix
+  if (themeImages.length > 1) {
+    final defaultImgPrefix = themeImages[0].prefix;
+    for (int i = 1; i < themeImages.length; i++) {
+      themeImages[i].setFallbackPrefix(defaultImgPrefix);
+    }
+  }
+
+  for (int i = 0; i < configs.length; i++) {
     XBThemeVM().setThemeForIndex(
       XBTheme(
         config: XBThemeConfig(
-          imgPrefix: imgPrefix,
+          imgPrefix: configs[i].imgPrefix,
           primaryColor: configs[i].primaryColor,
         ),
+        images: themeImages[i],
       ),
       i,
     );

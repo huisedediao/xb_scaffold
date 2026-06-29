@@ -117,7 +117,7 @@ class MyApp extends StatelessWidget {
         ),
         XBThemeConfig(
             primaryColor: const Color.fromARGB(255, 21, 123, 164),
-            imgPrefix: "assets/images")
+            imgPrefix: "assets/images_dark")
       ], child: const ChoosePage()),
     );
   }
