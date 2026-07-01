@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+typedef XBFullscreenChildBuilder = Widget Function(
+  BuildContext context,
+  double maxWidth,
+  double maxHeight,
+  bool isFullscreen,
+);
+
 class XBRotatableFullscreenController {
   _XBRotatableFullscreenState? _state;
 
@@ -21,7 +28,7 @@ class XBRotatableFullscreenController {
 class XBRotatableFullscreen extends StatefulWidget {
   const XBRotatableFullscreen({
     super.key,
-    required this.child,
+    required this.childBuilder,
     required this.controller,
     this.duration = const Duration(milliseconds: 300),
     this.curve = Curves.easeInOut,
@@ -30,7 +37,7 @@ class XBRotatableFullscreen extends StatefulWidget {
     this.onFullscreenChanged,
   });
 
-  final Widget child;
+  final XBFullscreenChildBuilder childBuilder;
   final XBRotatableFullscreenController controller;
   final Duration duration;
   final Curve curve;
@@ -39,8 +46,7 @@ class XBRotatableFullscreen extends StatefulWidget {
   final ValueChanged<bool>? onFullscreenChanged;
 
   @override
-  State<XBRotatableFullscreen> createState() =>
-      _XBRotatableFullscreenState();
+  State<XBRotatableFullscreen> createState() => _XBRotatableFullscreenState();
 }
 
 class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
@@ -169,7 +175,7 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
                     child: SizedBox(
                       width: _overlayVisible ? screen.height : begin.width,
                       height: _overlayVisible ? screen.width : begin.height,
-                      child: widget.child,
+                      child: _buildChild(),
                     ),
                   ),
                 ),
@@ -183,6 +189,19 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
     Overlay.of(context).insert(_overlayEntry!);
   }
 
+  Widget _buildChild() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return widget.childBuilder(
+          context,
+          constraints.maxWidth,
+          constraints.maxHeight,
+          _isFullscreen,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return KeyedSubtree(
@@ -190,7 +209,7 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
       child: Opacity(
         opacity: _isFullscreen ? 0.0 : 1.0,
         alwaysIncludeSemantics: true,
-        child: widget.child,
+        child: _buildChild(),
       ),
     );
   }

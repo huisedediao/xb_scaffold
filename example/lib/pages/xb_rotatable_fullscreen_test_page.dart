@@ -29,36 +29,42 @@ class XBRotatableFullscreenTestPage
                 onFullscreenChanged: (isFullscreen) {
                   debugPrint('全屏状态变化: $isFullscreen');
                 },
-                child: GestureDetector(
-                  onTap: () {
-                    if (vm.fullscreenController.isFullscreen) {
-                      vm.fullscreenController.exit();
-                    }
-                  },
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final w = constraints.maxWidth;
-                      final h = constraints.maxHeight.isFinite
-                          ? constraints.maxHeight
-                          : w / 16 * 9;
-                      return Container(
-                        width: w,
-                        height: h,
-                        decoration: BoxDecoration(
-                          color: colors.primary,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            '点击下方按钮\n进入全屏',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white, fontSize: 16),
+                childBuilder: (context, maxWidth, maxHeight, isFullscreen) {
+                  final w = maxWidth;
+                  final h = maxHeight.isFinite ? maxHeight : w / 16 * 9;
+                  xbError(
+                      "isFullscreen:$isFullscreen,maxWidth:$maxWidth,maxHeight:$maxHeight");
+                  return GestureDetector(
+                    onTap: () {
+                      if (vm.fullscreenController.isFullscreen) {
+                        vm.fullscreenController.exit();
+                      }
+                    },
+                    child: Container(
+                      alignment: Alignment.center,
+                      // color: colors.randColor,
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: Container(
+                          // width: !isFullscreen ? maxWidth : null,
+                          // height: !isFullscreen ? (maxWidth / 16 * 9) : null,
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              '点击下方按钮\n进入全屏',
+                              textAlign: TextAlign.center,
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 16),
+                            ),
                           ),
                         ),
-                      );
-                    },
-                  ),
-                ),
+                      ),
+                    ),
+                  );
+                },
               ),
               Expanded(child: ListView.builder(itemBuilder: (ctx, index) {
                 return Container(
