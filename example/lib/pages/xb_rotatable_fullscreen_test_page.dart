@@ -35,21 +35,28 @@ class XBRotatableFullscreenTestPage
                       vm.fullscreenController.exit();
                     }
                   },
-                  child: Container(
-                    width: screenW,
-                    height: screenW / 16 * 9,
-                    // color: colors.randColor,
-                    decoration: BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        '点击下方按钮\n进入全屏',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final w = constraints.maxWidth;
+                      final h = constraints.maxHeight.isFinite
+                          ? constraints.maxHeight
+                          : w / 16 * 9;
+                      return Container(
+                        width: w,
+                        height: h,
+                        decoration: BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            '点击下方按钮\n进入全屏',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white, fontSize: 16),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),

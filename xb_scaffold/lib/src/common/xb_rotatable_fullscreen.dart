@@ -140,6 +140,7 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
         return Material(
           type: MaterialType.transparency,
           child: Stack(
+            clipBehavior: Clip.none,
             children: [
               Positioned.fill(
                 child: AnimatedOpacity(
@@ -152,10 +153,14 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
               AnimatedPositioned(
                 duration: widget.duration,
                 curve: widget.curve,
-                left: _overlayVisible ? 0 : begin.left,
-                top: _overlayVisible ? 0 : begin.top,
-                width: _overlayVisible ? screen.width : begin.width,
-                height: _overlayVisible ? screen.height : begin.height,
+                left: _overlayVisible
+                    ? (screen.width - screen.height) / 2
+                    : begin.left,
+                top: _overlayVisible
+                    ? (screen.height - screen.width) / 2
+                    : begin.top,
+                width: _overlayVisible ? screen.height : begin.width,
+                height: _overlayVisible ? screen.width : begin.height,
                 child: AnimatedRotation(
                   turns: _overlayVisible ? widget.turns : 0,
                   duration: widget.duration,
