@@ -5,23 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "xb_scaffold",
-            "request": "launch",
-            "type": "dart"
-        },
-        {
-            "name": "xb_scaffold (profile mode)",
-            "request": "launch",
-            "type": "dart",
-            "flutterMode": "profile"
-        },
-        {
-            "name": "xb_scaffold (release mode)",
-            "request": "launch",
-            "type": "dart",
-            "flutterMode": "release"
-        },
-        {
             "name": "example",
             "cwd": "example",
             "request": "launch",
@@ -37,6 +20,126 @@
         {
             "name": "example (release mode)",
             "cwd": "example",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "xb_analytics_plus",
+            "cwd": "xb_analytics_plus",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "xb_analytics_plus (profile mode)",
+            "cwd": "xb_analytics_plus",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "xb_analytics_plus (release mode)",
+            "cwd": "xb_analytics_plus",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "xb_network",
+            "cwd": "xb_network",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "xb_network (profile mode)",
+            "cwd": "xb_network",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "xb_network (release mode)",
+            "cwd": "xb_network",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "xb_scaffold",
+            "cwd": "xb_scaffold",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "xb_scaffold (profile mode)",
+            "cwd": "xb_scaffold",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "xb_scaffold (release mode)",
+            "cwd": "xb_scaffold",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "xb_simple_router",
+            "cwd": "xb_simple_router",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "xb_simple_router (profile mode)",
+            "cwd": "xb_simple_router",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "xb_simple_router (release mode)",
+            "cwd": "xb_simple_router",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "xb_ume",
+            "cwd": "xb_ume",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "xb_ume (profile mode)",
+            "cwd": "xb_ume",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "xb_ume (release mode)",
+            "cwd": "xb_ume",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        {
+            "name": "example",
+            "cwd": "xb_ume/example",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "example (profile mode)",
+            "cwd": "xb_ume/example",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "example (release mode)",
+            "cwd": "xb_ume/example",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
