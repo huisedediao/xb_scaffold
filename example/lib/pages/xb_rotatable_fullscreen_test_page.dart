@@ -1,3 +1,4 @@
+import 'package:example/pages/view/rotatable_cell.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -67,6 +68,9 @@ class XBRotatableFullscreenTestPage
                 },
               ),
               Expanded(child: ListView.builder(itemBuilder: (ctx, index) {
+                if (index % 2 == 0) {
+                  return const RotatableCell();
+                }
                 return Container(
                   height: 50,
                   color: colors.randColor,
