@@ -1,6 +1,6 @@
 name: xb_analytics_plus
 description: Cross-platform analytics toolkit for XBScaffold with queueing, local persistence, export, and debug viewer.
-version: 0.1.0
+version: 0.1.1
 homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_analytics_plus
 repository: https://github.com/huisedediao/xb_scaffold/tree/main/xb_analytics_plus
 issue_tracker: https://github.com/huisedediao/xb_scaffold/issues

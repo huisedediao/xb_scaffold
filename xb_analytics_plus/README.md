@@ -22,7 +22,7 @@
 
 ```yaml
 dependencies:
-  xb_analytics_plus: ^0.1.0
+  xb_analytics_plus: ^0.1.1
 ```
 
 如果是当前仓库多包本地联调：

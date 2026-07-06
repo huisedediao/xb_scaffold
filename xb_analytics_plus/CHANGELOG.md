@@ -1,3 +1,7 @@
+## 0.1.1
+
+- 新增鸿蒙（HarmonyOS / OpenHarmony）平台兼容支持。
+
 ## 0.1.0
 
 - Initial release.
