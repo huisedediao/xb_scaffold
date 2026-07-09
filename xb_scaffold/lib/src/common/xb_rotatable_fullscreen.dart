@@ -89,10 +89,6 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
     _startRect = rect;
     _isFullscreen = true;
 
-    await SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-    );
-
     _overlayVisible = false;
     _insertOverlay();
 
@@ -122,10 +118,6 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
     widget.onFullscreenChanged?.call(false);
 
     if (mounted) setState(() {});
-
-    await SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-    );
   }
 
   Rect? _getRect() {
