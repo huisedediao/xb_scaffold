@@ -1,0 +1,15 @@
+name: xb_echo_logger
+description: 可复用的远程日志上报组件，支持队列、离线缓存、错误去重。适用于 Flutter 项目，同时提供 iOS/Android 原生端支持。
+version: 1.0.0
+homepage: https://github.com/jftech/xb_echo_logger
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

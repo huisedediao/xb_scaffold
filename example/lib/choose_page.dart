@@ -14,6 +14,7 @@ import 'package:example/pages/xb_simple_router_test_page.dart';
 import 'package:example/pages/xb_cell_demo.dart';
 import 'package:example/pages/xb_dialog_priority_test_page.dart';
 import 'package:example/pages/xb_rotatable_fullscreen_test_page.dart';
+import 'package:example/pages/xb_echo_logger_test_page.dart';
 import 'package:example/pages/xb_cell_group_demo.dart';
 import 'package:example/pages/xb_toast_demo.dart';
 import 'package:example/pages/xb_wait_task_demo.dart';
@@ -152,6 +153,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBRotatableFullscreen 全屏旋转',
       pageBuilder: _buildXBRotatableFullscreenTestPage,
     ),
+    const _ChooseMenuItem(
+      title: 'XBEchoLogger 日志上报测试',
+      pageBuilder: _buildXBEchoLoggerTestPage,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -193,6 +198,8 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       const XBDialogPriorityTestPage();
   static Widget _buildXBRotatableFullscreenTestPage() =>
       const XBRotatableFullscreenTestPage();
+  static Widget _buildXBEchoLoggerTestPage() =>
+      const XBEchoLoggerTestPage();
 }
 
 enum _ChooseNavMode {

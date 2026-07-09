@@ -559,6 +559,13 @@ packages:
       relative: true
     source: path
     version: "0.1.0"
+  xb_echo_logger:
+    dependency: "direct main"
+    description:
+      path: "../xb_echo_logger"
+      relative: true
+    source: path
+    version: "1.0.0"
   xb_network:
     dependency: "direct main"
     description:
