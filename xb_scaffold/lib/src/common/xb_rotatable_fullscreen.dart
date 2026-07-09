@@ -88,7 +88,6 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
 
     _startRect = rect;
     _isFullscreen = true;
-    widget.onFullscreenChanged?.call(true);
 
     await SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.immersiveSticky,
@@ -103,6 +102,9 @@ class _XBRotatableFullscreenState extends State<XBRotatableFullscreen> {
     _overlayEntry?.markNeedsBuild();
 
     if (mounted) setState(() {});
+
+    await Future<void>.delayed(widget.duration);
+    widget.onFullscreenChanged?.call(true);
   }
 
   Future<void> _exitFullscreen() async {
