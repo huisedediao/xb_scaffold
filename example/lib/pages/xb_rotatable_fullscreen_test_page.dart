@@ -39,6 +39,8 @@ class XBRotatableFullscreenTestPage
                     onTap: () {
                       if (vm.fullscreenController.isFullscreen) {
                         vm.fullscreenController.exit();
+                      } else {
+                        vm.fullscreenController.enter();
                       }
                     },
                     child: Container(
