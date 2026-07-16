@@ -687,14 +687,8 @@ class _XBIosBackHandlePainter extends CustomPainter {
     required this.color,
   });
 
-  /// 边缘控制点向屏幕内偏移的宽度比例，越小越贴近屏幕边缘。
-  static const double _edgeControlInsetFactor = 0;
-
-  /// 边缘控制点占对应半段高度的比例，控制靠近边缘处的大半径曲线。
-  static const double _edgeControlLengthFactor = 0.45;
-
-  /// 顶峰控制点与顶峰的距离比例，越小顶峰附近的曲线半径越小。
-  static const double _peakControlLengthFactor = 0.4;
+  /// 使用多段三次贝塞尔逼近渐变曲率函数，保证动态绘制时依然平滑。
+  static const int _curveSegmentCount = 8;
 
   final _XBIosBackEdge edge;
   final double bulgeCenterY;
@@ -709,57 +703,108 @@ class _XBIosBackHandlePainter extends CustomPainter {
     final double width = size.width;
     final double height = size.height;
     final double centerY = bulgeCenterY.clamp(0.0, height).toDouble();
-    final double edgeControlInset = width * _edgeControlInsetFactor;
-    final double topEdgeControlY = centerY * _edgeControlLengthFactor;
-    final double topPeakControlY = centerY * (1 - _peakControlLengthFactor);
     final double bottomHeight = height - centerY;
-    final double bottomPeakControlY =
-        centerY + bottomHeight * _peakControlLengthFactor;
-    final double bottomEdgeControlY =
-        centerY + bottomHeight * (1 - _edgeControlLengthFactor);
-
-    final Path path = switch (edge) {
-      _XBIosBackEdge.left => Path()
-        ..moveTo(0, 0)
-        ..cubicTo(
-          edgeControlInset,
-          topEdgeControlY,
-          width,
-          topPeakControlY,
-          width,
-          centerY,
-        )
-        ..cubicTo(
-          width,
-          bottomPeakControlY,
-          edgeControlInset,
-          bottomEdgeControlY,
-          0,
-          height,
-        )
-        ..close(),
-      _XBIosBackEdge.right => Path()
-        ..moveTo(width, 0)
-        ..cubicTo(
-          width - edgeControlInset,
-          topEdgeControlY,
-          0,
-          topPeakControlY,
-          0,
-          centerY,
-        )
-        ..cubicTo(
-          0,
-          bottomPeakControlY,
-          width - edgeControlInset,
-          bottomEdgeControlY,
-          width,
-          height,
-        )
-        ..close(),
-    };
+    final bool isLeftEdge = edge == _XBIosBackEdge.left;
+    final Path path = Path()..moveTo(isLeftEdge ? 0 : width, 0);
+    _addCurveHalf(
+      path: path,
+      isLeftEdge: isLeftEdge,
+      width: width,
+      startY: 0,
+      sectionHeight: centerY,
+      fromEdgeToPeak: true,
+    );
+    _addCurveHalf(
+      path: path,
+      isLeftEdge: isLeftEdge,
+      width: width,
+      startY: centerY,
+      sectionHeight: bottomHeight,
+      fromEdgeToPeak: false,
+    );
+    path.close();
 
     canvas.drawPath(path, paint);
+  }
+
+  static void _addCurveHalf({
+    required Path path,
+    required bool isLeftEdge,
+    required double width,
+    required double startY,
+    required double sectionHeight,
+    required bool fromEdgeToPeak,
+  }) {
+    if (sectionHeight <= 0) {
+      return;
+    }
+
+    Offset pointAt(double verticalProgress) {
+      final double curveProgress =
+          fromEdgeToPeak ? verticalProgress : 1 - verticalProgress;
+      final double horizontalProgress = _horizontalCurveProgress(curveProgress);
+      return Offset(
+        isLeftEdge
+            ? width * horizontalProgress
+            : width * (1 - horizontalProgress),
+        startY + sectionHeight * verticalProgress,
+      );
+    }
+
+    Offset derivativeAt(double verticalProgress) {
+      final double curveProgress =
+          fromEdgeToPeak ? verticalProgress : 1 - verticalProgress;
+      final double curveDirection = fromEdgeToPeak ? 1 : -1;
+      final double edgeDirection = isLeftEdge ? 1 : -1;
+      return Offset(
+        edgeDirection *
+            width *
+            _horizontalCurveDerivative(curveProgress) *
+            curveDirection,
+        sectionHeight,
+      );
+    }
+
+    double previousProgress = 0;
+    Offset previousPoint = pointAt(previousProgress);
+    Offset previousDerivative = derivativeAt(previousProgress);
+    for (int index = 1; index <= _curveSegmentCount; index++) {
+      final double progress = index / _curveSegmentCount;
+      final double progressDelta = progress - previousProgress;
+      final Offset point = pointAt(progress);
+      final Offset derivative = derivativeAt(progress);
+      final Offset controlPoint1 =
+          previousPoint + previousDerivative * (progressDelta / 3);
+      final Offset controlPoint2 = point - derivative * (progressDelta / 3);
+      path.cubicTo(
+        controlPoint1.dx,
+        controlPoint1.dy,
+        controlPoint2.dx,
+        controlPoint2.dy,
+        point.dx,
+        point.dy,
+      );
+      previousProgress = progress;
+      previousPoint = point;
+      previousDerivative = derivative;
+    }
+  }
+
+  /// 三阶起步让靠近屏幕边缘的低曲率部分占据更多纵向高度，
+  /// 顶峰处保留二阶收尾，使顶峰保持圆润而不是形成尖角。
+  static double _horizontalCurveProgress(double progress) {
+    final double progress2 = progress * progress;
+    final double progress3 = progress2 * progress;
+    final double progress4 = progress3 * progress;
+    final double progress5 = progress4 * progress;
+    return 4 * progress5 - 11 * progress4 + 8 * progress3;
+  }
+
+  static double _horizontalCurveDerivative(double progress) {
+    final double progress2 = progress * progress;
+    final double progress3 = progress2 * progress;
+    final double progress4 = progress3 * progress;
+    return 20 * progress4 - 44 * progress3 + 24 * progress2;
   }
 
   @override
