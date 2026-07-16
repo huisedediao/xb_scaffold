@@ -29,9 +29,10 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.triggerVelocity = 700,
     this.maxDragOffset = 40,
     this.indicatorSize = 44,
+    this.maxIndicatorHeight = 220,
     this.indicatorColor,
     this.iconColor = Colors.white,
-  });
+  }) : assert(maxIndicatorHeight > 0, 'maxIndicatorHeight must be positive');
 
   final Widget child;
   final XBIosEdgeBackCallback onBack;
@@ -43,6 +44,11 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   final double triggerVelocity;
   final double maxDragOffset;
   final double indicatorSize;
+
+  /// 边缘半透明指示区域的最大高度。
+  ///
+  /// 指示区域随手指向屏幕内滑动逐渐增高，达到该值后不再增高。
+  final double maxIndicatorHeight;
   final Color? indicatorColor;
   final Color iconColor;
 
@@ -124,6 +130,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         triggerDistance: widget.triggerDistance,
                         maxDragOffset: widget.maxDragOffset,
                         size: widget.indicatorSize,
+                        maxIndicatorHeight: widget.maxIndicatorHeight,
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
                         iconColor: widget.iconColor,
@@ -295,6 +302,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.triggerDistance,
     required this.maxDragOffset,
     required this.size,
+    required this.maxIndicatorHeight,
     required this.maxHeight,
     required this.indicatorColor,
     required this.iconColor,
@@ -306,6 +314,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double triggerDistance;
   final double maxDragOffset;
   final double size;
+  final double maxIndicatorHeight;
   final double maxHeight;
   final Color? indicatorColor;
   final Color iconColor;
@@ -320,7 +329,12 @@ class _XBIosBackIndicator extends StatelessWidget {
         ? 1
         : (dragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
     final double height = maxHeight.isFinite ? maxHeight : size * 16;
-    final double handleHeight = size * 3.0 + dragDistance;
+    final double naturalHandleHeight = size * 3.0 + dragDistance;
+    final double availableHeight = math.max(0.0, height);
+    final double handleHeight = math.min(
+      naturalHandleHeight,
+      math.min(maxIndicatorHeight, availableHeight),
+    );
     final double handleWidth = size * (0.68 + horizontalProgress * 0.28);
     final double maxTop = math.max(0.0, height - handleHeight);
     final double top =
@@ -329,11 +343,10 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double arrowSize = size * 0.72;
     final double stretchedWidth =
         handleWidth + horizontalProgress * (maxDragOffset - handleWidth);
-    final double arrowInset =
-        stretchedWidth * 0.5 - arrowSize / 2;
-    final double arrowTop = (localCenterY - arrowSize / 2)
-        .clamp(0.0, handleHeight - arrowSize)
-        .toDouble();
+    final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
+    final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
+    final double arrowTop =
+        (localCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
     final double opacity = (0.32 + progress * 0.68).clamp(0.0, 1.0).toDouble();
     final double scale = 0.9 + progress * 0.12;
 

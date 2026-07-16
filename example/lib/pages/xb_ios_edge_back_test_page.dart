@@ -45,6 +45,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
   double _triggerDistance = 40;
   double _triggerVelocity = 700;
   double _maxDragOffset = 40;
+  double _maxIndicatorHeight = 220;
 
   @override
   void initState() {
@@ -124,6 +125,8 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
               (v) => setState(() => _triggerVelocity = v)),
           _sliderRow('maxDragOffset', _maxDragOffset, 20, 200,
               (v) => setState(() => _maxDragOffset = v)),
+          _sliderRow('maxIndicatorHeight', _maxIndicatorHeight, 80, 400,
+              (v) => setState(() => _maxIndicatorHeight = v)),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _pushTestPage,
@@ -205,6 +208,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       triggerDistance: _triggerDistance,
       triggerVelocity: _triggerVelocity,
       maxDragOffset: _maxDragOffset,
+      maxIndicatorHeight: _maxIndicatorHeight,
       depth: 1,
     ));
   }
@@ -218,6 +222,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       triggerDistance: _triggerDistance,
       triggerVelocity: _triggerVelocity,
       maxDragOffset: _maxDragOffset,
+      maxIndicatorHeight: _maxIndicatorHeight,
     ));
   }
 
@@ -230,6 +235,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       triggerDistance: _triggerDistance,
       triggerVelocity: _triggerVelocity,
       maxDragOffset: _maxDragOffset,
+      maxIndicatorHeight: _maxIndicatorHeight,
       depth: 3,
     ));
   }
@@ -245,6 +251,7 @@ class _BackSubPage extends StatelessWidget {
     required this.triggerDistance,
     required this.triggerVelocity,
     required this.maxDragOffset,
+    required this.maxIndicatorHeight,
     required this.depth,
   });
 
@@ -255,6 +262,7 @@ class _BackSubPage extends StatelessWidget {
   final double triggerDistance;
   final double triggerVelocity;
   final double maxDragOffset;
+  final double maxIndicatorHeight;
   final int depth;
 
   @override
@@ -268,6 +276,7 @@ class _BackSubPage extends StatelessWidget {
         triggerDistance: triggerDistance,
         triggerVelocity: triggerVelocity,
         maxDragOffset: maxDragOffset,
+        maxIndicatorHeight: maxIndicatorHeight,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
       ),
@@ -318,6 +327,7 @@ class _BackSubPage extends StatelessWidget {
                       triggerDistance: triggerDistance,
                       triggerVelocity: triggerVelocity,
                       maxDragOffset: maxDragOffset,
+                      maxIndicatorHeight: maxIndicatorHeight,
                       depth: depth - 1,
                     )),
                   );
@@ -342,6 +352,7 @@ class _LongListSubPage extends StatelessWidget {
     required this.triggerDistance,
     required this.triggerVelocity,
     required this.maxDragOffset,
+    required this.maxIndicatorHeight,
   });
 
   final bool enabled;
@@ -351,6 +362,7 @@ class _LongListSubPage extends StatelessWidget {
   final double triggerDistance;
   final double triggerVelocity;
   final double maxDragOffset;
+  final double maxIndicatorHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -363,6 +375,7 @@ class _LongListSubPage extends StatelessWidget {
         triggerDistance: triggerDistance,
         triggerVelocity: triggerVelocity,
         maxDragOffset: maxDragOffset,
+        maxIndicatorHeight: maxIndicatorHeight,
         onBack: () => Navigator.of(context).maybePop(),
         child: Scaffold(
           appBar: AppBar(
