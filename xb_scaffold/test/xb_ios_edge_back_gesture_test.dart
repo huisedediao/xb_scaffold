@@ -575,10 +575,66 @@ void main() {
 
       final Finder indicator = _indicatorFinder();
       expect(indicator, findsOneWidget);
-      expect(tester.getTopRight(indicator).dx, moreOrLessEquals(rightEdge));
+      expect(
+        tester.getTopRight(indicator).dx,
+        moreOrLessEquals(rightEdge + 2),
+      );
       expect(tester.getCenter(indicator).dy, moreOrLessEquals(301.5));
 
       await gesture.cancel();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('indicators stay shifted two pixels toward the screen edge',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      final double screenWidth =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
+
+      Future<void> verifyEdge({required bool rightEdge}) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: XBIosEdgeBackGesture(
+              supportLeftEdge: !rightEdge,
+              supportRightEdge: rightEdge,
+              triggerDistance: 1000,
+              triggerVelocity: double.infinity,
+              onBack: () {},
+              child: const ColoredBox(color: Colors.white),
+            ),
+          ),
+        );
+
+        final TestGesture gesture = await tester.startGesture(
+          Offset(rightEdge ? screenWidth - 1 : 1, 300),
+        );
+        for (final double movement in <double>[8, 16, 32]) {
+          await gesture.moveBy(Offset(rightEdge ? -movement : movement, 0));
+          await tester.pump();
+
+          final Finder indicator = _indicatorFinder();
+          expect(indicator, findsOneWidget);
+          if (rightEdge) {
+            expect(
+              tester.getTopRight(indicator).dx,
+              moreOrLessEquals(screenWidth + 2),
+            );
+          } else {
+            expect(
+              tester.getTopLeft(indicator).dx,
+              moreOrLessEquals(-2),
+            );
+          }
+        }
+        await gesture.cancel();
+        await tester.pump();
+      }
+
+      await verifyEdge(rightEdge: false);
+      await verifyEdge(rightEdge: true);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

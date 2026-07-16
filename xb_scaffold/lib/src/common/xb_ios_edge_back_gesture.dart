@@ -600,8 +600,8 @@ class _XBIosBackIndicator extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Positioned(
-            left: isLeftEdge ? 0 : null,
-            right: isLeftEdge ? null : 0,
+            left: isLeftEdge ? -2 : null,
+            right: isLeftEdge ? null : -2,
             top: top,
             width: stretchedWidth,
             height: handleHeight,
