@@ -18,6 +18,9 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   /// 全局开关，默认开启。设为 false 关闭所有页面的自定义 iOS 返回手势。
   static final ValueNotifier<bool> globalEnabled = ValueNotifier(true);
 
+  /// 手势 UI 向屏幕外侧移动并补偿宽度的距离。
+  static const double indicatorEdgeOverlap = 2;
+
   const XBIosEdgeBackGesture({
     super.key,
     required this.child,
@@ -532,7 +535,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isLeftEdge = edge == _XBIosBackEdge.left;
-    const double edgeOverlap = 2;
+    const double edgeOverlap = XBIosEdgeBackGesture.indicatorEdgeOverlap;
     final double triggerProgress = triggerDistance <= 0
         ? 1
         : (dragDistance / triggerDistance).clamp(0.0, 1.0).toDouble();

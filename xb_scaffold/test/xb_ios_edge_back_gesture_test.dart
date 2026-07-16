@@ -579,6 +579,7 @@ void main() {
 
       final double rightEdge =
           tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      const double edgeOverlap = XBIosEdgeBackGesture.indicatorEdgeOverlap;
       final TestGesture gesture = await tester.startGesture(
         Offset(rightEdge - 1, 300),
       );
@@ -589,7 +590,7 @@ void main() {
       expect(indicator, findsOneWidget);
       expect(
         tester.getTopRight(indicator).dx,
-        moreOrLessEquals(rightEdge + 2),
+        moreOrLessEquals(rightEdge + edgeOverlap),
       );
       expect(tester.getCenter(indicator).dy, moreOrLessEquals(301.5));
 
@@ -599,12 +600,13 @@ void main() {
     }
   });
 
-  testWidgets('two pixel edge shift preserves the visible indicator width',
+  testWidgets('configured edge shift preserves the visible indicator width',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     try {
       final double screenWidth =
           tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      const double edgeOverlap = XBIosEdgeBackGesture.indicatorEdgeOverlap;
 
       Future<void> verifyEdge({required bool rightEdge}) async {
         await tester.pumpWidget(
@@ -637,19 +639,19 @@ void main() {
           if (rightEdge) {
             expect(
               tester.getTopRight(indicator).dx,
-              moreOrLessEquals(screenWidth + 2),
+              moreOrLessEquals(screenWidth + edgeOverlap),
             );
             visibleWidth = screenWidth - indicatorRect.left;
           } else {
             expect(
               tester.getTopLeft(indicator).dx,
-              moreOrLessEquals(-2),
+              moreOrLessEquals(-edgeOverlap),
             );
             visibleWidth = indicatorRect.right;
           }
           expect(
             tester.getSize(indicator).width - visibleWidth,
-            moreOrLessEquals(2),
+            moreOrLessEquals(edgeOverlap),
           );
         }
         expect(visibleWidth, moreOrLessEquals(21));
