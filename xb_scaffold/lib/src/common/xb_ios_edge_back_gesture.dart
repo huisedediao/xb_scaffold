@@ -33,6 +33,8 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.indicatorRevealDistance = 38,
     this.indicatorSlowdownStartProgress = 0,
     this.indicatorVerticalFollowFactor = 0.1,
+    this.indicatorBulgeVerticalFollowFactor = 0.05,
+    this.maxIndicatorBulgeVerticalOffset = 12,
     this.indicatorColor,
     this.iconColor = Colors.white,
     this.iconSize = 16,
@@ -50,6 +52,15 @@ class XBIosEdgeBackGesture extends StatefulWidget {
           indicatorVerticalFollowFactor >= 0 &&
               indicatorVerticalFollowFactor <= 1,
           'indicatorVerticalFollowFactor must be between 0 and 1',
+        ),
+        assert(
+          indicatorBulgeVerticalFollowFactor >= 0 &&
+              indicatorBulgeVerticalFollowFactor <= 1,
+          'indicatorBulgeVerticalFollowFactor must be between 0 and 1',
+        ),
+        assert(
+          maxIndicatorBulgeVerticalOffset >= 0,
+          'maxIndicatorBulgeVerticalOffset must not be negative',
         ),
         assert(
           iconSize > 0,
@@ -85,6 +96,12 @@ class XBIosEdgeBackGesture extends StatefulWidget {
 
   /// 手指纵向位移传递给指示区域的比例，取值范围为 0 到 1。
   final double indicatorVerticalFollowFactor;
+
+  /// 手指纵向位移传递给鼓包内部位置的比例，取值范围为 0 到 1。
+  final double indicatorBulgeVerticalFollowFactor;
+
+  /// 鼓包在指示区域内部允许的最大纵向偏移。
+  final double maxIndicatorBulgeVerticalOffset;
   final Color? indicatorColor;
   final Color iconColor;
 
@@ -105,6 +122,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   bool _gestureAccepted = false;
   bool _triggeringBack = false;
   double _dragDistance = 0;
+  double _verticalDragDistance = 0;
   double _indicatorCenterY = 0;
   double _contentWidth = 0;
   _XBIosBackEdge? _activeEdge;
@@ -177,6 +195,11 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         revealDistance: widget.indicatorRevealDistance,
                         slowdownStartProgress:
                             widget.indicatorSlowdownStartProgress,
+                        verticalDragDistance: _verticalDragDistance,
+                        bulgeVerticalFollowFactor:
+                            widget.indicatorBulgeVerticalFollowFactor,
+                        maxBulgeVerticalOffset:
+                            widget.maxIndicatorBulgeVerticalOffset,
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
                         iconColor: widget.iconColor,
@@ -207,6 +230,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
     _activeEdge = edge;
     setState(() {
       _dragDistance = 0;
+      _verticalDragDistance = 0;
       _gestureTracking = true;
       _gestureAccepted = false;
     });
@@ -247,11 +271,15 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
     final double indicatorCenterY = startPosition.dy +
         (localPosition.dy - startPosition.dy) *
             widget.indicatorVerticalFollowFactor;
-    if (_dragDistance == distance && _indicatorCenterY == indicatorCenterY) {
+    final double verticalDragDistance = localPosition.dy - startPosition.dy;
+    if (_dragDistance == distance &&
+        _verticalDragDistance == verticalDragDistance &&
+        _indicatorCenterY == indicatorCenterY) {
       return;
     }
     setState(() {
       _dragDistance = distance;
+      _verticalDragDistance = verticalDragDistance;
       _indicatorCenterY = indicatorCenterY;
     });
   }
@@ -296,11 +324,13 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
         _gestureTracking = false;
         _gestureAccepted = false;
         _dragDistance = 0;
+        _verticalDragDistance = 0;
       });
     } else {
       _gestureTracking = false;
       _gestureAccepted = false;
       _dragDistance = 0;
+      _verticalDragDistance = 0;
     }
     _startPosition = null;
     _startTime = null;
@@ -402,6 +432,9 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.maxIndicatorHeight,
     required this.revealDistance,
     required this.slowdownStartProgress,
+    required this.verticalDragDistance,
+    required this.bulgeVerticalFollowFactor,
+    required this.maxBulgeVerticalOffset,
     required this.maxHeight,
     required this.indicatorColor,
     required this.iconColor,
@@ -417,6 +450,9 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double maxIndicatorHeight;
   final double revealDistance;
   final double slowdownStartProgress;
+  final double verticalDragDistance;
+  final double bulgeVerticalFollowFactor;
+  final double maxBulgeVerticalOffset;
   final double maxHeight;
   final Color? indicatorColor;
   final Color iconColor;
@@ -456,6 +492,17 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double top =
         (centerY - handleHeight / 2).clamp(0.0, maxTop).toDouble();
     final double localCenterY = centerY - top;
+    final double effectiveMaxBulgeOffset = math.min(
+      maxBulgeVerticalOffset,
+      handleHeight * 0.18,
+    );
+    final double bulgeOffsetY =
+        (verticalDragDistance * bulgeVerticalFollowFactor)
+            .clamp(-effectiveMaxBulgeOffset, effectiveMaxBulgeOffset)
+            .toDouble();
+    final double bulgeCenterY = (localCenterY + bulgeOffsetY)
+        .clamp(handleHeight * 0.2, handleHeight * 0.8)
+        .toDouble();
     final double arrowSize = iconSize / 0.78;
     final double effectiveMaxWidth = math.max(0.0, maxDragOffset);
     final double baseWidth = math.min(size * 0.68, effectiveMaxWidth);
@@ -468,7 +515,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
     final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
     final double arrowTop =
-        (localCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
+        (bulgeCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
     final double targetOpacity =
         (0.32 + triggerProgress * 0.68).clamp(0.0, 1.0).toDouble();
     final double opacity = targetOpacity * growthProgress;
@@ -496,6 +543,7 @@ class _XBIosBackIndicator extends StatelessWidget {
                     child: CustomPaint(
                       painter: _XBIosBackHandlePainter(
                         edge: edge,
+                        bulgeCenterY: bulgeCenterY,
                         color: indicatorColor ??
                             Colors.black.withValues(alpha: 0.58),
                       ),
@@ -558,10 +606,12 @@ double _growthCompletionProgress(double slowdownStartProgress) {
 class _XBIosBackHandlePainter extends CustomPainter {
   const _XBIosBackHandlePainter({
     required this.edge,
+    required this.bulgeCenterY,
     required this.color,
   });
 
   final _XBIosBackEdge edge;
+  final double bulgeCenterY;
   final Color color;
 
   @override
@@ -572,24 +622,29 @@ class _XBIosBackHandlePainter extends CustomPainter {
       ..isAntiAlias = true;
     final double width = size.width;
     final double height = size.height;
-    final double centerY = height / 2;
+    final double centerY = bulgeCenterY.clamp(0.0, height).toDouble();
+    final double topControl1Y = centerY * 0.3;
+    final double topControl2Y = centerY * 0.5;
+    final double bottomHeight = height - centerY;
+    final double bottomControl1Y = centerY + bottomHeight * 0.5;
+    final double bottomControl2Y = centerY + bottomHeight * 0.7;
 
     final Path path = switch (edge) {
       _XBIosBackEdge.left => Path()
         ..moveTo(0, 0)
         ..cubicTo(
           width * 0.18,
-          height * 0.15,
+          topControl1Y,
           width,
-          height * 0.25,
+          topControl2Y,
           width,
           centerY,
         )
         ..cubicTo(
           width,
-          height * 0.75,
+          bottomControl1Y,
           width * 0.18,
-          height * 0.85,
+          bottomControl2Y,
           0,
           height,
         )
@@ -598,17 +653,17 @@ class _XBIosBackHandlePainter extends CustomPainter {
         ..moveTo(width, 0)
         ..cubicTo(
           width * 0.82,
-          height * 0.15,
+          topControl1Y,
           0,
-          height * 0.25,
+          topControl2Y,
           0,
           centerY,
         )
         ..cubicTo(
           0,
-          height * 0.75,
+          bottomControl1Y,
           width * 0.82,
-          height * 0.85,
+          bottomControl2Y,
           width,
           height,
         )
@@ -620,6 +675,8 @@ class _XBIosBackHandlePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _XBIosBackHandlePainter oldDelegate) {
-    return oldDelegate.edge != edge || oldDelegate.color != color;
+    return oldDelegate.edge != edge ||
+        oldDelegate.bulgeCenterY != bulgeCenterY ||
+        oldDelegate.color != color;
   }
 }

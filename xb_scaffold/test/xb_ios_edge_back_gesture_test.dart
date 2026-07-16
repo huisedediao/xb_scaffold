@@ -29,6 +29,8 @@ void main() {
     expect(gesture.indicatorRevealDistance, 38);
     expect(gesture.indicatorSlowdownStartProgress, 0);
     expect(gesture.indicatorVerticalFollowFactor, 0.1);
+    expect(gesture.indicatorBulgeVerticalFollowFactor, 0.05);
+    expect(gesture.maxIndicatorBulgeVerticalOffset, 12);
     expect(gesture.iconSize, 16);
   });
 
@@ -286,6 +288,56 @@ void main() {
       await gesture.cancel();
       await tester.pump();
       expect(_indicatorFinder(), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('bulge and arrow lean toward vertical pointer movement',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            supportRightEdge: false,
+            triggerDistance: 1000,
+            triggerVelocity: double.infinity,
+            maxDragOffset: 50,
+            maxIndicatorHeight: 124,
+            indicatorRevealDistance: 10,
+            indicatorSlowdownStartProgress: 1,
+            indicatorVerticalFollowFactor: 0.1,
+            indicatorBulgeVerticalFollowFactor: 0.05,
+            maxIndicatorBulgeVerticalOffset: 12,
+            onBack: () {},
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await gesture.moveBy(const Offset(50, 100));
+      await tester.pump();
+
+      final Finder indicator = _indicatorFinder();
+      final Finder arrow = find.byIcon(Icons.arrow_back_ios_new_rounded);
+      expect(tester.getCenter(indicator).dy, moreOrLessEquals(310));
+      expect(tester.getCenter(arrow).dy, moreOrLessEquals(315));
+
+      await gesture.moveBy(const Offset(0, -200));
+      await tester.pump();
+      expect(tester.getCenter(indicator).dy, moreOrLessEquals(290));
+      expect(tester.getCenter(arrow).dy, moreOrLessEquals(285));
+
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+      expect(tester.getCenter(indicator).dy, moreOrLessEquals(300));
+      expect(tester.getCenter(arrow).dy, moreOrLessEquals(300));
+
+      await gesture.cancel();
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }
