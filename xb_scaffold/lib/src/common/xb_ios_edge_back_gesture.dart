@@ -687,6 +687,15 @@ class _XBIosBackHandlePainter extends CustomPainter {
     required this.color,
   });
 
+  /// 边缘控制点向屏幕内偏移的宽度比例，越小越贴近屏幕边缘。
+  static const double _edgeControlInsetFactor = 0;
+
+  /// 边缘控制点占对应半段高度的比例，控制靠近边缘处的大半径曲线。
+  static const double _edgeControlLengthFactor = 0.45;
+
+  /// 顶峰控制点与顶峰的距离比例，越小顶峰附近的曲线半径越小。
+  static const double _peakControlLengthFactor = 0.4;
+
   final _XBIosBackEdge edge;
   final double bulgeCenterY;
   final Color color;
@@ -700,28 +709,31 @@ class _XBIosBackHandlePainter extends CustomPainter {
     final double width = size.width;
     final double height = size.height;
     final double centerY = bulgeCenterY.clamp(0.0, height).toDouble();
-    final double topControl1Y = centerY * 0.3;
-    final double topControl2Y = centerY * 0.5;
+    final double edgeControlInset = width * _edgeControlInsetFactor;
+    final double topEdgeControlY = centerY * _edgeControlLengthFactor;
+    final double topPeakControlY = centerY * (1 - _peakControlLengthFactor);
     final double bottomHeight = height - centerY;
-    final double bottomControl1Y = centerY + bottomHeight * 0.5;
-    final double bottomControl2Y = centerY + bottomHeight * 0.7;
+    final double bottomPeakControlY =
+        centerY + bottomHeight * _peakControlLengthFactor;
+    final double bottomEdgeControlY =
+        centerY + bottomHeight * (1 - _edgeControlLengthFactor);
 
     final Path path = switch (edge) {
       _XBIosBackEdge.left => Path()
         ..moveTo(0, 0)
         ..cubicTo(
-          width * 0.18,
-          topControl1Y,
+          edgeControlInset,
+          topEdgeControlY,
           width,
-          topControl2Y,
+          topPeakControlY,
           width,
           centerY,
         )
         ..cubicTo(
           width,
-          bottomControl1Y,
-          width * 0.18,
-          bottomControl2Y,
+          bottomPeakControlY,
+          edgeControlInset,
+          bottomEdgeControlY,
           0,
           height,
         )
@@ -729,18 +741,18 @@ class _XBIosBackHandlePainter extends CustomPainter {
       _XBIosBackEdge.right => Path()
         ..moveTo(width, 0)
         ..cubicTo(
-          width * 0.82,
-          topControl1Y,
+          width - edgeControlInset,
+          topEdgeControlY,
           0,
-          topControl2Y,
+          topPeakControlY,
           0,
           centerY,
         )
         ..cubicTo(
           0,
-          bottomControl1Y,
-          width * 0.82,
-          bottomControl2Y,
+          bottomPeakControlY,
+          width - edgeControlInset,
+          bottomEdgeControlY,
           width,
           height,
         )
