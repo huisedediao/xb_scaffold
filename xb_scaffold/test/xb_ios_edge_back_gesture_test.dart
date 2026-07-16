@@ -76,6 +76,99 @@ void main() {
     }
   });
 
+  testWidgets('gesture starts only where maximum indicator height fully fits',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      int backCount = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            maxIndicatorHeight: 120,
+            onBack: () => backCount++,
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final double screenWidth =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      final double screenHeight =
+          tester.view.physicalSize.height / tester.view.devicePixelRatio;
+
+      Future<void> expectRejected(Offset start, Offset movement) async {
+        final TestGesture gesture = await tester.startGesture(start);
+        await gesture.moveBy(movement);
+        await tester.pump();
+        expect(_indicatorFinder(), findsNothing);
+        await gesture.up();
+        await tester.pump();
+      }
+
+      await expectRejected(
+        const Offset(1, 59),
+        const Offset(100, 0),
+      );
+      await expectRejected(
+        Offset(screenWidth - 1, screenHeight - 59),
+        const Offset(-100, 0),
+      );
+      expect(backCount, 0);
+
+      final TestGesture topBoundaryGesture = await tester.startGesture(
+        const Offset(1, 60),
+      );
+      await topBoundaryGesture.moveBy(const Offset(100, 0));
+      await tester.pump();
+      expect(tester.getTopLeft(_indicatorFinder()).dy, moreOrLessEquals(0));
+      await topBoundaryGesture.cancel();
+      await tester.pump();
+
+      final TestGesture bottomBoundaryGesture = await tester.startGesture(
+        Offset(screenWidth - 1, screenHeight - 60),
+      );
+      await bottomBoundaryGesture.moveBy(const Offset(-100, 0));
+      await tester.pump();
+      expect(
+        tester.getBottomRight(_indicatorFinder()).dy,
+        moreOrLessEquals(screenHeight),
+      );
+      await bottomBoundaryGesture.cancel();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('gesture stays disabled when indicator is taller than content',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return XBIosEdgeBackGesture(
+                maxIndicatorHeight: constraints.maxHeight + 1,
+                onBack: () {},
+                child: const ColoredBox(color: Colors.white),
+              );
+            },
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await gesture.moveBy(const Offset(100, 0));
+      await tester.pump();
+      expect(_indicatorFinder(), findsNothing);
+      await gesture.up();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('indicator width never exceeds or shrinks back to maxDragOffset',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;

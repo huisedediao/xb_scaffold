@@ -125,6 +125,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   double _verticalDragDistance = 0;
   double _indicatorCenterY = 0;
   double _contentWidth = 0;
+  double _contentHeight = 0;
   _XBIosBackEdge? _activeEdge;
 
   bool get _effectiveEnabled {
@@ -145,6 +146,9 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
         _contentWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : MediaQuery.of(context).size.width;
+        _contentHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : MediaQuery.of(context).size.height;
 
         return Stack(
           children: [
@@ -164,6 +168,8 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         instance
                           ..edgeWidth = widget.edgeWidth
                           ..contentWidth = _contentWidth
+                          ..contentHeight = _contentHeight
+                          ..maxIndicatorHeight = widget.maxIndicatorHeight
                           ..supportLeftEdge = widget.supportLeftEdge
                           ..supportRightEdge = widget.supportRightEdge
                           ..dragStartBehavior = DragStartBehavior.down
@@ -216,7 +222,13 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   }
 
   void _handlePointerDown(PointerDownEvent event) {
-    if (!_effectiveEnabled || _trackingPointer != null) {
+    if (!_effectiveEnabled ||
+        _trackingPointer != null ||
+        !_isIndicatorStartYAllowed(
+          startY: event.localPosition.dy,
+          contentHeight: _contentHeight,
+          maxIndicatorHeight: widget.maxIndicatorHeight,
+        )) {
       return;
     }
     final _XBIosBackEdge? edge = _resolveEdge(event.localPosition.dx);
@@ -383,6 +395,8 @@ class _XBIosEdgeHorizontalDragGestureRecognizer
 
   double edgeWidth = 32;
   double contentWidth = 0;
+  double contentHeight = 0;
+  double maxIndicatorHeight = 0;
   bool supportLeftEdge = true;
   bool supportRightEdge = true;
   ValueChanged<PointerDownEvent>? onPointerDown;
@@ -409,6 +423,13 @@ class _XBIosEdgeHorizontalDragGestureRecognizer
     }
     final double effectiveEdgeWidth = math.max(0.0, edgeWidth);
     final double dx = event.localPosition.dx;
+    if (!_isIndicatorStartYAllowed(
+      startY: event.localPosition.dy,
+      contentHeight: contentHeight,
+      maxIndicatorHeight: maxIndicatorHeight,
+    )) {
+      return false;
+    }
     if (supportLeftEdge && dx <= effectiveEdgeWidth) {
       return true;
     }
@@ -419,6 +440,23 @@ class _XBIosEdgeHorizontalDragGestureRecognizer
     }
     return false;
   }
+}
+
+bool _isIndicatorStartYAllowed({
+  required double startY,
+  required double contentHeight,
+  required double maxIndicatorHeight,
+}) {
+  if (!contentHeight.isFinite || contentHeight <= 0) {
+    return false;
+  }
+  final double effectiveIndicatorHeight = math.max(0.0, maxIndicatorHeight);
+  if (effectiveIndicatorHeight > contentHeight) {
+    return false;
+  }
+  final double halfIndicatorHeight = effectiveIndicatorHeight / 2;
+  return startY >= halfIndicatorHeight &&
+      startY <= contentHeight - halfIndicatorHeight;
 }
 
 class _XBIosBackIndicator extends StatelessWidget {
