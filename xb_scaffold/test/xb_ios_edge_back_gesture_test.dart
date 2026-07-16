@@ -23,11 +23,11 @@ void main() {
     );
 
     expect(gesture.edgeWidth, 32);
-    expect(gesture.triggerDistance, 41);
+    expect(gesture.triggerDistance, 65);
     expect(gesture.triggerVelocity, 644);
     expect(gesture.maxDragOffset, 21);
     expect(gesture.maxIndicatorHeight, 124);
-    expect(gesture.indicatorRevealDistance, 38);
+    expect(gesture.indicatorRevealDistance, 55);
     expect(gesture.indicatorSlowdownStartProgress, 0);
     expect(gesture.indicatorVerticalFollowFactor, 0.1);
     expect(gesture.indicatorBulgeVerticalFollowFactor, 0.05);
@@ -197,6 +197,8 @@ void main() {
         MaterialApp(
           home: XBIosEdgeBackGesture(
             maxIndicatorHeight: 120,
+            indicatorRevealDistance: 40,
+            indicatorSlowdownStartProgress: 1,
             onBack: () => backCount++,
             child: const ColoredBox(color: Colors.white),
           ),
