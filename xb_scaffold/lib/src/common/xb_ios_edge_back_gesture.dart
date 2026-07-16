@@ -30,9 +30,14 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.maxDragOffset = 40,
     this.indicatorSize = 44,
     this.maxIndicatorHeight = 220,
+    this.indicatorRevealDistance = 40,
     this.indicatorColor,
     this.iconColor = Colors.white,
-  }) : assert(maxIndicatorHeight > 0, 'maxIndicatorHeight must be positive');
+  })  : assert(maxIndicatorHeight > 0, 'maxIndicatorHeight must be positive'),
+        assert(
+          indicatorRevealDistance > 0,
+          'indicatorRevealDistance must be positive',
+        );
 
   final Widget child;
   final XBIosEdgeBackCallback onBack;
@@ -49,6 +54,9 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   ///
   /// 指示区域随手指向屏幕内滑动逐渐增高，达到该值后不再增高。
   final double maxIndicatorHeight;
+
+  /// 指示区域从屏幕边缘完全展开所需的拖动距离。
+  final double indicatorRevealDistance;
   final Color? indicatorColor;
   final Color iconColor;
 
@@ -61,6 +69,8 @@ enum _XBIosBackEdge { left, right }
 class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   Offset? _startPosition;
   DateTime? _startTime;
+  int? _trackingPointer;
+  bool _gestureTracking = false;
   bool _gestureAccepted = false;
   bool _triggeringBack = false;
   double _dragDistance = 0;
@@ -77,7 +87,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_effectiveEnabled && !_gestureAccepted) {
+    if (!_effectiveEnabled && !_gestureTracking) {
       return widget.child;
     }
 
@@ -90,7 +100,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
         return Stack(
           children: [
             Positioned.fill(child: widget.child),
-            if (_effectiveEnabled || _gestureAccepted)
+            if (_effectiveEnabled || _gestureTracking)
               Positioned.fill(
                 child: RawGestureDetector(
                   behavior: HitTestBehavior.translucent,
@@ -108,6 +118,8 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                           ..supportLeftEdge = widget.supportLeftEdge
                           ..supportRightEdge = widget.supportRightEdge
                           ..dragStartBehavior = DragStartBehavior.down
+                          ..onPointerDown = _handlePointerDown
+                          ..onPointerMove = _handlePointerMove
                           ..onStart = _handleDragStart
                           ..onUpdate = _handleDragUpdate
                           ..onEnd = _handleDragEnd
@@ -118,7 +130,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                   child: const SizedBox.expand(),
                 ),
               ),
-            if (_gestureAccepted && _activeEdge != null)
+            if (_gestureTracking && _activeEdge != null)
               Positioned.fill(
                 child: AbsorbPointer(
                   child: LayoutBuilder(
@@ -131,6 +143,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         maxDragOffset: widget.maxDragOffset,
                         size: widget.indicatorSize,
                         maxIndicatorHeight: widget.maxIndicatorHeight,
+                        revealDistance: widget.indicatorRevealDistance,
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
                         iconColor: widget.iconColor,
@@ -145,37 +158,64 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
     );
   }
 
-  void _handleDragStart(DragStartDetails details) {
-    if (!_effectiveEnabled) {
+  void _handlePointerDown(PointerDownEvent event) {
+    if (!_effectiveEnabled || _trackingPointer != null) {
       return;
     }
-    final _XBIosBackEdge? edge = _resolveEdge(details.localPosition.dx);
+    final _XBIosBackEdge? edge = _resolveEdge(event.localPosition.dx);
     if (edge == null) {
       return;
     }
-    _startPosition = details.localPosition;
+    _startPosition = event.localPosition;
     _startTime = DateTime.now();
-    _indicatorCenterY = details.localPosition.dy;
+    _trackingPointer = event.pointer;
+    _indicatorCenterY = event.localPosition.dy;
     _activeEdge = edge;
     setState(() {
       _dragDistance = 0;
-      _gestureAccepted = true;
+      _gestureTracking = true;
+      _gestureAccepted = false;
     });
   }
 
-  void _handleDragUpdate(DragUpdateDetails details) {
-    final _XBIosBackEdge? edge = _activeEdge;
-    if (!_gestureAccepted || _startPosition == null || edge == null) {
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _trackingPointer) {
       return;
     }
-    final double deltaX = details.localPosition.dx - _startPosition!.dx;
+    _updateGesturePosition(event.localPosition);
+  }
+
+  void _handleDragStart(DragStartDetails details) {
+    if (!_effectiveEnabled || !_gestureTracking || _activeEdge == null) {
+      return;
+    }
+    _gestureAccepted = true;
+  }
+
+  void _handleDragUpdate(DragUpdateDetails details) {
+    if (!_gestureAccepted) {
+      return;
+    }
+    _updateGesturePosition(details.localPosition);
+  }
+
+  void _updateGesturePosition(Offset localPosition) {
+    final Offset? startPosition = _startPosition;
+    final _XBIosBackEdge? edge = _activeEdge;
+    if (!_gestureTracking || startPosition == null || edge == null) {
+      return;
+    }
+    final double deltaX = localPosition.dx - startPosition.dx;
     final double distance = switch (edge) {
       _XBIosBackEdge.left => math.max(0.0, deltaX),
       _XBIosBackEdge.right => math.max(0.0, -deltaX),
     };
+    if (_dragDistance == distance && _indicatorCenterY == localPosition.dy) {
+      return;
+    }
     setState(() {
       _dragDistance = distance;
-      _indicatorCenterY = details.localPosition.dy;
+      _indicatorCenterY = localPosition.dy;
     });
   }
 
@@ -213,17 +253,21 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   }
 
   void _resetGesture() {
-    if (mounted && (_gestureAccepted || _dragDistance > 0)) {
+    if (mounted &&
+        (_gestureTracking || _gestureAccepted || _dragDistance > 0)) {
       setState(() {
+        _gestureTracking = false;
         _gestureAccepted = false;
         _dragDistance = 0;
       });
     } else {
+      _gestureTracking = false;
       _gestureAccepted = false;
       _dragDistance = 0;
     }
     _startPosition = null;
     _startTime = null;
+    _trackingPointer = null;
     _activeEdge = null;
   }
 
@@ -274,6 +318,22 @@ class _XBIosEdgeHorizontalDragGestureRecognizer
   double contentWidth = 0;
   bool supportLeftEdge = true;
   bool supportRightEdge = true;
+  ValueChanged<PointerDownEvent>? onPointerDown;
+  ValueChanged<PointerMoveEvent>? onPointerMove;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    onPointerDown?.call(event);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event is PointerMoveEvent) {
+      onPointerMove?.call(event);
+    }
+    super.handleEvent(event);
+  }
 
   @override
   bool isPointerAllowed(PointerEvent event) {
@@ -303,6 +363,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.maxDragOffset,
     required this.size,
     required this.maxIndicatorHeight,
+    required this.revealDistance,
     required this.maxHeight,
     required this.indicatorColor,
     required this.iconColor,
@@ -315,6 +376,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double maxDragOffset;
   final double size;
   final double maxIndicatorHeight;
+  final double revealDistance;
   final double maxHeight;
   final Color? indicatorColor;
   final Color iconColor;
@@ -322,33 +384,43 @@ class _XBIosBackIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isLeftEdge = edge == _XBIosBackEdge.left;
-    final double progress = triggerDistance <= 0
+    final double triggerProgress = triggerDistance <= 0
         ? 1
         : (dragDistance / triggerDistance).clamp(0.0, 1.0).toDouble();
+    final double revealProgress = revealDistance <= 0
+        ? 1
+        : (dragDistance / revealDistance).clamp(0.0, 1.0).toDouble();
     final double horizontalProgress = maxDragOffset <= 0
         ? 1
         : (dragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
     final double height = maxHeight.isFinite ? maxHeight : size * 16;
     final double naturalHandleHeight = size * 3.0 + dragDistance;
     final double availableHeight = math.max(0.0, height);
-    final double handleHeight = math.min(
+    final double targetHandleHeight = math.min(
       naturalHandleHeight,
       math.min(maxIndicatorHeight, availableHeight),
     );
+    final double handleHeight = targetHandleHeight * revealProgress;
     final double handleWidth = size * (0.68 + horizontalProgress * 0.28);
     final double maxTop = math.max(0.0, height - handleHeight);
     final double top =
         (centerY - handleHeight / 2).clamp(0.0, maxTop).toDouble();
     final double localCenterY = centerY - top;
     final double arrowSize = size * 0.72;
-    final double stretchedWidth =
+    final double targetStretchedWidth =
         handleWidth + horizontalProgress * (maxDragOffset - handleWidth);
+    final double stretchedWidth = targetStretchedWidth * revealProgress;
     final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
     final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
     final double arrowTop =
         (localCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
-    final double opacity = (0.32 + progress * 0.68).clamp(0.0, 1.0).toDouble();
-    final double scale = 0.9 + progress * 0.12;
+    final double targetOpacity =
+        (0.32 + triggerProgress * 0.68).clamp(0.0, 1.0).toDouble();
+    final double opacity = targetOpacity * revealProgress;
+    final double arrowProgress =
+        ((revealProgress - 0.2) / 0.8).clamp(0.0, 1.0).toDouble();
+    final double targetScale = 0.9 + triggerProgress * 0.12;
+    final double scale = 0.65 + arrowProgress * (targetScale - 0.65);
 
     return SizedBox.expand(
       child: Stack(
@@ -363,7 +435,7 @@ class _XBIosBackIndicator extends StatelessWidget {
             child: Opacity(
               opacity: opacity,
               child: Stack(
-                clipBehavior: Clip.none,
+                clipBehavior: Clip.hardEdge,
                 children: [
                   Positioned.fill(
                     child: CustomPaint(
@@ -374,23 +446,27 @@ class _XBIosBackIndicator extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: isLeftEdge ? arrowInset : null,
-                    right: isLeftEdge ? null : arrowInset,
-                    top: arrowTop,
-                    width: arrowSize,
-                    height: arrowSize,
-                    child: Transform.scale(
-                      scale: scale,
-                      child: Icon(
-                        isLeftEdge
-                            ? Icons.arrow_back_ios_new_rounded
-                            : Icons.arrow_back_ios_new_rounded,
-                        color: iconColor,
-                        size: arrowSize * 0.78,
+                  if (arrowProgress > 0)
+                    Positioned(
+                      left: isLeftEdge ? arrowInset : null,
+                      right: isLeftEdge ? null : arrowInset,
+                      top: arrowTop,
+                      width: arrowSize,
+                      height: arrowSize,
+                      child: Opacity(
+                        opacity: arrowProgress,
+                        child: Transform.scale(
+                          scale: scale,
+                          child: Icon(
+                            isLeftEdge
+                                ? Icons.arrow_back_ios_new_rounded
+                                : Icons.arrow_back_ios_new_rounded,
+                            color: iconColor,
+                            size: arrowSize * 0.78,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
