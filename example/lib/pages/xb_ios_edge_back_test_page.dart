@@ -42,12 +42,13 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
   bool _supportLeftEdge = true;
   bool _supportRightEdge = true;
   double _edgeWidth = 32;
-  double _triggerDistance = 40;
-  double _triggerVelocity = 700;
-  double _maxDragOffset = 40;
-  double _maxIndicatorHeight = 220;
-  double _indicatorRevealDistance = 40;
-  double _indicatorSlowdownStartProgress = 0.6;
+  double _triggerDistance = 25;
+  double _triggerVelocity = 644;
+  double _maxDragOffset = 25;
+  double _maxIndicatorHeight = 124;
+  double _indicatorRevealDistance = 46;
+  double _indicatorSlowdownStartProgress = 0;
+  double _iconSize = 16;
 
   @override
   void initState() {
@@ -139,6 +140,8 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
             (v) => setState(() => _indicatorSlowdownStartProgress = v),
             valueLabelBuilder: (v) => '${(v * 100).round()}%',
           ),
+          _sliderRow('iconSize', _iconSize, 12, 36,
+              (v) => setState(() => _iconSize = v)),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _pushTestPage,
@@ -231,6 +234,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      iconSize: _iconSize,
       depth: 1,
     ));
   }
@@ -247,6 +251,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      iconSize: _iconSize,
     ));
   }
 
@@ -262,6 +267,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      iconSize: _iconSize,
       depth: 3,
     ));
   }
@@ -280,6 +286,7 @@ class _BackSubPage extends StatelessWidget {
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
     required this.indicatorSlowdownStartProgress,
+    required this.iconSize,
     required this.depth,
   });
 
@@ -293,6 +300,7 @@ class _BackSubPage extends StatelessWidget {
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
   final double indicatorSlowdownStartProgress;
+  final double iconSize;
   final int depth;
 
   @override
@@ -309,6 +317,7 @@ class _BackSubPage extends StatelessWidget {
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
         indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
+        iconSize: iconSize,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
       ),
@@ -363,6 +372,7 @@ class _BackSubPage extends StatelessWidget {
                       indicatorRevealDistance: indicatorRevealDistance,
                       indicatorSlowdownStartProgress:
                           indicatorSlowdownStartProgress,
+                      iconSize: iconSize,
                       depth: depth - 1,
                     )),
                   );
@@ -390,6 +400,7 @@ class _LongListSubPage extends StatelessWidget {
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
     required this.indicatorSlowdownStartProgress,
+    required this.iconSize,
   });
 
   final bool enabled;
@@ -402,6 +413,7 @@ class _LongListSubPage extends StatelessWidget {
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
   final double indicatorSlowdownStartProgress;
+  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -417,6 +429,7 @@ class _LongListSubPage extends StatelessWidget {
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
         indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
+        iconSize: iconSize,
         onBack: () => Navigator.of(context).maybePop(),
         child: Scaffold(
           appBar: AppBar(

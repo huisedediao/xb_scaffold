@@ -12,7 +12,25 @@ Finder _indicatorFinder() {
   );
 }
 
+void _onBack() {}
+
 void main() {
+  test('defaults match the tuned gesture values', () {
+    const XBIosEdgeBackGesture gesture = XBIosEdgeBackGesture(
+      onBack: _onBack,
+      child: SizedBox(),
+    );
+
+    expect(gesture.edgeWidth, 32);
+    expect(gesture.triggerDistance, 25);
+    expect(gesture.triggerVelocity, 644);
+    expect(gesture.maxDragOffset, 25);
+    expect(gesture.maxIndicatorHeight, 124);
+    expect(gesture.indicatorRevealDistance, 46);
+    expect(gesture.indicatorSlowdownStartProgress, 0);
+    expect(gesture.iconSize, 16);
+  });
+
   testWidgets('indicator height stops growing at maxIndicatorHeight',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
@@ -24,7 +42,7 @@ void main() {
             triggerDistance: 1000,
             triggerVelocity: double.infinity,
             maxDragOffset: 300,
-            maxIndicatorHeight: 220,
+            maxIndicatorHeight: 160,
             onBack: () {},
             child: const ColoredBox(color: Colors.white),
           ),
@@ -39,12 +57,55 @@ void main() {
 
       final Finder indicator = _indicatorFinder();
       expect(indicator, findsOneWidget);
-      expect(tester.getSize(indicator).height, 182);
+      expect(tester.getSize(indicator).height, lessThan(160));
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.arrow_back_ios_new_rounded)).size,
+        16,
+      );
 
       await gesture.moveBy(const Offset(200, 0));
       await tester.pump();
 
-      expect(tester.getSize(indicator).height, 220);
+      expect(tester.getSize(indicator).height, 160);
+      await gesture.cancel();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('indicator width never exceeds or shrinks back to maxDragOffset',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            supportRightEdge: false,
+            triggerDistance: 1000,
+            triggerVelocity: double.infinity,
+            maxDragOffset: 20,
+            indicatorRevealDistance: 10,
+            onBack: () {},
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      final List<double> widths = <double>[];
+      for (int i = 0; i < 3; i++) {
+        await gesture.moveBy(i == 0 ? const Offset(10, 0) : const Offset(5, 0));
+        await tester.pump();
+        widths.add(tester.getSize(_indicatorFinder()).width);
+      }
+
+      expect(widths, everyElement(lessThanOrEqualTo(20)));
+      expect(widths[1], greaterThanOrEqualTo(widths[0]));
+      expect(widths[2], greaterThanOrEqualTo(widths[1]));
+      expect(widths.last, moreOrLessEquals(20));
+
       await gesture.cancel();
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -61,6 +122,8 @@ void main() {
             supportRightEdge: false,
             triggerDistance: 1000,
             triggerVelocity: double.infinity,
+            maxDragOffset: 40,
+            maxIndicatorHeight: 220,
             indicatorRevealDistance: 100,
             indicatorSlowdownStartProgress: 0.6,
             onBack: () {},
@@ -77,7 +140,7 @@ void main() {
 
       final Finder indicator = _indicatorFinder();
       final List<Size> sizes = <Size>[tester.getSize(indicator)];
-      for (int i = 0; i < 4; i++) {
+      for (int i = 0; i < 8; i++) {
         await gesture.moveBy(const Offset(10, 0));
         await tester.pump();
         sizes.add(tester.getSize(indicator));
@@ -99,6 +162,10 @@ void main() {
       expect(sizes.last.width, moreOrLessEquals(40));
       expect(sizes.last.height, moreOrLessEquals(220));
 
+      await gesture.moveBy(const Offset(50, 0));
+      await tester.pump();
+      expect(tester.getSize(indicator), sizes.last);
+
       await gesture.cancel();
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -119,6 +186,8 @@ void main() {
               supportRightEdge: false,
               triggerDistance: 1000,
               triggerVelocity: double.infinity,
+              maxDragOffset: 40,
+              maxIndicatorHeight: 220,
               indicatorRevealDistance: 100,
               indicatorSlowdownStartProgress: slowdownStart,
               onBack: () {},
@@ -148,8 +217,8 @@ void main() {
         slowdownStart: 0.8,
         dragDistance: 90,
       );
-      expect(afterCustomStart.width, moreOrLessEquals(38));
-      expect(afterCustomStart.height, moreOrLessEquals(209));
+      expect(afterCustomStart.width, moreOrLessEquals(35.5));
+      expect(afterCustomStart.height, moreOrLessEquals(195.25));
 
       final Size fullyLinear = await measureIndicator(
         slowdownStart: 1,

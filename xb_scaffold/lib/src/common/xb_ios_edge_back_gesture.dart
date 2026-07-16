@@ -25,15 +25,16 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.supportLeftEdge = true,
     this.supportRightEdge = true,
     this.edgeWidth = 32,
-    this.triggerDistance = 40,
-    this.triggerVelocity = 700,
-    this.maxDragOffset = 40,
+    this.triggerDistance = 25,
+    this.triggerVelocity = 644,
+    this.maxDragOffset = 25,
     this.indicatorSize = 44,
-    this.maxIndicatorHeight = 220,
-    this.indicatorRevealDistance = 40,
-    this.indicatorSlowdownStartProgress = 0.6,
+    this.maxIndicatorHeight = 124,
+    this.indicatorRevealDistance = 46,
+    this.indicatorSlowdownStartProgress = 0,
     this.indicatorColor,
     this.iconColor = Colors.white,
+    this.iconSize = 16,
   })  : assert(maxIndicatorHeight > 0, 'maxIndicatorHeight must be positive'),
         assert(
           indicatorRevealDistance > 0,
@@ -43,6 +44,10 @@ class XBIosEdgeBackGesture extends StatefulWidget {
           indicatorSlowdownStartProgress >= 0 &&
               indicatorSlowdownStartProgress <= 1,
           'indicatorSlowdownStartProgress must be between 0 and 1',
+        ),
+        assert(
+          iconSize > 0,
+          'iconSize must be positive',
         );
 
   final Widget child;
@@ -61,7 +66,10 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   /// 指示区域随手指向屏幕内滑动逐渐增高，达到该值后不再增高。
   final double maxIndicatorHeight;
 
-  /// 指示区域从屏幕边缘完全展开所需的拖动距离。
+  /// 指示区域在线性增长时从屏幕边缘完全展开所需的拖动距离。
+  ///
+  /// 启用减速增长后，实际完整展开距离会根据
+  /// [indicatorSlowdownStartProgress] 延长。
   final double indicatorRevealDistance;
 
   /// 指示区域开始减速增长的展开进度，取值范围为 0 到 1。
@@ -70,6 +78,9 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   final double indicatorSlowdownStartProgress;
   final Color? indicatorColor;
   final Color iconColor;
+
+  /// 返回箭头图标的尺寸。
+  final double iconSize;
 
   @override
   State<XBIosEdgeBackGesture> createState() => _XBIosEdgeBackGestureState();
@@ -160,6 +171,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
                         iconColor: widget.iconColor,
+                        iconSize: widget.iconSize,
                       );
                     },
                   ),
@@ -381,6 +393,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.maxHeight,
     required this.indicatorColor,
     required this.iconColor,
+    required this.iconSize,
   });
 
   final _XBIosBackEdge edge;
@@ -395,6 +408,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double maxHeight;
   final Color? indicatorColor;
   final Color iconColor;
+  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -402,33 +416,43 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double triggerProgress = triggerDistance <= 0
         ? 1
         : (dragDistance / triggerDistance).clamp(0.0, 1.0).toDouble();
-    final double revealProgress = revealDistance <= 0
-        ? 1
-        : (dragDistance / revealDistance).clamp(0.0, 1.0).toDouble();
+    final double rawRevealProgress =
+        revealDistance <= 0 ? 1 : math.max(0.0, dragDistance / revealDistance);
     final double growthProgress = _applyGrowthSlowdown(
-      revealProgress,
+      rawRevealProgress,
       slowdownStartProgress,
     );
+    final double completionProgress =
+        _growthCompletionProgress(slowdownStartProgress);
+    final double completionDragDistance = revealDistance <= 0
+        ? dragDistance
+        : revealDistance * completionProgress;
+    final double effectiveDragDistance =
+        math.min(dragDistance, completionDragDistance);
     final double horizontalProgress = maxDragOffset <= 0
         ? 1
-        : (dragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
+        : (effectiveDragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
     final double height = maxHeight.isFinite ? maxHeight : size * 16;
-    final double naturalHandleHeight = size * 3.0 + dragDistance;
+    final double naturalHandleHeight = size * 3.0 + effectiveDragDistance;
     final double availableHeight = math.max(0.0, height);
     final double targetHandleHeight = math.min(
       naturalHandleHeight,
       math.min(maxIndicatorHeight, availableHeight),
     );
     final double handleHeight = targetHandleHeight * growthProgress;
-    final double handleWidth = size * (0.68 + horizontalProgress * 0.28);
     final double maxTop = math.max(0.0, height - handleHeight);
     final double top =
         (centerY - handleHeight / 2).clamp(0.0, maxTop).toDouble();
     final double localCenterY = centerY - top;
-    final double arrowSize = size * 0.72;
+    final double arrowSize = iconSize / 0.78;
+    final double effectiveMaxWidth = math.max(0.0, maxDragOffset);
+    final double baseWidth = math.min(size * 0.68, effectiveMaxWidth);
     final double targetStretchedWidth =
-        handleWidth + horizontalProgress * (maxDragOffset - handleWidth);
-    final double stretchedWidth = targetStretchedWidth * growthProgress;
+        baseWidth + (effectiveMaxWidth - baseWidth) * horizontalProgress;
+    final double stretchedWidth = math.min(
+      effectiveMaxWidth,
+      targetStretchedWidth * growthProgress,
+    );
     final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
     final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
     final double arrowTop =
@@ -481,7 +505,7 @@ class _XBIosBackIndicator extends StatelessWidget {
                                 ? Icons.arrow_back_ios_new_rounded
                                 : Icons.arrow_back_ios_new_rounded,
                             color: iconColor,
-                            size: arrowSize * 0.78,
+                            size: iconSize,
                           ),
                         ),
                       ),
@@ -497,15 +521,26 @@ class _XBIosBackIndicator extends StatelessWidget {
 }
 
 double _applyGrowthSlowdown(double progress, double slowdownStartProgress) {
-  if (slowdownStartProgress >= 1 || progress <= slowdownStartProgress) {
-    return progress;
+  final double effectiveProgress = math.max(0.0, progress);
+  if (slowdownStartProgress >= 1) {
+    return effectiveProgress.clamp(0.0, 1.0).toDouble();
   }
+  if (effectiveProgress <= slowdownStartProgress) {
+    return effectiveProgress;
+  }
+  final double tailSpan = 2 * (1 - slowdownStartProgress);
   final double tailProgress =
-      (progress - slowdownStartProgress) / (1 - slowdownStartProgress);
-  final double remaining = 1 - tailProgress;
-  final double slowedTailProgress = 1 - remaining * remaining;
+      ((effectiveProgress - slowdownStartProgress) / tailSpan)
+          .clamp(0.0, 1.0)
+          .toDouble();
+  final double slowedTailProgress =
+      2 * tailProgress - tailProgress * tailProgress;
   return slowdownStartProgress +
       (1 - slowdownStartProgress) * slowedTailProgress;
+}
+
+double _growthCompletionProgress(double slowdownStartProgress) {
+  return slowdownStartProgress >= 1 ? 1 : 2 - slowdownStartProgress;
 }
 
 class _XBIosBackHandlePainter extends CustomPainter {
