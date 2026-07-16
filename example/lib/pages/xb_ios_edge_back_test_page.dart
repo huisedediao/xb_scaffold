@@ -44,8 +44,8 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
   double _edgeWidth = 32;
   double _triggerDistance = 65;
   double _triggerVelocity = 644;
-  double _maxDragOffset = 21;
-  double _maxIndicatorHeight = 124;
+  double _maxDragOffset = 25;
+  double _maxIndicatorHeight = 185;
   double _indicatorRevealDistance = 55;
   double _indicatorSlowdownStartProgress = 0;
   double _indicatorVerticalFollowFactor = 0.1;
