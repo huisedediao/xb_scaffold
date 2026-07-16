@@ -48,6 +48,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
   double _maxIndicatorHeight = 124;
   double _indicatorRevealDistance = 38;
   double _indicatorSlowdownStartProgress = 0;
+  double _indicatorVerticalFollowFactor = 0.1;
   double _iconSize = 16;
 
   @override
@@ -138,6 +139,14 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
             0,
             1,
             (v) => setState(() => _indicatorSlowdownStartProgress = v),
+            valueLabelBuilder: (v) => '${(v * 100).round()}%',
+          ),
+          _sliderRow(
+            'verticalFollowFactor',
+            _indicatorVerticalFollowFactor,
+            0,
+            1,
+            (v) => setState(() => _indicatorVerticalFollowFactor = v),
             valueLabelBuilder: (v) => '${(v * 100).round()}%',
           ),
           _sliderRow('iconSize', _iconSize, 12, 36,
@@ -234,6 +243,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      indicatorVerticalFollowFactor: _indicatorVerticalFollowFactor,
       iconSize: _iconSize,
       depth: 1,
     ));
@@ -251,6 +261,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      indicatorVerticalFollowFactor: _indicatorVerticalFollowFactor,
       iconSize: _iconSize,
     ));
   }
@@ -267,6 +278,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
       indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
+      indicatorVerticalFollowFactor: _indicatorVerticalFollowFactor,
       iconSize: _iconSize,
       depth: 3,
     ));
@@ -286,6 +298,7 @@ class _BackSubPage extends StatelessWidget {
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
     required this.indicatorSlowdownStartProgress,
+    required this.indicatorVerticalFollowFactor,
     required this.iconSize,
     required this.depth,
   });
@@ -300,6 +313,7 @@ class _BackSubPage extends StatelessWidget {
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
   final double indicatorSlowdownStartProgress;
+  final double indicatorVerticalFollowFactor;
   final double iconSize;
   final int depth;
 
@@ -317,6 +331,7 @@ class _BackSubPage extends StatelessWidget {
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
         indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
+        indicatorVerticalFollowFactor: indicatorVerticalFollowFactor,
         iconSize: iconSize,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
@@ -372,6 +387,8 @@ class _BackSubPage extends StatelessWidget {
                       indicatorRevealDistance: indicatorRevealDistance,
                       indicatorSlowdownStartProgress:
                           indicatorSlowdownStartProgress,
+                      indicatorVerticalFollowFactor:
+                          indicatorVerticalFollowFactor,
                       iconSize: iconSize,
                       depth: depth - 1,
                     )),
@@ -400,6 +417,7 @@ class _LongListSubPage extends StatelessWidget {
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
     required this.indicatorSlowdownStartProgress,
+    required this.indicatorVerticalFollowFactor,
     required this.iconSize,
   });
 
@@ -413,6 +431,7 @@ class _LongListSubPage extends StatelessWidget {
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
   final double indicatorSlowdownStartProgress;
+  final double indicatorVerticalFollowFactor;
   final double iconSize;
 
   @override
@@ -429,6 +448,7 @@ class _LongListSubPage extends StatelessWidget {
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
         indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
+        indicatorVerticalFollowFactor: indicatorVerticalFollowFactor,
         iconSize: iconSize,
         onBack: () => Navigator.of(context).maybePop(),
         child: Scaffold(

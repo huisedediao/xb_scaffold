@@ -32,6 +32,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.maxIndicatorHeight = 124,
     this.indicatorRevealDistance = 38,
     this.indicatorSlowdownStartProgress = 0,
+    this.indicatorVerticalFollowFactor = 0.1,
     this.indicatorColor,
     this.iconColor = Colors.white,
     this.iconSize = 16,
@@ -44,6 +45,11 @@ class XBIosEdgeBackGesture extends StatefulWidget {
           indicatorSlowdownStartProgress >= 0 &&
               indicatorSlowdownStartProgress <= 1,
           'indicatorSlowdownStartProgress must be between 0 and 1',
+        ),
+        assert(
+          indicatorVerticalFollowFactor >= 0 &&
+              indicatorVerticalFollowFactor <= 1,
+          'indicatorVerticalFollowFactor must be between 0 and 1',
         ),
         assert(
           iconSize > 0,
@@ -76,6 +82,9 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   ///
   /// 设为 0 表示全程减速增长，设为 1 表示保持线性增长。
   final double indicatorSlowdownStartProgress;
+
+  /// 手指纵向位移传递给指示区域的比例，取值范围为 0 到 1。
+  final double indicatorVerticalFollowFactor;
   final Color? indicatorColor;
   final Color iconColor;
 
@@ -235,12 +244,15 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
       _XBIosBackEdge.left => math.max(0.0, deltaX),
       _XBIosBackEdge.right => math.max(0.0, -deltaX),
     };
-    if (_dragDistance == distance && _indicatorCenterY == localPosition.dy) {
+    final double indicatorCenterY = startPosition.dy +
+        (localPosition.dy - startPosition.dy) *
+            widget.indicatorVerticalFollowFactor;
+    if (_dragDistance == distance && _indicatorCenterY == indicatorCenterY) {
       return;
     }
     setState(() {
       _dragDistance = distance;
-      _indicatorCenterY = localPosition.dy;
+      _indicatorCenterY = indicatorCenterY;
     });
   }
 

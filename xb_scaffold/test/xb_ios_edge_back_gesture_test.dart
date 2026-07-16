@@ -28,6 +28,7 @@ void main() {
     expect(gesture.maxIndicatorHeight, 124);
     expect(gesture.indicatorRevealDistance, 38);
     expect(gesture.indicatorSlowdownStartProgress, 0);
+    expect(gesture.indicatorVerticalFollowFactor, 0.1);
     expect(gesture.iconSize, 16);
   });
 
@@ -264,7 +265,7 @@ void main() {
       final Size firstSize = tester.getSize(indicator);
       expect(firstSize.width, greaterThan(0));
       expect(firstSize.height, greaterThan(0));
-      expect(tester.getCenter(indicator).dy, moreOrLessEquals(320));
+      expect(tester.getCenter(indicator).dy, moreOrLessEquals(302));
       expect(tester.widget<Opacity>(indicator).opacity, greaterThan(0));
       expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
 
@@ -316,7 +317,7 @@ void main() {
       final Finder indicator = _indicatorFinder();
       expect(indicator, findsOneWidget);
       expect(tester.getTopRight(indicator).dx, moreOrLessEquals(rightEdge));
-      expect(tester.getCenter(indicator).dy, moreOrLessEquals(315));
+      expect(tester.getCenter(indicator).dy, moreOrLessEquals(301.5));
 
       await gesture.cancel();
     } finally {
