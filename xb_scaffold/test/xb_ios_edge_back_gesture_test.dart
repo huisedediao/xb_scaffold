@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -36,9 +37,19 @@ void main() {
   });
 
   testWidgets(
-      'threshold callback retriggers only after returning within half distance',
+      'threshold feedback retriggers only after returning within half distance',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    final List<MethodCall> hapticCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'HapticFeedback.vibrate') {
+          hapticCalls.add(call);
+        }
+        return null;
+      },
+    );
     try {
       int thresholdCount = 0;
       await tester.pumpWidget(
@@ -60,21 +71,26 @@ void main() {
       await gesture.moveBy(const Offset(39, 0));
       await tester.pump();
       expect(thresholdCount, 0);
+      expect(hapticCalls, isEmpty);
 
       await gesture.moveBy(const Offset(2, 0));
       await tester.pump();
       expect(thresholdCount, 1);
+      expect(hapticCalls, hasLength(1));
+      expect(hapticCalls.single.arguments, 'HapticFeedbackType.lightImpact');
 
       await gesture.moveBy(const Offset(20, 0));
       await gesture.moveBy(const Offset(-39, 0));
       await gesture.moveBy(const Offset(19, 0));
       await tester.pump();
       expect(thresholdCount, 1);
+      expect(hapticCalls, hasLength(1));
 
       await gesture.moveBy(const Offset(-22, 0));
       await gesture.moveBy(const Offset(22, 0));
       await tester.pump();
       expect(thresholdCount, 2);
+      expect(hapticCalls, hasLength(2));
 
       await gesture.cancel();
       await tester.pump();
@@ -85,8 +101,13 @@ void main() {
       await nextGesture.moveBy(const Offset(41, 0));
       await tester.pump();
       expect(thresholdCount, 3);
+      expect(hapticCalls, hasLength(3));
       await nextGesture.cancel();
     } finally {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
       debugDefaultTargetPlatformOverride = null;
     }
   });

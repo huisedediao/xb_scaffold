@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 typedef XBIosEdgeBackCallback = FutureOr<void> Function();
 
@@ -74,7 +75,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
   /// 手指向屏幕内滑动达到返回距离阈值时触发。
   ///
   /// 达到阈值后，手指需要退回到阈值的一半以内才会重新允许触发。
-  /// 组件本身不执行震动，外部可通过该回调提供震动反馈。
+  /// 组件会自动执行轻微震动，外部可通过该回调提供额外反馈。
   final VoidCallback? onReturnThresholdReached;
   final bool enabled;
   final bool supportLeftEdge;
@@ -322,6 +323,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
 
     if (distance >= triggerDistance) {
       _canTriggerThresholdCallback = false;
+      unawaited(HapticFeedback.lightImpact());
       widget.onReturnThresholdReached?.call();
     }
   }
