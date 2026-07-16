@@ -47,6 +47,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
   double _maxDragOffset = 40;
   double _maxIndicatorHeight = 220;
   double _indicatorRevealDistance = 40;
+  double _indicatorSlowdownStartProgress = 0.6;
 
   @override
   void initState() {
@@ -130,6 +131,14 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
               (v) => setState(() => _maxIndicatorHeight = v)),
           _sliderRow('indicatorRevealDistance', _indicatorRevealDistance, 10,
               120, (v) => setState(() => _indicatorRevealDistance = v)),
+          _sliderRow(
+            'slowdownStartProgress',
+            _indicatorSlowdownStartProgress,
+            0,
+            1,
+            (v) => setState(() => _indicatorSlowdownStartProgress = v),
+            valueLabelBuilder: (v) => '${(v * 100).round()}%',
+          ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: _pushTestPage,
@@ -174,8 +183,14 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
     );
   }
 
-  Widget _sliderRow(String label, double value, double min, double max,
-      ValueChanged<double> onChanged) {
+  Widget _sliderRow(
+    String label,
+    double value,
+    double min,
+    double max,
+    ValueChanged<double> onChanged, {
+    String Function(double)? valueLabelBuilder,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -191,8 +206,10 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
           ),
           SizedBox(
               width: 50,
-              child:
-                  Text(value.toStringAsFixed(0), textAlign: TextAlign.right)),
+              child: Text(
+                valueLabelBuilder?.call(value) ?? value.toStringAsFixed(0),
+                textAlign: TextAlign.right,
+              )),
         ],
       ),
     );
@@ -213,6 +230,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxDragOffset: _maxDragOffset,
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
+      indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
       depth: 1,
     ));
   }
@@ -228,6 +246,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxDragOffset: _maxDragOffset,
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
+      indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
     ));
   }
 
@@ -242,6 +261,7 @@ class _XBIosEdgeBackTestPageState extends State<XBIosEdgeBackTestPage> {
       maxDragOffset: _maxDragOffset,
       maxIndicatorHeight: _maxIndicatorHeight,
       indicatorRevealDistance: _indicatorRevealDistance,
+      indicatorSlowdownStartProgress: _indicatorSlowdownStartProgress,
       depth: 3,
     ));
   }
@@ -259,6 +279,7 @@ class _BackSubPage extends StatelessWidget {
     required this.maxDragOffset,
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
+    required this.indicatorSlowdownStartProgress,
     required this.depth,
   });
 
@@ -271,6 +292,7 @@ class _BackSubPage extends StatelessWidget {
   final double maxDragOffset;
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
+  final double indicatorSlowdownStartProgress;
   final int depth;
 
   @override
@@ -286,6 +308,7 @@ class _BackSubPage extends StatelessWidget {
         maxDragOffset: maxDragOffset,
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
+        indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
       ),
@@ -338,6 +361,8 @@ class _BackSubPage extends StatelessWidget {
                       maxDragOffset: maxDragOffset,
                       maxIndicatorHeight: maxIndicatorHeight,
                       indicatorRevealDistance: indicatorRevealDistance,
+                      indicatorSlowdownStartProgress:
+                          indicatorSlowdownStartProgress,
                       depth: depth - 1,
                     )),
                   );
@@ -364,6 +389,7 @@ class _LongListSubPage extends StatelessWidget {
     required this.maxDragOffset,
     required this.maxIndicatorHeight,
     required this.indicatorRevealDistance,
+    required this.indicatorSlowdownStartProgress,
   });
 
   final bool enabled;
@@ -375,6 +401,7 @@ class _LongListSubPage extends StatelessWidget {
   final double maxDragOffset;
   final double maxIndicatorHeight;
   final double indicatorRevealDistance;
+  final double indicatorSlowdownStartProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -389,6 +416,7 @@ class _LongListSubPage extends StatelessWidget {
         maxDragOffset: maxDragOffset,
         maxIndicatorHeight: maxIndicatorHeight,
         indicatorRevealDistance: indicatorRevealDistance,
+        indicatorSlowdownStartProgress: indicatorSlowdownStartProgress,
         onBack: () => Navigator.of(context).maybePop(),
         child: Scaffold(
           appBar: AppBar(

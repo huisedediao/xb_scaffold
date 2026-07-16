@@ -51,6 +51,117 @@ void main() {
     }
   });
 
+  testWidgets('indicator growth slows progressively after configured start',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            supportRightEdge: false,
+            triggerDistance: 1000,
+            triggerVelocity: double.infinity,
+            indicatorRevealDistance: 100,
+            indicatorSlowdownStartProgress: 0.6,
+            onBack: () {},
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await gesture.moveBy(const Offset(60, 0));
+      await tester.pump();
+
+      final Finder indicator = _indicatorFinder();
+      final List<Size> sizes = <Size>[tester.getSize(indicator)];
+      for (int i = 0; i < 4; i++) {
+        await gesture.moveBy(const Offset(10, 0));
+        await tester.pump();
+        sizes.add(tester.getSize(indicator));
+      }
+
+      final List<double> widthGrowth = <double>[
+        for (int i = 1; i < sizes.length; i++)
+          sizes[i].width - sizes[i - 1].width,
+      ];
+      final List<double> heightGrowth = <double>[
+        for (int i = 1; i < sizes.length; i++)
+          sizes[i].height - sizes[i - 1].height,
+      ];
+
+      for (int i = 1; i < widthGrowth.length; i++) {
+        expect(widthGrowth[i], lessThan(widthGrowth[i - 1]));
+        expect(heightGrowth[i], lessThan(heightGrowth[i - 1]));
+      }
+      expect(sizes.last.width, moreOrLessEquals(40));
+      expect(sizes.last.height, moreOrLessEquals(220));
+
+      await gesture.cancel();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('slowdown start supports custom and fully linear values',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      Future<Size> measureIndicator({
+        required double slowdownStart,
+        required double dragDistance,
+      }) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: XBIosEdgeBackGesture(
+              supportRightEdge: false,
+              triggerDistance: 1000,
+              triggerVelocity: double.infinity,
+              indicatorRevealDistance: 100,
+              indicatorSlowdownStartProgress: slowdownStart,
+              onBack: () {},
+              child: const ColoredBox(color: Colors.white),
+            ),
+          ),
+        );
+        final TestGesture gesture = await tester.startGesture(
+          const Offset(1, 300),
+        );
+        await gesture.moveBy(Offset(dragDistance, 0));
+        await tester.pump();
+        final Size size = tester.getSize(_indicatorFinder());
+        await gesture.cancel();
+        await tester.pump();
+        return size;
+      }
+
+      final Size beforeCustomStart = await measureIndicator(
+        slowdownStart: 0.8,
+        dragDistance: 70,
+      );
+      expect(beforeCustomStart.width, moreOrLessEquals(28));
+      expect(beforeCustomStart.height, moreOrLessEquals(141.4));
+
+      final Size afterCustomStart = await measureIndicator(
+        slowdownStart: 0.8,
+        dragDistance: 90,
+      );
+      expect(afterCustomStart.width, moreOrLessEquals(38));
+      expect(afterCustomStart.height, moreOrLessEquals(209));
+
+      final Size fullyLinear = await measureIndicator(
+        slowdownStart: 1,
+        dragDistance: 90,
+      );
+      expect(fullyLinear.width, moreOrLessEquals(36));
+      expect(fullyLinear.height, moreOrLessEquals(198));
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('indicator follows slow pointer movement before drag acceptance',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;

@@ -31,12 +31,18 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     this.indicatorSize = 44,
     this.maxIndicatorHeight = 220,
     this.indicatorRevealDistance = 40,
+    this.indicatorSlowdownStartProgress = 0.6,
     this.indicatorColor,
     this.iconColor = Colors.white,
   })  : assert(maxIndicatorHeight > 0, 'maxIndicatorHeight must be positive'),
         assert(
           indicatorRevealDistance > 0,
           'indicatorRevealDistance must be positive',
+        ),
+        assert(
+          indicatorSlowdownStartProgress >= 0 &&
+              indicatorSlowdownStartProgress <= 1,
+          'indicatorSlowdownStartProgress must be between 0 and 1',
         );
 
   final Widget child;
@@ -57,6 +63,11 @@ class XBIosEdgeBackGesture extends StatefulWidget {
 
   /// 指示区域从屏幕边缘完全展开所需的拖动距离。
   final double indicatorRevealDistance;
+
+  /// 指示区域开始减速增长的展开进度，取值范围为 0 到 1。
+  ///
+  /// 设为 0 表示全程减速增长，设为 1 表示保持线性增长。
+  final double indicatorSlowdownStartProgress;
   final Color? indicatorColor;
   final Color iconColor;
 
@@ -144,6 +155,8 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
                         size: widget.indicatorSize,
                         maxIndicatorHeight: widget.maxIndicatorHeight,
                         revealDistance: widget.indicatorRevealDistance,
+                        slowdownStartProgress:
+                            widget.indicatorSlowdownStartProgress,
                         maxHeight: constraints.maxHeight,
                         indicatorColor: widget.indicatorColor,
                         iconColor: widget.iconColor,
@@ -364,6 +377,7 @@ class _XBIosBackIndicator extends StatelessWidget {
     required this.size,
     required this.maxIndicatorHeight,
     required this.revealDistance,
+    required this.slowdownStartProgress,
     required this.maxHeight,
     required this.indicatorColor,
     required this.iconColor,
@@ -377,6 +391,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   final double size;
   final double maxIndicatorHeight;
   final double revealDistance;
+  final double slowdownStartProgress;
   final double maxHeight;
   final Color? indicatorColor;
   final Color iconColor;
@@ -390,6 +405,10 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double revealProgress = revealDistance <= 0
         ? 1
         : (dragDistance / revealDistance).clamp(0.0, 1.0).toDouble();
+    final double growthProgress = _applyGrowthSlowdown(
+      revealProgress,
+      slowdownStartProgress,
+    );
     final double horizontalProgress = maxDragOffset <= 0
         ? 1
         : (dragDistance / maxDragOffset).clamp(0.0, 1.0).toDouble();
@@ -400,7 +419,7 @@ class _XBIosBackIndicator extends StatelessWidget {
       naturalHandleHeight,
       math.min(maxIndicatorHeight, availableHeight),
     );
-    final double handleHeight = targetHandleHeight * revealProgress;
+    final double handleHeight = targetHandleHeight * growthProgress;
     final double handleWidth = size * (0.68 + horizontalProgress * 0.28);
     final double maxTop = math.max(0.0, height - handleHeight);
     final double top =
@@ -409,16 +428,16 @@ class _XBIosBackIndicator extends StatelessWidget {
     final double arrowSize = size * 0.72;
     final double targetStretchedWidth =
         handleWidth + horizontalProgress * (maxDragOffset - handleWidth);
-    final double stretchedWidth = targetStretchedWidth * revealProgress;
+    final double stretchedWidth = targetStretchedWidth * growthProgress;
     final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
     final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
     final double arrowTop =
         (localCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
     final double targetOpacity =
         (0.32 + triggerProgress * 0.68).clamp(0.0, 1.0).toDouble();
-    final double opacity = targetOpacity * revealProgress;
+    final double opacity = targetOpacity * growthProgress;
     final double arrowProgress =
-        ((revealProgress - 0.2) / 0.8).clamp(0.0, 1.0).toDouble();
+        ((growthProgress - 0.2) / 0.8).clamp(0.0, 1.0).toDouble();
     final double targetScale = 0.9 + triggerProgress * 0.12;
     final double scale = 0.65 + arrowProgress * (targetScale - 0.65);
 
@@ -475,6 +494,18 @@ class _XBIosBackIndicator extends StatelessWidget {
       ),
     );
   }
+}
+
+double _applyGrowthSlowdown(double progress, double slowdownStartProgress) {
+  if (slowdownStartProgress >= 1 || progress <= slowdownStartProgress) {
+    return progress;
+  }
+  final double tailProgress =
+      (progress - slowdownStartProgress) / (1 - slowdownStartProgress);
+  final double remaining = 1 - tailProgress;
+  final double slowedTailProgress = 1 - remaining * remaining;
+  return slowdownStartProgress +
+      (1 - slowdownStartProgress) * slowedTailProgress;
 }
 
 class _XBIosBackHandlePainter extends CustomPainter {
