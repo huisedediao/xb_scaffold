@@ -532,6 +532,7 @@ class _XBIosBackIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isLeftEdge = edge == _XBIosBackEdge.left;
+    const double edgeOverlap = 2;
     final double triggerProgress = triggerDistance <= 0
         ? 1
         : (dragDistance / triggerDistance).clamp(0.0, 1.0).toDouble();
@@ -583,7 +584,9 @@ class _XBIosBackIndicator extends StatelessWidget {
       effectiveMaxWidth,
       targetStretchedWidth * growthProgress,
     );
-    final double arrowInset = stretchedWidth * 0.5 - arrowSize / 2;
+    final double compensatedWidth = stretchedWidth + edgeOverlap;
+    final double arrowInset =
+        stretchedWidth * 0.5 - arrowSize / 2 + edgeOverlap;
     final double maxArrowTop = math.max(0.0, handleHeight - arrowSize);
     final double arrowTop =
         (bulgeCenterY - arrowSize / 2).clamp(0.0, maxArrowTop).toDouble();
@@ -600,10 +603,10 @@ class _XBIosBackIndicator extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Positioned(
-            left: isLeftEdge ? -2 : null,
-            right: isLeftEdge ? null : -2,
+            left: isLeftEdge ? -edgeOverlap : null,
+            right: isLeftEdge ? null : -edgeOverlap,
             top: top,
-            width: stretchedWidth,
+            width: compensatedWidth,
             height: handleHeight,
             child: Opacity(
               opacity: opacity,

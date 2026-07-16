@@ -13,6 +13,15 @@ Finder _indicatorFinder() {
   );
 }
 
+Size _visibleIndicatorSize(WidgetTester tester, Finder indicator) {
+  final Rect bounds = tester.getRect(indicator);
+  final double screenWidth =
+      tester.view.physicalSize.width / tester.view.devicePixelRatio;
+  final double visibleLeft = bounds.left.clamp(0.0, screenWidth).toDouble();
+  final double visibleRight = bounds.right.clamp(0.0, screenWidth).toDouble();
+  return Size(visibleRight - visibleLeft, bounds.height);
+}
+
 void _onBack() {}
 
 void main() {
@@ -308,7 +317,7 @@ void main() {
       for (int i = 0; i < 3; i++) {
         await gesture.moveBy(i == 0 ? const Offset(10, 0) : const Offset(5, 0));
         await tester.pump();
-        widths.add(tester.getSize(_indicatorFinder()).width);
+        widths.add(tester.getTopRight(_indicatorFinder()).dx);
       }
 
       expect(widths, everyElement(lessThanOrEqualTo(20)));
@@ -349,11 +358,13 @@ void main() {
       await tester.pump();
 
       final Finder indicator = _indicatorFinder();
-      final List<Size> sizes = <Size>[tester.getSize(indicator)];
+      final List<Size> sizes = <Size>[
+        _visibleIndicatorSize(tester, indicator),
+      ];
       for (int i = 0; i < 8; i++) {
         await gesture.moveBy(const Offset(10, 0));
         await tester.pump();
-        sizes.add(tester.getSize(indicator));
+        sizes.add(_visibleIndicatorSize(tester, indicator));
       }
 
       final List<double> widthGrowth = <double>[
@@ -374,7 +385,7 @@ void main() {
 
       await gesture.moveBy(const Offset(50, 0));
       await tester.pump();
-      expect(tester.getSize(indicator), sizes.last);
+      expect(_visibleIndicatorSize(tester, indicator), sizes.last);
 
       await gesture.cancel();
     } finally {
@@ -410,7 +421,8 @@ void main() {
         );
         await gesture.moveBy(Offset(dragDistance, 0));
         await tester.pump();
-        final Size size = tester.getSize(_indicatorFinder());
+        final Finder indicator = _indicatorFinder();
+        final Size size = _visibleIndicatorSize(tester, indicator);
         await gesture.cancel();
         await tester.pump();
         return size;
@@ -465,13 +477,13 @@ void main() {
 
       final Finder indicator = _indicatorFinder();
       expect(indicator, findsOneWidget);
-      expect(tester.getSize(indicator), Size.zero);
+      expect(_visibleIndicatorSize(tester, indicator), Size.zero);
       expect(tester.widget<Opacity>(indicator).opacity, 0);
 
       await gesture.moveBy(const Offset(4, 20));
       await tester.pump();
 
-      final Size firstSize = tester.getSize(indicator);
+      final Size firstSize = _visibleIndicatorSize(tester, indicator);
       expect(firstSize.width, greaterThan(0));
       expect(firstSize.height, greaterThan(0));
       expect(tester.getCenter(indicator).dy, moreOrLessEquals(302));
@@ -481,14 +493,14 @@ void main() {
       await gesture.moveBy(const Offset(4, 0));
       await tester.pump();
 
-      final Size expandedSize = tester.getSize(indicator);
+      final Size expandedSize = _visibleIndicatorSize(tester, indicator);
       expect(expandedSize.width, greaterThan(firstSize.width));
       expect(expandedSize.height, greaterThan(firstSize.height));
 
       await gesture.moveBy(const Offset(-6, 0));
       await tester.pump();
 
-      final Size retractedSize = tester.getSize(indicator);
+      final Size retractedSize = _visibleIndicatorSize(tester, indicator);
       expect(retractedSize.width, lessThan(expandedSize.width));
       expect(retractedSize.height, lessThan(expandedSize.height));
 
@@ -587,7 +599,7 @@ void main() {
     }
   });
 
-  testWidgets('indicators stay shifted two pixels toward the screen edge',
+  testWidgets('two pixel edge shift preserves the visible indicator width',
       (WidgetTester tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     try {
@@ -602,6 +614,9 @@ void main() {
               supportRightEdge: rightEdge,
               triggerDistance: 1000,
               triggerVelocity: double.infinity,
+              maxDragOffset: 21,
+              indicatorRevealDistance: 20,
+              indicatorSlowdownStartProgress: 1,
               onBack: () {},
               child: const ColoredBox(color: Colors.white),
             ),
@@ -611,24 +626,33 @@ void main() {
         final TestGesture gesture = await tester.startGesture(
           Offset(rightEdge ? screenWidth - 1 : 1, 300),
         );
+        double visibleWidth = 0;
         for (final double movement in <double>[8, 16, 32]) {
           await gesture.moveBy(Offset(rightEdge ? -movement : movement, 0));
           await tester.pump();
 
           final Finder indicator = _indicatorFinder();
           expect(indicator, findsOneWidget);
+          final Rect indicatorRect = tester.getRect(indicator);
           if (rightEdge) {
             expect(
               tester.getTopRight(indicator).dx,
               moreOrLessEquals(screenWidth + 2),
             );
+            visibleWidth = screenWidth - indicatorRect.left;
           } else {
             expect(
               tester.getTopLeft(indicator).dx,
               moreOrLessEquals(-2),
             );
+            visibleWidth = indicatorRect.right;
           }
+          expect(
+            tester.getSize(indicator).width - visibleWidth,
+            moreOrLessEquals(2),
+          );
         }
+        expect(visibleWidth, moreOrLessEquals(21));
         await gesture.cancel();
         await tester.pump();
       }
