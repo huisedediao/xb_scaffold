@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 /// 构建一个无内置边缘返回手势的 PageRoute。
@@ -362,6 +363,7 @@ class _BackSubPage extends StatelessWidget {
         indicatorBulgeVerticalFollowFactor: indicatorBulgeVerticalFollowFactor,
         maxIndicatorBulgeVerticalOffset: maxIndicatorBulgeVerticalOffset,
         iconSize: iconSize,
+        onReturnThresholdReached: HapticFeedback.lightImpact,
         onBack: () => Navigator.of(context).maybePop(),
         child: _buildContent(context),
       ),
@@ -489,6 +491,7 @@ class _LongListSubPage extends StatelessWidget {
         indicatorBulgeVerticalFollowFactor: indicatorBulgeVerticalFollowFactor,
         maxIndicatorBulgeVerticalOffset: maxIndicatorBulgeVerticalOffset,
         iconSize: iconSize,
+        onReturnThresholdReached: HapticFeedback.lightImpact,
         onBack: () => Navigator.of(context).maybePop(),
         child: Scaffold(
           appBar: AppBar(

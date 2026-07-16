@@ -32,6 +32,97 @@ void main() {
     expect(gesture.indicatorBulgeVerticalFollowFactor, 0.05);
     expect(gesture.maxIndicatorBulgeVerticalOffset, 12);
     expect(gesture.iconSize, 16);
+    expect(gesture.onReturnThresholdReached, isNull);
+  });
+
+  testWidgets(
+      'threshold callback retriggers only after returning within half distance',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      int thresholdCount = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            supportRightEdge: false,
+            triggerDistance: 40,
+            triggerVelocity: double.infinity,
+            onReturnThresholdReached: () => thresholdCount++,
+            onBack: () {},
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await gesture.moveBy(const Offset(39, 0));
+      await tester.pump();
+      expect(thresholdCount, 0);
+
+      await gesture.moveBy(const Offset(2, 0));
+      await tester.pump();
+      expect(thresholdCount, 1);
+
+      await gesture.moveBy(const Offset(20, 0));
+      await gesture.moveBy(const Offset(-39, 0));
+      await gesture.moveBy(const Offset(19, 0));
+      await tester.pump();
+      expect(thresholdCount, 1);
+
+      await gesture.moveBy(const Offset(-22, 0));
+      await gesture.moveBy(const Offset(22, 0));
+      await tester.pump();
+      expect(thresholdCount, 2);
+
+      await gesture.cancel();
+      await tester.pump();
+
+      final TestGesture nextGesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await nextGesture.moveBy(const Offset(41, 0));
+      await tester.pump();
+      expect(thresholdCount, 3);
+      await nextGesture.cancel();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets(
+      'velocity-only back does not call the distance threshold callback',
+      (WidgetTester tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      int backCount = 0;
+      int thresholdCount = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: XBIosEdgeBackGesture(
+            supportRightEdge: false,
+            triggerDistance: 1000,
+            triggerVelocity: 0,
+            onReturnThresholdReached: () => thresholdCount++,
+            onBack: () => backCount++,
+            child: const ColoredBox(color: Colors.white),
+          ),
+        ),
+      );
+
+      final TestGesture gesture = await tester.startGesture(
+        const Offset(1, 300),
+      );
+      await gesture.moveBy(const Offset(30, 0));
+      await gesture.up();
+      await tester.pump();
+
+      expect(backCount, 1);
+      expect(thresholdCount, 0);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('indicator height stops growing at maxIndicatorHeight',

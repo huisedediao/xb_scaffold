@@ -21,6 +21,7 @@ class XBIosEdgeBackGesture extends StatefulWidget {
     super.key,
     required this.child,
     required this.onBack,
+    this.onReturnThresholdReached,
     this.enabled = true,
     this.supportLeftEdge = true,
     this.supportRightEdge = true,
@@ -69,6 +70,12 @@ class XBIosEdgeBackGesture extends StatefulWidget {
 
   final Widget child;
   final XBIosEdgeBackCallback onBack;
+
+  /// 手指向屏幕内滑动达到返回距离阈值时触发。
+  ///
+  /// 达到阈值后，手指需要退回到阈值的一半以内才会重新允许触发。
+  /// 组件本身不执行震动，外部可通过该回调提供震动反馈。
+  final VoidCallback? onReturnThresholdReached;
   final bool enabled;
   final bool supportLeftEdge;
   final bool supportRightEdge;
@@ -120,6 +127,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
   int? _trackingPointer;
   bool _gestureTracking = false;
   bool _gestureAccepted = false;
+  bool _canTriggerThresholdCallback = true;
   bool _triggeringBack = false;
   double _dragDistance = 0;
   double _verticalDragDistance = 0;
@@ -240,6 +248,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
     _trackingPointer = event.pointer;
     _indicatorCenterY = event.localPosition.dy;
     _activeEdge = edge;
+    _canTriggerThresholdCallback = true;
     setState(() {
       _dragDistance = 0;
       _verticalDragDistance = 0;
@@ -260,6 +269,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
       return;
     }
     _gestureAccepted = true;
+    _updateThresholdCallbackState(_dragDistance);
   }
 
   void _handleDragUpdate(DragUpdateDetails details) {
@@ -284,6 +294,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
         (localPosition.dy - startPosition.dy) *
             widget.indicatorVerticalFollowFactor;
     final double verticalDragDistance = localPosition.dy - startPosition.dy;
+    _updateThresholdCallbackState(distance);
     if (_dragDistance == distance &&
         _verticalDragDistance == verticalDragDistance &&
         _indicatorCenterY == indicatorCenterY) {
@@ -294,6 +305,25 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
       _verticalDragDistance = verticalDragDistance;
       _indicatorCenterY = indicatorCenterY;
     });
+  }
+
+  void _updateThresholdCallbackState(double distance) {
+    if (!_gestureAccepted) {
+      return;
+    }
+
+    final double triggerDistance = math.max(0.0, widget.triggerDistance);
+    if (!_canTriggerThresholdCallback) {
+      if (distance <= triggerDistance / 2) {
+        _canTriggerThresholdCallback = true;
+      }
+      return;
+    }
+
+    if (distance >= triggerDistance) {
+      _canTriggerThresholdCallback = false;
+      widget.onReturnThresholdReached?.call();
+    }
   }
 
   void _handleDragEnd(DragEndDetails details) {
@@ -348,6 +378,7 @@ class _XBIosEdgeBackGestureState extends State<XBIosEdgeBackGesture> {
     _startTime = null;
     _trackingPointer = null;
     _activeEdge = null;
+    _canTriggerThresholdCallback = true;
   }
 
   _XBIosBackEdge? _resolveEdge(double dx) {
