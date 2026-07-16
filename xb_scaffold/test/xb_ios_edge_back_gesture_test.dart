@@ -24,9 +24,9 @@ void main() {
     expect(gesture.edgeWidth, 32);
     expect(gesture.triggerDistance, 41);
     expect(gesture.triggerVelocity, 644);
-    expect(gesture.maxDragOffset, 25);
+    expect(gesture.maxDragOffset, 21);
     expect(gesture.maxIndicatorHeight, 124);
-    expect(gesture.indicatorRevealDistance, 33);
+    expect(gesture.indicatorRevealDistance, 38);
     expect(gesture.indicatorSlowdownStartProgress, 0);
     expect(gesture.iconSize, 16);
   });
