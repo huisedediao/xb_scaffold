@@ -148,14 +148,9 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   }
 
   Widget _rootWidget(BuildContext context) {
-    final vm = vmOf(context);
-    // 正在展示 loading，且不允许 在展示 loading 的时候响应返回
-    final canNotResponsePop = vm.isShowLoadingWidget &&
-        !needResponseNavigationBarLeftWhileLoading(context);
     return PopScope(
-      canPop: !canNotResponsePop && canPop(context),
+      canPop: canPop(context),
       onPopInvokedWithResult: (didPop, result) {
-        if (canNotResponsePop) return;
         if (didPop) {
           handlePopSuccess(context, result);
         } else {
