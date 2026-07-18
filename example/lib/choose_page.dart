@@ -4,6 +4,8 @@ import 'package:example/pages/xb_analytics_test_page.dart';
 import 'package:example/pages/xb_network_test_page.dart';
 import 'package:example/pages/xb_log_test_page.dart';
 import 'package:example/pages/xb_ios_edge_back_test_page.dart';
+import 'package:example/pages/xb_page_can_pop_test.dart';
+import 'package:example/pages/xb_pop_test.dart';
 import 'package:example/pages/xb_repository_demo.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
@@ -157,6 +159,14 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBEchoLogger 日志上报测试',
       pageBuilder: _buildXBEchoLoggerTestPage,
     ),
+    const _ChooseMenuItem(
+      title: 'XBPopTest 测试页',
+      pageBuilder: _buildXBPopTestPage,
+    ),
+    const _ChooseMenuItem(
+      title: 'XBPageCanPopTest 测试页',
+      pageBuilder: _buildXBPageCanPopTestPage,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -192,14 +202,14 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBAnalyticsTestPage() => const XBAnalyticsTestPage();
   static Widget _buildXBRepositoryDemo() => const XBRepositoryDemo();
   static Widget _buildXBLogTestPage() => const XBLogTestPage();
-  static Widget _buildXBIosEdgeBackTestPage() =>
-      const XBIosEdgeBackTestPage();
+  static Widget _buildXBIosEdgeBackTestPage() => const XBIosEdgeBackTestPage();
   static Widget _buildXBDialogPriorityTestPage() =>
       const XBDialogPriorityTestPage();
   static Widget _buildXBRotatableFullscreenTestPage() =>
       const XBRotatableFullscreenTestPage();
-  static Widget _buildXBEchoLoggerTestPage() =>
-      const XBEchoLoggerTestPage();
+  static Widget _buildXBEchoLoggerTestPage() => const XBEchoLoggerTestPage();
+  static Widget _buildXBPopTestPage() => const XBPopTest();
+  static Widget _buildXBPageCanPopTestPage() => const XBPageCanPopTest();
 }
 
 enum _ChooseNavMode {

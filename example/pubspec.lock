@@ -558,7 +558,7 @@ packages:
       path: "../xb_analytics_plus"
       relative: true
     source: path
-    version: "0.1.0"
+    version: "0.1.1"
   xb_echo_logger:
     dependency: "direct main"
     description:
@@ -579,7 +579,7 @@ packages:
       path: "../xb_scaffold"
       relative: true
     source: path
-    version: "1.0.6"
+    version: "1.0.8"
   xb_simple_router:
     dependency: "direct main"
     description:

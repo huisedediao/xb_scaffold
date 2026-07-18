@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../xb_scaffold.dart';
-import 'common/xb_legacy_pop_scope.dart';
 import 'configs/xb_color_config.dart';
 
 enum XBStatusBarStyle { light, dark }
@@ -19,9 +18,6 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// 是否需要安全区域
   bool needSafeArea(BuildContext context) => false;
-
-  /// 是否启动安卓（harmony）物理返回
-  bool onAndroidPhysicalBack(BuildContext context) => true;
 
   /// 屏幕方向改变后，是否需要重新build
   bool needRebuildWhileOrientationChanged(BuildContext context) => false;
@@ -43,9 +39,6 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// 是否需要 MediaQuery.removePadding
   bool needRemovePadding(BuildContext context) => true;
-
-  /// 是否启动iOS侧滑返回
-  bool needIosGestureBack(BuildContext context) => true;
 
   /// 在展示loading的时候，是否需要响应navigationBar的左侧部分
   bool needResponseNavigationBarLeftWhileLoading(BuildContext context) => true;
@@ -72,6 +65,11 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   /// notify是否需要在push动画完成之后
   bool notifyNeedAfterPushAnimation(BuildContext context) => false;
+
+  /// 页面是否可以返回
+  /// false：左上角和手势都不能返回
+  /// true：左上角和手势都能返回
+  bool canPop(BuildContext context) => true;
 
   bool _primary(BuildContext context) => !needHideAppbar(context);
 
@@ -151,15 +149,19 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
 
   Widget _rootWidget(BuildContext context) {
     final vm = vmOf(context);
-    final onWillPop = vm.onWillPop();
-    if (onWillPop == null) {
-      return PopScope(
-        canPop: true,
-        child: _buildLoadingContent(context),
-      );
-    }
-    return XBLegacyPopScope(
-      onWillPop: onWillPop as Future<bool> Function(),
+    // 正在展示 loading，且不允许 在展示 loading 的时候响应返回
+    final canNotResponsePop = vm.isShowLoadingWidget &&
+        !needResponseNavigationBarLeftWhileLoading(context);
+    return PopScope(
+      canPop: !canNotResponsePop && canPop(context),
+      onPopInvokedWithResult: (didPop, result) {
+        if (canNotResponsePop) return;
+        if (didPop) {
+          handlePopSuccess(context, result);
+        } else {
+          handlePopFailure(context, result);
+        }
+      },
       child: _buildLoadingContent(context),
     );
   }
@@ -364,6 +366,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   Widget? endDrawer(BuildContext context) {
     return null;
   }
+
+  /// 处理返回成功
+  void handlePopSuccess(BuildContext context, result) {}
+
+  /// 处理返回失败
+  void handlePopFailure(BuildContext context, result) {}
 }
 
 /// 处理触摸事件的StatefulWidget，用于区分长按和普通点击

@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 
@@ -107,7 +105,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   }
 
   void back<O extends Object?>([O? result]) {
-    xbNavigatorState.pop(result);
+    xbNavigatorState.maybePop(result);
   }
 
   String? loadingMsg;
@@ -237,56 +235,5 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
     xbRouteObserver.unsubscribe(this);
     _pushNotifyAnimationTimer.cancel();
     super.dispose();
-  }
-
-  /// -------------------- function --------------------
-  /// 即将pop
-  onWillPop() {
-    if (kIsWeb) {
-      return _webOnWillPop;
-    }
-
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return _androidOnWillPop;
-
-      case TargetPlatform.iOS:
-        if (_castWidget.needIosGestureBack(context) && _canLoadingPop()) {
-          return null;
-        }
-        return _iosOnWillPop;
-
-      default:
-        if (isHarmony) {
-          return _androidOnWillPop;
-        }
-        return null;
-    }
-  }
-
-  Future<bool> _webOnWillPop() async {
-    return true;
-  }
-
-  /// iOS 侧滑返回：当 PopScope 需要拦截返回（canPop=false）时，系统侧滑返回会失效，可通过该逻辑控制
-  /// 返回结果无影响，因为只要设置了就不能滑动返回
-  Future<bool> _iosOnWillPop() async {
-    return false;
-  }
-
-  /*
-   * 只有 安卓 的 手势返回 操作，这个方法才生效
-   * 如果需要控制iOS的滑动返回，在NeedIosGestureUtil中配置
-   * */
-  Future<bool> _androidOnWillPop() async {
-    return !isShowGoabolLoading &&
-        _castWidget.onAndroidPhysicalBack(context) &&
-        _canLoadingPop();
-  }
-
-  /// loading是否允许返回
-  bool _canLoadingPop() {
-    return isShowLoadingWidget == false ||
-        _castWidget.needResponseNavigationBarLeftWhileLoading(context);
   }
 }
