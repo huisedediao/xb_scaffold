@@ -1,6 +1,6 @@
 name: xb_ume
 description: Pure Flutter in-app debug toolkit inspired by flutter_ume, including console, route, performance, network, inspector, device and storage panels.
-version: 0.1.1
+version: 0.1.2
 homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_ume
 repository: https://github.com/huisedediao/xb_scaffold/tree/main/xb_ume
 issue_tracker: https://github.com/huisedediao/xb_scaffold/issues
