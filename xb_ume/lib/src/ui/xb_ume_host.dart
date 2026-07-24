@@ -270,8 +270,22 @@ class _XbUmeHostState extends State<XBUmeHost> {
     required Size viewportSize,
     required double visibleHeight,
   }) {
-    // 优先使用实际点击组件的 rect 做高亮，回退到解析出的祖先组件 rect
-    final rect = result.pickedRect ?? result.resolvedRect!;
+    // 智能选择高亮 rect：
+    // - resolvedRect 通常覆盖用户组件的完整视觉区域（如 XBImage 的 SizedBox），
+    //   适合作为默认高亮。
+    // - 但当 resolvedRect 覆盖过多视口区域（>55%，如 HomePage/Scaffold 覆盖整页）
+    //   时回退到 pickedRect，精确定位实际点击的叶子组件。
+    final picked = result.pickedRect;
+    final resolved = result.resolvedRect;
+    final Rect rect;
+    if (picked != null && resolved != null) {
+      final viewportArea = math.max(1.0, viewportSize.width * visibleHeight);
+      final resolvedCoverage =
+          (resolved.width * resolved.height) / viewportArea;
+      rect = resolvedCoverage > 0.55 ? picked : resolved;
+    } else {
+      rect = picked ?? resolved!;
+    }
     final clamped = Rect.fromLTRB(
       rect.left.clamp(0.0, viewportSize.width),
       rect.top.clamp(0.0, visibleHeight),
