@@ -146,9 +146,17 @@ class _WidgetLocatorPanelState extends State<_WidgetLocatorPanel> {
 
   Widget _buildResult(BuildContext context) {
     final result = _result!;
+    final pickedRectStr = result.pickedRect != null
+        ? '(${result.pickedRect!.left.toStringAsFixed(1)},${result.pickedRect!.top.toStringAsFixed(1)},${result.pickedRect!.width.toStringAsFixed(1)}x${result.pickedRect!.height.toStringAsFixed(1)})'
+        : '-';
+    final resolvedRectStr = result.resolvedRect != null
+        ? '(${result.resolvedRect!.left.toStringAsFixed(1)},${result.resolvedRect!.top.toStringAsFixed(1)},${result.resolvedRect!.width.toStringAsFixed(1)}x${result.resolvedRect!.height.toStringAsFixed(1)})'
+        : '-';
     final details = <String>[
       'pickedWidget: ${result.pickedWidgetType}',
+      'pickedRect: $pickedRectStr',
       'resolvedWidget: ${result.resolvedWidgetType}',
+      'resolvedRect: $resolvedRectStr',
       'resolveStrategy: ${result.resolveStrategy}',
       'file: ${result.file ?? '-'}',
       'line: ${result.line ?? '-'}',

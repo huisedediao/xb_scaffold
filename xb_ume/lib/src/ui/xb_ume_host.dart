@@ -255,7 +255,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
             ),
           ),
         ),
-        if (result?.resolvedRect != null)
+        if (result?.pickedRect != null || result?.resolvedRect != null)
           ..._buildSelectionMarker(
             result: result!,
             viewportSize: viewportSize,
@@ -270,7 +270,8 @@ class _XbUmeHostState extends State<XBUmeHost> {
     required Size viewportSize,
     required double visibleHeight,
   }) {
-    final rect = result.resolvedRect!;
+    // 优先使用实际点击组件的 rect 做高亮，回退到解析出的祖先组件 rect
+    final rect = result.pickedRect ?? result.resolvedRect!;
     final clamped = Rect.fromLTRB(
       rect.left.clamp(0.0, viewportSize.width),
       rect.top.clamp(0.0, visibleHeight),
@@ -392,12 +393,28 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      result.resolvedWidgetType,
-                      style: const TextStyle(
+                      result.pickedWidgetType != result.resolvedWidgetType
+                          ? 'picked: ${result.pickedWidgetType}'
+                          : result.resolvedWidgetType,
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
+                        color: result.pickedWidgetType != result.resolvedWidgetType
+                            ? const Color(0xFF00E5FF)
+                            : Colors.white,
                       ),
                     ),
+                    if (result.pickedWidgetType != result.resolvedWidgetType) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'resolved: ${result.resolvedWidgetType}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFB0BEC5),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Text(_wrapPathForDisplay(fileText)),
                     if (result.hasLocation) ...[

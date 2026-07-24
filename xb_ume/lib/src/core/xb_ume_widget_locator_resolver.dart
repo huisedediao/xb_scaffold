@@ -14,6 +14,7 @@ class XBUmeWidgetLocatorResult {
     required this.ancestorPath,
     required this.rawCreationLocation,
     required this.resolveStrategy,
+    required this.pickedRect,
     required this.resolvedRect,
     required this.parentWidgetType,
     required this.parentFile,
@@ -32,6 +33,11 @@ class XBUmeWidgetLocatorResult {
   final String ancestorPath;
   final String? rawCreationLocation;
   final String resolveStrategy;
+
+  /// 实际点击的组件在屏幕上的 rect，用于精确高亮。
+  final Rect? pickedRect;
+
+  /// 解析出的 first-party 祖先组件的 rect。
   final Rect? resolvedRect;
   final String? parentWidgetType;
   final String? parentFile;
@@ -61,6 +67,8 @@ class XBUmeWidgetLocatorResolver {
         .map((entry) => '${entry.widget.runtimeType}')
         .toList(growable: false);
 
+    final pickedSnapshot = snapshots.isNotEmpty ? snapshots.first : null;
+
     return XBUmeWidgetLocatorResult(
       pickedElement: pickedElement,
       resolvedElement: resolved.snapshot.element,
@@ -72,6 +80,7 @@ class XBUmeWidgetLocatorResolver {
       ancestorPath: pathNames.join(' > '),
       rawCreationLocation: resolved.snapshot.rawCreationLocation,
       resolveStrategy: resolved.strategy,
+      pickedRect: pickedSnapshot?.globalRect,
       resolvedRect: resolved.snapshot.globalRect,
       parentWidgetType: parent?.snapshot.widgetType,
       parentFile: parent?.snapshot.file,
