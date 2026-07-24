@@ -329,9 +329,28 @@ class XBUmeWidgetLocatorResolver {
         lower.contains('/flutter/packages/flutter/');
   }
 
+  /// 检测是否位于 pub cache 目录。
+  ///
+  /// pub cache 路径可能因平台/环境不同而不同：
+  /// - macOS/Linux 默认: `~/.pub-cache/hosted/...`
+  /// - OHOS 变体: `~/.pub-cache-ohos/hosted/...`
+  /// - Windows: `%LOCALAPPDATA%\Pub\Cache\...`
+  /// - 自定义 PUB_CACHE 环境变量
+  ///
+  /// 除了目录名匹配外，`/hosted/pub.` 也是一个可靠的 pub cache 指示符。
   bool _isPubCacheLocation(String normalizedFile) {
     final lower = normalizedFile.toLowerCase();
-    return lower.contains('/.pub-cache/') || lower.contains('\\.pub-cache\\');
+    // 匹配 pub-cache 及其变体（pub-cache-ohos 等）
+    if (lower.contains('pub-cache') ||
+        lower.contains('pub\\cache') ||
+        lower.contains('pub/cache')) {
+      return true;
+    }
+    // /hosted/pub.dev 或 /hosted/pub.flutter-io.cn 是 pub cache 独有模式
+    if (lower.contains('/hosted/pub.')) {
+      return true;
+    }
+    return false;
   }
 
   String _normalizeLocationFile(String file) {

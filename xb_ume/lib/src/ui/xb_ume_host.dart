@@ -399,12 +399,14 @@ class _XbUmeHostState extends State<XBUmeHost> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: result.pickedWidgetType != result.resolvedWidgetType
-                            ? const Color(0xFF00E5FF)
-                            : Colors.white,
+                        color:
+                            result.pickedWidgetType != result.resolvedWidgetType
+                                ? const Color(0xFF00E5FF)
+                                : Colors.white,
                       ),
                     ),
-                    if (result.pickedWidgetType != result.resolvedWidgetType) ...[
+                    if (result.pickedWidgetType !=
+                        result.resolvedWidgetType) ...[
                       const SizedBox(height: 2),
                       Text(
                         'resolved: ${result.resolvedWidgetType}',
