@@ -113,9 +113,17 @@ class XBUmeWidgetLocatorResolver {
     return chain;
   }
 
+  /// 解析优先级（从高到低）：
+  /// 1. appCodeCandidate — 用户 app 代码（isLocalProject=true），
+  ///    如 xb_cell_demo.dart 中创建的 XBCellCenterTitle
+  /// 2. libraryCandidate — 非 Flutter SDK、非 pub cache 的库代码
+  ///    （如 path dependency xb_scaffold/lib/...）
+  /// 3. nonFlutterCandidate — 任何非 Flutter SDK 的组件（含 pub cache）
+  /// 4. anyWithLocation — 任何有 creation location 的组件
   _ResolvedSnapshot _resolvePreferredSnapshot(
       List<_LocatorSnapshot> snapshots) {
-    _LocatorSnapshot? localProjectCandidate;
+    _LocatorSnapshot? appCodeCandidate;
+    _LocatorSnapshot? libraryCandidate;
     _LocatorSnapshot? nonFlutterCandidate;
     _LocatorSnapshot? anyWithLocation;
 
@@ -126,22 +134,30 @@ class XBUmeWidgetLocatorResolver {
 
       final normalizedFile = _normalizeLocationFile(snapshot.file!);
 
-      if (localProjectCandidate == null &&
-          !_isFlutterOrDartSdkLocation(normalizedFile) &&
-          _isLikelyFirstParty(normalizedFile, snapshot.isLocalProject)) {
-        localProjectCandidate = snapshot;
-      }
+      if (_isFlutterOrDartSdkLocation(normalizedFile)) continue;
 
-      if (nonFlutterCandidate == null &&
-          !_isFlutterOrDartSdkLocation(normalizedFile)) {
-        nonFlutterCandidate = snapshot;
+      nonFlutterCandidate ??= snapshot;
+
+      if (_isPubCacheLocation(normalizedFile)) continue;
+
+      libraryCandidate ??= snapshot;
+
+      if (snapshot.isLocalProject) {
+        appCodeCandidate ??= snapshot;
       }
     }
 
-    if (localProjectCandidate != null) {
+    if (appCodeCandidate != null) {
       return _ResolvedSnapshot(
-        snapshot: localProjectCandidate,
-        strategy: 'nearest first-party widget (non Flutter SDK)',
+        snapshot: appCodeCandidate,
+        strategy: 'nearest app-code widget (local project)',
+      );
+    }
+
+    if (libraryCandidate != null) {
+      return _ResolvedSnapshot(
+        snapshot: libraryCandidate,
+        strategy: 'nearest library widget (non-Flutter, non-pub-cache)',
       );
     }
 
@@ -177,7 +193,8 @@ class XBUmeWidgetLocatorResolver {
     }
 
     final ancestors = snapshots.sublist(resolvedIndex + 1);
-    _LocatorSnapshot? localProjectCandidate;
+    _LocatorSnapshot? appCodeCandidate;
+    _LocatorSnapshot? libraryCandidate;
     _LocatorSnapshot? nonFlutterCandidate;
     _LocatorSnapshot? anyWithLocation;
 
@@ -187,22 +204,30 @@ class XBUmeWidgetLocatorResolver {
       anyWithLocation ??= snapshot;
       final normalizedFile = _normalizeLocationFile(snapshot.file!);
 
-      if (localProjectCandidate == null &&
-          !_isFlutterOrDartSdkLocation(normalizedFile) &&
-          _isLikelyFirstParty(normalizedFile, snapshot.isLocalProject)) {
-        localProjectCandidate = snapshot;
-      }
+      if (_isFlutterOrDartSdkLocation(normalizedFile)) continue;
 
-      if (nonFlutterCandidate == null &&
-          !_isFlutterOrDartSdkLocation(normalizedFile)) {
-        nonFlutterCandidate = snapshot;
+      nonFlutterCandidate ??= snapshot;
+
+      if (_isPubCacheLocation(normalizedFile)) continue;
+
+      libraryCandidate ??= snapshot;
+
+      if (snapshot.isLocalProject) {
+        appCodeCandidate ??= snapshot;
       }
     }
 
-    if (localProjectCandidate != null) {
+    if (appCodeCandidate != null) {
       return _ResolvedSnapshot(
-        snapshot: localProjectCandidate,
-        strategy: 'parent first-party widget (non Flutter SDK)',
+        snapshot: appCodeCandidate,
+        strategy: 'parent app-code widget (local project)',
+      );
+    }
+
+    if (libraryCandidate != null) {
+      return _ResolvedSnapshot(
+        snapshot: libraryCandidate,
+        strategy: 'parent library widget (non-Flutter, non-pub-cache)',
       );
     }
 
@@ -299,26 +324,6 @@ class XBUmeWidgetLocatorResolver {
         value.top.isFinite &&
         value.right.isFinite &&
         value.bottom.isFinite;
-  }
-
-  bool _isLikelyFirstParty(String normalizedFile, bool isLocalProject) {
-    if (_isFlutterOrDartSdkLocation(normalizedFile)) {
-      return false;
-    }
-
-    if (_isPubCacheLocation(normalizedFile)) {
-      return false;
-    }
-
-    if (normalizedFile.startsWith('package:')) {
-      return isLocalProject;
-    }
-
-    if (normalizedFile.startsWith('/')) {
-      return true;
-    }
-
-    return isLocalProject;
   }
 
   bool _isFlutterOrDartSdkLocation(String normalizedFile) {
