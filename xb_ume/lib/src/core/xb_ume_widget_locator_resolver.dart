@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 
+import 'xb_ume_locator_source_matcher.dart';
+
 class XBUmeWidgetLocatorResult {
   const XBUmeWidgetLocatorResult({
     required this.pickedElement,
@@ -21,6 +23,8 @@ class XBUmeWidgetLocatorResult {
     required this.parentLine,
     required this.parentColumn,
     required this.parentResolveStrategy,
+    this.resolvedPackage,
+    this.parentPackage,
   });
 
   final Element pickedElement;
@@ -44,6 +48,8 @@ class XBUmeWidgetLocatorResult {
   final int? parentLine;
   final int? parentColumn;
   final String? parentResolveStrategy;
+  final String? resolvedPackage;
+  final String? parentPackage;
 
   bool get hasLocation =>
       (file != null && file!.isNotEmpty) && line != null && column != null;
@@ -55,12 +61,17 @@ class XBUmeWidgetLocatorResult {
 }
 
 class XBUmeWidgetLocatorResolver {
-  const XBUmeWidgetLocatorResolver();
+  const XBUmeWidgetLocatorResolver({
+    this.inspectablePackages = const <String>{},
+  });
+
+  final Set<String> inspectablePackages;
 
   XBUmeWidgetLocatorResult resolve(Element pickedElement) {
     final chain = _normalizeChainLeafToRoot(pickedElement);
     final snapshots = chain.map(_buildSnapshot).toList(growable: false);
-    final resolved = _resolvePreferredSnapshot(snapshots);
+    final resolved = _resolveInspectablePackageSnapshot(snapshots) ??
+        _resolvePreferredSnapshot(snapshots);
     final parent = _resolveParentSnapshot(snapshots, resolved.snapshot);
 
     final pathNames = chain.reversed
@@ -87,7 +98,23 @@ class XBUmeWidgetLocatorResolver {
       parentLine: parent?.snapshot.line,
       parentColumn: parent?.snapshot.column,
       parentResolveStrategy: parent?.strategy,
+      resolvedPackage: resolved.snapshot.inspectablePackage,
+      parentPackage: parent?.snapshot.inspectablePackage,
     );
+  }
+
+  _ResolvedSnapshot? _resolveInspectablePackageSnapshot(
+    List<_LocatorSnapshot> snapshots,
+  ) {
+    for (final snapshot in snapshots) {
+      final packageName = snapshot.inspectablePackage;
+      if (!snapshot.hasLocation || packageName == null) continue;
+      return _ResolvedSnapshot(
+        snapshot: snapshot,
+        strategy: 'nearest widget from inspectable package ($packageName)',
+      );
+    }
+    return null;
   }
 
   List<Element> _normalizeChainLeafToRoot(Element pickedElement) {
@@ -193,6 +220,21 @@ class XBUmeWidgetLocatorResolver {
     }
 
     final ancestors = snapshots.sublist(resolvedIndex + 1);
+
+    final resolvedPackage = resolvedSnapshot.inspectablePackage;
+    if (resolvedPackage != null) {
+      for (final snapshot in ancestors) {
+        if (snapshot.hasLocation &&
+            snapshot.inspectablePackage == resolvedPackage) {
+          return _ResolvedSnapshot(
+            snapshot: snapshot,
+            strategy:
+                'nearest parent from inspectable package ($resolvedPackage)',
+          );
+        }
+      }
+    }
+
     _LocatorSnapshot? appCodeCandidate;
     _LocatorSnapshot? libraryCandidate;
     _LocatorSnapshot? nonFlutterCandidate;
@@ -276,6 +318,10 @@ class XBUmeWidgetLocatorResolver {
       rawCreationLocation: rawCreationLocation,
       isLocalProject: debugIsLocalCreationLocation(element),
       globalRect: _computeGlobalRect(element),
+      inspectablePackage: XBUmeLocatorSourceMatcher.findInspectablePackage(
+        creationLocationMap?['file']?.toString(),
+        inspectablePackages,
+      ),
     );
   }
 
@@ -381,6 +427,7 @@ class _LocatorSnapshot {
     required this.rawCreationLocation,
     required this.isLocalProject,
     required this.globalRect,
+    required this.inspectablePackage,
   });
 
   final Element element;
@@ -391,6 +438,7 @@ class _LocatorSnapshot {
   final String? rawCreationLocation;
   final bool isLocalProject;
   final Rect? globalRect;
+  final String? inspectablePackage;
 
   bool get hasLocation =>
       (file != null && file!.isNotEmpty) && line != null && column != null;

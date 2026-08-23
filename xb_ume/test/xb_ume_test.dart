@@ -86,6 +86,7 @@ void main() {
     const base = XBUmeConfig(
       enableConsole: false,
       enableRoute: false,
+      locatorInspectablePackages: <String>{'flutter_quill'},
     );
     expect(base.enableConsole, false);
     expect(base.enableRoute, false);
@@ -95,6 +96,7 @@ void main() {
     expect(updated.enableConsole, true);
     expect(updated.enableRoute, true);
     expect(updated.enablePerformance, true);
+    expect(updated.locatorInspectablePackages, <String>{'flutter_quill'});
   });
 
   test('manual network reporter records request lifecycle', () {

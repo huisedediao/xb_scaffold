@@ -27,6 +27,13 @@ class XBUmeConfig {
   final Duration consoleUiUpdateInterval;
   final bool inspectorAutoCaptureOnOpen;
 
+  /// Third-party package names whose source locations may be selected by the
+  /// widget locator, for example `flutter_quill`.
+  ///
+  /// Packages not listed here keep the default behavior: the locator prefers
+  /// the nearest source location from the application or a local library.
+  final Set<String> locatorInspectablePackages;
+
   final Offset floatingInitialOffset;
   final Size panelSize;
 
@@ -61,6 +68,7 @@ class XBUmeConfig {
     this.performanceUiUpdateInterval = const Duration(milliseconds: 240),
     this.consoleUiUpdateInterval = const Duration(milliseconds: 120),
     this.inspectorAutoCaptureOnOpen = false,
+    this.locatorInspectablePackages = const <String>{},
     this.floatingInitialOffset = const Offset(16, 180),
     this.panelSize = const Size(980, 640),
     this.persistenceEnabled = false,
@@ -111,6 +119,7 @@ class XBUmeConfig {
     Duration? performanceUiUpdateInterval,
     Duration? consoleUiUpdateInterval,
     bool? inspectorAutoCaptureOnOpen,
+    Set<String>? locatorInspectablePackages,
     Offset? floatingInitialOffset,
     Size? panelSize,
     bool? persistenceEnabled,
@@ -146,6 +155,8 @@ class XBUmeConfig {
           consoleUiUpdateInterval ?? this.consoleUiUpdateInterval,
       inspectorAutoCaptureOnOpen:
           inspectorAutoCaptureOnOpen ?? this.inspectorAutoCaptureOnOpen,
+      locatorInspectablePackages:
+          locatorInspectablePackages ?? this.locatorInspectablePackages,
       floatingInitialOffset:
           floatingInitialOffset ?? this.floatingInitialOffset,
       panelSize: panelSize ?? this.panelSize,

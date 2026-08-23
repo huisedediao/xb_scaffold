@@ -32,8 +32,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
   final GlobalKey _appRootKey = GlobalKey(debugLabel: 'xb_ume_app_root');
   final XBUmeWidgetPickService _pickService = XBUmeWidgetPickService.instance;
   final XBUmeNoticeService _noticeService = XBUmeNoticeService.instance;
-  final XBUmeWidgetLocatorResolver _locatorResolver =
-      const XBUmeWidgetLocatorResolver();
+  late final XBUmeWidgetLocatorResolver _locatorResolver;
 
   bool _pickMode = false;
   XBUmeWidgetLocatorResult? _pickResult;
@@ -44,6 +43,9 @@ class _XbUmeHostState extends State<XBUmeHost> {
   void initState() {
     super.initState();
     _offset = widget.controller.config.floatingInitialOffset;
+    _locatorResolver = XBUmeWidgetLocatorResolver(
+      inspectablePackages: widget.controller.config.locatorInspectablePackages,
+    );
     _panelVisible = widget.controller.panelVisible.value;
     _pickMode = _pickService.picking.value;
     _pickResult = _pickService.selectedResult.value;

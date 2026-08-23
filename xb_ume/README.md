@@ -54,6 +54,26 @@ class MyApp extends StatelessWidget {
 }
 ```
 
+## Widget locator
+
+The locator prefers source locations from the application by default. To
+inspect the implementation of selected third-party UI packages, add their
+pubspec package names to `locatorInspectablePackages`:
+
+```dart
+const XBUmeConfig(
+  locatorInspectablePackages: <String>{
+    'flutter_quill',
+    'cached_network_image',
+  },
+);
+```
+
+When a tapped widget was created by a configured package, the locator shows
+the nearest source location in that package and its nearest located ancestor
+from the same package. If there is no same-package ancestor, it falls back to
+the normal application-first parent resolution.
+
 ## Network adapters
 
 ### Dio

@@ -4,9 +4,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:xb_analytics_plus/xb_analytics_plus.dart';
 import 'package:xb_ume/xb_ume.dart';
 
-void main() {
+import 'pages/xb_analytics_locator_test_page.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
   final memoryStore = <String, dynamic>{
     'token': 'demo-token-should-be-masked',
     'featureA': true,
@@ -17,6 +22,15 @@ void main() {
     config: const XBUmeConfig(
       enable: kDebugMode,
       persistenceEnabled: true,
+      // locatorInspectablePackages: <String>{'xb_analytics_plus'},
+    ),
+  );
+  await initXBTrack(
+    const XBTrackConfig(
+      appVersion: '0.1.0+1',
+      enableConsoleSink: true,
+      enableMemorySink: true,
+      enableLocalStoreSink: true,
     ),
   );
   XBUme.registerStorageAdapter(
@@ -106,6 +120,19 @@ class _HomePageState extends State<HomePage> {
                 },
                 child: const Text('Push Route'),
               ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      settings: const RouteSettings(
+                        name: '/xb-analytics-locator-test',
+                      ),
+                      builder: (_) => const XBAnalyticsLocatorTestPage(),
+                    ),
+                  );
+                },
+                child: const Text('XB Analytics Locator Test'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -113,7 +140,8 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 16),
           const Text(
             'Tap floating UME button to open panel.\n'
-            'This demo covers M1-M4 modules.',
+            'Open XB Track Debug to test locating widgets from the local '
+            'xb_analytics_plus package.',
           ),
         ],
       ),

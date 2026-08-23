@@ -1,30 +1,56 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xb_analytics_plus/xb_analytics_plus.dart';
+import 'package:xb_ume/xb_ume.dart';
 
 import 'package:xb_ume_example/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  setUpAll(() async {
+    XBUmeBinding.ensureInitialized(
+      config: const XBUmeConfig(
+        captureDebugPrint: false,
+        captureFlutterError: false,
+        capturePlatformError: false,
+      ),
+    );
+    await initXBTrack(
+      const XBTrackConfig(
+        enableMemorySink: true,
+        enableLocalStoreSink: false,
+      ),
+    );
+  });
+
+  tearDownAll(() async {
+    await closeXBTrack(flushBeforeClose: false);
+    XBUmeBinding.instance.dispose();
+  });
+
+  testWidgets('opens the XB Track debug page', (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final testPageButton = find.text('XB Analytics Locator Test');
+    await tester.ensureVisible(testPageButton);
+    await tester.tap(testPageButton);
+    await tester.pumpAndSettle();
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('local-project-control-area')),
+      findsOneWidget,
+    );
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    await tester.tap(find.text('Show third-party UI'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(
+        const ValueKey<String>('local-project-track-debug-wrapper'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('XB Track Debug'), findsOneWidget);
+    expect(find.text('Search by event or params'), findsOneWidget);
+    expect(find.text('Local project UI'), findsOneWidget);
   });
 }

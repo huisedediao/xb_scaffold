@@ -10,6 +10,8 @@ dependencies:
     sdk: flutter
   xb_ume:
     path: ../
+  xb_analytics_plus:
+    path: ../../xb_analytics_plus
   dio: ^5.4.3+1
   http: ^1.2.2
 
