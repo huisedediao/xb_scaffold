@@ -4,6 +4,45 @@ import 'package:flutter/widgets.dart';
 
 import 'xb_ume_locator_source_matcher.dart';
 
+/// 组件链条中的单个节点（从被点击的叶子组件到根组件）。
+class XBUmeLocatorChainNode {
+  const XBUmeLocatorChainNode({
+    required this.widgetType,
+    required this.file,
+    required this.line,
+    required this.column,
+    required this.isLocalProject,
+    required this.isPicked,
+    required this.isResolved,
+    required this.isParent,
+    required this.visible,
+    this.inspectablePackage,
+  });
+
+  final String widgetType;
+  final String? file;
+  final int? line;
+  final int? column;
+  final bool isLocalProject;
+
+  /// 是否为实际点击的叶子组件。
+  final bool isPicked;
+
+  /// 是否为解析出的目标组件。
+  final bool isResolved;
+
+  /// 是否为解析目标的父级组件。
+  final bool isParent;
+
+  /// 是否为“代码可见”层：有源码位置且不属于 Flutter/Dart SDK 框架
+  /// （包含业务代码、path 依赖库与 pub-cache 三方包）。
+  final bool visible;
+  final String? inspectablePackage;
+
+  bool get hasLocation =>
+      (file != null && file!.isNotEmpty) && line != null && column != null;
+}
+
 class XBUmeWidgetLocatorResult {
   const XBUmeWidgetLocatorResult({
     required this.pickedElement,
@@ -23,6 +62,7 @@ class XBUmeWidgetLocatorResult {
     required this.parentLine,
     required this.parentColumn,
     required this.parentResolveStrategy,
+    required this.chain,
     this.resolvedPackage,
     this.parentPackage,
   });
@@ -50,6 +90,9 @@ class XBUmeWidgetLocatorResult {
   final String? parentResolveStrategy;
   final String? resolvedPackage;
   final String? parentPackage;
+
+  /// 完整组件链条，顺序为叶子（被点击组件）→ 根。
+  final List<XBUmeLocatorChainNode> chain;
 
   bool get hasLocation =>
       (file != null && file!.isNotEmpty) && line != null && column != null;
@@ -80,6 +123,30 @@ class XBUmeWidgetLocatorResolver {
 
     final pickedSnapshot = snapshots.isNotEmpty ? snapshots.first : null;
 
+    final resolvedIndex = snapshots.indexWhere(
+      (item) => identical(item.element, resolved.snapshot.element),
+    );
+    final parentIndex = parent == null
+        ? -1
+        : snapshots.indexWhere(
+            (item) => identical(item.element, parent.snapshot.element),
+          );
+    final chainNodes = <XBUmeLocatorChainNode>[
+      for (var index = 0; index < snapshots.length; index++)
+        XBUmeLocatorChainNode(
+          widgetType: snapshots[index].widgetType,
+          file: snapshots[index].file,
+          line: snapshots[index].line,
+          column: snapshots[index].column,
+          isLocalProject: snapshots[index].isLocalProject,
+          inspectablePackage: snapshots[index].inspectablePackage,
+          isPicked: index == 0,
+          isResolved: index == resolvedIndex,
+          isParent: index == parentIndex,
+          visible: _isCodeVisibleSnapshot(snapshots[index]),
+        ),
+    ];
+
     return XBUmeWidgetLocatorResult(
       pickedElement: pickedElement,
       resolvedElement: resolved.snapshot.element,
@@ -100,7 +167,15 @@ class XBUmeWidgetLocatorResolver {
       parentResolveStrategy: parent?.strategy,
       resolvedPackage: resolved.snapshot.inspectablePackage,
       parentPackage: parent?.snapshot.inspectablePackage,
+      chain: chainNodes,
     );
+  }
+
+  /// 判断某层是否为“代码可见”：有源码位置且不属于 Flutter/Dart SDK。
+  /// 业务代码、path 依赖库、pub-cache 三方包均视为可见。
+  bool _isCodeVisibleSnapshot(_LocatorSnapshot snapshot) {
+    if (!snapshot.hasLocation) return false;
+    return !_isFlutterOrDartSdkLocation(_normalizeLocationFile(snapshot.file!));
   }
 
   _ResolvedSnapshot? _resolveInspectablePackageSnapshot(

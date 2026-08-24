@@ -36,6 +36,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
 
   bool _pickMode = false;
   XBUmeWidgetLocatorResult? _pickResult;
+  bool _bubbleExpanded = false;
   XBUmeNotice? _notice;
   String? _lastSelectionLayoutLogKey;
 
@@ -385,9 +386,15 @@ class _XbUmeHostState extends State<XBUmeHost> {
       Positioned(
         left: left,
         top: bubbleTop,
-        child: IgnorePointer(
-          child: Material(
-            color: Colors.transparent,
+        child: Material(
+          color: Colors.transparent,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              _setStateSafely(() {
+                _bubbleExpanded = !_bubbleExpanded;
+              });
+            },
             child: Container(
               width: bubbleWidth,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -404,49 +411,81 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   fontSize: 11,
                   height: 1.35,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      result.pickedWidgetType != result.resolvedWidgetType
-                          ? 'picked: ${result.pickedWidgetType}'
-                          : result.resolvedWidgetType,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color:
-                            result.pickedWidgetType != result.resolvedWidgetType
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: bubbleMaxHeight),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          result.pickedWidgetType != result.resolvedWidgetType
+                              ? 'picked: ${result.pickedWidgetType}'
+                              : result.resolvedWidgetType,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: result.pickedWidgetType !=
+                                    result.resolvedWidgetType
                                 ? const Color(0xFF00E5FF)
                                 : Colors.white,
-                      ),
-                    ),
-                    if (result.pickedWidgetType !=
-                        result.resolvedWidgetType) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        'resolved: ${result.resolvedWidgetType}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFB0BEC5),
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(_wrapPathForDisplay(fileText)),
-                    if (result.hasLocation) ...[
-                      const SizedBox(height: 2),
-                      Text(lineColumnText),
-                    ],
-                    const SizedBox(height: 6),
-                    Text(
-                      'parent: ${result.parentWidgetType ?? '-'}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                        if (result.pickedWidgetType !=
+                            result.resolvedWidgetType) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'resolved: ${result.resolvedWidgetType}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFB0BEC5),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(_wrapPathForDisplay(fileText)),
+                        if (result.hasLocation) ...[
+                          const SizedBox(height: 2),
+                          Text(lineColumnText),
+                        ],
+                        const SizedBox(height: 6),
+                        Text(
+                          'parent: ${result.parentWidgetType ?? '-'}',
+                          style:
+                              const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(_wrapPathForDisplay(parentLocationText)),
+                        if (_bubbleExpanded)
+                          ..._buildChainRows(result),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _bubbleExpanded
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 14,
+                              color: const Color(0xFF00E5FF),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _bubbleExpanded
+                                  ? 'Collapse chain'
+                                  : 'Expand full chain '
+                                      '(${_visibleChainNodes(result).length})',
+                              style: const TextStyle(
+                                color: Color(0xFF00E5FF),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(_wrapPathForDisplay(parentLocationText)),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -454,6 +493,74 @@ class _XbUmeHostState extends State<XBUmeHost> {
         ),
       ),
     ];
+  }
+
+  /// 展开态下只展示“代码可见”层（业务代码、本地库、三方包，
+  /// 过滤 Flutter SDK 框架层），顺序为根 → 被点击组件。
+  /// 若没有任何可见层（极端情况）则回退展示全部。
+  List<XBUmeLocatorChainNode> _visibleChainNodes(
+    XBUmeWidgetLocatorResult result,
+  ) {
+    final all = result.chain.reversed.toList(growable: false);
+    final visible = all.where((node) => node.visible).toList(growable: false);
+    return visible.isEmpty ? all : visible;
+  }
+
+  /// 展开态下的完整组件链条（根 → 被点击组件），逐层缩进。
+  List<Widget> _buildChainRows(XBUmeWidgetLocatorResult result) {
+    final nodes = _visibleChainNodes(result);
+    return <Widget>[
+      const SizedBox(height: 6),
+      Container(
+        height: 1,
+        color: const Color(0xFF00E5FF).withValues(alpha: 0.25),
+      ),
+      const SizedBox(height: 6),
+      const Text(
+        'widget chain (root → picked):',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 2),
+      for (var depth = 0; depth < nodes.length; depth++)
+        _buildChainRow(nodes[depth], depth: depth),
+    ];
+  }
+
+  Widget _buildChainRow(XBUmeLocatorChainNode node, {required int depth}) {
+    final Color color;
+    final FontWeight weight;
+    if (node.isResolved) {
+      color = const Color(0xFF00E5FF);
+      weight = FontWeight.w700;
+    } else if (node.isPicked) {
+      color = Colors.white;
+      weight = FontWeight.w700;
+    } else if (node.isParent) {
+      color = Colors.white;
+      weight = FontWeight.w600;
+    } else {
+      color = const Color(0xFFB0BEC5);
+      weight = FontWeight.w400;
+    }
+    final location = node.hasLocation
+        ? '${node.file}:${node.line}:${node.column}'
+        : 'no location';
+    return Padding(
+      padding: EdgeInsets.only(left: depth * 10.0, top: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            node.widgetType,
+            style: TextStyle(color: color, fontWeight: weight),
+          ),
+          Text(
+            _wrapPathForDisplay(location),
+            style: const TextStyle(fontSize: 10, color: Color(0xFF8B95A5)),
+          ),
+        ],
+      ),
+    );
   }
 
   String _wrapPathForDisplay(String path) {
@@ -601,6 +708,9 @@ class _XbUmeHostState extends State<XBUmeHost> {
     }
     _setStateSafely(() {
       _pickMode = pickMode;
+      if (!pickMode) {
+        _bubbleExpanded = false;
+      }
     });
   }
 
@@ -613,6 +723,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
   void _onPickResultChanged() {
     _setStateSafely(() {
       _pickResult = _pickService.selectedResult.value;
+      _bubbleExpanded = false;
     });
   }
 
