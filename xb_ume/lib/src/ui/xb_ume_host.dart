@@ -524,8 +524,41 @@ class _XbUmeHostState extends State<XBUmeHost> {
   }
 
   /// 展开态下的完整组件链条（根 → 被点击组件）。
+  /// 按文件分组展示：文件路径在上、组件名在下，文件之间有明显分割线。
   List<Widget> _buildChainRows(XBUmeWidgetLocatorResult result) {
     final nodes = _visibleChainNodes(result);
+    final rows = <Widget>[];
+    String? currentFile;
+    var hasGroup = false;
+    for (final node in nodes) {
+      final file = node.hasLocation ? node.file : null;
+      if (file != currentFile) {
+        // 切换到新的文件分组：先插入分割线，再展示文件头。
+        if (hasGroup) {
+          rows.add(const SizedBox(height: 8));
+          rows.add(
+            Container(
+              height: 1,
+              color: const Color(0xFF00E5FF).withValues(alpha: 0.22),
+            ),
+          );
+          rows.add(const SizedBox(height: 8));
+        }
+        rows.add(
+          Text(
+            file == null ? 'unknown location' : _wrapPathForDisplay(file),
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFB0BEC5),
+            ),
+          ),
+        );
+        currentFile = file;
+        hasGroup = true;
+      }
+      rows.add(_buildChainRow(node));
+    }
     return <Widget>[
       const SizedBox(height: 6),
       Container(
@@ -538,18 +571,15 @@ class _XbUmeHostState extends State<XBUmeHost> {
         style: TextStyle(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 2),
-      for (final node in nodes) _buildChainRow(node),
+      ...rows,
     ];
   }
 
   Widget _buildChainRow(XBUmeLocatorChainNode node) {
     final FontWeight weight =
         (node.isResolved || node.isPicked) ? FontWeight.w700 : FontWeight.w600;
-    final location = node.hasLocation
-        ? '${node.file}:${node.line}:${node.column}'
-        : 'no location';
     return Padding(
-      padding: const EdgeInsets.only(top: 2),
+      padding: const EdgeInsets.only(left: 8, top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -557,10 +587,11 @@ class _XbUmeHostState extends State<XBUmeHost> {
             node.widgetType,
             style: TextStyle(color: Colors.white, fontWeight: weight),
           ),
-          Text(
-            _wrapPathForDisplay(location),
-            style: const TextStyle(fontSize: 10, color: Color(0xFF8B95A5)),
-          ),
+          if (node.hasLocation)
+            Text(
+              'line: ${node.line}  column: ${node.column}',
+              style: const TextStyle(fontSize: 10, color: Color(0xFF8B95A5)),
+            ),
         ],
       ),
     );
