@@ -360,6 +360,114 @@ class _XbUmeHostState extends State<XBUmeHost> {
       spaceBelow: spaceBelow,
     );
 
+    final Widget bubble = Material(
+      color: Colors.transparent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          _setStateSafely(() {
+            _bubbleExpanded = !_bubbleExpanded;
+          });
+        },
+        child: Container(
+          width: _bubbleExpanded ? null : bubbleWidth,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.84),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: const Color(0xFF00E5FF).withValues(alpha: 0.45),
+            ),
+          ),
+          child: DefaultTextStyle(
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              height: 1.35,
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: _bubbleExpanded ? double.infinity : bubbleMaxHeight,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      result.pickedWidgetType != result.resolvedWidgetType
+                          ? 'picked: ${result.pickedWidgetType}'
+                          : result.resolvedWidgetType,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            result.pickedWidgetType != result.resolvedWidgetType
+                                ? const Color(0xFF00E5FF)
+                                : Colors.white,
+                      ),
+                    ),
+                    if (result.pickedWidgetType !=
+                        result.resolvedWidgetType) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'resolved: ${result.resolvedWidgetType}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFB0BEC5),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(_wrapPathForDisplay(fileText)),
+                    if (result.hasLocation) ...[
+                      const SizedBox(height: 2),
+                      Text(lineColumnText),
+                    ],
+                    const SizedBox(height: 6),
+                    Text(
+                      'parent: ${result.parentWidgetType ?? '-'}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(_wrapPathForDisplay(parentLocationText)),
+                    if (_bubbleExpanded) ..._buildChainRows(result),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _bubbleExpanded
+                              ? Icons.expand_less
+                              : Icons.expand_more,
+                          size: 14,
+                          color: const Color(0xFF00E5FF),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _bubbleExpanded
+                              ? 'Collapse chain'
+                              : 'Expand full chain '
+                                  '(${_visibleChainNodes(result).length})',
+                          style: const TextStyle(
+                            color: Color(0xFF00E5FF),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final safePadding = MediaQuery.of(context).padding;
+
     return <Widget>[
       Positioned.fromRect(
         rect: clamped,
@@ -383,115 +491,24 @@ class _XbUmeHostState extends State<XBUmeHost> {
           ),
         ),
       ),
-      Positioned(
-        left: left,
-        top: bubbleTop,
-        child: Material(
-          color: Colors.transparent,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              _setStateSafely(() {
-                _bubbleExpanded = !_bubbleExpanded;
-              });
-            },
-            child: Container(
-              width: bubbleWidth,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.84),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: const Color(0xFF00E5FF).withValues(alpha: 0.45),
-                ),
-              ),
-              child: DefaultTextStyle(
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  height: 1.35,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: bubbleMaxHeight),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          result.pickedWidgetType != result.resolvedWidgetType
-                              ? 'picked: ${result.pickedWidgetType}'
-                              : result.resolvedWidgetType,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: result.pickedWidgetType !=
-                                    result.resolvedWidgetType
-                                ? const Color(0xFF00E5FF)
-                                : Colors.white,
-                          ),
-                        ),
-                        if (result.pickedWidgetType !=
-                            result.resolvedWidgetType) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            'resolved: ${result.resolvedWidgetType}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFFB0BEC5),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 4),
-                        Text(_wrapPathForDisplay(fileText)),
-                        if (result.hasLocation) ...[
-                          const SizedBox(height: 2),
-                          Text(lineColumnText),
-                        ],
-                        const SizedBox(height: 6),
-                        Text(
-                          'parent: ${result.parentWidgetType ?? '-'}',
-                          style:
-                              const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(_wrapPathForDisplay(parentLocationText)),
-                        if (_bubbleExpanded)
-                          ..._buildChainRows(result),
-                        const SizedBox(height: 6),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _bubbleExpanded
-                                  ? Icons.expand_less
-                                  : Icons.expand_more,
-                              size: 14,
-                              color: const Color(0xFF00E5FF),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _bubbleExpanded
-                                  ? 'Collapse chain'
-                                  : 'Expand full chain '
-                                      '(${_visibleChainNodes(result).length})',
-                              style: const TextStyle(
-                                color: Color(0xFF00E5FF),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+      if (_bubbleExpanded)
+        // 展开态：气泡充满整个可视区域（避开顶部/底部安全区与底部面板区）。
+        Positioned(
+          left: 8,
+          right: 8,
+          top: safePadding.top + 8,
+          bottom: math.max(
+            safePadding.bottom + 8,
+            viewportSize.height - visibleHeight + 8,
           ),
+          child: bubble,
+        )
+      else
+        Positioned(
+          left: left,
+          top: bubbleTop,
+          child: bubble,
         ),
-      ),
     ];
   }
 
@@ -526,9 +543,8 @@ class _XbUmeHostState extends State<XBUmeHost> {
   }
 
   Widget _buildChainRow(XBUmeLocatorChainNode node) {
-    final FontWeight weight = (node.isResolved || node.isPicked)
-        ? FontWeight.w700
-        : FontWeight.w600;
+    final FontWeight weight =
+        (node.isResolved || node.isPicked) ? FontWeight.w700 : FontWeight.w600;
     final location = node.hasLocation
         ? '${node.file}:${node.line}:${node.column}'
         : 'no location';
