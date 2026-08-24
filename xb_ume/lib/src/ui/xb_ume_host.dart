@@ -506,7 +506,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
     return visible.isEmpty ? all : visible;
   }
 
-  /// 展开态下的完整组件链条（根 → 被点击组件），逐层缩进。
+  /// 展开态下的完整组件链条（根 → 被点击组件）。
   List<Widget> _buildChainRows(XBUmeWidgetLocatorResult result) {
     final nodes = _visibleChainNodes(result);
     return <Widget>[
@@ -521,38 +521,25 @@ class _XbUmeHostState extends State<XBUmeHost> {
         style: TextStyle(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 2),
-      for (var depth = 0; depth < nodes.length; depth++)
-        _buildChainRow(nodes[depth], depth: depth),
+      for (final node in nodes) _buildChainRow(node),
     ];
   }
 
-  Widget _buildChainRow(XBUmeLocatorChainNode node, {required int depth}) {
-    final Color color;
-    final FontWeight weight;
-    if (node.isResolved) {
-      color = const Color(0xFF00E5FF);
-      weight = FontWeight.w700;
-    } else if (node.isPicked) {
-      color = Colors.white;
-      weight = FontWeight.w700;
-    } else if (node.isParent) {
-      color = Colors.white;
-      weight = FontWeight.w600;
-    } else {
-      color = const Color(0xFFB0BEC5);
-      weight = FontWeight.w400;
-    }
+  Widget _buildChainRow(XBUmeLocatorChainNode node) {
+    final FontWeight weight = (node.isResolved || node.isPicked)
+        ? FontWeight.w700
+        : FontWeight.w600;
     final location = node.hasLocation
         ? '${node.file}:${node.line}:${node.column}'
         : 'no location';
     return Padding(
-      padding: EdgeInsets.only(left: depth * 10.0, top: 2),
+      padding: const EdgeInsets.only(top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             node.widgetType,
-            style: TextStyle(color: color, fontWeight: weight),
+            style: TextStyle(color: Colors.white, fontWeight: weight),
           ),
           Text(
             _wrapPathForDisplay(location),
