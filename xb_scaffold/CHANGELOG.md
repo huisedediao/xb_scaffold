@@ -910,3 +910,9 @@
 ## 1.0.9
 
 - 优化 XBPage 返回控制和返回处理
+
+## 1.1.0
+
+- 新增 AI Skill：包内内置 skill/xb-scaffold（SKILL.md + reference 文档，全英文），供 AI 编程工具学习 xb_scaffold
+- 新增 `xb.skill` 命令：在项目根生成厂商中立的 AI 自装指南 `xb-scaffold-ai-guide.md`（可选 `--out <path>`、`--force`），文档内含给 AI 的安装指令与 section 标记切分的完整知识库，由 AI 自行转换安装到任意工具（Qoder/Claude Code/Cursor 等）的 skill/规则机制
+- `xb.setup` 末尾自动生成该指南，接入即生成；`make install-cli` 同步支持 `xb.skill`

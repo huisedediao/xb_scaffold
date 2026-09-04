@@ -284,6 +284,37 @@ dart run xb_scaffold:xb xb.newmodel add_device_video_manage_unnormal_model '{"de
 dart run xb_scaffold:xb xb.newmodel add_device_video_manage_unnormal_model lib/model/ '{"deviceId":"1"}'
 ```
 
+### 5. 生成 AI 自装指南（可选，推荐）
+
+xb_scaffold 并非主流框架，AI 编程工具默认不了解它的 API。包内内置了一份全英文的 AI Skill（`skill/xb-scaffold/`，含 SKILL.md 和详细到组件参数/样式的 reference 文档）。
+
+由于各家 AI IDE（Qoder、Claude Code、Cursor 等）的 skill/规则目录与格式互不兼容，`xb.skill` 不直接安装到任何特定工具，而是在项目根生成一份**厂商中立的自装指南**：
+
+```bash
+dart run xb_scaffold:xb xb.skill
+# 已安装 xb 短命令的项目：
+xb.skill
+```
+
+| 参数 | 说明 |
+|---|---|
+| （默认） | 在当前目录生成 `xb-scaffold-ai-guide.md` |
+| `--out <path>` | 自定义生成位置（如 `docs/xb-scaffold.md`） |
+| `--force` | 覆盖已存在的文件，不再询问 |
+
+指南文档包含两部分：
+
+1. **给 AI 的指令**：如何把下方的知识库转换成它当前工具的原生 skill/规则（含常见工具映射表：`.qoder/skills/`、`.claude/skills/`、`.cursor/rules/` 等）；
+2. **完整知识库**：用 `<!-- section: ... -->` 标记切分的 SKILL.md 与 4 份 reference 文档全文。
+
+之后告诉你的 AI 一句话即可：
+
+> 读取并执行项目根目录下 `xb-scaffold-ai-guide.md` 中的安装指令。
+
+无论你（或团队成员）使用哪种 AI IDE，它都会自己把知识装成自己认识的样子。
+
+注意：`xb.setup` 会在末尾自动生成该指南，接入即生成，一般无需单独执行。
+
 ## 快速开始
 
 ### 1. 初始化应用
