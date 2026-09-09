@@ -453,6 +453,7 @@ dart run xb_scaffold:xb xb.build --dry-run
 | 签名时报 `An App ID with identifier 'com.xxx' is not available` | bundle id（`com.xxx.xxx`）被别人注册过了 | 用 Xcode 打开 iOS 工程 → Signing & Capabilities → 把 Bundle Identifier 改成没被占用的（如 `com.你的公司.你的项目`），提交后重新打包 |
 | 打出来的包没有我最新改的代码 | 未提交的改动不会进包 | 先 `git commit` 再打包，或加 `--no-worktree` 快速自测 |
 | 下载依赖时网络报错 | 网络波动 | 直接重跑打包命令（有缓存，重试通常能过） |
+| 安卓包解析依赖时报 `Read timed out` | 部分依赖只在公司内网 maven 仓库有，且首次必须联网下载 | 连上公司网络/VPN 后重跑一次，成功后依赖永久缓存，之后断网也能打包 |
 | 看到看不懂的报错 | — | 把终端完整输出复制给同事 / 在 XB Scaffold 仓库提 issue |
 
 ### 6. 进阶命令速查

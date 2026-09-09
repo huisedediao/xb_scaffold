@@ -76,7 +76,11 @@ class WorktreeSession:
         branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo.toplevel).replace(
             "/", "-"
         )
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"xb-build-{repo.toplevel.name}-{branch}-"))
+        # resolve() 统一为真实路径：macOS 上 /var 是 /private/var 的符号链接，
+        # 不 resolve 会导致后续与 resolve() 后的路径比较（软链落点边界）误判
+        temp_dir = Path(
+            tempfile.mkdtemp(prefix=f"xb-build-{repo.toplevel.name}-{branch}-")
+        ).resolve()
         _git(["worktree", "add", "--detach", str(temp_dir), "HEAD"], repo.toplevel)
 
         self._temp_dir = temp_dir

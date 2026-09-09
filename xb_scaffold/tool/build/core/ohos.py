@@ -15,6 +15,30 @@ from .config import BuildConfig
 from .worktree import WorktreeSession, check_tool
 
 
+def _reuse_oh_modules(src_ohos: Path, dst_ohos: Path) -> None:
+    """复用主目录的鸿蒙依赖（oh_modules 目录 + oh-package-lock.json5），
+    避免隔离构建时 ohpm 全量网络下载。
+
+    与 iOS 复用 Pods 同哲学：预置后由 ohpm/hvigor 自行校验增量；
+    源缺失或复制失败时静默回退全量安装，不影响构建正确性。
+    """
+    for rel in ("oh_modules", "oh-package-lock.json5"):
+        src = src_ohos / rel
+        dst = dst_ohos / rel
+        if not src.exists() or dst.exists():
+            continue
+        try:
+            if src.is_dir():
+                subprocess.run(["rsync", "-a", f"{src}/", f"{dst}/"], check=True)
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print(f"[Ohos] 依赖 {rel} 复用失败，将执行全量依赖安装")
+            return
+        print(f"[Ohos] 已复用 {rel}: {dst}")
+
+
 def build_ohos(cfg: BuildConfig, session: WorktreeSession) -> Path:
     """执行鸿蒙打包，返回产物（.hap/.app）路径。"""
     check_tool("flutter")
@@ -24,6 +48,9 @@ def build_ohos(cfg: BuildConfig, session: WorktreeSession) -> Path:
         raise SystemExit("[Ohos] 未找到 ohos/ 目录，无法打包")
 
     cfg_ohos = cfg.ohos
+    # 1. 复用主目录 ohos 依赖（仅隔离构建时生效，思路同 iOS 复用 Pods）
+    if cfg_ohos.get("reuse_oh_modules", True) and session.isolated:
+        _reuse_oh_modules(session.project_dir / "ohos", ohos_dir)
     package_type = str(cfg_ohos.get("package_type") or "hap")
     if package_type not in ("hap", "app"):
         raise SystemExit(f"[Ohos] 不支持的包类型: {package_type}（可选 hap/app）")

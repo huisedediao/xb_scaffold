@@ -114,8 +114,10 @@ python3 <xb_scaffold包>/tool/build/xb_build.py --project-dir . --dry-run
 | `ios.extra_settings` | `[]` | 追加自定义 xcodebuild 设置（如 `ENABLE_BITCODE=NO`） |
 | `android.target_platforms` | `null` | 如 `["android-arm64"]`；null=flutter 默认 |
 | `android.apk_name` | `<project>.apk` | 产物文件名 |
+| `android.build_cache` | `true` | 隔离构建时启用 Gradle Build Cache（只写入 worktree 内 gradle.properties，随目录删除，不影响工程） |
 | `ohos.package_type` | `hap` | `hap` 或 `app` |
 | `ohos.flavor` | `""` | 透传 `--flavor`（空则不传） |
+| `ohos.reuse_oh_modules` | `true` | 复用已有 ohos/oh_modules（含 lock），跳过 ohpm 全量下载 |
 
 ## 原理与边界
 
