@@ -1,17 +1,20 @@
 """iOS 构建：pub get → pod install →（可选补丁）→ xcodebuild archive。
 
-签名通用化（不修改工程文件）：
-xcodebuild 命令行 build setting 优先级高于 project.pbxproj 内配置，
-证书/描述文件等信息按签名样式注入到 archive 命令末尾：
+签名通用化：证书/描述文件等信息按用户级 ios.signing 配置注入到
+xcodebuild 命令末尾（命令行优先级高于 project.pbxproj）：
 - style=automatic: CODE_SIGN_STYLE=Automatic + DEVELOPMENT_TEAM + -allowProvisioningUpdates
 - style=manual:    CODE_SIGN_STYLE=Manual + CODE_SIGN_IDENTITY + PROVISIONING_PROFILE_SPECIFIER
 - style=none:      不注入，使用工程自带签名配置
+若工程文件残留与用户级配置冲突的签名设置（如手动 profile/identity 残留
+或签名样式不一致，Xcode 会报 conflicting provisioning settings），打包前
+临时按用户级配置改写 project.pbxproj，构建完成后自动还原，不影响工程。
 另外保留可选 patch_files 兜底机制（备份→覆盖→还原），用于极少数
 build setting 无法表达的工程结构调整，默认关闭。
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -72,6 +75,85 @@ def _signing_settings(cfg_ios: dict) -> tuple[list[str], bool]:
     return settings, allow_updates
 
 
+# pbxproj 中签名行的值可能带引号（含空串/特殊字符）也可能不带（简单标识符）。
+_PROFILE_LINE_RE = re.compile(
+    r'^(?P<head>\s*(?:"PROVISIONING_PROFILE_SPECIFIER\[sdk=[^"]*\]"'
+    r'|PROVISIONING_PROFILE_SPECIFIER)\s*=\s*)(?:"[^"]*"|[^;\n]*?)'
+    r'[ \t]*;(?=[ \t]*(?:\r?\n|$))',
+    re.M,
+)
+_STYLE_LINE_RE = re.compile(
+    r'^(?P<head>\s*CODE_SIGN_STYLE\s*=\s*)(?:"[^"]*"|[^;\n]*?)'
+    r'[ \t]*;(?=[ \t]*(?:\r?\n|$))',
+    re.M,
+)
+_IDENTITY_LINE_RE = re.compile(
+    r'^(?P<head>\s*(?:"CODE_SIGN_IDENTITY\[sdk=[^"]*\]"'
+    r'|CODE_SIGN_IDENTITY)\s*=\s*)(?:"[^"]*"|[^;\n]*?)'
+    r'[ \t]*;(?=[ \t]*(?:\r?\n|$))',
+    re.M,
+)
+
+
+def _find_pbxproj(ios_dir: Path):
+    """定位 ios/ 下的 project.pbxproj（优先 Runner.xcodeproj）。"""
+    cand = ios_dir / "Runner.xcodeproj" / "project.pbxproj"
+    if cand.is_file():
+        return cand
+    for proj in sorted(ios_dir.glob("*.xcodeproj")):
+        cand = proj / "project.pbxproj"
+        if cand.is_file():
+            return cand
+    print("[iOS] 未找到 project.pbxproj，跳过工程签名配置对齐")
+    return None
+
+
+def _reconcile_signing(pbxproj: Path, cfg_ios: dict):
+    """按用户级 ios.signing 配置生成对齐后的 pbxproj 文本；无差异返回 None。
+
+    工程文件里残留的手动 profile（PROVISIONING_PROFILE_SPECIFIER 非空）或
+    不一致的 CODE_SIGN_STYLE，会使 Xcode 报 conflicting provisioning settings。
+    这里把签名相关行统一改写成用户级配置期望的形态，由调用方在构建后还原：
+    - style=automatic: profile 全部置空，identity -> "Apple Development"，
+      CODE_SIGN_STYLE -> Automatic（Xcode 要求自动签名配 Apple Development 证书）
+    - style=manual:    profile/identity 统一为用户配置值（未配则置空），样式 -> Manual
+    - style=none:      不改动，使用工程自带配置
+    """
+    signing = cfg_ios.get("signing", {}) or {}
+    style = str(signing.get("style") or "none").strip()
+    if style not in ("automatic", "manual"):
+        return None
+    try:
+        text = pbxproj.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"[iOS] 读取 {pbxproj} 失败，跳过签名配置对齐: {exc}")
+        return None
+
+    target_style = "Automatic" if style == "automatic" else "Manual"
+    target_profile = "" if style == "automatic" else str(signing.get("profile") or "").strip()
+    target_identity = (
+        "Apple Development"
+        if style == "automatic"
+        else str(signing.get("identity") or "").strip()
+    )
+
+    def _align_profile(m: re.Match) -> str:
+        return f'{m.group("head")}"{target_profile}";'
+
+    def _align_style(m: re.Match) -> str:
+        return f'{m.group("head")}{target_style};'
+
+    def _align_identity(m: re.Match) -> str:
+        return f'{m.group("head")}"{target_identity}";'
+
+    aligned = _PROFILE_LINE_RE.sub(_align_profile, text)
+    aligned = _STYLE_LINE_RE.sub(_align_style, aligned)
+    aligned = _IDENTITY_LINE_RE.sub(_align_identity, aligned)
+    if aligned == text:
+        return None
+    return aligned
+
+
 class _Patches:
     """文件补丁兜底：备份工程文件→用本地补丁覆盖→restore() 还原。"""
 
@@ -130,8 +212,22 @@ def build_ios(cfg: BuildConfig, session: WorktreeSession) -> Path:
     patches = _Patches(
         session.project_dir, work_dir, cfg_ios.get("patch_files", {})
     )
+    pbxproj = _find_pbxproj(ios_dir)
+    signing_backup = None
     try:
         patches.apply()
+
+        # 3.5 工程签名配置对齐：automatic/manual 时按用户级配置临时改写
+        # pbxproj 残留（如手动 profile 与自动签名冲突），构建后 finally 还原。
+        if pbxproj is not None:
+            aligned = _reconcile_signing(pbxproj, cfg_ios)
+            if aligned is not None:
+                signing_backup = pbxproj.read_text(encoding="utf-8")
+                pbxproj.write_text(aligned, encoding="utf-8")
+                print(
+                    f"[iOS] 工程签名配置已按用户级配置对齐"
+                    f"（构建后自动还原）: {pbxproj}"
+                )
 
         # 4. xcodebuild archive
         scheme = str(cfg_ios.get("scheme") or "Runner")
@@ -183,4 +279,9 @@ def build_ios(cfg: BuildConfig, session: WorktreeSession) -> Path:
         print(f"\n[iOS] 归档完成: {archive_path}")
         return archive_path
     finally:
+        if signing_backup is not None and pbxproj is not None:
+            try:
+                pbxproj.write_text(signing_backup, encoding="utf-8")
+            except OSError as exc:
+                print(f"[iOS] 还原工程签名配置失败: {exc}")
         patches.restore()

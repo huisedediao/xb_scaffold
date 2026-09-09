@@ -10,8 +10,10 @@
   项目不是 git 仓库或已是 worktree 时自动降级为直接构建。
 - **iOS Pods 复用**：隔离 worktree 中自动复用项目已安装的 `ios/Pods`（rsync 复制），
   pod install 从"全量网络下载 10+ 分钟"降到"秒级校验"，失败自动回退全量安装。
-- **iOS 签名注入，零工程文件修改**：签名信息不写进 `project.pbxproj`，
-  而是在 `xcodebuild archive` 命令行注入（优先级最高），见下方签名说明。
+- **iOS 签名按配置自动对齐**：签名信息按用户级配置注入 `xcodebuild` 命令行
+  （优先级最高）；若工程文件残留与之冲突的签名设置（如手动 profile 残留导致
+  Xcode 报 conflicting provisioning settings），打包前临时对齐、构建后自动还原，
+  工程文件最终零残留，见下方签名说明。
 - **三层配置**：内置默认值 < 项目级 `.xb_build_config.json` <
   用户级 `~/.xb_build_config.json`；签名证书等个人配置放用户级文件，不进 git。
 - **path 依赖自动软链**：识别 pubspec 中 `../xxx` 类型的 path 依赖，
@@ -53,7 +55,10 @@ python3 <xb_scaffold包>/tool/build/xb_build.py --project-dir . --dry-run
 文件或项目配置，每个开发者 clone 后都要改工程、且极易误提交。
 
 **做法**：`xcodebuild` 命令行 build setting 优先级高于 `project.pbxproj`，
-因此签名完全由配置文件驱动，工程文件零修改、零备份还原。
+签名完全由配置文件驱动。个别工程文件里残留与配置冲突的签名设置（如工程
+配置过手动 profile 又选了自动签名，Xcode 会报 `Runner has conflicting
+provisioning settings`），此时工具会打包前按用户级配置临时对齐工程文件、
+构建后自动还原，不影响工程本身。
 
 在用户级配置 `~/.xb_build_config.json` 写入（**不要提交到 git**）：
 
