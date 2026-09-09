@@ -315,6 +315,157 @@ xb.skill
 
 注意：`xb.setup` 会在末尾自动生成该指南，接入即生成，一般无需单独执行。
 
+## 使用 xb.build 打包（新手教程）
+
+> xb.build 是 XB Scaffold 自带的打包命令。照着本文一步步做，不需要理解原理也能把项目打包成安装包。本文假设你已经会用 Flutter 写代码，只是还没打过包。
+
+### 1. 准备工作（每台电脑只需做一次）
+
+**① 检查环境**
+- 打 iOS 包：必须用 **Mac**，并装好 Xcode（App Store 搜 "Xcode" 安装）
+- 打 Android / 鸿蒙包：Mac 或 Windows 都可以
+- Flutter 已安装：打开终端输入 `flutter --version`，能显示版本号即可
+- 项目依赖了 XB Scaffold：打开项目 `pubspec.yaml`，`dependencies` 里有 `xb_scaffold: ^版本号`（版本太老会没有 xb.build，见第 5 节排错）
+
+**② 打开终端，进入项目目录**
+- Mac 打开终端：按 `⌘ + 空格`，输入"终端"回车
+- 进入项目：输入 `cd `（cd 后有一个空格），**把项目文件夹拖进终端窗口**，回车。例如显示成：
+  ```bash
+  cd /Users/你的用户名/你的项目
+  ```
+
+**③ 下载项目依赖**
+```bash
+flutter pub get
+```
+看到 `Got dependencies!` 即成功。
+
+**④ 配置 iOS 签名（只打 Android / 鸿蒙的人跳过这步）**
+
+苹果要求每个 App 都必须有"签名"，签名绑定一个 **团队编号（Team ID）**。xb.build 需要你把编号填进配置文件，只需做一次。
+
+找到你的团队编号，三选一：
+- **方式 A（最省事）**：直接问负责打包/上架的同事要。公司项目一般只有一个固定编号，例如 `273JDFD2Q8`
+- **方式 B（从证书看）**：打开 Mac 的"钥匙串访问"应用 → 搜索 `Apple Development` 或 `iPhone Distribution` → 双击证书 → **名称中括号里的字母数字**（例如 `(273JDFD2Q8)`）就是 Team ID
+- **方式 C（从老工程抄）**：找一个"能在 Xcode 里正常打包"的 iOS 工程，用文本编辑器打开 `ios/Runner.xcodeproj/project.pbxproj`，搜索 `DEVELOPMENT_TEAM`，等号后的内容就是
+
+拿到编号后，在终端执行下面命令（**把 `XXXXXXXXXX` 换成你的编号**，整体复制执行即可，没有报错就是成功）：
+
+```bash
+cat > ~/.xb_build_config.json << 'EOF'
+{
+  "ios": {
+    "signing": {
+      "style": "automatic",
+      "team": "XXXXXXXXXX"
+    }
+  }
+}
+EOF
+```
+
+说明：`style: automatic` 表示让 Xcode 自动管理证书和描述文件，绝大多数人用它就够了，不需要手动碰证书。
+
+**⑤ 确认 Xcode 已登录 Apple 账号（打 iOS 需要）**
+
+打开 Xcode → 菜单 Settings…（旧版叫 Preferences…）→ `Accounts`，能看到 Apple ID 即可。公司电脑一般已配好，不确定就打开看一眼。
+
+### 2. 开始打包
+
+**① 先提交代码（⚠️ 很重要，否则会打旧包）**
+
+xb.build 是在代码仓库"最近一次提交"的基础上打包的（保证打出来的包和代码一致）。**如果你刚改了代码但还没 `git commit`，打出来的包不含你的新改动**。两种选择：
+
+- **正式打包**：先提交，再打包
+  ```bash
+  git add .
+  git commit -m "准备打包"
+  ```
+- **快速自测**：不想提交，就想用当前代码打一个试试 → 在打包命令末尾加 `--no-worktree`（见下）
+
+**② 执行打包**
+
+打 iPhone 包：
+
+```bash
+dart run xb_scaffold:xb xb.build --platform ios --build-name 1.0.0 --build-number 1
+```
+
+只有两个参数需要理解：
+- `--build-name 1.0.0`：**版本号**，给用户看的，通常 `数字.数字.数字`，按你们团队的版本计划填
+- `--build-number 1`：**打包序号**，每次打包都要比上一次大（苹果硬性要求），不知道当前是多少就先填 `1`，之后每次 +1
+
+打安卓包（不需要版本参数）：
+
+```bash
+dart run xb_scaffold:xb xb.build --platform android
+```
+
+打鸿蒙包（默认生成 `.hap`；想要 `.app` 加 `--ohos app`）：
+
+```bash
+dart run xb_scaffold:xb xb.build --platform ohos
+```
+
+**懒人选项**：什么都不带，自动检测项目能打哪些平台，全部打一遍：
+
+```bash
+dart run xb_scaffold:xb xb.build
+```
+
+（如果装过 xb.setup 短命令，把上面的 `dart run xb_scaffold:xb xb.build` 换成 `xb.build` 即可）
+
+**③ 等待完成**
+
+- 首次打包比较慢（iOS 可能 20~40 分钟：要下载依赖 + 全量编译），之后会快很多
+- 中途不要关终端
+- 看到这行字就是成功：
+  ```
+  全部平台构建完成，产物目录: /Users/你的用户名/Desktop/xb_build
+  ```
+
+### 3. 打包完成，去哪里拿安装包？
+
+所有产物都在 **桌面上的 `xb_build` 文件夹**（即 `~/Desktop/xb_build`）：
+
+| 平台 | 产物文件 | 说明 |
+| --- | --- | --- |
+| iOS | `项目名.xcarchive` | Xcode 归档包。装真机 / TestFlight / 上架还需用 Xcode 再导出一次（可让负责上架的同事操作） |
+| Android | `项目名.apk` | 可直接发给别人安装，或上传各应用市场 |
+| 鸿蒙 | `项目名.hap` / `项目名.app` | 安装到鸿蒙设备，或上传华为应用市场 |
+
+### 4. 打包前建议先试跑（可选但推荐）
+
+第一次打包前，先做一次"只检查不动手"：
+
+```bash
+dart run xb_scaffold:xb xb.build --dry-run
+```
+
+它会检查电脑环境、git 状态、签名配置是否齐全并打印出来，有问题可以提前发现，不用等 40 分钟。
+
+### 5. 常见问题
+
+| 现象 | 原因 | 解决办法 |
+| --- | --- | --- |
+| 提示 `xb.build` 不是有效命令 | 当前依赖的 xb_scaffold 版本还没有 xb.build | 升级 pubspec 里的 xb_scaffold 到含 xb.build 的版本，重新 `flutter pub get` |
+| 签名时报 `No profiles ... were found` / 找不到 team | Team ID 填错，或这台 Mac 的 Xcode 没登录对应 Apple 账号 | 重新核对第 1 步 ④ 的编号；确认 Xcode 已登录（第 1 步 ⑤） |
+| 签名时报 `An App ID with identifier 'com.xxx' is not available` | bundle id（`com.xxx.xxx`）被别人注册过了 | 用 Xcode 打开 iOS 工程 → Signing & Capabilities → 把 Bundle Identifier 改成没被占用的（如 `com.你的公司.你的项目`），提交后重新打包 |
+| 打出来的包没有我最新改的代码 | 未提交的改动不会进包 | 先 `git commit` 再打包，或加 `--no-worktree` 快速自测 |
+| 下载依赖时网络报错 | 网络波动 | 直接重跑打包命令（有缓存，重试通常能过） |
+| 看到看不懂的报错 | — | 把终端完整输出复制给同事 / 在 XB Scaffold 仓库提 issue |
+
+### 6. 进阶命令速查
+
+| 命令 | 作用 |
+| --- | --- |
+| `... xb.build --dry-run` | 只检查环境与配置，不打包 |
+| `... xb.build --no-worktree` | 不用 git 已提交代码，直接用当前代码打包（快速自测） |
+| `... xb.build --open` | 打包完成后自动打开产物文件夹 |
+| `... xb.build --project-dir /别的/项目路径` | 在任意目录给其他项目打包 |
+| `... xb.build --platform ios android` | 同时打多个平台 |
+
+
 ## 快速开始
 
 ### 1. 初始化应用
