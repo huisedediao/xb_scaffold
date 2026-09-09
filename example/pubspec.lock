@@ -579,7 +579,7 @@ packages:
       path: "../xb_scaffold"
       relative: true
     source: path
-    version: "1.0.8"
+    version: "1.1.0"
   xb_simple_router:
     dependency: "direct main"
     description:
@@ -593,7 +593,7 @@ packages:
       path: "../xb_ume"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.1.3"
   xdg_directories:
     dependency: transitive
     description:

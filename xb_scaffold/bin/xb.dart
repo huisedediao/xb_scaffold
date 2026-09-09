@@ -4,7 +4,7 @@ import 'dart:isolate';
 
 const String _themeExtensionDirName = 'xb_scaffold_extension';
 
-void main(List<String> args) {
+Future<void> main(List<String> args) async {
   if (args.isEmpty) {
     _printHelp();
     exitCode = 64;
@@ -16,6 +16,14 @@ void main(List<String> args) {
     _printHelp();
     return;
   }
+
+  // xb.build 透传全部原始参数（含 --config 等带路径的参数），
+  // 必须在 --out/路径推断逻辑之前拦截，避免参数被剥离。
+  if (_isBuildCommand(command)) {
+    await _runBuild(args.sublist(1));
+    return;
+  }
+
   final rawParams = args.sublist(1);
   final params = List<String>.from(rawParams);
 
@@ -56,7 +64,7 @@ void main(List<String> args) {
   }
 
   if (normalizedCommand == 'xb.skill') {
-    _installSkill(params, outputPath);
+    await _installSkill(params, outputPath);
     return;
   }
 
@@ -110,6 +118,54 @@ void main(List<String> args) {
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(_withOuterBlankLines(content));
   stdout.writeln('Generated: ${file.path}');
+}
+
+bool _isBuildCommand(String command) {
+  final c = command.trim().toLowerCase();
+  return c == 'xb.build' || c == 'xb_build' || c == 'build';
+}
+
+/// 定位当前运行的 xb_scaffold 包根目录（pub cache / git 缓存 / 本地路径均可）。
+Future<Directory?> _resolvePackageRoot() async {
+  Uri? uri;
+  try {
+    uri = await Isolate.resolvePackageUri(
+        Uri.parse('package:xb_scaffold/xb_scaffold.dart'));
+  } catch (_) {
+    return null;
+  }
+  if (uri == null || !uri.isScheme('file')) {
+    return null;
+  }
+  final path = Uri.parse(uri.toString().replaceFirst('file://', '')).path;
+  final libIndex = path.indexOf('/lib/');
+  if (libIndex == -1) {
+    return null;
+  }
+  return Directory(path.substring(0, libIndex));
+}
+
+/// xb.build：以当前目录为项目根，调起通用打包工具（Python 实现）。
+/// 透传全部原始参数，stdout/stderr 直接透传实现实时日志。
+Future<void> _runBuild(List<String> params) async {
+  final packageRoot = await _resolvePackageRoot();
+  if (packageRoot == null || !packageRoot.existsSync()) {
+    stderr.writeln('xb.build: 无法定位 xb_scaffold 包目录');
+    exitCode = 1;
+    return;
+  }
+  final script = File('${packageRoot.path}/tool/build/xb_build.py');
+  if (!script.existsSync()) {
+    stderr.writeln('xb.build: 未找到打包脚本 ${script.path}');
+    exitCode = 1;
+    return;
+  }
+  final proc = await Process.start(
+    'python3',
+    [script.path, '--project-dir', Directory.current.path, ...params],
+    mode: ProcessStartMode.inheritStdio,
+  );
+  exitCode = await proc.exitCode;
 }
 
 String _withOuterBlankLines(String content) {
@@ -1289,7 +1345,8 @@ CMDS := \
 	xb.updateimg \
 	xb.parsemodel \
 	xb.newmodel \
-	xb.skill
+ 	xb.skill \
+	xb.build
 
 help:
 	@echo "Usage:"
@@ -1419,6 +1476,7 @@ Examples:
   xb xb.newmodel user_model lib/model/user_model.dart '{"name":"tom"}'
   xb xb.setup
   xb xb.skill [--out <path>] [--force]
+  xb xb.build [--platform ios] [--build-number 100] [--build-name 1.0.0]
 
 Commands:
   xb.page <file_name_or_class_name>
@@ -1429,5 +1487,6 @@ Commands:
   xb.newmodel <file_name> [out_path] <json_string>
   xb.setup
   xb.skill [--out <path>] [--force]
+  xb.build [--platform android|ios|ohos] [--build-number <num>] [--build-name <ver>]
 ''');
 }

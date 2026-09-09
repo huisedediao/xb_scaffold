@@ -1,0 +1,32 @@
+{
+  "说明": "项目级打包配置模板。复制为 <项目根>/.xb_build_config.json 后按需修改；全部字段可选，省略时使用默认值（自动检测）。个人证书等私有信息请放在用户级配置 ~/.xb_build_config.json，勿提交 git。",
+
+  "project_name": "auto",
+  "output_dir": "~/Desktop/xb_build",
+  "platforms": ["auto"],
+  "git_worktree": true,
+
+  "ios": {
+    "scheme": "Runner",
+    "workspace": "ios/Runner.xcworkspace",
+    "configuration": "Release",
+    "signing": {
+      "style": "none",
+      "team": "",
+      "identity": "Apple Distribution",
+      "profile": ""
+    },
+    "allow_provisioning_updates": true,
+    "reuse_pods": true,
+    "patch_files": {}
+  },
+
+  "android": {
+    "target_platforms": null,
+    "apk_name": "auto"
+  },
+
+  "ohos": {
+    "package_type": "hap"
+  }
+}
