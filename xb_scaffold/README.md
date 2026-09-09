@@ -395,13 +395,13 @@ dart run xb_scaffold:xb xb.build --platform ios --build-name 1.0.0 --build-numbe
 - `--build-name 1.0.0`：**版本号**，给用户看的，通常 `数字.数字.数字`，按你们团队的版本计划填
 - `--build-number 1`：**打包序号**，每次打包都要比上一次大（苹果硬性要求），不知道当前是多少就先填 `1`，之后每次 +1
 
-打安卓包（不需要版本参数）：
+打安卓包（`--build-name` / `--build-number` 与 iOS 通用，可带可不带；不传则用工程配置的版本）：
 
 ```bash
 dart run xb_scaffold:xb xb.build --platform android
 ```
 
-打鸿蒙包（默认生成 `.hap`；想要 `.app` 加 `--ohos app`）：
+打鸿蒙包（同样支持版本参数；默认生成 `.hap`，想要 `.app` 加 `--ohos app`）：
 
 ```bash
 dart run xb_scaffold:xb xb.build --platform ohos

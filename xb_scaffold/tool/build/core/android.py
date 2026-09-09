@@ -35,6 +35,11 @@ def build_android(cfg: BuildConfig, session: WorktreeSession) -> Path:
     target_platforms = cfg_android.get("target_platforms")
     if isinstance(target_platforms, list) and target_platforms:
         cmd += ["--target-platform", *[str(item) for item in target_platforms]]
+    # 版本参数三端通用：仅在显式指定时追加，未指定则用工程自身版本
+    if cfg.build_number:
+        cmd += ["--build-number", cfg.build_number]
+    if cfg.build_name:
+        cmd += ["--build-name", cfg.build_name]
 
     print(f"\n>>> [Android]: {' '.join(cmd)}")
     completed = subprocess.run(cmd, cwd=work_dir)

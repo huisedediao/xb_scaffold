@@ -32,6 +32,11 @@ def build_ohos(cfg: BuildConfig, session: WorktreeSession) -> Path:
     flavor = str(cfg_ohos.get("flavor") or "").strip()
     if flavor:
         cmd += ["--flavor", flavor]
+    # 版本参数三端通用：仅在显式指定时追加，未指定则用工程自身版本
+    if cfg.build_number:
+        cmd += ["--build-number", cfg.build_number]
+    if cfg.build_name:
+        cmd += ["--build-name", cfg.build_name]
 
     print(f"\n>>> [Ohos]: {' '.join(cmd)}")
     completed = subprocess.run(cmd, cwd=work_dir)

@@ -39,8 +39,8 @@ python3 <xb_scaffold包>/tool/build/xb_build.py --project-dir . --dry-run
 |---|---|
 | `--project-dir <路径>` | 目标 Flutter 项目根（默认当前目录） |
 | `--platform android\|ios\|ohos\|auto` | 要构建的平台，默认 `auto`（按目录检测） |
-| `--build-number <num>` | iOS CFBundleVersion（注入 FLUTTER_BUILD_NUMBER） |
-| `--build-name <x.y.z>` | iOS 版本号（注入 FLUTTER_BUILD_NAME） |
+| `--build-number <num>` | 三端通用构建序号：iOS 注入 FLUTTER_BUILD_NUMBER，Android/Ohos 透传 flutter --build-number |
+| `--build-name <x.y.z>` | 三端通用版本号：iOS 注入 FLUTTER_BUILD_NAME，Android/Ohos 透传 flutter --build-name |
 | `--ohos hap\|app` | 鸿蒙包类型（默认 hap） |
 | `--no-worktree` | 关闭隔离，直接构建当前目录 |
 | `--no-reuse-pods` | 不复用已有 ios/Pods |

@@ -65,12 +65,10 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
         overrides["platforms"] = args.platform
     if args.ohos:
         overrides.setdefault("ohos", {})["package_type"] = args.ohos
-    if args.build_number or args.build_name:
-        ios = overrides.setdefault("ios", {})
-        if args.build_number:
-            ios["build_number"] = args.build_number
-        if args.build_name:
-            ios["build_name"] = args.build_name
+    if args.build_number:
+        overrides["build_number"] = args.build_number
+    if args.build_name:
+        overrides["build_name"] = args.build_name
     if args.no_worktree:
         overrides["git_worktree"] = False
     if args.no_reuse_pods:

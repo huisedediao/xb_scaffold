@@ -22,6 +22,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_dir": "~/Desktop/xb_build",
     "platforms": ["auto"],  # auto=按 android/ios/ohos 目录自动检测；可显式指定子集
     "git_worktree": True,
+    # 三端通用版本覆盖；不填则各平台使用工程自身配置
+    "build_name": "",
+    "build_number": "",
     "ios": {
         "scheme": "Runner",
         "workspace": "ios/Runner.xcworkspace",
@@ -92,8 +95,9 @@ def read_pubspec_path_deps(pubspec_path: Path) -> list[str]:
     seen: set[str] = set()
     for match in _PUBSPEC_PATH_RE.finditer(content):
         indent = match.group(1)
-        # path 依赖行要求有缩进（处于某个依赖 key 之下）
-        if "\n" in indent or not indent.strip():
+        # path 依赖行要求行首有缩进（处于某个依赖 key 之下）；
+        # ^(\s+) 已保证至少一个空白，仅需防跨行匹配吞入换行
+        if "\n" in indent:
             continue
         rel = match.group(2)
         if rel not in seen:
@@ -137,6 +141,13 @@ class BuildConfig:
         self.ios: dict = data.get("ios", {}) or {}
         self.android: dict = data.get("android", {}) or {}
         self.ohos: dict = data.get("ohos", {}) or {}
+        # 版本参数三端通用：优先顶层，兼容历史配置写在 ios 段
+        self.build_name = str(
+            data.get("build_name") or self.ios.get("build_name") or ""
+        ).strip()
+        self.build_number = str(
+            data.get("build_number") or self.ios.get("build_number") or ""
+        ).strip()
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.data.get(key, default)

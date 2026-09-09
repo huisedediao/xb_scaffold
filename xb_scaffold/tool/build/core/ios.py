@@ -168,8 +168,8 @@ def build_ios(cfg: BuildConfig, session: WorktreeSession) -> Path:
         if allow_updates:
             cmd.append("-allowProvisioningUpdates")
         # 版本号通过命令行覆盖（优先级高于 xcconfig），无需改工程文件
-        build_number = str(cfg_ios.get("build_number") or "").strip()
-        build_name = str(cfg_ios.get("build_name") or "").strip()
+        build_number = cfg.build_number
+        build_name = cfg.build_name
         if build_number:
             cmd.append(f"FLUTTER_BUILD_NUMBER={build_number}")
         if build_name:
