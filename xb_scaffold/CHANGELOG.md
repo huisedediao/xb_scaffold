@@ -921,3 +921,7 @@
 
 - 增加xb.build命令用于打包 iOS、安卓、ohos
 
+## 1.1.2
+
+- optimized
+
