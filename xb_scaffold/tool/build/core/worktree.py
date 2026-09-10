@@ -59,6 +59,7 @@ class WorktreeSession:
         self.project_dir = project_dir.resolve()
         self.work_dir = self.project_dir  # 隔离后变为 worktree 内对应目录
         self._temp_dir: Path | None = None
+        self._toplevel: Path | None = None  # 仓库顶层，供 cleanup 定位仓库
         self._symlinks: list[Path] = []
         self._cleaned = False
 
@@ -84,6 +85,7 @@ class WorktreeSession:
         _git(["worktree", "add", "--detach", str(temp_dir), "HEAD"], repo.toplevel)
 
         self._temp_dir = temp_dir
+        self._toplevel = repo.toplevel
         self.work_dir = temp_dir
         if repo.relative_sub is not None and repo.relative_sub != Path("."):
             self.work_dir = temp_dir / repo.relative_sub
@@ -133,9 +135,11 @@ class WorktreeSession:
         if self._temp_dir is None:
             return
         temp_dir = self._temp_dir
-        # worktree add 时该目录已被 git 使用，清理归属 git
+        # worktree add 时该目录已被 git 使用，清理归属 git；
+        # 显式 cwd 保证从项目目录外调用 xb.build 时也能移除 worktree 元数据
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(temp_dir)],
+            cwd=self._toplevel or self.project_dir,
             capture_output=True,
         )
         if temp_dir.exists():
