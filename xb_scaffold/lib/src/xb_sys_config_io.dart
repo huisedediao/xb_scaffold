@@ -5,3 +5,5 @@ bool get isHarmony {
   if (kIsWeb) return false;
   return Platform.operatingSystem == 'ohos';
 }
+
+bool get isOhos => isHarmony;
