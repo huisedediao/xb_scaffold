@@ -25,7 +25,8 @@ class XBEventBus {
   /// 显式注入自定义 controller（如自定义 broadcast 策略/测试替身）。
   /// 必须在任何订阅发生前调用，重复初始化会 assert 报错。
   static void initController(StreamController customController) {
-    assert(_controller == null,
+    assert(
+        _controller == null,
         'XBEventBus controller has already been initialized. '
         'initController must be called before any listener/fire.');
     _controller ??= customController;
@@ -57,7 +58,7 @@ class XBEventBus {
         entries.remove(entry);
         continue;
       }
-      (handler as Function)(event);
+      (handler)(event);
     }
     // 兼容保留：仍向自定义 controller 广播，保证 on<T>() 订阅可用
     if (_controller != null && _controller!.hasListener) {
@@ -107,8 +108,8 @@ class XBEventBus {
     final deadTypes = <Type>[];
     _entries.forEach((type, entries) {
       final before = entries.length;
-      entries.removeWhere(
-          (entry) => entry.listenerRef.target == null || entry.handlerRef.target == null);
+      entries.removeWhere((entry) =>
+          entry.listenerRef.target == null || entry.handlerRef.target == null);
       removed += before - entries.length;
       if (entries.isEmpty) {
         deadTypes.add(type);
@@ -125,8 +126,8 @@ class XBEventBus {
   static void _pruneLocked(Type type) {
     final entries = _entries[type];
     if (entries == null) return;
-    entries.removeWhere(
-        (entry) => entry.listenerRef.target == null || entry.handlerRef.target == null);
+    entries.removeWhere((entry) =>
+        entry.listenerRef.target == null || entry.handlerRef.target == null);
   }
 }
 
