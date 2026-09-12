@@ -1,7 +1,1 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-
-bool get isHarmony {
-  if (kIsWeb) return false;
-  return Platform.operatingSystem == 'ohos';
-}
+export 'xb_sys_config_io.dart' if (dart.library.html) 'xb_sys_config_stub.dart';

@@ -925,3 +925,10 @@
 
 - optimized
 
+## 1.1.3
+
+- Web 平台兼容性修复：`XBRootWidget`/`XBFileImage`/`XBImgSizeUtil.getImageSizeFromFile`/`isHarmony`/`XBTrimTextInputFormatter` 等原先直接依赖 `dart:io` 的 API 改为条件导出（io 实现 + web stub），Web 工程引入 `xb_scaffold` 不再编译失败
+- 双击退出抽为 `exitApp()`：非 Web 平台行为不变（`exit(0)`），Web 平台回退为 `SystemNavigator.pop()`
+- `XBVM` 新增 `mounted` 访问器（与 `State.mounted` 对齐）：异步回调中访问 `context`/`state`/`widget` 前检查，避免页面销毁后使用悬空引用；`notify()`、loading 展示/隐藏等内部防护同步升级
+- `XBScaffold` 初始化竞态修复：主题异步初始化增加 token 校验，旧一轮初始化结果不再覆盖新一轮配置；新增 `didUpdateWidget`，`themeConfigs`/`loadingBuilder`/`toastBackgroundColor`/`maxPageLogLen` 变更时可正确生效
+

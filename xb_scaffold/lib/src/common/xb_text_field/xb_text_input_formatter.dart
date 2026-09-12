@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// 限制只能输入数字
@@ -72,7 +71,8 @@ class XBTrimTextInputFormatter extends TextInputFormatter {
   TextEditingValue formatEditUpdate(
       TextEditingValue oldValue, TextEditingValue newValue) {
     //ios完成输入或者是安卓
-    if (!newValue.composing.isValid || Platform.isAndroid) {
+    if (!newValue.composing.isValid ||
+        defaultTargetPlatform == TargetPlatform.android) {
       final newValueTrim = newValue.text.trim();
       return TextEditingValue(
         text: newValueTrim,

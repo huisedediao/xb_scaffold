@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/xb_scaffold.dart';
 import 'dart:typed_data';
+import 'xb_img_size_file.dart';
 
 class XBImgSizeUtil {
   /// key:url value:size
@@ -35,15 +34,9 @@ class XBImgSizeUtil {
   }
 
   /// 从File获取图片宽高（路径）
-  static Future<Size> getImageSizeFromFile(File file) async {
-    if (await file.length() == 0) return Future.value(Size.zero);
-    String key = file.path;
-    if (_map[key] != null) {
-      return _map[key]!;
-    }
-    final size = await getImageSize(Image(image: XBFileImage(file)));
-    _map[key] = size;
-    return size;
+  /// Web 平台不支持 File，返回 Size.zero
+  static Future<Size> getImageSizeFromFile(dynamic file) {
+    return getXBImageSizeFromFile(file);
   }
 
   /// 从File获取图片宽高（二进制数据）

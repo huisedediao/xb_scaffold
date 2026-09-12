@@ -1,6 +1,6 @@
-import 'dart:io';
 import 'package:xb_scaffold/xb_scaffold.dart';
 import 'package:flutter/material.dart';
+import 'common/xb_exit_app.dart';
 import 'common/xb_legacy_pop_scope.dart';
 
 class XBRootWidget extends XBWidget<XBRootWidgetVM> {
@@ -79,8 +79,9 @@ class XBRootWidgetVM extends XBVM<XBRootWidget> with WidgetsBindingObserver {
       toast(widget.willExitTip ?? "再按一次退出应用");
       return false;
     } else {
-      exit(0);
-      // return true;
+      exitApp();
+      // Web 平台下 exitApp 无法真正退出，返回 false 阻止默认返回行为
+      return false;
     }
   }
 

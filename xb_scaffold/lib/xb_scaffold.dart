@@ -181,69 +181,107 @@ class XBScaffold extends StatefulWidget {
 }
 
 class _XBScaffoldState extends State<XBScaffold> {
+  /// 初始化令牌：新一轮初始化开始后，旧一轮异步结果作废，防止旧配置覆盖新配置
+  int _initToken = 0;
+
   @override
   void initState() {
     super.initState();
+    _syncGlobalConfigs();
+    _initThemes(++_initToken);
+  }
+
+  @override
+  void didUpdateWidget(covariant XBScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncGlobalConfigs();
+    if (!_themeConfigsEqual(widget.themeConfigs, oldWidget.themeConfigs)) {
+      _initThemes(++_initToken);
+    }
+  }
+
+  /// 同步全局配置（loadingBuilder / toastBackgroundColor / maxPageLogLen）
+  void _syncGlobalConfigs() {
     _xbLoadingBuilder = widget.loadingBuilder;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
     _maxPageLogLen = widget.maxPageLogLen;
-    _initXBScaffold(configs: widget.themeConfigs);
+  }
+
+  /// XBThemeConfig 未重写 ==，手动按内容比较，避免父组件重建时误触发重新初始化
+  bool _themeConfigsEqual(List<XBThemeConfig> a, List<XBThemeConfig> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].imgPrefix != b[i].imgPrefix ||
+          a[i].primaryColor != b[i].primaryColor) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 初始化各主题并注册到 XBThemeVM
+  ///
+  /// 异步加载 AssetManifest 期间可能又有新一轮初始化（如 themeConfigs 变更），
+  /// 通过 token 判断：旧任务完成后若 token 已过期则丢弃结果。
+  /// 完成时 setThemeForIndex 会触发 notifyListeners，
+  /// 依赖主题的页面（needRebuildWhileAppThemeChanged）会自动重建。
+  Future<void> _initThemes(int token) async {
+    final configs = widget.themeConfigs;
+
+    // 加载 AssetManifest，获取所有已声明的 asset 资源
+    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+    if (token != _initToken) return;
+    final allAssets = manifest.listAssets();
+
+    // 为每个主题构建 XBThemeImage 并扫描可用资源
+    final List<XBThemeImage> themeImages = [];
+    for (int i = 0; i < configs.length; i++) {
+      String imgPrefix = configs[i].imgPrefix;
+      if (!imgPrefix.endsWith("/")) {
+        imgPrefix = "$imgPrefix/";
+      }
+      final themeImage = XBThemeImage(prefix: imgPrefix);
+
+      // 扫描该主题前缀下的所有 asset，提取相对文件名
+      final Set<String> availableAssets = {};
+      for (final key in allAssets) {
+        if (key.startsWith(imgPrefix)) {
+          availableAssets.add(key.substring(imgPrefix.length));
+        }
+      }
+      themeImage.setAvailableAssets(availableAssets);
+      themeImages.add(themeImage);
+    }
+
+    if (token != _initToken) return;
+
+    // 非默认主题设置 fallback 为默认主题（index 0）的 imgPrefix
+    if (themeImages.length > 1) {
+      final defaultImgPrefix = themeImages[0].prefix;
+      for (int i = 1; i < themeImages.length; i++) {
+        themeImages[i].setFallbackPrefix(defaultImgPrefix);
+      }
+    }
+
+    for (int i = 0; i < configs.length; i++) {
+      XBThemeVM().setThemeForIndex(
+        XBTheme(
+          config: XBThemeConfig(
+            imgPrefix: configs[i].imgPrefix,
+            primaryColor: configs[i].primaryColor,
+          ),
+          images: themeImages[i],
+        ),
+        i,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     _syncXBFallbackNavigatorState(context);
     return widget.child;
-  }
-}
-
-/// 初始化
-Future<void> _initXBScaffold({
-  required List<XBThemeConfig> configs,
-}) async {
-  // 加载 AssetManifest，获取所有已声明的 asset 资源
-  final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
-  final allAssets = manifest.listAssets();
-
-  // 为每个主题构建 XBThemeImage 并扫描可用资源
-  final List<XBThemeImage> themeImages = [];
-  for (int i = 0; i < configs.length; i++) {
-    String imgPrefix = configs[i].imgPrefix;
-    if (!imgPrefix.endsWith("/")) {
-      imgPrefix = "$imgPrefix/";
-    }
-    final themeImage = XBThemeImage(prefix: imgPrefix);
-
-    // 扫描该主题前缀下的所有 asset，提取相对文件名
-    final Set<String> availableAssets = {};
-    for (final key in allAssets) {
-      if (key.startsWith(imgPrefix)) {
-        availableAssets.add(key.substring(imgPrefix.length));
-      }
-    }
-    themeImage.setAvailableAssets(availableAssets);
-    themeImages.add(themeImage);
-  }
-
-  // 非默认主题设置 fallback 为默认主题（index 0）的 imgPrefix
-  if (themeImages.length > 1) {
-    final defaultImgPrefix = themeImages[0].prefix;
-    for (int i = 1; i < themeImages.length; i++) {
-      themeImages[i].setFallbackPrefix(defaultImgPrefix);
-    }
-  }
-
-  for (int i = 0; i < configs.length; i++) {
-    XBThemeVM().setThemeForIndex(
-      XBTheme(
-        config: XBThemeConfig(
-          imgPrefix: configs[i].imgPrefix,
-          primaryColor: configs[i].primaryColor,
-        ),
-        images: themeImages[i],
-      ),
-      i,
-    );
   }
 }
 

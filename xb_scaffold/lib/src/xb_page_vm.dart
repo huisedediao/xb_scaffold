@@ -76,13 +76,13 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
 
   @override
   notify() {
-    if (disposed) return;
+    if (!mounted) return;
     if (_castWidget.notifyNeedAfterPushAnimation(context)) {
       if (isFinishedPushAnimation) {
         super.notify();
       } else {
         addEnsureAfterPushAnimationTask(() {
-          if (!disposed) {
+          if (mounted) {
             super.notify();
           }
         });
@@ -118,18 +118,18 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   }
 
   void _scheduleShowLoading() {
-    if (_loadingShowScheduled || disposed) return;
+    if (_loadingShowScheduled || !mounted) return;
     _loadingShowScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadingShowScheduled = false;
-      if (!disposed) {
+      if (mounted) {
         _showLoading();
       }
     });
   }
 
   _showLoading() {
-    if (disposed || !needShowLoadingWidget) return;
+    if (!mounted || !needShowLoadingWidget) return;
     final fadeState = loadingWidgetFadeKey.currentState;
     if (fadeState == null) {
       _scheduleShowLoading();
@@ -141,7 +141,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
   }
 
   hideLoading() {
-    if (disposed || !needShowLoadingWidget) return;
+    if (!mounted || !needShowLoadingWidget) return;
     final fadeState = loadingWidgetFadeKey.currentState;
     if (fadeState == null) {
       _isShowLoadingWidget = false;
@@ -149,7 +149,7 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
       return;
     }
     fadeState.hide(() {
-      if (disposed) return;
+      if (!mounted) return;
       _isShowLoadingWidget = false;
       notify();
     });

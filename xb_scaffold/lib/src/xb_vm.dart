@@ -35,6 +35,16 @@ class XBVM<T> extends ChangeNotifier {
   bool _disposed = false;
   bool get disposed => _disposed;
 
+  /// VM 及其宿主 Widget 是否仍然存活（与 State.mounted 对齐）
+  /// 异步回调（网络请求、Future.delayed 等）中访问 context/state 前，
+  /// 应先检查此属性，避免页面销毁后使用悬空的 context
+  /// ```dart
+  /// await api.fetch();
+  /// if (!mounted) return;
+  /// notify();
+  /// ```
+  bool get mounted => !disposed && state.mounted;
+
   /// 已经完成创建
   @mustCallSuper
   void didCreated() {
@@ -53,7 +63,7 @@ class XBVM<T> extends ChangeNotifier {
 
   /// 通知刷新
   notify() {
-    if (disposed) return;
+    if (!mounted) return;
     notifyListeners();
   }
 

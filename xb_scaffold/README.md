@@ -1086,6 +1086,26 @@ class MyPage extends XBPage<MyPageVM> {
 
 ### 1. VM 生命周期管理
 
+VM 提供 `mounted` 属性（与 `State.mounted` 对齐）：VM 未销毁且宿主 Widget 仍在树上时为 `true`。
+任何异步回调（网络请求、`Future.delayed`、事件监听等）中，访问 `context`/`state`/`widget` 或刷新 UI 前，都应先检查它，避免页面销毁后使用悬空引用：
+
+```dart
+class MyPageVM extends XBPageVM<MyPage> {
+  void loadData() async {
+    try {
+      final user = await userRepository.getUser();
+      // 异步期间页面可能已被销毁
+      if (!mounted) return;
+      _user = user;
+      notify();
+    } catch (e) {
+      if (!mounted) return;
+      toast('加载失败');
+    }
+  }
+}
+```
+
 ```dart
 class MyPageVM extends XBPageVM<MyPage> {
   StreamSubscription? _subscription;
