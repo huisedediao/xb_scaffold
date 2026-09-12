@@ -217,6 +217,9 @@ class _XBScaffoldState extends State<XBScaffold> {
   void initState() {
     super.initState();
     _syncGlobalConfigs();
+    // 首帧同步占位默认主题：主题异步初始化完成前，首页首帧可能读主题
+    // （如 AppBar 标题），避免命中 "themes not registered yet" 断言
+    XBThemeVM().ensureDefaultThemeRegistered();
     _initThemes(++_initToken);
   }
 

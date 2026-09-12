@@ -133,4 +133,32 @@ void main() {
 
     expect(XBThemeVM().themeIndex, 0);
   });
+
+  testWidgets('ensureDefaultThemeRegistered：首帧未注册时同步占位，不命中断言', (tester) async {
+    // 模拟冷启动：pump 后首帧立即读主题（不等 pumpAndSettle）
+    Object? themeReadError;
+    await tester.pumpWidget(MaterialApp(
+      home: XBScaffold(
+        themeConfigs: twoThemes(),
+        child: Builder(builder: (context) {
+          // 此时异步 _initThemes 尚未完成，占位主题应已可用
+          themeReadError = null;
+          try {
+            expect(XBThemeVM().theme.colors.primary, isNotNull);
+            // ignore: avoid_catches_without_on_clauses
+          } catch (e) {
+            themeReadError = e;
+          }
+          return const SizedBox();
+        }),
+      ),
+    ));
+    expect(themeReadError, isNull,
+        reason: '首帧读主题不应抛 "themes not registered yet"');
+
+    // 异步初始化完成后，占位被完整主题覆盖
+    await tester.pumpAndSettle();
+    expect(XBThemeVM().theme.colors.primary, Colors.blue);
+    expect(XBThemeVM().registeredThemeCount, 2);
+  });
 }

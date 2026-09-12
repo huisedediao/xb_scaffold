@@ -67,6 +67,16 @@ class XBThemeVM extends ChangeNotifier {
     _indexWriter?.call(themeIndex);
   }
 
+  /// 确保至少有一个主题可用（首帧同步占位）。
+  ///
+  /// XBScaffold 在 initState 同步调用：主题异步初始化（AssetManifest 加载）
+  /// 完成前，首页首帧就可能读主题（如 AppBar 标题），占位可避免命中
+  /// "themes not registered yet" 断言；异步初始化完成后会被完整主题覆盖。
+  void ensureDefaultThemeRegistered() {
+    if (_themeMap.isNotEmpty) return;
+    setThemeForIndex(XBTheme(), 0);
+  }
+
   /// 设置主题
   /// theme：主题
   /// themeIndex：主题编号

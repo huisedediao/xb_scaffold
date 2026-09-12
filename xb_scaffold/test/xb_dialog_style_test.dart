@@ -297,4 +297,195 @@ void main() {
 
     await _closeDialog(tester);
   });
+
+  /// 设计稿风格：设备密码输入弹窗
+  /// 白色圆角卡片 + 居中标题 + 灰色圆角输入框（含提示行与可见性图标）
+  /// + 底部胶囊按钮（取消浅灰、确定青色渐变白字），
+  /// 按钮区超出纯样式字段能力，用 partBuilders.buttons 实现。
+  testWidgets('设备密码输入风格（胶囊按钮 + 渐变确定键）', (WidgetTester tester) async {
+    await _pumpHarness(tester, () {
+      dialogContent(
+        title: '请输入设备密码',
+        content: const _DevicePasswordBody(),
+        btnTitles: const ['取消', '确定'],
+        onSelected: _noopOnSelected,
+      );
+    });
+    xbSetDialogStyle(XBDialogStyle(
+      radius: 16,
+      titleStyle: const TextStyle(
+          fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black),
+      partBuilders: XBDialogPartBuilders(
+        buttons: (context, style) => const _PillButtons(),
+      ),
+    ));
+    await tester.tap(find.text('show'));
+    await tester.pump();
+
+    // 卡片圆角 16
+    expect(_dialogCard(tester, 16), isNotNull);
+
+    // 标题加粗黑色
+    final title = tester.widget<Text>(find.text('请输入设备密码'));
+    expect(title.style?.fontSize, 18);
+    expect(title.style?.fontWeight, FontWeight.bold);
+
+    // 内容区文案
+    expect(find.text('4329d34f23948****shd4'), findsOneWidget);
+    expect(find.text('a***n'), findsOneWidget);
+    expect(find.text('密码长度8-64位，由字母+数字组成'), findsOneWidget);
+    expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+    expect(find.text('若忘记密码，请恢复出厂设置重新添加！'), findsOneWidget);
+
+    // 胶囊按钮：两个 radius 22 容器
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.constraints?.maxHeight == 44 &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).borderRadius ==
+              BorderRadius.circular(22)),
+      findsNWidgets(2),
+    );
+
+    // 取消：浅灰背景 + 黑字；确定：青色渐变背景 + 白色加粗字
+    final cancelText = tester.widget<Text>(find.text('取消').first);
+    expect(cancelText.style?.color, Colors.black);
+    final confirmText = tester.widget<Text>(find.text('确定').first);
+    expect(confirmText.style?.color, Colors.white);
+    expect(confirmText.style?.fontWeight, FontWeight.bold);
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).gradient != null),
+      findsOneWidget,
+    );
+
+    // 默认分隔线与默认按钮行不再渲染（被 buttons builder 替换）
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.constraints?.maxHeight == onePixel),
+      findsNothing,
+    );
+
+    await _closeDialog(tester);
+  });
+}
+
+/// 设备密码弹窗内容区（设计稿还原）
+class _DevicePasswordBody extends StatelessWidget {
+  const _DevicePasswordBody();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '4329d34f23948****shd4',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 15, color: Colors.black),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'a***n',
+                style: TextStyle(fontSize: 16, color: Colors.black),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '密码长度8-64位，由字母+数字组成',
+                      style:
+                          TextStyle(fontSize: 13, color: Color(0xFFB9B9B9)),
+                    ),
+                  ),
+                  Icon(Icons.visibility_off,
+                      size: 18, color: Color(0xFFB9B9B9)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          '若忘记密码，请恢复出厂设置重新添加！',
+          style: TextStyle(fontSize: 14, color: Colors.black),
+        ),
+      ],
+    );
+  }
+}
+
+/// 胶囊按钮行（替换默认分隔线 + 按钮行，pop 由自身调用）
+class _PillButtons extends StatelessWidget {
+  const _PillButtons();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                xbNavigatorState.pop();
+              },
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F0F0),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: const Text(
+                  '取消',
+                  style: TextStyle(fontSize: 16, color: Colors.black),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                xbNavigatorState.pop();
+              },
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF4FD9C6), Color(0xFF1FC8B7)],
+                  ),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: const Text(
+                  '确定',
+                  style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
