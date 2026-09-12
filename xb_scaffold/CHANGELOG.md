@@ -925,6 +925,14 @@
 
 - optimized
 
+## 1.1.4
+
+- `XBEventBus` 弱注册重构：Bus 对 listener 及其回调只持弱引用，非 VM 使用者忘记 `removeListener` 不再永久泄漏，注册项随 GC 自动失效并在 fire/prune 时剪除；`XBVM.listen` 内部自动保管回调，VM 使用者无感知
+- `XBEventBus` 分发优化：按事件类型 `Map<Type, List>` 精准分发，不再对所有订阅者做 O(n) 类型过滤
+- **行为变化**：事件分发改为按 `runtimeType` 精确匹配（注册父类型、fire 子类型实例时不再收到）；需要子类型语义请改用 `XBEventBus.on<T>()` 强订阅通道
+- `setController` 废弃，新增 `initController`：注入时机错误或重复初始化会 assert 报错，不再静默失效
+- `XBVM` 新增 `removeListen` 用于单独注销某个事件回调
+
 ## 1.1.3
 
 - Web 平台兼容性修复：`XBRootWidget`/`XBFileImage`/`XBImgSizeUtil.getImageSizeFromFile`/`isHarmony`/`XBTrimTextInputFormatter` 等原先直接依赖 `dart:io` 的 API 改为条件导出（io 实现 + web stub），Web 工程引入 `xb_scaffold` 不再编译失败

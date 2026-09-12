@@ -919,6 +919,30 @@ class HomePageVM extends XBPageVM<HomePage> {
 XBEventBus.fire(UserLoginEvent('john_doe'));
 ```
 
+#### 弱注册语义（重要）
+
+`XBEventBus.addListener` 为**弱注册**：Bus 对 listener 及其回调只持弱引用。
+
+- **VM 使用者无感知**：`listen()` 内部会自动保管回调，VM 销毁时自动注销；即使忘记注销，VM 被回收后注册项也会随 GC 自动失效，不会泄漏
+- **非 VM 使用者注意**：回调须由 listener 自己持有（存入字段或作为其方法），否则回调可能先于 listener 被 GC 而收不到事件：
+
+```dart
+// ✅ 推荐：回调存入字段，listener 存活期间回调可达
+class MyManager {
+  late final handler = (UserLoginEvent e) { ... };
+  MyManager() {
+    XBEventBus.addListener(this, handler);
+  }
+}
+
+// ❌ 避免临时匿名闭包且不持有注销句柄（会被 GC 回收）
+```
+
+- 需要**强订阅**（临时闭包、流式处理等场景）请用 `XBEventBus.on<T>()` 获取流并自行管理 `StreamSubscription` 的取消
+- 分发按事件 `runtimeType` **精确匹配**：注册父类型、fire 子类型实例时不会收到（请使用具体事件类型注册）
+- `XBEventBus.prune()` 可主动清理已被 GC 回收的注册项（通常无需手动调用）
+- 自定义 controller 请在初始化最早期调用 `XBEventBus.initController(...)`，重复/时机错误会 assert 报错（旧 `setController` 已废弃）
+
 ### 工具类
 
 #### 定时器

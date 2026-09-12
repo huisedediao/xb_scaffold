@@ -67,8 +67,19 @@ class XBVM<T> extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 保管 listen 注册的事件回调，防止被 GC 回收
+  /// （XBEventBus 为弱注册，回调须由 listener 自己持有）
+  final List<Function> _retainedHandlers = [];
+
   listen<E>(Function(E) onData) {
+    _retainedHandlers.add(onData);
     XBEventBus.addListener<E>(this, onData);
+  }
+
+  /// 移除由 [listen] 注册的回调（从保管列表中移除，并注销事件总线）
+  void removeListen<E>(Function(E) onData) {
+    _retainedHandlers.remove(onData);
+    XBEventBus.removeListener(this);
   }
 
   @mustCallSuper
@@ -84,6 +95,7 @@ class XBVM<T> extends ChangeNotifier {
     debugPrint(log);
     recordPageLog(log);
     XBEventBus.removeListener(this);
+    _retainedHandlers.clear();
     _disposed = true;
     super.dispose();
   }
