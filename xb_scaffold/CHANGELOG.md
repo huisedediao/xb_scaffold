@@ -925,6 +925,11 @@
 
 - optimized
 
+## 1.1.7
+
+- 页面日志时间戳修复：`recordPageLog` 改用设备本地时间（旧实现 `toUtc().add(hours: 8)` 硬编码东八区，海外/非东八区设备时间戳错误）
+- `toastWidget` 失败可观测：首次失败记录日志后再重试；重试前显式检查 overlay 就绪，仍不可用则记录日志并安全丢弃，不再静默吞错
+
 ## 1.1.6
 
 - **破坏性变更**：移除 `XBPage.pushAnimationMilliseconds`，不再用固定定时器猜测转场结束时机

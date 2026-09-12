@@ -42,8 +42,20 @@ toastWidget({required Widget widget, int duration = 3, double bottom = 150}) {
   try {
     _toastWidget(widget: widget, duration: duration, bottom: bottom);
   } catch (e) {
+    // 常见原因：首帧前 navigator/overlay 尚未就绪，下一帧重试
+    debugPrint("XBToast: show failed, will retry next frame. error: $e");
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _toastWidget(widget: widget, duration: duration, bottom: bottom);
+      // 重试前显式检查 overlay 就绪，避免重试再抛错或静默吞掉
+      if (xbOverlayStateOrNull == null) {
+        debugPrint(
+            "XBToast: overlay still not ready after retry, toast dropped.");
+        return;
+      }
+      try {
+        _toastWidget(widget: widget, duration: duration, bottom: bottom);
+      } catch (retryError) {
+        debugPrint("XBToast: retry failed, toast dropped. error: $retryError");
+      }
     });
   }
 }
