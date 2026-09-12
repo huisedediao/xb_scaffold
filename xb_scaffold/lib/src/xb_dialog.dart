@@ -19,42 +19,73 @@ dialogContent(
     required ValueChanged<int> onSelected,
     double? maxWidth,
     int priority = 0}) {
+  final style = xbDialogStyle;
+  final builders = style?.partBuilders;
+  final separatorColor = style?.lineColor ?? lineColor;
+  final btnHeight = style?.btnHeight ?? 50;
   Widget child = ClipRRect(
-    borderRadius: BorderRadius.circular(10),
+    borderRadius: BorderRadius.circular(style?.radius ?? 10),
     child: Container(
-      color: Colors.white,
+      color: style?.backgroundColor ?? Colors.white,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            height: spaces.gapDef,
+          XBDialogPart(
+            builder: builders?.title,
+            defaultChild: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: spaces.gapDef,
+                ),
+                Text(
+                  title,
+                  style: titleStyle ??
+                      style?.titleStyle ??
+                      TextStyle(
+                          fontSize: fontSizes.s18,
+                          fontWeight: fontWeights.medium),
+                ),
+              ],
+            ),
           ),
-          Text(
-            title,
-            style: titleStyle ??
-                TextStyle(
-                    fontSize: fontSizes.s18, fontWeight: fontWeights.medium),
+          XBDialogPart(
+            builder: builders?.content,
+            defaultChild: Padding(
+              padding: style?.contentPadding ??
+                  EdgeInsets.only(
+                      left: spaces.gapDef,
+                      right: spaces.gapDef,
+                      top: spaces.gapLess,
+                      bottom: spaces.gapDef),
+              child: content,
+            ),
           ),
-          Padding(
-            padding: EdgeInsets.only(
-                left: spaces.gapDef,
-                right: spaces.gapDef,
-                top: spaces.gapLess,
-                bottom: spaces.gapDef),
-            child: content,
+          XBDialogPart(
+            builder: builders?.buttons,
+            defaultChild: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  height: onePixel,
+                  color: separatorColor,
+                ),
+                Row(
+                  children: _setupBtns(
+                      btnTitles: btnTitles,
+                      onSelected: onSelected,
+                      btnHighLightColor:
+                          btnHighLightColor ?? style?.btnHighLightColor,
+                      btnDefaultColor:
+                          btnDefaultColor ?? style?.btnDefaultColor,
+                      fontSize:
+                          btnFontSize ?? style?.btnFontSize ?? fontSizes.s16,
+                      btnHeight: btnHeight,
+                      separatorColor: separatorColor),
+                )
+              ],
+            ),
           ),
-          Container(
-            height: onePixel,
-            color: lineColor,
-          ),
-          Row(
-            children: _setupBtns(
-                btnTitles: btnTitles,
-                onSelected: onSelected,
-                btnHighLightColor: btnHighLightColor,
-                btnDefaultColor: btnDefaultColor,
-                fontSize: btnFontSize ?? fontSizes.s16),
-          )
         ],
       ),
     ),
@@ -89,6 +120,7 @@ dialog(
       titleStyle: titleStyle,
       content: Text(msg,
           style: msgStyle ??
+              xbDialogStyle?.msgStyle ??
               TextStyle(
                   fontSize: fontSizes.s15, color: const Color(0xFF808080))),
       btnTitles: btnTitles,
@@ -106,28 +138,31 @@ List<Widget> _setupBtns({
   required Color? btnHighLightColor,
   required Color? btnDefaultColor,
   required double fontSize,
+  required double btnHeight,
+  required Color separatorColor,
 }) {
   if (btnTitles.length == 1) {
     return [
       _buildBtn(btnTitles[0], btnHighLightColor ?? colors.primary, fontSize,
-          () {
+          btnHeight, () {
         xbNavigatorState.pop();
         onSelected(0);
       })
     ];
   } else {
     return [
-      _buildBtn(btnTitles[0], btnDefaultColor ?? Colors.black, fontSize, () {
+      _buildBtn(btnTitles[0], btnDefaultColor ?? Colors.black, fontSize,
+          btnHeight, () {
         xbNavigatorState.pop();
         onSelected(0);
       }),
       Container(
-        height: 50,
+        height: btnHeight,
         width: onePixel,
-        color: lineColor,
+        color: separatorColor,
       ),
       _buildBtn(btnTitles[1], btnHighLightColor ?? colors.primary, fontSize,
-          () {
+          btnHeight, () {
         xbNavigatorState.pop();
         onSelected(1);
       })
@@ -135,14 +170,14 @@ List<Widget> _setupBtns({
   }
 }
 
-Widget _buildBtn(
-    String title, Color color, double fontSize, VoidCallback onTap) {
+Widget _buildBtn(String title, Color color, double fontSize, double height,
+    VoidCallback onTap) {
   return Expanded(
       child: XBButton(
           effect: XBButtonTapEffect.cover,
           onTap: onTap,
           child: Container(
-            height: 50,
+            height: height,
             alignment: Alignment.center,
             child: Text(
               title,

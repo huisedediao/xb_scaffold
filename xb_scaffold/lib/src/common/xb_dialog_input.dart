@@ -46,23 +46,35 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
   @override
   Widget buildWidget(BuildContext context) {
     final vm = vmOf(context);
+    final style = xbDialogStyle;
+    final builders = style?.partBuilders;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomMargin ?? 100),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(style?.radius ?? 10),
         child: Container(
-          color: Colors.white,
+          color: style?.backgroundColor ?? Colors.white,
           width: maxWidth ?? (screenW - spaces.gapDef * 2),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                height: spaces.gapDef + 5,
-              ),
-              Text(
-                title,
-                style: TextStyle(
-                    fontSize: fontSizes.s16, fontWeight: fontWeights.semiBold),
+              XBDialogPart(
+                builder: builders?.title,
+                defaultChild: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      height: spaces.gapDef + 5,
+                    ),
+                    Text(
+                      title,
+                      style: style?.titleStyle ??
+                          TextStyle(
+                              fontSize: fontSizes.s16,
+                              fontWeight: fontWeights.semiBold),
+                    ),
+                  ],
+                ),
               ),
               if (subTitle != null)
                 Padding(
@@ -72,6 +84,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                       top: spaces.gapDef),
                   child: Text(subTitle ?? "",
                       style: subTitleStyle ??
+                          style?.msgStyle ??
                           TextStyle(
                               fontSize: fontSizes.s14, color: Colors.grey)),
                 ),
@@ -86,7 +99,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                     Expanded(
                       child: XBBG(
                         // paddingH: spaces.gapDef,
-                        borderColor: Colors.grey.withAlpha(80),
+                        borderColor: style?.inputBorderColor ??
+                            Colors.grey.withAlpha(80),
                         borderWidth: onePixel,
                         defAllRadius: 6,
                         child: Row(
@@ -134,9 +148,11 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                       padding: EdgeInsets.only(
                           left: spaces.gapDef, right: spaces.gapDef * 0.5),
                       child: XBCellCenterTitle(
-                          contentHeight: 50,
+                          contentHeight: style?.btnHeight ?? 50,
                           contentBorderRadius: BorderRadius.circular(6),
-                          titleStyle: const TextStyle(color: Colors.grey),
+                          titleStyle: TextStyle(
+                              color: style?.btnDefaultColor ?? Colors.grey,
+                              fontSize: style?.btnFontSize),
                           title: cancelTitle ?? "取消",
                           onTap: () {
                             xbNavigatorState.pop();
@@ -149,9 +165,11 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                       padding: EdgeInsets.only(
                           left: spaces.gapDef * 0.5, right: spaces.gapDef),
                       child: XBCellCenterTitle(
-                          contentHeight: 50,
+                          contentHeight: style?.btnHeight ?? 50,
                           contentBorderRadius: BorderRadius.circular(6),
-                          titleStyle: TextStyle(color: colors.primary),
+                          titleStyle: TextStyle(
+                              color: style?.btnHighLightColor ?? colors.primary,
+                              fontSize: style?.btnFontSize),
                           title: confirmTitle ?? "确定",
                           onTap: () {
                             if (vm.value.isEmpty) {

@@ -22,6 +22,7 @@ export './src/xb_action_sheet.dart';
 export './src/xb_toast.dart';
 
 export 'src/configs/xb_def.dart';
+export 'src/configs/xb_dialog_style.dart';
 
 export 'src/common/xb_common.dart';
 export 'src/utils/xb_utils.dart';

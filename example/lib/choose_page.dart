@@ -9,6 +9,7 @@ import 'package:example/pages/xb_pop_test.dart';
 import 'package:example/pages/xb_repository_demo.dart';
 import 'package:example/pages/xb_button_demo.dart';
 import 'package:example/pages/xb_dialog_input_demo.dart';
+import 'package:example/pages/xb_dialog_style_demo.dart';
 import 'package:example/pages/xb_image_test_page.dart';
 import 'package:example/pages/xb_page_demo.dart';
 import 'package:example/pages/xb_route_test_page.dart';
@@ -86,6 +87,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
     const _ChooseMenuItem(
       title: 'XBDialogInput demo',
       pageBuilder: _buildXBDialogInputDemo,
+    ),
+    const _ChooseMenuItem(
+      title: 'XBDialogStyle 样式定制 demo',
+      pageBuilder: _buildXBDialogStyleDemo,
     ),
     const _ChooseMenuItem(
       title: 'XBButton demo',
@@ -187,6 +192,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBCellGroupDemo() => const XBCellGroupDemo();
   static Widget _buildXBPageDemo() => const XBPageDemo();
   static Widget _buildXBDialogInputDemo() => const XBDialogInputDemo();
+  static Widget _buildXBDialogStyleDemo() => const XBDialogStyleDemo();
   static Widget _buildXBButtonDemo() => const XBButtonDemo();
   static Widget _buildXBToastDemo() => const XBToastDemo();
   static Widget _buildXBWaitTaskDemo() => const XBWaitTaskDemo();

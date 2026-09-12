@@ -45,6 +45,40 @@ dialogWidget(Widget widget, {int priority = 0})  // show ANY widget as a modal d
 
 Style: white rounded card (radius 10), title on top, body below, 1px line, bottom button row (h=50) split by a 1px vertical line. Two-button layout: cancel-black left, highlight right. Pops automatically after selection. `priority` lets an urgent dialog jump the queue in `XBDialogManager`.
 
+### XBDialogStyle — project-wide dialog theming
+
+Every project can fully restyle dialog/dialogContent/XBDialogInput without changing the fixed structure (card → title → content → line → buttons). Three-level resolution everywhere: per-call arg > global `xbDialogStyle` > framework default. Fully backward compatible.
+
+```dart
+// Option A: inject at app root (synced like loadingBuilder)
+XBScaffold(
+  dialogStyle: const XBDialogStyle(
+    backgroundColor: Color(0xFF2C2C2E),   // card bg, default white
+    radius: 16,                           // card radius, default 10
+    titleStyle: TextStyle(...),           // title text
+    msgStyle: TextStyle(...),             // body/subTitle text
+    contentPadding: EdgeInsets(...),      // content padding (dialogContent)
+    lineColor: Colors.white24,            // separator + button divider
+    btnHeight: 50, btnFontSize: 16,
+    btnDefaultColor: Colors.white70,      // first of two buttons
+    btnHighLightColor: Colors.amber,      // last/only button
+    inputBorderColor: Colors.red,         // XBDialogInput border
+    partBuilders: XBDialogPartBuilders(
+      title: (ctx, style) => widgetOr,    // replace section; return null → default
+      content: (ctx, style) => widgetOr,  // replaces dialogContent body only
+      buttons: (ctx, style) => widgetOr,  // replaces separator+button row; you call pop
+    ),
+  ),
+  ...
+);
+
+// Option B: switch at runtime (e.g. follow dark mode); null restores defaults
+xbSetDialogStyle(const XBDialogStyle(...));
+xbSetDialogStyle(null);
+```
+
+All fields optional; builders receive the resolved style and may return null to fall back to the default rendering of that section.
+
 ### XBDialogInput (input dialog)
 
 ```dart
@@ -62,7 +96,7 @@ dialogWidget(XBDialogInput(
 ));
 ```
 
-Style: white card radius 10, bordered input box (radius 6) with a grey clear (x) button, bottom cancel/confirm row h=50.
+Style: white card radius 10, bordered input box (radius 6) with a grey clear (x) button, bottom cancel/confirm row h=50. Card bg/radius/title/subTitle/border/buttons all honor the global `XBDialogStyle`.
 
 ## ActionSheet (bottom sheet)
 

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'src/configs/xb_dialog_style.dart';
 import 'src/xb_error/xb_error.dart';
 import 'src/xb_theme/xb_theme_vm.dart';
 
@@ -116,6 +117,15 @@ typedef XBLoadingBuilder = Widget Function(BuildContext context, String? msg);
 XBLoadingBuilder? _xbLoadingBuilder;
 XBLoadingBuilder? get xbLoadingBuilder => _xbLoadingBuilder;
 
+/// 用于外部控制 dialog 样式（结构不变，仅替换各部分样式/内容）
+XBDialogStyle? _xbDialogStyle;
+XBDialogStyle? get xbDialogStyle => _xbDialogStyle;
+
+/// 运行中动态设置 dialog 全局样式（如跟随深色模式），传 null 恢复框架默认
+void xbSetDialogStyle(XBDialogStyle? style) {
+  _xbDialogStyle = style;
+}
+
 /// toast 背景颜色
 Color? _xbToastBackgroundColor;
 Color? get xbToastBackgroundColor => _xbToastBackgroundColor;
@@ -161,6 +171,9 @@ class XBScaffold extends StatefulWidget {
   /// loading 要长什么样
   final XBLoadingBuilder? loadingBuilder;
 
+  /// dialog 要长什么样（结构不变，仅替换各部分样式/内容）
+  final XBDialogStyle? dialogStyle;
+
   /// toast 的背景颜色
   final Color? toastBackgroundColor;
 
@@ -184,6 +197,7 @@ class XBScaffold extends StatefulWidget {
     required this.child,
     required this.themeConfigs,
     this.loadingBuilder,
+    this.dialogStyle,
     this.toastBackgroundColor,
     this.maxPageLogLen,
     this.themeIndexReader,
@@ -215,9 +229,10 @@ class _XBScaffoldState extends State<XBScaffold> {
     }
   }
 
-  /// 同步全局配置（loadingBuilder / toastBackgroundColor / maxPageLogLen / 主题持久化钩子）
+  /// 同步全局配置（loadingBuilder / dialogStyle / toastBackgroundColor / maxPageLogLen / 主题持久化钩子）
   void _syncGlobalConfigs() {
     _xbLoadingBuilder = widget.loadingBuilder;
+    _xbDialogStyle = widget.dialogStyle;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
     _maxPageLogLen = widget.maxPageLogLen;
     XBThemeVM().bindIndexWriter(widget.themeIndexWriter);
