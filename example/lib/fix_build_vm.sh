@@ -35,7 +35,6 @@ METHODS = [
     "navigationBarTitleSize",
     "navigationBarTitleFontWeight",
     "setTitle",
-    "pushAnimationMilliseconds",
     "longPressThresholdMilliseconds",
     "leadingWidth",
     "buildTitle",

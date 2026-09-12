@@ -99,7 +99,7 @@ class HomePageVM extends XBPageVM<HomePage> {
 
 - Visibility/layout: `needSafeArea` (default false), `needHideAppbar`, `needImmersiveAppbar`, `needRemovePadding` (default true), `needAdaptKeyboard`, `needPageContentAdaptTabbar`, `needRebuildWhileOrientationChanged`, `needRebuildWhileAppThemeChanged` (default true), `backgroundWidget`, `backgroundColor` (default `viewBG`).
 - Loading: `needLoading` (default false) enables page-level loading overlay; `needInitLoading` shows it immediately; `buildLoading` customizes; `needResponse*WhileLoading` controls which regions stay interactive.
-- AppBar: `navigationBarBGColor` / `navigationBarTitleColor` / `navigationBarTitleSize` / `navigationBarTitleFontWeight`, `leading`, `actions`, `buildTitle`, `leadingWidth`, `statusBarStyle` (`XBStatusBarStyle.light/dark`), `pushAnimationMilliseconds`.
+- AppBar: `navigationBarBGColor` / `navigationBarTitleColor` / `navigationBarTitleSize` / `navigationBarTitleFontWeight`, `leading`, `actions`, `buildTitle`, `leadingWidth`, `statusBarStyle` (`XBStatusBarStyle.light/dark`).
 - Back behavior: `canPop` (block back button + gestures), `handlePopSuccess` / `handlePopFailure`.
 
 ## Global UI one-liners

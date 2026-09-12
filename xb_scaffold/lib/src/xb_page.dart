@@ -105,9 +105,6 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
   /// 如果重写了buildTitle，则不生效
   String setTitle(BuildContext context) => "";
 
-  /// 页面push动画时间
-  int pushAnimationMilliseconds(BuildContext context) => 450;
-
   /// 长按时间阈值（毫秒），超过此时间认为是长按，不触发endEditing
   int longPressThresholdMilliseconds(BuildContext context) => 500;
 

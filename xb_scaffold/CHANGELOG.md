@@ -925,6 +925,13 @@
 
 - optimized
 
+## 1.1.6
+
+- **破坏性变更**：移除 `XBPage.pushAnimationMilliseconds`，不再用固定定时器猜测转场结束时机
+- `addEnsureAfterPushAnimationTask` 改为监听 `Route.animation` 的 `AnimationStatus`：转场真正结束（completed）时精确触发，自定义时长转场、被打断的转场（dismissed，任务随页面销毁废弃）均准确
+- 零时长转场（`transitionDuration == Duration.zero`）立即视为完成；首帧延迟等极端场景由下一帧兜底检查覆盖
+- 兼容说明：`goRouter`/`getx` 等第三方路由最终也会生成标准 `Route`，`ModalRoute.of` 均可拿到转场动画，行为一致
+
 ## 1.1.5
 
 - 主题持久化（存储委托模式）：`XBScaffold` 新增 `themeIndexReader`/`themeIndexWriter` 可选参数，注入后自动“变更即存、启动回灌”，存储后端由业务方决定（SharedPreferences/MMKV/内存等），框架零存储依赖
