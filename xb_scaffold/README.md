@@ -826,6 +826,30 @@ extension CustomColors on XBThemeColor {
 }
 ```
 
+#### 主题持久化（可选）
+
+在 `XBScaffold` 上注入读写器即可自动记住用户选择的主题（无需引入额外依赖，存储后端由你决定）：
+
+```dart
+// 例如配合 shared_preferences
+final prefs = await SharedPreferences.getInstance();
+
+XBScaffold(
+  themeConfigs: [...],
+  // 变更时自动调用
+  themeIndexWriter: (index) => prefs.setInt('theme_index', index),
+  // 启动初始化完成后自动回灌（返回 null 表示首次启动，保持默认主题）
+  themeIndexReader: () async => prefs.getInt('theme_index'),
+  child: ...,
+)
+```
+
+说明：
+
+- 回灌发生在主题注册完成之后，无时序问题；持久化的脏数据（越界/负数）会被静默忽略
+- `changeTheme` 越界时：主题保持不变，debug 下抛 `AssertionError` 提前暴露问题（旧版会静默新建空主题导致页面拿到默认色）
+- `theme` getter 读取未初始化的主题时不再静默新建空主题，而是回落到默认主题（index 0）并 assert 提示
+
 ### Dialog 和弹窗
 
 ```dart

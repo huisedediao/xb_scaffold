@@ -167,12 +167,27 @@ class XBScaffold extends StatefulWidget {
   /// max page log len，默认 30
   final int? maxPageLogLen;
 
+  /// 主题索引持久化读取器（可选）：返回上次保存的主题 index，未存储过返回 null。
+  /// 初始化完成、主题注册后自动回灌生效。
+  /// ```dart
+  /// themeIndexReader: () async => prefs.getInt('theme_index'),
+  /// ```
+  final XBThemeIndexReader? themeIndexReader;
+
+  /// 主题索引持久化写入器（可选）：changeTheme 时自动调用。
+  /// ```dart
+  /// themeIndexWriter: (index) => prefs.setInt('theme_index', index),
+  /// ```
+  final XBThemeIndexWriter? themeIndexWriter;
+
   const XBScaffold({
     required this.child,
     required this.themeConfigs,
     this.loadingBuilder,
     this.toastBackgroundColor,
     this.maxPageLogLen,
+    this.themeIndexReader,
+    this.themeIndexWriter,
     super.key,
   });
 
@@ -200,11 +215,12 @@ class _XBScaffoldState extends State<XBScaffold> {
     }
   }
 
-  /// 同步全局配置（loadingBuilder / toastBackgroundColor / maxPageLogLen）
+  /// 同步全局配置（loadingBuilder / toastBackgroundColor / maxPageLogLen / 主题持久化钩子）
   void _syncGlobalConfigs() {
     _xbLoadingBuilder = widget.loadingBuilder;
     _xbToastBackgroundColor = widget.toastBackgroundColor;
     _maxPageLogLen = widget.maxPageLogLen;
+    XBThemeVM().bindIndexWriter(widget.themeIndexWriter);
   }
 
   /// XBThemeConfig 未重写 ==，手动按内容比较，避免父组件重建时误触发重新初始化
@@ -275,6 +291,20 @@ class _XBScaffoldState extends State<XBScaffold> {
         ),
         i,
       );
+    }
+
+    // 回灌持久化的主题 index（须在主题注册完成之后，避免命中越界校验）
+    // 脏数据（越界/负数）静默忽略，避免历史遗留脏数据在启动时崩溃
+    final reader = widget.themeIndexReader;
+    if (reader != null) {
+      final savedIndex = await reader();
+      if (token == _initToken &&
+          savedIndex != null &&
+          savedIndex >= 0 &&
+          savedIndex < configs.length &&
+          savedIndex != XBThemeVM().themeIndex) {
+        XBThemeVM().changeTheme(savedIndex);
+      }
     }
   }
 

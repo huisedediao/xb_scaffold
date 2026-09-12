@@ -925,6 +925,13 @@
 
 - optimized
 
+## 1.1.5
+
+- 主题持久化（存储委托模式）：`XBScaffold` 新增 `themeIndexReader`/`themeIndexWriter` 可选参数，注入后自动“变更即存、启动回灌”，存储后端由业务方决定（SharedPreferences/MMKV/内存等），框架零存储依赖
+- `changeTheme` 越界校验：index 越界时主题保持不变，debug 下抛 `AssertionError` 提前暴露（旧版会静默新建空主题，页面拿到默认色不报错）
+- `theme` getter 修复：读取未初始化/越界主题时回落到默认主题（index 0）并 assert 提示，不再静默新建空主题污染 `_themeMap`
+- 回灌防脏数据：持久化的越界/负数 index 被静默忽略，不会在启动时崩溃
+
 ## 1.1.4
 
 - `XBEventBus` 弱注册重构：Bus 对 listener 及其回调只持弱引用，非 VM 使用者忘记 `removeListener` 不再永久泄漏，注册项随 GC 自动失效并在 fire/prune 时剪除；`XBVM.listen` 内部自动保管回调，VM 使用者无感知
