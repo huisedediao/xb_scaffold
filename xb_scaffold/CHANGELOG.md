@@ -925,6 +925,11 @@
 
 - optimized
 
+## 1.1.8
+
+- README 新增「大页面性能优化」章节：拆分子 XBWidget / context.select / ValueNotifier 三种局部 rebuild 手段及重建统计方法
+- 补齐核心模块测试（+19 个）：路由观察者（push/pop 生命周期回调、三层路由、销毁取消订阅）、XBImage 类型分发（空值/bytes/svg/data-uri/网络/asset 全分支）、XBImgSizeUtil（PNG 解码与缓存）、5 个表单 formatter
+
 ## 1.1.7
 
 - 页面日志时间戳修复：`recordPageLog` 改用设备本地时间（旧实现 `toUtc().add(hours: 8)` 硬编码东八区，海外/非东八区设备时间戳错误）

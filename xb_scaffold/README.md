@@ -1213,6 +1213,104 @@ class UserVM extends XBVM<UserWidget> {
 enum UserState { loading, success, error }
 ```
 
+### 3. 大页面性能优化：避免全量 rebuild
+
+先说清楚默认机制：`XBWidget` 内部用 `Consumer<T>` 监听**整个 VM**，所以每次 `vm.notify()` 都会重建整个 `buildWidget`。
+
+```dart
+// 每次 notify()，buildWidget 里的所有 widget 都会重建
+@override
+Widget buildWidget(BuildContext context) {
+  return Column(
+    children: [
+      header,           // ← 重建
+      hugeList,         // ← 重建（贵）
+      bottomBar,        // ← 重建
+    ],
+  );
+}
+```
+
+小页面这样完全没问题（Flutter 重建 widget 树本身很快，真正贵的是 layout/paint）。但大页面、列表重的页面，建议用下面的手段把刷新范围缩小。
+
+#### 手段一：拆分子 XBWidget（推荐，框架原生方式）
+
+把高频刷新的区域提取为独立的 `XBWidget`，它有自己的 VM，`notify()` 只重建自己：
+
+```dart
+// 拆出的计数器组件，自己持有 VM
+class CounterWidget extends XBWidget<CounterVM> {
+  @override
+  CounterVM generateVM(BuildContext context) => CounterVM(context: context);
+
+  @override
+  Widget buildWidget(BuildContext context) {
+    final vm = vmOf(context);
+    return Text('${vm.count}');   // 只重建这一小块
+  }
+}
+
+class CounterVM extends XBVM<CounterWidget> {
+  int count = 0;
+  void increment() {
+    count++;
+    notify();   // ← 只重建 CounterWidget，页面其他部分不动
+  }
+}
+```
+
+#### 手段二：context.select 只订阅特定字段
+
+`XBWidget` 已经把 VM 放进了 Provider，子 Widget（普通的 `StatelessWidget` 即可）可以用 `context.select` 只依赖某个字段，字段不变就不重建：
+
+```dart
+// 需在业务工程 pubspec 中添加 provider 依赖（xb_scaffold 内部已依赖，但 Dart 要求 import 必须声明直接依赖）
+import 'package:provider/provider.dart';
+
+class PriceText extends StatelessWidget {
+  const PriceText({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // 只依赖 price，其他字段变化不触发重建
+    final price = context.select<OrderVM, double>((vm) => vm.price);
+    return Text('¥$price');
+  }
+}
+```
+
+注意：`select` 必须写在**独立 Widget 的 build** 里才有效。直接写在 `buildWidget` 里没有意义——父级 `Consumer` 已经订阅了整个 VM，每次 `notify()` 都会重建。
+
+#### 手段三：高频更新绕开 VM
+
+倒计时、进度条、动画值这类每帧/每秒都变的状态，不要放进 VM 频繁 `notify()`，用 `ValueNotifier` 局部订阅：
+
+```dart
+class CountdownView extends StatelessWidget {
+  final ValueNotifier<int> seconds;
+  const CountdownView({super.key, required this.seconds});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: seconds,
+      builder: (context, value, _) => Text('$value s'),
+    );
+  }
+}
+```
+
+#### 怎么判断页面需要优化
+
+在 debug 下打开重建统计，操作页面观察哪些 widget 被反复 rebuild：
+
+```dart
+// main() 中设置
+debugPrintRebuildDirtyWidgets = true;
+```
+
+如果某次交互后日志里出现几百行 rebuild 记录，或列表 item 整体重建，就按上面三个手段处理。
+
 ## 常见问题
 
 ### Q: 如何在子组件中访问父页面的 VM？
