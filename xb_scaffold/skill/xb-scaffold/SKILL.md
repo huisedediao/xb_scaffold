@@ -143,7 +143,7 @@ Details, parameter tables and appearance notes: [reference/ui-components.md](ref
 
 ## Screen metrics and style constants (global getters)
 
-`screenW`, `screenH`, `screenSize`, `stateBarH`, `naviBarH`, `tabbarH`, `topBarH`, `screenHWithoutTopBarH`, `safeAreaBottom`, `onePixel`, `dpr`; colors `lineColor` (#E6E6E6), `viewBG`, `naviBarBG`, `naviBarTitle`; theme `colors.primary` (default #007AFF), `fontSizes.s8..s40` (`def`=16), `fontWeights.bold/semiBold/medium/normal/thin`, `spaces.gapDef`(17.5)/`gapLess`(13.5)/`gapLarge`(35), `images.imgPath(name)`; helpers `endEditing()`, `xbNavigatorState`, `xbNavigatorContext`, `isHarmony`, page log `recordPageLog`/`showPageLog`.
+`screenW`, `screenH`, `screenSize`, `stateBarH`, `naviBarH`, `tabbarH`, `topBarH`, `screenHWithoutTopBarH`, `safeAreaBottom`, `onePixel`, `dpr`; colors `lineColor` (#E6E6E6), `viewBG`, `naviBarBG`, `naviBarTitle`; theme `colors.primary` (default #007AFF), `fontSizes.s8..s40` (`def`=16), `fontWeights.bold/semiBold/medium/normal/thin`, `spaces.gapDef`(17.5)/`gapLess`(13.5)/`gapLarge`(35), `images.imgPath(name)`; helpers `endEditing()`, `xbNavigatorState`, `xbNavigatorContext`, `isHarmony` / `isOhos` (alias, true on OpenHarmony), page log `recordPageLog`/`showPageLog`.
 
 ## Utilities
 
