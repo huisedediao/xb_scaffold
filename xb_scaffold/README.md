@@ -132,6 +132,7 @@ xb.newmodel add_device_video_manage_unnormal_model lib/model/add_device_video_ma
 - `app_theme_font_weights.dart`
 - `app_theme_image.dart`
 - `app_theme_space.dart`
+- 文件级跳过：已存在的文件保留不动（不会覆盖已有内容），仅补齐缺失的文件
 
 `xb.updateimg` 的更新规则：
 

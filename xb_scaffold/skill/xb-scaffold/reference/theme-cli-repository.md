@@ -40,7 +40,7 @@ extension AppImages on XBThemeImage {
 // usage: Container(color: colors.customBlue)
 ```
 
-Generated extension files (`xb.extension [dir]`, default `lib/`): `app_theme_color.dart`, `app_theme_font_size.dart`, `app_theme_font_family.dart`, `app_theme_font_weights.dart`, `app_theme_image.dart`, `app_theme_space.dart` inside a `xb_scaffold_extension` directory. `xb.updateimg [imgDir]` (default `./assets/images`) incrementally appends `String get xxx => imgPath('relative/path');` into `app_theme_image.dart` (name-collision suffixes `_png`/`_svg`).
+Generated extension files (`xb.extension [dir]`, default `lib/`): `app_theme_color.dart`, `app_theme_font_size.dart`, `app_theme_font_family.dart`, `app_theme_font_weights.dart`, `app_theme_image.dart`, `app_theme_space.dart` inside a `xb_scaffold_extension` directory. Generation is per-file: existing files are preserved (never overwritten), only missing files are scaffolded. `xb.updateimg [imgDir]` (default `./assets/images`) incrementally appends `String get xxx => imgPath('relative/path');` into `app_theme_image.dart` (name-collision suffixes `_png`/`_svg`).
 
 ## Data layer (Repository / Service / DataSource)
 

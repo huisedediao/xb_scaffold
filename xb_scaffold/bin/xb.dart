@@ -402,25 +402,14 @@ extension AppThemeSpace on XBThemeSpace {
 """,
   };
 
-  final targetFiles = files.keys
-      .map((name) => File('$targetDirPath/$name'))
-      .toList(growable: false);
-  final existingFiles =
-      targetFiles.where((file) => file.existsSync()).toList(growable: false);
-  if (existingFiles.isNotEmpty) {
-    stderr.writeln(
-      'Target file already exists, skip generation to avoid any changes:',
-    );
-    for (final file in existingFiles) {
-      stderr.writeln('  ${file.path}');
-    }
-    exitCode = 1;
-    return;
-  }
-
+  // 文件级判断：已存在的文件保留不动，仅补齐缺失的文件
   dir.createSync(recursive: true);
   for (final entry in files.entries) {
     final file = File('${dir.path}/${entry.key}');
+    if (file.existsSync()) {
+      stderr.writeln('Target file already exists, skip: ${file.path}');
+      continue;
+    }
     file.writeAsStringSync(_withOuterBlankLines(entry.value));
     stdout.writeln('Generated: ${file.path}');
   }
