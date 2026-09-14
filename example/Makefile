@@ -9,7 +9,9 @@ CMDS := \
 	xb.extension \
 	xb.updateimg \
 	xb.parsemodel \
-	xb.newmodel
+	xb.newmodel \
+ 	xb.skill \
+	xb.build
 
 help:
 	@echo "Usage:"
