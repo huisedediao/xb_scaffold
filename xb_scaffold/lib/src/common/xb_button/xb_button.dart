@@ -18,7 +18,7 @@ class XBButton extends StatefulWidget {
   /// 是否可点击
   final bool enable;
 
-  /// 不可点击时，child上覆盖的颜色，默认为0.24透明度的白色（外部传入半透明颜色）
+  /// 不可点击时，child上覆盖的颜色，默认为Colors.white38（外部传入半透明颜色）
   final Color? disableColor;
 
   /// 点击事件
@@ -61,8 +61,7 @@ class XBButton extends StatefulWidget {
       this.onTapDisable,
       this.preventMultiTapMilliseconds = 500,
       this.coverTransparentWhileOpacity = false,
-      Key? key})
-      : super(key: key);
+      super.key});
 
   @override
   State<XBButton> createState() => _XBButtonState();
@@ -78,6 +77,14 @@ class _XBButtonState extends State<XBButton> {
     super.initState();
     _preventMultiTask = XBPreventMultiTask(
         intervalMilliseconds: widget.preventMultiTapMilliseconds);
+  }
+
+  @override
+  void dispose() {
+    if (_tappingState == this) {
+      _tappingState = null;
+    }
+    super.dispose();
   }
 
   _setStateIfMounted() {
@@ -101,14 +108,10 @@ class _XBButtonState extends State<XBButton> {
           alignment: Alignment.center,
           children: [
             widget.child,
-            Container(
-              color: widget.disableColor ?? Colors.white38,
-              child: Visibility(
-                  visible: false,
-                  maintainState: true,
-                  maintainSize: true,
-                  maintainAnimation: true,
-                  child: widget.child),
+            Positioned.fill(
+              child: Container(
+                color: widget.disableColor ?? Colors.white38,
+              ),
             )
           ],
         ),
@@ -139,15 +142,19 @@ class _XBButtonState extends State<XBButton> {
           if (_tappingState == this) {
             _tappingState = null;
           }
-          _onTapDown = false;
-          _setStateIfMounted();
+          if (_onTapDown) {
+            _onTapDown = false;
+            _setStateIfMounted();
+          }
         },
         onPointerCancel: (e) {
           if (_tappingState == this) {
             _tappingState = null;
           }
-          _onTapDown = false;
-          _setStateIfMounted();
+          if (_onTapDown) {
+            _onTapDown = false;
+            _setStateIfMounted();
+          }
         },
         child: tapChild,
       );
@@ -182,17 +189,14 @@ class _XBButtonState extends State<XBButton> {
           alignment: Alignment.center,
           children: [
             widget.child,
-            Opacity(
-                opacity: _coverEffectOpacity(),
-                child: Container(
-                  color: widget.coverEffectColor ?? Colors.black.withAlpha(15),
-                  child: Visibility(
-                      visible: false,
-                      maintainState: true,
-                      maintainSize: true,
-                      maintainAnimation: true,
-                      child: widget.child),
-                ))
+            Positioned.fill(
+              child: Opacity(
+                  opacity: _coverEffectOpacity(),
+                  child: Container(
+                    color:
+                        widget.coverEffectColor ?? Colors.black.withAlpha(15),
+                  )),
+            )
           ],
         ),
       );
