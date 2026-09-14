@@ -22,6 +22,23 @@ XBThemeImage get images;         // images.imgPath('icon.png') -> '<imgPrefix>ic
 
 Image fallback: each theme's `imgPrefix` is scanned against the AssetManifest; when a non-default theme lacks an asset, it falls back to theme 0's prefix.
 
+### Theme persistence (optional)
+
+Persist the selected theme index via a storage delegate: `XBScaffold` accepts two optional hooks and the framework imports no storage package — the backend (SharedPreferences/MMKV/etc.) is decided by the app:
+
+```dart
+XBScaffold(
+  themeConfigs: [...],
+  themeIndexWriter: (index) => prefs.setInt('theme_index', index), // called on every changeTheme
+  themeIndexReader: () async => prefs.getInt('theme_index'),       // restores after theme registration
+  child: ...,
+)
+```
+
+- Writer (`XBThemeIndexWriter = FutureOr<void> Function(int)`) is auto-invoked on every `changeTheme`; it may be async.
+- Reader (`XBThemeIndexReader = Future<int?> Function()`) runs after theme registration completes (no init race); returning null means first launch and keeps the default theme.
+- Out-of-range `changeTheme` keeps the theme unchanged and throws `AssertionError` in debug; out-of-range or negative indices restored from storage are silently ignored.
+
 Pages rebuild on theme change by default (`needRebuildWhileAppThemeChanged => true`).
 
 ### Extending the theme

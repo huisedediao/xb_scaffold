@@ -32,10 +32,14 @@ XBScaffold(
   XBLoadingBuilder? loadingBuilder,   // Widget Function(BuildContext, String? msg)
   Color? toastBackgroundColor,
   int? maxPageLogLen,                 // page log ring buffer, default 30
+  themeIndexReader,                   // XBThemeIndexReader = Future<int?> Function(); restores the saved theme index after theme registration (null = first launch, keep default)
+  themeIndexWriter,                   // XBThemeIndexWriter = FutureOr<void> Function(int); invoked on every changeTheme to persist the index
 )
 ```
 
 Initializes theme map (one `XBTheme` per config index, scanned against `AssetManifest`), stores the loading builder and toast color globally. Non-first themes fall back to theme 0's `imgPrefix` for missing images.
+
+Theme persistence uses a storage delegate: the framework imports no storage package; the backend is decided by the app (SharedPreferences/MMKV/etc.). Out-of-range `changeTheme` keeps the theme unchanged and throws `AssertionError` in debug; out-of-range or negative indices restored from storage are silently ignored.
 
 ### XBMaterialApp
 
