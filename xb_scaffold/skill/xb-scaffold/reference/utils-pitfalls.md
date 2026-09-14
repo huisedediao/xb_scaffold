@@ -22,13 +22,20 @@ void didCreated() {
   listen<UserLoginEvent>((event) => print(event.username));
 }
 
-// Anywhere else:
+// Anywhere else (weak registration):
+late final _handler = (UserLoginEvent e) => print(e.username); // MUST be held by the listener (field/method)
+XBEventBus.addListener<UserLoginEvent>(this, _handler);
+XBEventBus.removeListener(this);                              // optional; GC also prunes dead entries
+
+// Strong subscription via stream (manual cleanup needed):
+final sub = XBEventBus.on<UserLoginEvent>().listen(...);
 XBEventBus.fire(UserLoginEvent('john'));
-final sub = XBEventBus.on<UserLoginEvent>().listen(...);  // manual cleanup needed
-XBEventBus.removeListener(listenerObj);                    // required for non-VM listeners
 ```
 
-Type-filtered broadcast stream. Prefer `vm.listen` so cancellation is automatic.
+Semantics:
+- **Weak registration**: the bus holds both the listener and its callback via `WeakReference`; entries whose objects were GC'd are pruned lazily on the next fire. **The callback must be held by the listener itself** (a field or a method) — a temporary closure has no strong reference outside the bus and may be collected silently, so events stop arriving with no error. `vm.listen` retains handlers internally, so VM users are unaffected.
+- **Exact `runtimeType` dispatch**: registering a supertype and firing a subtype does NOT match; use `XBEventBus.on<T>()` (stream, strong reference) when you need custom semantics.
+- `initController(customController)` customizes the broadcast stream and must be called before any subscription; the old `setController` is deprecated (it silently failed when called late).
 
 ## Timers and tasks
 
@@ -118,3 +125,4 @@ Global style constants: `lineColor` #E6E6E6, `viewBG` #F1EBEB (page background d
 10. **Don't import `src/`** — anything not exported by `package:xb_scaffold/xb_scaffold.dart` is private API and may change.
 11. **`XBHoveringHeaderList` requires fixed heights** — you must supply `itemHeightForIndexPath` and `headerHeightForSection`; for variable-height content use plain `ListView`.
 12. **Theme image fallback only scans declared assets** — new images require `flutter pub get`/rebuild so `AssetManifest` includes them.
+13. **toast may be dropped at startup** — if the overlay is not ready on the first frame, `toast` logs the error, retries once on the next frame, and drops the toast with a log if the overlay is still not ready. It never throws; check the console if a toast does not appear.

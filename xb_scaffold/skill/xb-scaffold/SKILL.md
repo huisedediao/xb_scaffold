@@ -91,9 +91,11 @@ class HomePageVM extends XBPageVM<HomePage> {
 - `context.vmOfOrNull<T>()` / `context.vmWatchOrNull<T>()` — null-safe variants.
 - Inside `XBWidget`/`XBPage` subclasses: `vmOf(context)`, `vm`, `vmWatch` getters, `reset()` (new VM), `rebuildUI()`.
 
-**XBVM essentials**: `notify()` refreshes UI; `listen<E>(cb)` subscribes to `XBEventBus` (auto-removed on dispose); `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
+**XBVM essentials**: `notify()` refreshes UI; `listen<E>(cb)` subscribes to `XBEventBus` (weak registration, the VM retains the handler; auto-removed on dispose) and `removeListen<E>(cb)` unsubscribes explicitly; `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
 
 **XBPageVM extras**: `showLoading({msg})` / `hideLoading()`; `back([result])`; `isTop`; route lifecycle `willShow`/`willHide`/`willDispose`/`didPush`/`didPop`/`didPushNext`/`didPopNext`; `addEnsureAfterPushAnimationTask(fn)`; drawer helpers.
+
+**Large pages**: avoid full rebuilds — split sub-`XBWidget`s, use `context.select` inside independent child widgets, or `ValueNotifier` for high-frequency values (see reference/core.md).
 
 ## Page configuration (XBPage overrides)
 
@@ -149,7 +151,7 @@ Details, parameter tables and appearance notes: [reference/ui-components.md](ref
 
 Details: [reference/utils-pitfalls.md](reference/utils-pitfalls.md)
 
-- `XBEventBus.fire(event)` / `vm.listen<T>(cb)` / `XBEventBus.on<T>()`.
+- `XBEventBus.fire(event)` / `vm.listen<T>(cb)` / `XBEventBus.on<T>()` (strong stream subscription). Weak registration: callbacks must be held by the listener (a field/method) or they may be GC'd silently; dispatch is exact `runtimeType` matching (no subtype matching).
 - `XBTimer` (once/repeat/cancel, optional `listeningVM` auto-cancel), `XBWaitTask` (timeout race), `XBPreventMultiTask` (debounce), `XBRefreshTasKUtil` (delayed refresh), `XBTask`.
 - JSON parsing: `xbParse<T>(json['k'])`, `xbParseList<T>(json['k'], factory: Model.fromJson)`.
 - `XBDateFormat('yyyy-MM-dd HH:mm:ss').format(dt)/parse(s)`, `XBTimeUtil` (nowMillis, nowTimeStr, isToday, formatSecondsToHMS).
@@ -172,6 +174,7 @@ Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 - `XBImage` on web does not support `File` inputs.
 - In `testWidgets`, live global streams can hang the test — wrap listeners in `tester.runAsync`.
 - `XBCellTitleSwitch` passes `isNeedBtn: false` by default (the switch itself handles taps); set `onTap` to receive change events.
+- `toast` may be dropped at startup if the overlay is not ready (logged, retried once next frame, then dropped) — check the console if a toast never appears.
 
 ## Deeper references
 

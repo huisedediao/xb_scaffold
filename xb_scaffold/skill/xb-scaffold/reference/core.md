@@ -66,7 +66,8 @@ The widget wraps itself in `ChangeNotifierProvider<T>.value` + `Consumer<T>` and
 - `widget` — cast to the owning widget type `T`.
 - `notify()` — call after mutating fields; ignored after dispose.
 - `didCreated()` — VM created (init data here). `widgetDidBuilt()` — first frame built (post-frame). `didChangeDependencies()`, `didUpdateWidget(oldWidget)`, `dispose()` — always call `super`.
-- `listen<E>(Function(E) onData)` — event bus subscription auto-cancelled on dispose.
+- `listen<E>(Function(E) onData)` — event bus subscription (weak registration; the VM retains the handler for you) auto-cancelled on dispose.
+- `removeListen<E>(Function(E) onData)` — unsubscribe a specific handler registered via `listen`.
 - `setRepo(XBRepository?)` / `repo<R>()` — lifecycle-managed repository.
 - `disposed` — check before async work completes.
 - `widgetSize` / `widgetSizeDidChanged()` — react to layout size changes.
@@ -112,4 +113,14 @@ xbNavigatorState.push(MaterialPageRoute(builder: (_) => const DetailPage()));
 
 ## Page log
 
-Every `XBPageVM` lifecycle transition is recorded (timestamped, UTC+8). Inspect with `pageLogInfo()` / `showPageLog()`; cap via `XBScaffold(maxPageLogLen:)`.
+Every `XBPageVM` lifecycle transition is recorded (timestamped with device-local time). Inspect with `pageLogInfo()` / `showPageLog()`; cap via `XBScaffold(maxPageLogLen:)`.
+
+## Large-page performance (avoiding full rebuilds)
+
+`XBWidget` listens to the whole VM via `Consumer<T>`: every `vm.notify()` rebuilds the entire `buildWidget`. Fine for small pages; for large or list-heavy pages, narrow the rebuild scope:
+
+1. **Split sub-`XBWidget`s** (preferred) — extract high-frequency areas into independent `XBWidget`s with their own VMs; `notify()` then only rebuilds that subtree.
+2. **`context.select<T, R>((vm) => vm.field)`** — inside an independent child widget's `build` method (NOT directly inside `buildWidget`, where it has no effect); the child rebuilds only when the selected value changes.
+3. **Bypass the VM for high-frequency values** — countdowns/progress/animation values: use `ValueNotifier` + `ValueListenableBuilder` instead of `vm.notify()`.
+
+Diagnose rebuilds with `debugPrintRebuildDirtyWidgets = true`.
