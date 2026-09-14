@@ -8,7 +8,7 @@
 XBThemeConfig({required Color primaryColor, required String imgPrefix});
 ```
 
-Switch themes at runtime: `XBThemeVM().changeTheme(1)` (index of `themeConfigs`). Read the active theme anywhere with the global getters:
+Switch themes at runtime: `XBThemeVM().changeTheme(1)` (index of `themeConfigs`). Query the current theme state via `XBThemeVM()`: `themeIndex` (int, active index, 0 before init), `registeredThemeCount` (int, registered themes, 0 before init), `theme` (active `XBTheme`, falls back to index 0 when uninitialized). Read the active theme anywhere with the global getters:
 
 ```dart
 XBTheme get app;                 // full theme
