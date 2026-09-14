@@ -119,6 +119,7 @@ dialog(                                        // iOS-style alert: white rounded
 dialogContent(title: 'x', content: myWidget, btnTitles: ['OK'], onSelected: (_) {}); // custom body
 dialogWidget(XBDialogInput(title: '输入', placeholder: '...', onDone: (text) {}));   // input dialog
 dialogWidget(anyWidget, priority: 1);          // any custom dialog (priority queue)
+// project-wide theming: XBScaffold(dialogStyle: XBDialogStyle(...)) or xbSetDialogStyle(...) — see XBDialogStyle in reference/ui-components.md
 
 actionSheet(                                   // bottom sheet, white cells h=50, top radius 10
   titles: ['拍照', '相册'], onSelected: (i) {}, dismissTitle: '取消',
@@ -174,6 +175,7 @@ Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 - `XBImage` on web does not support `File` inputs.
 - In `testWidgets`, live global streams can hang the test — wrap listeners in `tester.runAsync`.
 - `XBCellTitleSwitch` passes `isNeedBtn: false` by default (the switch itself handles taps); set `onTap` to receive change events.
+- `XBScaffold.dialogStyle` param overrides `xbSetDialogStyle` on every scaffold (re)build (`_syncGlobalConfigs`) — pick one source of truth (prefer the param).
 - `toast` may be dropped at startup if the overlay is not ready (logged, retried once next frame, then dropped) — check the console if a toast never appears.
 
 ## Deeper references
