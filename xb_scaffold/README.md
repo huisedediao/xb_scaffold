@@ -1,6 +1,6 @@
 # XB Scaffold
 
-基于 Provider 封装的 Flutter 脚手架，集成路由、主题、dialog、toast、actionSheet 等常用控件，提供完整的 MVVM 架构解决方案。
+基于 Provider 封装的 Flutter 脚手架，集成主题、dialog、toast、actionSheet 等常用控件，提供完整的 MVVM 架构解决方案（路由能力由配套包 [xb_simple_router](../xb_simple_router) 提供）。
 
 [![pub package](https://img.shields.io/pub/v/xb_scaffold.svg)](https://pub.dev/packages/xb_scaffold)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -9,7 +9,6 @@
 
 - 🏗️ **完整的 MVVM 架构**：基于 Provider 的状态管理
 - 🎨 **主题系统**：支持多主题切换和自定义主题
-- 🧭 **路由管理**：简化的路由操作和生命周期管理
 - 📱 **丰富的 UI 组件**：内置常用组件和工具类
 - 🔄 **生命周期管理**：完整的页面和组件生命周期
 - 🌐 **跨平台支持**：支持 iOS、Android、Web、Desktop
@@ -1350,25 +1349,9 @@ extension MyThemeColors on XBThemeColor {
 Container(color: colors.customPrimary)
 ```
 
-### Q: 为什么在 `testWidgets` 里使用 `xbRouteStackStream.listen` 会卡住？
+### Q: 如何使用路由（push/pop）？
 
-A: 在 Flutter 的 `testWidgets`（fake async）环境中，直接监听全局路由流可能导致测试进程不退出。  
-建议把监听/取消放到 `tester.runAsync` 中执行：
-
-```dart
-testWidgets('route stream test', (tester) async {
-  await tester.pumpWidget(const MyApp());
-
-  await tester.runAsync(() async {
-    final sub = xbRouteStackStream.listen((event) {
-      // assert / collect event
-    });
-    await sub.cancel();
-  });
-});
-```
-
-如果只是做路由 API 覆盖测试，优先通过页面状态断言（如 `find.text`、`canPop`）验证，避免不必要的全局流监听。
+A: 路由能力已剥离到配套包 [xb_simple_router](../xb_simple_router)，提供 Navigator 模式的全局 `push`/`pop`/`replace`/`popToRoot`、路由栈监听（`xbSimpleRouteStackStream`），以及可注入的 driver 抽象和 go_router 适配。
 
 ## 更新日志
 
