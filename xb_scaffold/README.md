@@ -128,6 +128,7 @@ xb.newmodel add_device_video_manage_unnormal_model lib/model/add_device_video_ma
 - 在该目录生成以下文件：
 - `app_theme_color.dart`
 - `app_theme_font_size.dart`
+- `app_theme_font_family.dart`
 - `app_theme_font_weights.dart`
 - `app_theme_image.dart`
 - `app_theme_space.dart`
@@ -824,6 +825,12 @@ extension CustomColors on XBThemeColor {
   Color get customBlue => Color(0xFF2196F3);
   Color get customGreen => Color(0xFF4CAF50);
 }
+
+// 扩展主题字体族（默认 fontFamilies.def 为 null，即系统默认字体）
+extension AppThemeFontFamily on XBThemeFontFamily {
+  String get pingFang => 'PingFang SC';
+}
+// 使用：Text('文本', style: TextStyle(fontFamily: fontFamilies.pingFang))
 ```
 
 #### 主题持久化（可选）

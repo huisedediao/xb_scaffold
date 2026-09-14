@@ -16,6 +16,7 @@ XBThemeColor get colors;         // colors.primary (default #007AFF), colors.ran
 XBThemeSpace get spaces;         // gapDef 17.5, gapLess 13.5, gapLarge 35
 XBThemeFontSize get fontSizes;   // s8..s40 (s31..s35, s37..s39 missing), def = 16
 XBThemeFontWeight get fontWeights; // bold, semiBold(w600), medium(w500), normal, thin(w200)
+XBThemeFontFamily get fontFamilies; // def = null (system default), extend via extension
 XBThemeImage get images;         // images.imgPath('icon.png') -> '<imgPrefix>icon.png'
 ```
 
@@ -39,7 +40,7 @@ extension AppImages on XBThemeImage {
 // usage: Container(color: colors.customBlue)
 ```
 
-Generated extension files (`xb.extension [dir]`, default `lib/`): `app_theme_color.dart`, `app_theme_font_size.dart`, `app_theme_font_weights.dart`, `app_theme_image.dart`, `app_theme_space.dart` inside a `xb_scaffold_extension` directory. `xb.updateimg [imgDir]` (default `./assets/images`) incrementally appends `String get xxx => imgPath('relative/path');` into `app_theme_image.dart` (name-collision suffixes `_png`/`_svg`).
+Generated extension files (`xb.extension [dir]`, default `lib/`): `app_theme_color.dart`, `app_theme_font_size.dart`, `app_theme_font_family.dart`, `app_theme_font_weights.dart`, `app_theme_image.dart`, `app_theme_space.dart` inside a `xb_scaffold_extension` directory. `xb.updateimg [imgDir]` (default `./assets/images`) incrementally appends `String get xxx => imgPath('relative/path');` into `app_theme_image.dart` (name-collision suffixes `_png`/`_svg`).
 
 ## Data layer (Repository / Service / DataSource)
 

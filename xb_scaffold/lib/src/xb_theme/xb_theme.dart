@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'xb_theme_color.dart';
+import 'xb_theme_font_family.dart';
 import 'xb_theme_font_size.dart';
 import 'xb_theme_font_weight.dart';
 import 'xb_theme_image.dart';
 import 'xb_theme_space.dart';
 
 export 'xb_theme_color.dart';
+export 'xb_theme_font_family.dart';
 export 'xb_theme_font_size.dart';
 export 'xb_theme_font_weight.dart';
 export 'xb_theme_image.dart';
@@ -26,6 +28,7 @@ class XBTheme {
   final XBThemeColor colors;
   final XBThemeSpace spaces;
   final XBThemeFontSize fontSizes;
+  final XBThemeFontFamily fontFamilies;
   final XBThemeFontWeight fontWeights;
   final XBThemeImage images;
 
@@ -33,6 +36,7 @@ class XBTheme {
       : colors = XBThemeColor(primaryColor: config?.primaryColor),
         spaces = XBThemeSpace(),
         fontSizes = XBThemeFontSize(),
+        fontFamilies = XBThemeFontFamily(),
         fontWeights = XBThemeFontWeight(),
         images = images ?? XBThemeImage(prefix: config?.imgPrefix);
 }

@@ -371,6 +371,14 @@ extension AppThemeFontSize on XBThemeFontSize {
   double get s50 => 50;
 }
 """,
+    'app_theme_font_family.dart':
+        """import 'package:xb_scaffold/xb_scaffold.dart';
+
+extension AppThemeFontFamily on XBThemeFontFamily {
+  /// 添加需要的字体族
+  // String get pingFang => 'PingFang SC';
+}
+""",
     'app_theme_font_weights.dart': """import 'package:flutter/material.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
 

@@ -11,7 +11,7 @@ description: Complete usage guide for the xb_scaffold Flutter framework (MVVM wi
 
 1. **MVVM first**: every page/component that owns state extends `XBPage`/`XBWidget` with a paired VM class. Never call `setState` for VM state; mutate VM fields then call `vm.notify()`.
 2. **Global UI APIs** (`toast`, `dialog`, `actionSheet`, `showLoadingGlobal`, route push/pop via `xbNavigatorState`) work only after `XBScaffold`/`XBMaterialApp` is mounted. If you must use `MaterialApp`/`GetMaterialApp` instead of `XBMaterialApp`, pass `navigatorKey: xbNavigatorKey`.
-3. **Theme access is global**: use the top-level getters `colors`, `fontSizes`, `fontWeights`, `spaces`, `images`, `app` (from `xb_theme_mixin.dart`) anywhere — e.g. `color: colors.primary`.
+3. **Theme access is global**: use the top-level getters `colors`, `fontSizes`, `fontFamilies`, `fontWeights`, `spaces`, `images`, `app` (from `xb_theme_mixin.dart`) anywhere — e.g. `color: colors.primary`.
 4. **Never import from `package:xb_scaffold/src/...`**; import `package:xb_scaffold/xb_scaffold.dart` only.
 
 ## App bootstrap (required)
@@ -143,7 +143,7 @@ Details, parameter tables and appearance notes: [reference/ui-components.md](ref
 
 ## Screen metrics and style constants (global getters)
 
-`screenW`, `screenH`, `screenSize`, `stateBarH`, `naviBarH`, `tabbarH`, `topBarH`, `screenHWithoutTopBarH`, `safeAreaBottom`, `onePixel`, `dpr`; colors `lineColor` (#E6E6E6), `viewBG`, `naviBarBG`, `naviBarTitle`; theme `colors.primary` (default #007AFF), `fontSizes.s8..s40` (`def`=16), `fontWeights.bold/semiBold/medium/normal/thin`, `spaces.gapDef`(17.5)/`gapLess`(13.5)/`gapLarge`(35), `images.imgPath(name)`; helpers `endEditing()`, `xbNavigatorState`, `xbNavigatorContext`, `isHarmony` / `isOhos` (alias, true on OpenHarmony), page log `recordPageLog`/`showPageLog`.
+`screenW`, `screenH`, `screenSize`, `stateBarH`, `naviBarH`, `tabbarH`, `topBarH`, `screenHWithoutTopBarH`, `safeAreaBottom`, `onePixel`, `dpr`; colors `lineColor` (#E6E6E6), `viewBG`, `naviBarBG`, `naviBarTitle`; theme `colors.primary` (default #007AFF), `fontSizes.s8..s40` (`def`=16), `fontWeights.bold/semiBold/medium/normal/thin`, `fontFamilies.def` (null = system default), `spaces.gapDef`(17.5)/`gapLess`(13.5)/`gapLarge`(35), `images.imgPath(name)`; helpers `endEditing()`, `xbNavigatorState`, `xbNavigatorContext`, `isHarmony` / `isOhos` (alias, true on OpenHarmony), page log `recordPageLog`/`showPageLog`.
 
 ## Utilities
 
@@ -159,7 +159,7 @@ Details: [reference/utils-pitfalls.md](reference/utils-pitfalls.md)
 
 Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 
-- Multi-theme: `XBThemeVM().changeTheme(i)`; extend via Dart `extension` on `XBThemeColor`/`XBThemeFontSize`/etc.; `xb.extension` CLI generates starter files.
+- Multi-theme: `XBThemeVM().changeTheme(i)`; extend via Dart `extension` on `XBThemeColor`/`XBThemeFontSize`/`XBThemeFontFamily`/etc.; `xb.extension` CLI generates starter files.
 - Data layer: `XBRepository` → `XBService` → `XBDataSource` chain with paired init/dispose; attach via `vm.setRepo(...)`.
 - CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`.
 
