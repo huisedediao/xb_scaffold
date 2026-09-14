@@ -1139,6 +1139,9 @@ void _setupCliShortcuts() {
   _writeThemeExtensionFiles('lib/');
   _updateAppThemeImage('./assets/images');
 
+  // Copy the framework README.md into the project root (silent overwrite).
+  _writeScaffoldReadme();
+
   // Generate the AI self-install guide (overwrite silently to keep it up to date).
   _installSkill(['--force'], null);
 }
@@ -1148,23 +1151,33 @@ const String _skillDefaultGuideFileName = 'xb-scaffold-ai-guide.md';
 
 /// Locate the bundled skill directory inside the xb_scaffold package.
 Future<Directory?> _resolveSkillSourceDir() async {
-  Uri? uri;
-  try {
-    uri = await Isolate.resolvePackageUri(
-        Uri.parse('package:xb_scaffold/xb_scaffold.dart'));
-  } catch (_) {
+  final packageRootDir = await _resolvePackageRoot();
+  final packageRoot = packageRootDir?.path;
+  if (packageRoot == null) {
     return null;
   }
-  if (uri == null || !uri.isScheme('file')) {
-    return null;
-  }
-  final libPath = Uri.parse(uri.toString().replaceFirst('file://', '')).path;
-  final libIndex = libPath.indexOf('/lib/');
-  if (libIndex == -1) {
-    return null;
-  }
-  final packageRoot = libPath.substring(0, libIndex);
   return Directory('$packageRoot/skill/$_skillName');
+}
+
+/// Copy the framework README.md into the project root as README_XBScaffold.md
+/// (silent overwrite to keep it in sync with the installed package version).
+Future<void> _writeScaffoldReadme() async {
+  final packageRootDir = await _resolvePackageRoot();
+  final packageRoot = packageRootDir?.path;
+  if (packageRoot == null) {
+    stderr
+        .writeln('xb.setup: skip README_XBScaffold.md, package root not found.');
+    return;
+  }
+  final source = File('$packageRoot/README.md');
+  if (!source.existsSync()) {
+    stderr.writeln(
+        'xb.setup: skip README_XBScaffold.md, source not found: ${source.path}');
+    return;
+  }
+  final target = File('README_XBScaffold.md');
+  target.writeAsStringSync(source.readAsStringSync());
+  stdout.writeln('Generated (overwrite): ${target.path}');
 }
 
 bool _confirmOverwrite(String targetPath) {

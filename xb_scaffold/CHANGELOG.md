@@ -925,6 +925,12 @@
 
 - optimized
 
+## 1.1.9
+
+- `xb.setup` 新增产物：在业务工程根目录生成 `README_XBScaffold.md`（xb_scaffold 框架完整文档，内容为包内 README.md 原样复制，每次执行静默覆盖为当前包版本）
+- `xb.extension` 生成逻辑改为文件级跳过：已存在的文件保留不动（不覆盖用户定制），仅补齐缺失的文件；退出码不再因存在旧文件而报非 0，存量工程执行 `xb.setup`/`xb.extension` 可自动补齐新增模板
+- 主题系统新增 `XBThemeFontFamily`（全局 getter `fontFamilies`，默认 `def` 为 null 即系统默认字体，业务通过 extension 添加自定义字体族）；`xb.extension`/`xb.setup` 模板同步新增 `app_theme_font_family.dart`
+
 ## 1.1.8
 
 - README 新增「大页面性能优化」章节：拆分子 XBWidget / context.select / ValueNotifier 三种局部 rebuild 手段及重建统计方法

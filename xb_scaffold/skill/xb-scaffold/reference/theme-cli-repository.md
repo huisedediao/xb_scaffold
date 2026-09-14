@@ -79,7 +79,7 @@ class UserRepo extends XBRepository {
 ## CLI tools (`xb.*`)
 
 One-time setup in a consuming project: `dart run xb_scaffold:xb xb.setup`
-(generates `Makefile`, runs `make install-cli`, fixes PATH, then runs `xb.extension` + `xb.updateimg`; afterwards the short `xb` command is available). `xb.setup` also generates the AI self-install guide (see `xb.skill` below).
+(generates `Makefile`, runs `make install-cli`, fixes PATH, then runs `xb.extension` + `xb.updateimg`; afterwards the short `xb` command is available). `xb.setup` also copies the framework README to the project root as `README_XBScaffold.md` (silent overwrite) and generates the AI self-install guide (see `xb.skill` below).
 
 All commands also work without install via `dart run xb_scaffold:xb <command>`.
 

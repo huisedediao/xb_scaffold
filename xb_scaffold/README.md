@@ -69,6 +69,7 @@ dart run xb_scaffold:xb xb.setup
    - Windows：提示你手动把 `%USERPROFILE%\.local\bin` 加入环境变量
 4. 自动执行 `xb.extension`（默认目录 `lib/`）
 5. 自动执行 `xb.updateimg`（默认图片目录 `./assets/images`）
+6. 在项目根目录生成 `README_XBScaffold.md`（xb_scaffold 框架完整文档，每次执行静默覆盖为当前包版本）
 
 注意：`xb.setup` 无法直接刷新你“当前已打开”的终端会话。  
 执行完成后，请在当前终端手动运行：
