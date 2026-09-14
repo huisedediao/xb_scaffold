@@ -1,0 +1,1 @@
+每次对 xb_scaffold/xb_scaffold/ 中的内容修改后，都需要检查修改内容是否需要同步到 SKILL.md 和 README.md 中，如果需要，则更新 SKILL.md 和 README.md
