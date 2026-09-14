@@ -1257,6 +1257,9 @@ knowledge as a native skill / rule of the tool you are currently running in.
      \`reference/<name>.md\` next to the main skill file.
    - Keep file names, headings, code blocks and the frontmatter exactly as
      given (translate nothing).
+   - If a previous installation of this skill already exists at the target
+     location, overwrite it entirely with the current content — do not
+     merge or keep stale sections.
 4. When your tool needs an index/description, reuse the skill's \`name\` and
    \`description\` from the frontmatter template.
 5. After writing the files, confirm to the user where the skill was
