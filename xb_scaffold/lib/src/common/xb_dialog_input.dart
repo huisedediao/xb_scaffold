@@ -54,7 +54,8 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
         borderRadius: BorderRadius.circular(style?.radius ?? 10),
         child: Container(
           color: style?.backgroundColor ?? Colors.white,
-          width: maxWidth ?? (screenW - spaces.gapDef * 2),
+          width:
+              maxWidth ?? style?.maxWidth ?? (screenW - spaces.gapDef * 2),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

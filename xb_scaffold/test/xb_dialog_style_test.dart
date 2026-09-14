@@ -372,6 +372,85 @@ void main() {
 
     await _closeDialog(tester);
   });
+
+  group('maxWidth 三级取值（调用处 > XBDialogStyle.maxWidth > 框架默认）', () {
+    testWidgets('XBDialogStyle.maxWidth 生效（横屏收窄场景）',
+        (WidgetTester tester) async {
+      await _showDialog(tester, style: const XBDialogStyle(maxWidth: 300));
+
+      expect(
+        find.byWidgetPredicate((w) => w is SizedBox && w.width == 300),
+        findsOneWidget,
+      );
+
+      await _closeDialog(tester);
+    });
+
+    testWidgets('调用处 maxWidth 优先于 XBDialogStyle.maxWidth',
+        (WidgetTester tester) async {
+      await _pumpHarness(tester, () {
+        dialog(
+          title: '提示',
+          msg: '确定删除吗？',
+          btnTitles: const ['取消', '确定'],
+          onSelected: _noopOnSelected,
+          maxWidth: 260,
+        );
+      });
+      xbSetDialogStyle(const XBDialogStyle(maxWidth: 300));
+      await tester.tap(find.text('show'));
+      await tester.pump();
+
+      expect(
+        find.byWidgetPredicate((w) => w is SizedBox && w.width == 260),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate((w) => w is SizedBox && w.width == 300),
+        findsNothing,
+      );
+
+      await _closeDialog(tester);
+    });
+
+    testWidgets('超过屏宽可用区域时 cap 到 screenW - gapDef*2',
+        (WidgetTester tester) async {
+      await _showDialog(tester, style: const XBDialogStyle(maxWidth: 5000));
+
+      final expected = screenW - spaces.gapDef * 2;
+      expect(expected, lessThan(5000));
+      expect(
+        find.byWidgetPredicate((w) => w is SizedBox && w.width == expected),
+        findsOneWidget,
+      );
+
+      await _closeDialog(tester);
+    });
+
+    testWidgets('XBDialogInput 使用 XBDialogStyle.maxWidth',
+        (WidgetTester tester) async {
+      await _pumpHarness(tester, () {
+        dialogWidget(
+          const XBDialogInput(
+            title: '输入标题',
+            placeholder: 'placeholder',
+            onDone: _noopOnDone,
+          ),
+        );
+      });
+      xbSetDialogStyle(const XBDialogStyle(maxWidth: 320));
+      await tester.tap(find.text('show'));
+      await tester.pump();
+
+      expect(
+        find.byWidgetPredicate(
+            (w) => w is Container && w.constraints?.maxWidth == 320),
+        findsOneWidget,
+      );
+
+      await _closeDialog(tester);
+    });
+  });
 }
 
 /// 设备密码弹窗内容区（设计稿还原）

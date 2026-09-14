@@ -63,6 +63,7 @@ XBScaffold(
     btnDefaultColor: Colors.white70,      // first of two buttons
     btnHighLightColor: Colors.amber,      // last/only button
     inputBorderColor: Colors.red,         // XBDialogInput border
+    maxWidth: 400,                        // card max width (e.g. narrow dialogs in landscape)
     partBuilders: XBDialogPartBuilders(
       title: (ctx, style) => widgetOr,    // replace section; return null → default
       content: (ctx, style) => widgetOr,  // replaces dialogContent body only
@@ -78,6 +79,8 @@ xbSetDialogStyle(null);
 ```
 
 All fields optional; builders receive the resolved style and may return null to fall back to the default rendering of that section.
+
+Card width: `maxWidth` resolves per-call arg > `XBDialogStyle.maxWidth` > framework default (`screenW - gapDef*2`, i.e. full width minus side gaps — very wide in landscape, so set `maxWidth` there); values beyond the usable width are capped. `dialogWidget` width is fully controlled by your own widget.
 
 ### XBDialogInput (input dialog)
 

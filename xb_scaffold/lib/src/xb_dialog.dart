@@ -90,11 +90,14 @@ dialogContent(
       ),
     ),
   );
-  if (maxWidth != null) {
-    if (maxWidth > screenW - spaces.gapDef * 2) {
-      maxWidth = screenW - spaces.gapDef * 2;
-    }
-    dialogWidget(SizedBox(width: maxWidth, child: child), priority: priority);
+  // 三级取值：调用处 maxWidth > XBDialogStyle.maxWidth > 框架默认（不限制，加左右 gapLarge 内边距）
+  final effectiveMaxWidth = maxWidth ?? style?.maxWidth;
+  if (effectiveMaxWidth != null) {
+    // 超出屏宽可用区域时 cap，防止溢出
+    final capped = effectiveMaxWidth > screenW - spaces.gapDef * 2
+        ? screenW - spaces.gapDef * 2
+        : effectiveMaxWidth;
+    dialogWidget(SizedBox(width: capped, child: child), priority: priority);
   } else {
     dialogWidget(Padding(
       padding: EdgeInsets.only(left: spaces.gapLarge, right: spaces.gapLarge),

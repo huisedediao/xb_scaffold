@@ -58,6 +58,10 @@ class XBDialogStyle {
   /// 输入弹窗输入框边框颜色，默认 Colors.grey.withAlpha(80)
   final Color? inputBorderColor;
 
+  /// 卡片最大宽度（横屏收窄 dialog 宽度用），
+  /// 取值优先级：调用处 maxWidth > XBDialogStyle.maxWidth > 框架默认（screenW - gapDef*2）
+  final double? maxWidth;
+
   /// 分区内容 builder 集合（可选）
   final XBDialogPartBuilders? partBuilders;
 
@@ -73,6 +77,7 @@ class XBDialogStyle {
     this.btnDefaultColor,
     this.btnHighLightColor,
     this.inputBorderColor,
+    this.maxWidth,
     this.partBuilders,
   });
 }
