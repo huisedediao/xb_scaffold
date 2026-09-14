@@ -1,1 +1,1 @@
-每次对 xb_scaffold/xb_scaffold/ 中的内容修改后，都需要检查修改内容是否需要同步到 SKILL.md 和 README.md 中，如果需要，则更新 SKILL.md 和 README.md
+每次对工程中的任何一个工程进行修改过后，都需要检查是否需要修改工程的 README.md ，如果需要，则更新 README.md；如果工程是 xb_scaffold 除了检查是否需要更新 README.md 外，还需要检查是否需要更新到 SKILL.md(以及相关内容)，如果需要，则更新 SKILL.md(以及相关内容)
