@@ -39,7 +39,9 @@ Widget buildXBSvgFile({
     width: width,
     height: height,
     fit: fit,
-    color: color,
+    // flutter_svg 已废弃 color 参数，其内部实现等价于
+    // ColorFilter.mode(color, BlendMode.srcIn)（color 为 null 时不做着色）
+    colorFilter: color == null ? null : ColorFilter.mode(color, BlendMode.srcIn),
     placeholderBuilder: (context) => placeholderWidget ?? Container(),
   );
 }

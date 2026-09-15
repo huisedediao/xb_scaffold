@@ -151,7 +151,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      color: svgColor,
+      colorFilter: _svgColorFilter(svgColor),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -162,7 +162,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      color: svgColor,
+      colorFilter: _svgColorFilter(svgColor),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -173,7 +173,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      color: svgColor,
+      colorFilter: _svgColorFilter(svgColor),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -184,10 +184,16 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      color: svgColor,
+      colorFilter: _svgColorFilter(svgColor),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
+
+  /// flutter_svg 已废弃 color 参数，color 的内部实现等价于
+  /// ColorFilter.mode(color, BlendMode.srcIn)（color 为 null 时不做着色），
+  /// 此处保持完全相同的渲染效果
+  ColorFilter? _svgColorFilter(Color? color) =>
+      color == null ? null : ColorFilter.mode(color, BlendMode.srcIn);
 
   Widget _error(Object error) {
     return errWidget ??
