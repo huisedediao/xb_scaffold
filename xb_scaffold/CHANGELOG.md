@@ -1,14 +1,19 @@
+# Changelog
+
+> 条目格式约定：每条以「新增 / 修复 / 优化 / 破坏性变更」中文前缀开头，一行一条。
+> 版本按时间升序排列；早期版本中无法考据的 "optimized" 类条目已统一归并为「常规优化与维护」。
+
 ## 0.0.1
 
 - base init
 
 ## 0.0.2
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.3
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.4
 
@@ -28,11 +33,11 @@
 
 ## 0.0.8
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.9
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.10
 
@@ -76,15 +81,15 @@
 
 ## 0.0.20
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.21
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.22
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.23
 
@@ -116,7 +121,7 @@
 
 ## 0.0.30
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.31
 
@@ -128,7 +133,7 @@
 
 ## 0.0.33
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.34
 
@@ -140,11 +145,11 @@
 
 ## 0.0.37
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.38
 
-- 优化
+- 常规优化与维护
 
 ## 0.0.39
 
@@ -180,7 +185,7 @@
 
 ## 0.0.47
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.48
 
@@ -232,7 +237,7 @@
 
 ## 0.0.60
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.61
 
@@ -248,7 +253,7 @@
 
 ## 0.0.64
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.65
 
@@ -264,7 +269,7 @@
 
 ## 0.0.68
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.69
 
@@ -368,7 +373,7 @@
 
 ## 0.0.94
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.95
 
@@ -408,11 +413,11 @@
 
 ## 0.0.104
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.105
 
-- optimize
+- 常规优化与维护
 
 ## 0.0.106
 
@@ -444,31 +449,31 @@
 
 ## 0.0.113
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.114
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.115
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.116
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.117
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.118
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.119
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.120
 
@@ -480,7 +485,7 @@
 
 ## 0.0.122
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.123
 
@@ -496,7 +501,7 @@
 
 ## 0.0.126
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.127
 
@@ -544,15 +549,15 @@
 
 ## 0.0.138
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.139
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.140
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.141
 
@@ -564,11 +569,11 @@
 
 ## 0.0.143
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.144
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.145
 
@@ -576,19 +581,19 @@
 
 ## 0.0.146
 
-- optimized
+- 常规优化与维护
 
 ## 0.0.147
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.0
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.1
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.2
 
@@ -616,19 +621,19 @@
 
 ## 0.1.8
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.9
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.10
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.11
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.12
 
@@ -656,7 +661,7 @@
 
 ## 0.1.18
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.19
 
@@ -668,15 +673,15 @@
 
 ## 0.1.21
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.22
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.23
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.24
 
@@ -684,7 +689,7 @@
 
 ## 0.1.25
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.26
 
@@ -692,7 +697,7 @@
 
 ## 0.1.27
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.28
 
@@ -716,43 +721,43 @@
 
 ## 0.1.33
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.34
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.35
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.36
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.37
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.38
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.39
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.40
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.41
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.42
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.43
 
@@ -768,15 +773,15 @@
 
 ## 0.1.46
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.47
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.48
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.49
 
@@ -788,7 +793,7 @@
 
 ## 0.1.51
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.52
 
@@ -800,15 +805,15 @@
 
 ## 0.1.54
 
-- op
+- 常规优化与维护
 
 ## 0.1.55
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.56
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.57
 
@@ -816,27 +821,27 @@
 
 ## 0.1.58
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.59
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.60
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.61
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.62
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.63
 
-- optimized
+- 常规优化与维护
 
 ## 0.1.64
 
@@ -872,7 +877,7 @@
 
 ## 1.0.1
 
-- optimized
+- 常规优化与维护
 
 ## 1.0.2
 
@@ -885,7 +890,7 @@
 
 ## 1.0.3
 
-- 移除 network 模块，独立成 xb_network 
+- 移除 network 模块，独立成 xb_network
 
 ## 1.0.4
 
@@ -923,38 +928,14 @@
 
 ## 1.1.2
 
-- optimized
+- 常规优化与维护
 
-## 1.1.9
+## 1.1.3
 
-- `xb.setup` 新增产物：在业务工程根目录生成 `README_XBScaffold.md`（xb_scaffold 框架完整文档，内容为包内 README.md 原样复制，每次执行静默覆盖为当前包版本）
-- `xb.extension` 生成逻辑改为文件级跳过：已存在的文件保留不动（不覆盖用户定制），仅补齐缺失的文件；退出码不再因存在旧文件而报非 0，存量工程执行 `xb.setup`/`xb.extension` 可自动补齐新增模板
-- 主题系统新增 `XBThemeFontFamily`（全局 getter `fontFamilies`，默认 `def` 为 null 即系统默认字体，业务通过 extension 添加自定义字体族）；`xb.extension`/`xb.setup` 模板同步新增 `app_theme_font_family.dart`
-- `XBDialogStyle` 新增 `maxWidth`：dialog/dialogContent/XBDialogInput 卡片宽度三级取值（调用处 maxWidth > 全局样式 maxWidth > 框架默认 screenW - gapDef*2），超宽自动 cap，适配横屏收窄弹窗宽度
-
-## 1.1.8
-
-- README 新增「大页面性能优化」章节：拆分子 XBWidget / context.select / ValueNotifier 三种局部 rebuild 手段及重建统计方法
-- 补齐核心模块测试（+19 个）：路由观察者（push/pop 生命周期回调、三层路由、销毁取消订阅）、XBImage 类型分发（空值/bytes/svg/data-uri/网络/asset 全分支）、XBImgSizeUtil（PNG 解码与缓存）、5 个表单 formatter
-
-## 1.1.7
-
-- 页面日志时间戳修复：`recordPageLog` 改用设备本地时间（旧实现 `toUtc().add(hours: 8)` 硬编码东八区，海外/非东八区设备时间戳错误）
-- `toastWidget` 失败可观测：首次失败记录日志后再重试；重试前显式检查 overlay 就绪，仍不可用则记录日志并安全丢弃，不再静默吞错
-
-## 1.1.6
-
-- **破坏性变更**：移除 `XBPage.pushAnimationMilliseconds`，不再用固定定时器猜测转场结束时机
-- `addEnsureAfterPushAnimationTask` 改为监听 `Route.animation` 的 `AnimationStatus`：转场真正结束（completed）时精确触发，自定义时长转场、被打断的转场（dismissed，任务随页面销毁废弃）均准确
-- 零时长转场（`transitionDuration == Duration.zero`）立即视为完成；首帧延迟等极端场景由下一帧兜底检查覆盖
-- 兼容说明：`goRouter`/`getx` 等第三方路由最终也会生成标准 `Route`，`ModalRoute.of` 均可拿到转场动画，行为一致
-
-## 1.1.5
-
-- 主题持久化（存储委托模式）：`XBScaffold` 新增 `themeIndexReader`/`themeIndexWriter` 可选参数，注入后自动“变更即存、启动回灌”，存储后端由业务方决定（SharedPreferences/MMKV/内存等），框架零存储依赖
-- `changeTheme` 越界校验：index 越界时主题保持不变，debug 下抛 `AssertionError` 提前暴露（旧版会静默新建空主题，页面拿到默认色不报错）
-- `theme` getter 修复：读取未初始化/越界主题时回落到默认主题（index 0）并 assert 提示，不再静默新建空主题污染 `_themeMap`
-- 回灌防脏数据：持久化的越界/负数 index 被静默忽略，不会在启动时崩溃
+- Web 平台兼容性修复：`XBRootWidget`/`XBFileImage`/`XBImgSizeUtil.getImageSizeFromFile`/`isHarmony`/`XBTrimTextInputFormatter` 等原先直接依赖 `dart:io` 的 API 改为条件导出（io 实现 + web stub），Web 工程引入 `xb_scaffold` 不再编译失败
+- 双击退出抽为 `exitApp()`：非 Web 平台行为不变（`exit(0)`），Web 平台回退为 `SystemNavigator.pop()`
+- `XBVM` 新增 `mounted` 访问器（与 `State.mounted` 对齐）：异步回调中访问 `context`/`state`/`widget` 前检查，避免页面销毁后使用悬空引用；`notify()`、loading 展示/隐藏等内部防护同步升级
+- `XBScaffold` 初始化竞态修复：主题异步初始化增加 token 校验，旧一轮初始化结果不再覆盖新一轮配置；新增 `didUpdateWidget`，`themeConfigs`/`loadingBuilder`/`toastBackgroundColor`/`maxPageLogLen` 变更时可正确生效
 
 ## 1.1.4
 
@@ -964,10 +945,33 @@
 - `setController` 废弃，新增 `initController`：注入时机错误或重复初始化会 assert 报错，不再静默失效
 - `XBVM` 新增 `removeListen` 用于单独注销某个事件回调
 
-## 1.1.3
+## 1.1.5
 
-- Web 平台兼容性修复：`XBRootWidget`/`XBFileImage`/`XBImgSizeUtil.getImageSizeFromFile`/`isHarmony`/`XBTrimTextInputFormatter` 等原先直接依赖 `dart:io` 的 API 改为条件导出（io 实现 + web stub），Web 工程引入 `xb_scaffold` 不再编译失败
-- 双击退出抽为 `exitApp()`：非 Web 平台行为不变（`exit(0)`），Web 平台回退为 `SystemNavigator.pop()`
-- `XBVM` 新增 `mounted` 访问器（与 `State.mounted` 对齐）：异步回调中访问 `context`/`state`/`widget` 前检查，避免页面销毁后使用悬空引用；`notify()`、loading 展示/隐藏等内部防护同步升级
-- `XBScaffold` 初始化竞态修复：主题异步初始化增加 token 校验，旧一轮初始化结果不再覆盖新一轮配置；新增 `didUpdateWidget`，`themeConfigs`/`loadingBuilder`/`toastBackgroundColor`/`maxPageLogLen` 变更时可正确生效
+- 主题持久化（存储委托模式）：`XBScaffold` 新增 `themeIndexReader`/`themeIndexWriter` 可选参数，注入后自动“变更即存、启动回灌”，存储后端由业务方决定（SharedPreferences/MMKV/内存等），框架零存储依赖
+- `changeTheme` 越界校验：index 越界时主题保持不变，debug 下抛 `AssertionError` 提前暴露（旧版会静默新建空主题，页面拿到默认色不报错）
+- `theme` getter 修复：读取未初始化/越界主题时回落到默认主题（index 0）并 assert 提示，不再静默新建空主题污染 `_themeMap`
+- 回灌防脏数据：持久化的越界/负数 index 被静默忽略，不会在启动时崩溃
 
+## 1.1.6
+
+- **破坏性变更**：移除 `XBPage.pushAnimationMilliseconds`，不再用固定定时器猜测转场结束时机
+- `addEnsureAfterPushAnimationTask` 改为监听 `Route.animation` 的 `AnimationStatus`：转场真正结束（completed）时精确触发，自定义时长转场、被打断的转场（dismissed，任务随页面销毁废弃）均准确
+- 零时长转场（`transitionDuration == Duration.zero`）立即视为完成；首帧延迟等极端场景由下一帧兜底检查覆盖
+- 兼容说明：`goRouter`/`getx` 等第三方路由最终也会生成标准 `Route`，`ModalRoute.of` 均可拿到转场动画，行为一致
+
+## 1.1.7
+
+- 页面日志时间戳修复：`recordPageLog` 改用设备本地时间（旧实现 `toUtc().add(hours: 8)` 硬编码东八区，海外/非东八区设备时间戳错误）
+- `toastWidget` 失败可观测：首次失败记录日志后再重试；重试前显式检查 overlay 就绪，仍不可用则记录日志并安全丢弃，不再静默吞错
+
+## 1.1.8
+
+- README 新增「大页面性能优化」章节：拆分子 XBWidget / context.select / ValueNotifier 三种局部 rebuild 手段及重建统计方法
+- 补齐核心模块测试（+19 个）：路由观察者（push/pop 生命周期回调、三层路由、销毁取消订阅）、XBImage 类型分发（空值/bytes/svg/data-uri/网络/asset 全分支）、XBImgSizeUtil（PNG 解码与缓存）、5 个表单 formatter
+
+## 1.1.9
+
+- `xb.setup` 新增产物：在业务工程根目录生成 `README_XBScaffold.md`（xb_scaffold 框架完整文档，内容为包内 README.md 原样复制，每次执行静默覆盖为当前包版本）
+- `xb.extension` 生成逻辑改为文件级跳过：已存在的文件保留不动（不覆盖用户定制），仅补齐缺失的文件；退出码不再因存在旧文件而报非 0，存量工程执行 `xb.setup`/`xb.extension` 可自动补齐新增模板
+- 主题系统新增 `XBThemeFontFamily`（全局 getter `fontFamilies`，默认 `def` 为 null 即系统默认字体，业务通过 extension 添加自定义字体族）；`xb.extension`/`xb.setup` 模板同步新增 `app_theme_font_family.dart`
+- `XBDialogStyle` 新增 `maxWidth`：dialog/dialogContent/XBDialogInput 卡片宽度三级取值（调用处 maxWidth > 全局样式 maxWidth > 框架默认 screenW - gapDef*2），超宽自动 cap，适配横屏收窄弹窗宽度
