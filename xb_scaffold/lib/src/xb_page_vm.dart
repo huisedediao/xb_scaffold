@@ -3,9 +3,12 @@ import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBPageVM<T> extends XBVM<T> with RouteAware {
   XBPageVM({required super.context}) {
-    if (_castWidget.needInitLoading(context)) {
-      _isShowLoadingWidget = true;
-    }
+    // loading 显隐/文案走 ValueNotifier 局部订阅（xb_page 中 ValueListenableBuilder），
+    // 变化只重建遮罩子树，不触发整页 rebuild；
+    // needInitLoading 在构造期确定，直接作为显隐初值，首帧由 XBFadeWidget.initShow 承担
+    isShowLoadingWidgetNotifier =
+        createNotifier<bool>(_castWidget.needInitLoading(context));
+    loadingMsgNotifier = createNotifier<String?>(null);
   }
 
   @override
@@ -142,10 +145,23 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
     super.notify();
   }
 
-  bool _isShowLoadingWidget = false;
-  bool _loadingShowScheduled = false;
+  /// loading 遮罩显隐（页面级）。UI 用 ValueListenableBuilder 局部订阅，
+  /// 高频显隐不经过 [notify]，避免整页重建
+  late final ValueNotifier<bool> isShowLoadingWidgetNotifier;
 
-  bool get isShowLoadingWidget => _isShowLoadingWidget;
+  /// loading 提示文案，同上走局部订阅
+  late final ValueNotifier<String?> loadingMsgNotifier;
+
+  bool get isShowLoadingWidget => isShowLoadingWidgetNotifier.value;
+
+  String? get loadingMsg => loadingMsgNotifier.value;
+
+  void _setLoadingVisible(bool visible) {
+    if (isShowLoadingWidgetNotifier.value == visible) return;
+    isShowLoadingWidgetNotifier.value = visible;
+  }
+
+  bool _loadingShowScheduled = false;
 
   GlobalKey<XBFadeWidgetState>? _loadingWidgetFadeKey;
 
@@ -158,12 +174,14 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
     xbNavigatorState.maybePop(result);
   }
 
-  String? loadingMsg;
-
   bool get needShowLoadingWidget => _castWidget.needLoading(context);
 
   showLoading({String? msg}) {
-    loadingMsg = msg;
+    if (!mounted || !needShowLoadingWidget) return;
+    final msgChanged = loadingMsgNotifier.value != msg;
+    loadingMsgNotifier.value = msg;
+    // 已在显示且文案未变时早退，避免无谓的动画重启与重建
+    if (!msgChanged && isShowLoadingWidget) return;
     _showLoading();
   }
 
@@ -185,23 +203,22 @@ class XBPageVM<T> extends XBVM<T> with RouteAware {
       _scheduleShowLoading();
       return;
     }
-    _isShowLoadingWidget = true;
-    notify();
+    _setLoadingVisible(true);
     fadeState.show();
   }
 
   hideLoading() {
     if (!mounted || !needShowLoadingWidget) return;
+    // 未显示早退
+    if (!isShowLoadingWidget) return;
     final fadeState = loadingWidgetFadeKey.currentState;
     if (fadeState == null) {
-      _isShowLoadingWidget = false;
-      notify();
+      _setLoadingVisible(false);
       return;
     }
     fadeState.hide(() {
       if (!mounted) return;
-      _isShowLoadingWidget = false;
-      notify();
+      _setLoadingVisible(false);
     });
   }
 

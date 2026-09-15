@@ -22,12 +22,18 @@ class _TestPage extends XBPage<_TestVM> {
   final bool pageCanPop;
   final List<String>? popLog;
 
+  /// buildPage 调用计数：验证 loading 显隐不触发整页 rebuild
+  static int buildPageCalls = 0;
+
   @override
   _TestVM generateVM(BuildContext context) =>
       _TestVM(context: context, page: this);
 
   @override
-  Widget buildPage(BuildContext context) => const _TestPageContent();
+  Widget buildPage(BuildContext context) {
+    buildPageCalls++;
+    return const _TestPageContent();
+  }
 
   @override
   bool needLoading(BuildContext context) => withLoading;
@@ -125,6 +131,7 @@ void main() {
         XBTheme(config: XBThemeConfig(primaryColor: Colors.blue, imgPrefix: 'a/')), 0);
     _tapCount = 0;
     _textFieldFocusNode = FocusNode();
+    _TestPage.buildPageCalls = 0;
   });
 
   tearDown(() {
@@ -156,6 +163,36 @@ void main() {
     await _pumpPage(
         tester, const _TestPage(withLoading: true, initLoading: true));
     expect(find.byType(XBLoadingWidget), findsOneWidget);
+  });
+
+  testWidgets('showLoading/hideLoading 不触发整页 rebuild（局部订阅）', (tester) async {
+    await _pumpPage(tester, const _TestPage(withLoading: true));
+    final vm = _vmOf(tester);
+    final baseline = _TestPage.buildPageCalls;
+
+    vm.showLoading(msg: '加载中');
+    await _pumpFrames(tester);
+    expect(find.byType(XBLoadingWidget), findsOneWidget);
+
+    vm.hideLoading();
+    await _pumpFrames(tester);
+    expect(find.byType(XBLoadingWidget), findsNothing);
+    expect(_TestPage.buildPageCalls, baseline,
+        reason: 'loading 显隐走 ValueNotifier 局部订阅，不应重建业务内容');
+  });
+
+  testWidgets('显示中更新 msg 只刷新 loading 文案，不重建业务内容', (tester) async {
+    await _pumpPage(tester, const _TestPage(withLoading: true));
+    final vm = _vmOf(tester);
+    vm.showLoading(msg: 'first');
+    await _pumpFrames(tester);
+    expect(find.text('first'), findsOneWidget);
+    final baseline = _TestPage.buildPageCalls;
+
+    vm.showLoading(msg: 'second');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('second'), findsOneWidget);
+    expect(_TestPage.buildPageCalls, baseline);
   });
 
   testWidgets('loading 时内容默认被遮罩屏蔽，needResponseContent 放行', (tester) async {

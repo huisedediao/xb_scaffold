@@ -182,8 +182,12 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
         XBFadeWidget(
           key: vm.loadingWidgetFadeKey,
           initShow: needInitLoading(context),
-          child: Visibility(
-            visible: vm.isShowLoadingWidget,
+          // 显隐走 ValueNotifier 局部订阅：显隐变化只重建 Visibility 这层，
+          // 遮罩内容（mask）与页面业务内容均不重建，不触发整页 rebuild
+          child: ValueListenableBuilder<bool>(
+            valueListenable: vm.isShowLoadingWidgetNotifier,
+            builder: (context, visible, mask) =>
+                Visibility(visible: visible, child: mask!),
             child: Stack(children: [
               Column(
                 children: [
@@ -226,18 +230,26 @@ abstract class XBPage<T extends XBPageVM> extends XBWidget<T> {
               buildLoading(context),
             ]),
           ),
-        )
+        ),
       ],
     );
   }
 
-  /// 如果需要不同loading，重写此方法
+  /// 如果需要不同loading，重写此方法。
+  /// 默认实现订阅 [XBPageVM.loadingMsgNotifier]，
+  /// msg 变化时只重建 loading 本体，不触发整页 rebuild
   Widget buildLoading(BuildContext context) {
     final vm = vmOf(context);
     if (xbLoadingBuilder != null) {
-      return xbLoadingBuilder!(vm.context, vm.loadingMsg);
+      return ValueListenableBuilder<String?>(
+        valueListenable: vm.loadingMsgNotifier,
+        builder: (context, msg, _) => xbLoadingBuilder!(vm.context, msg),
+      );
     }
-    return XBLoadingWidget(msg: vm.loadingMsg);
+    return ValueListenableBuilder<String?>(
+      valueListenable: vm.loadingMsgNotifier,
+      builder: (context, msg, _) => XBLoadingWidget(msg: msg),
+    );
   }
 
   Widget _buildBodyContent(BuildContext context) {

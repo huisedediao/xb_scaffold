@@ -50,6 +50,10 @@ class XBLoadingTask {
   bool contentEnable;
   String? msg;
   Widget? widget;
+
+  /// 执行失败后的重试次数（超过 [_maxTaskRetries] 丢弃，防毒任务每帧无限重试）
+  int retryCount = 0;
+
   XBLoadingTask(this.name,
       {this.topLeftEnable = true,
       this.topCenterEnable = false,
@@ -127,39 +131,51 @@ _showLoadingGlobal({
   overlay.insert(overlayEntry);
 }
 
+/// 任务连续失败重试上限，超过后丢弃并报错，
+/// 避免持续性异常（如 overlay 不可用）导致每帧无限重试空转
+const int _maxTaskRetries = 3;
+
 _exeTask() {
-  if (_taskQueue.isEmpty) {
-    return;
-  }
-  try {
-    final task = _taskQueue.first;
-    if (task.name == _taskShow) {
-      late Widget loadingBody;
-      if (task.widget != null) {
-        loadingBody = task.widget!;
-      } else if (xbLoadingBuilder != null) {
-        loadingBody = xbLoadingBuilder!(xbNavigatorContext, task.msg);
+  while (_taskQueue.isNotEmpty) {
+    // 先出队再执行：失败的任务不会滞留队首
+    final task = _taskQueue.removeFirst();
+    try {
+      if (task.name == _taskShow) {
+        late Widget loadingBody;
+        if (task.widget != null) {
+          loadingBody = task.widget!;
+        } else if (xbLoadingBuilder != null) {
+          loadingBody = xbLoadingBuilder!(xbNavigatorContext, task.msg);
+        } else {
+          loadingBody = XBLoadingWidget(
+            msg: task.msg,
+          );
+        }
+        _showLoadingGlobal(
+            widget: loadingBody,
+            topLeftEnable: task.topLeftEnable,
+            topCenterEnable: task.topCenterEnable,
+            topRightEnable: task.topRightEnable,
+            contentEnable: task.contentEnable);
       } else {
-        loadingBody = XBLoadingWidget(
-          msg: task.msg,
-        );
+        _hideLast();
       }
-      _showLoadingGlobal(
-          widget: loadingBody,
-          topLeftEnable: task.topLeftEnable,
-          topCenterEnable: task.topCenterEnable,
-          topRightEnable: task.topRightEnable,
-          contentEnable: task.contentEnable);
-    } else {
-      _hideLast();
+    } catch (e, s) {
+      task.retryCount++;
+      xbError('XBLoadingTask failed (retry ${task.retryCount}/$_maxTaskRetries):\n$e\n$s');
+      if (task.retryCount <= _maxTaskRetries) {
+        // 一次性失败（如 overlay 尚未就绪）：队首回插保持 FIFO，
+        // 调度帧确保下帧重试能执行（静态画面下不会自然出帧）
+        _taskQueue.addFirst(task);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _exeTask();
+        });
+        WidgetsBinding.instance.scheduleFrame();
+        return;
+      }
+      // 连续失败超限：丢弃毒任务，继续处理后续任务
+      xbError('XBLoadingTask dropped after $_maxTaskRetries retries');
     }
-    _taskQueue.remove(task);
-    _exeTask();
-  } catch (e) {
-    _hideLast();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _exeTask();
-    });
   }
 }
 
