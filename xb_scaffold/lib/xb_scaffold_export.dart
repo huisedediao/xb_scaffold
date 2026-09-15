@@ -24,6 +24,7 @@ export './src/xb_toast.dart';
 
 export 'src/configs/xb_def.dart';
 export 'src/configs/xb_dialog_style.dart';
+export 'src/configs/xb_strings.dart';
 
 export 'src/common/xb_common.dart';
 export 'src/utils/xb_utils.dart';

@@ -1,36 +1,45 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBErrorView extends StatelessWidget {
   final Object? error;
   final StackTrace? stackTrace;
-  final String message;
+  final String? message;
   final VoidCallback? onRetry;
   final String retryText;
   final VoidCallback? onBack;
   final String backText;
   final bool showCopyButton;
-  final String copyButtonText;
-  final String copiedHintText;
+  final String? copyButtonText;
+  final String? copiedHintText;
 
   const XBErrorView({
     super.key,
     this.error,
     this.stackTrace,
-    this.message = '页面发生异常，请稍后重试',
+    this.message,
     this.onRetry,
     this.retryText = 'retry',
     this.onBack,
     this.backText = 'back',
     this.showCopyButton = true,
-    this.copyButtonText = '复制异常',
-    this.copiedHintText = '已复制异常信息',
+    this.copyButtonText,
+    this.copiedHintText,
   });
+
+  /// 兜底走全局文案配置（xbSetDefaultStrings 可替换）
+  String get effectiveMessage => message ?? xbDefaultStrings.errorViewMessage;
+  String get effectiveCopyButtonText =>
+      copyButtonText ?? xbDefaultStrings.errorViewCopyButton;
+  String get effectiveCopiedHintText =>
+      copiedHintText ?? xbDefaultStrings.errorViewCopiedHint;
 
   String _buildCopyText() {
     final buffer = StringBuffer();
-    if (message.isNotEmpty) {
-      buffer.writeln('message: $message');
+    final msg = effectiveMessage;
+    if (msg.isNotEmpty) {
+      buffer.writeln('message: $msg');
     }
     if (error != null) {
       buffer.writeln('error: $error');
@@ -59,7 +68,7 @@ class XBErrorView extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  message,
+                  effectiveMessage,
                   style: const TextStyle(
                     fontSize: 16,
                     color: Colors.black87,
@@ -92,10 +101,10 @@ class XBErrorView extends StatelessWidget {
                             await Clipboard.setData(ClipboardData(text: text));
                             messenger?.hideCurrentSnackBar();
                             messenger?.showSnackBar(
-                              SnackBar(content: Text(copiedHintText)),
+                              SnackBar(content: Text(effectiveCopiedHintText)),
                             );
                           },
-                          child: Text(copyButtonText),
+                          child: Text(effectiveCopyButtonText),
                         ),
                     ],
                   ),

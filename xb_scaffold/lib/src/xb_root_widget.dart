@@ -76,7 +76,7 @@ class XBRootWidgetVM extends XBVM<XBRootWidget> with WidgetsBindingObserver {
     if (lastWillPop == null ||
         DateTime.now().difference(lastWillPop!) > const Duration(seconds: 2)) {
       lastWillPop = DateTime.now();
-      toast(widget.willExitTip ?? "再按一次退出应用");
+      toast(widget.willExitTip ?? xbDefaultStrings.exitAppTip);
       return false;
     } else {
       exitApp();

@@ -80,6 +80,23 @@ xbSetDialogStyle(null);
 
 All fields optional; builders receive the resolved style and may return null to fall back to the default rendering of that section.
 
+### Default strings (i18n hook)
+
+Framework-b UI fallback strings default to Chinese. Override globally at app startup:
+
+```dart
+xbSetDefaultStrings(const XBScaffoldStrings(
+  dialogInputCancel: 'Cancel', dialogInputConfirm: 'OK',
+  dialogInputNotEmptyTip: 'Required',
+  actionSheetCancel: 'Cancel', actionSheetDone: 'Done',
+  exitAppTip: 'Tap again to exit',
+  errorViewMessage: 'Something went wrong', errorViewCopyButton: 'Copy error',
+  errorViewCopiedHint: 'Copied',
+));
+```
+
+Resolution per call site: local param (e.g. `XBDialogInput.cancelTitle`) > `xbDefaultStrings` field > built-in Chinese default. `xbSetDefaultStrings(const XBScaffoldStrings())` restores defaults.
+
 Card width: `maxWidth` resolves per-call arg > `XBDialogStyle.maxWidth` > framework default (`screenW - gapDef*2`, i.e. full width minus side gaps — very wide in landscape, so set `maxWidth` there); values beyond the usable width are capped. `dialogWidget` width is fully controlled by your own widget.
 
 ### XBDialogInput (input dialog)

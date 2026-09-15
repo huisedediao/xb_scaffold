@@ -381,7 +381,7 @@ class XBActionSheetMultiItemDefWidget
     } else {
       ret = Padding(
         padding: EdgeInsets.only(left: spaces.gapLess),
-        child: const Text("取消"),
+        child: Text(xbDefaultStrings.actionSheetCancel),
       );
     }
     return XBButton(
@@ -405,7 +405,7 @@ class XBActionSheetMultiItemDefWidget
       ret = Padding(
         padding: EdgeInsets.only(right: spaces.gapLess),
         child: Text(
-          "确定",
+          xbDefaultStrings.actionSheetDone,
           style: TextStyle(
               color: const Color.fromARGB(255, 42, 124, 247).withAlpha(200)),
         ),

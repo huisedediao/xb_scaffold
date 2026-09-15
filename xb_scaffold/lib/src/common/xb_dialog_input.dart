@@ -154,7 +154,7 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                           titleStyle: TextStyle(
                               color: style?.btnDefaultColor ?? Colors.grey,
                               fontSize: style?.btnFontSize),
-                          title: cancelTitle ?? "取消",
+                          title: cancelTitle ?? xbDefaultStrings.dialogInputCancel,
                           onTap: () {
                             xbNavigatorState.pop();
                           }),
@@ -171,10 +171,10 @@ class XBDialogInput extends XBWidget<InputDoubleAsVM> {
                           titleStyle: TextStyle(
                               color: style?.btnHighLightColor ?? colors.primary,
                               fontSize: style?.btnFontSize),
-                          title: confirmTitle ?? "确定",
+                          title: confirmTitle ?? xbDefaultStrings.dialogInputConfirm,
                           onTap: () {
                             if (vm.value.isEmpty) {
-                              toast(notEmptyTip ?? "请输入内容",
+                              toast(notEmptyTip ?? xbDefaultStrings.dialogInputNotEmptyTip,
                                   bottom: screenH * 0.6);
                               return;
                             }

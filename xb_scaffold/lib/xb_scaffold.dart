@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'src/configs/xb_dialog_style.dart';
+import 'src/configs/xb_strings.dart';
 import 'src/xb_error/xb_error.dart';
 import 'src/xb_theme/xb_theme_vm.dart';
 
@@ -124,6 +125,16 @@ XBDialogStyle? get xbDialogStyle => _xbDialogStyle;
 /// 运行中动态设置 dialog 全局样式（如跟随深色模式），传 null 恢复框架默认
 void xbSetDialogStyle(XBDialogStyle? style) {
   _xbDialogStyle = style;
+}
+
+/// 全局默认文案（i18n 预留），未设置时使用中文默认值
+XBScaffoldStrings _xbDefaultStrings = const XBScaffoldStrings();
+XBScaffoldStrings get xbDefaultStrings => _xbDefaultStrings;
+
+/// 设置全局默认文案，建议在 app 启动早期调用；
+/// 传 [XBScaffoldStrings()]（默认实例）可恢复中文默认值
+void xbSetDefaultStrings(XBScaffoldStrings strings) {
+  _xbDefaultStrings = strings;
 }
 
 /// toast 背景颜色
