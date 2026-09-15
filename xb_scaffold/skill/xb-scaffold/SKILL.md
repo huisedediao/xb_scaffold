@@ -164,7 +164,7 @@ Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 
 - Multi-theme: `XBThemeVM().changeTheme(i)` to switch; `XBThemeVM().themeIndex` to query the active index (and `registeredThemeCount` for how many are registered); extend via Dart `extension` on `XBThemeColor`/`XBThemeFontSize`/`XBThemeFontFamily`/etc.; `xb.extension` CLI generates starter files; persist the selected index via optional `themeIndexReader`/`themeIndexWriter` on `XBScaffold` (storage delegate, see reference).
 - Data layer: `XBRepository` → `XBService` → `XBDataSource` chain with paired init/dispose; attach via `vm.setRepo(...)`.
-- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`.
+- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`; also installs `xb_`-prefixed code snippets to VS Code (user snippets) and Android Studio (live templates group `xb_scaffold_code_snippets`, restart IDE to load).
 
 ## Common pitfalls
 

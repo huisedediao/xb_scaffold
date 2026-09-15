@@ -1144,6 +1144,9 @@ void _setupCliShortcuts() {
 
   // Generate the AI self-install guide (overwrite silently to keep it up to date).
   _installSkill(['--force'], null);
+
+  // Install code snippets to VS Code / Android Studio (user level, overwrite every run).
+  _installCodeSnippets();
 }
 
 const String _skillName = 'xb-scaffold';
@@ -1178,6 +1181,238 @@ Future<void> _writeScaffoldReadme() async {
   final target = File('README_XBScaffold.md');
   target.writeAsStringSync(source.readAsStringSync());
   stdout.writeln('Generated (overwrite): ${target.path}');
+}
+
+const String _snippetFileName = 'xb_scaffold_code_snippets.code-snippets';
+const String _snippetGroupName = 'xb_scaffold_code_snippets';
+
+/// 安装 xb_scaffold 代码片段（每次 xb.setup 静默覆盖，保持与包版本同步）：
+/// - VS Code：片段 JSON 复制到用户级 snippets 目录（无项目级安装需求）；
+/// - Android Studio/IntelliJ：JSON 转换为 Live Templates 组 XML 写入用户级
+///   templates 目录（JetBrains Live Templates 无项目级存储，仅支持用户级）；
+/// 片段单一数据源：<packageRoot>/bin/templates/$_snippetFileName
+Future<void> _installCodeSnippets() async {
+  final packageRootDir = await _resolvePackageRoot();
+  final packageRoot = packageRootDir?.path;
+  if (packageRoot == null) {
+    stderr.writeln('xb.setup: skip code snippets, package root not found.');
+    return;
+  }
+  final source = File('$packageRoot/bin/templates/$_snippetFileName');
+  if (!source.existsSync()) {
+    stderr.writeln(
+        'xb.setup: skip code snippets, source not found: ${source.path}');
+    return;
+  }
+  final content = source.readAsStringSync();
+
+  var vsCodeCount = 0;
+  for (final dir in _vsCodeUserSnippetsDirs()) {
+    final target = File('${dir.path}/$_snippetFileName');
+    dir.createSync(recursive: true);
+    target.writeAsStringSync(content);
+    stdout.writeln('Generated (overwrite): ${target.path}');
+    vsCodeCount++;
+  }
+  if (vsCodeCount == 0) {
+    stdout.writeln('xb.setup: VS Code user snippets dir not found, skipped.');
+  }
+
+  var jetBrainsCount = 0;
+  for (final dir in _jetBrainsTemplatesDirs()) {
+    final target = File('${dir.path}/$_snippetGroupName.xml');
+    dir.createSync(recursive: true);
+    target.writeAsStringSync(_convertSnippetsToLiveTemplatesXml(content));
+    stdout.writeln('Generated (overwrite): ${target.path}');
+    jetBrainsCount++;
+  }
+  if (jetBrainsCount == 0) {
+    stdout.writeln(
+        'xb.setup: Android Studio/IntelliJ config dir not found, skipped.');
+  } else {
+    stdout.writeln(
+        'Restart Android Studio/IntelliJ to load "$_snippetGroupName" live templates.');
+  }
+}
+
+String? _userHomeDir() {
+  if (Platform.isWindows) {
+    return Platform.environment['USERPROFILE'];
+  }
+  return Platform.environment['HOME'];
+}
+
+/// VS Code 用户级 snippets 目录候选（仅返回 IDE 配置目录已存在者）
+List<Directory> _vsCodeUserSnippetsDirs() {
+  final home = _userHomeDir();
+  if (home == null) {
+    return const [];
+  }
+  String base;
+  if (Platform.isMacOS) {
+    base = '$home/Library/Application Support';
+  } else if (Platform.isWindows) {
+    base = Platform.environment['APPDATA'] ?? '';
+  } else {
+    base = '$home/.config';
+  }
+  const ideDirs = ['Code', 'Code - Insiders', 'VSCodium', 'Cursor'];
+  return ideDirs
+      .map((ide) => Directory('$base/$ide/User/snippets'))
+      .where((dir) => dir.parent.existsSync())
+      .toList();
+}
+
+/// Android Studio/IntelliJ 用户级 Live Templates 目录候选
+/// （<configRoot>/<IDE 版本目录>/templates，仅返回 IDE 配置目录已存在者）
+List<Directory> _jetBrainsTemplatesDirs() {
+  final home = _userHomeDir();
+  if (home == null) {
+    return const [];
+  }
+  List<String> roots;
+  if (Platform.isMacOS) {
+    roots = [
+      '$home/Library/Application Support/Google',
+      '$home/Library/Application Support/JetBrains',
+    ];
+  } else if (Platform.isWindows) {
+    final appData = Platform.environment['APPDATA'] ?? '';
+    roots = ['$appData/Google', '$appData/JetBrains'];
+  } else {
+    roots = ['$home/.config/Google', '$home/.config/JetBrains'];
+  }
+  const idePrefixes = ['AndroidStudio', 'IntelliJIDEA', 'IntelliJIdea'];
+  final result = <Directory>[];
+  for (final root in roots) {
+    final rootDir = Directory(root);
+    if (!rootDir.existsSync()) {
+      continue;
+    }
+    for (final entry in rootDir.listSync()) {
+      if (entry is! Directory) {
+        continue;
+      }
+      final name = entry.uri.pathSegments.reversed
+          .firstWhere((segment) => segment.isNotEmpty, orElse: () => '');
+      if (idePrefixes.any((prefix) => name.startsWith(prefix))) {
+        result.add(Directory('${entry.path}/templates'));
+      }
+    }
+  }
+  return result;
+}
+
+final RegExp _snippetPlaceholderExp =
+    RegExp(r'\$\{(\d+)(?::([^{}]*))?\}|\$(\d+)');
+
+/// 把 VS Code 片段 JSON（JSONC，允许注释）转换为 JetBrains Live Templates 组 XML：
+/// - $1 / ${1:default} → 命名变量 $V1$（同名变量多处出现自动联动），
+///   default 记入 variable 的 defaultValue；
+/// - 末尾追加 $END$（展开后光标终点）；
+/// - 适用上下文限定为 Dart。
+String _convertSnippetsToLiveTemplatesXml(String jsoncContent) {
+  final decoded = jsonDecode(_stripJsoncComments(jsoncContent));
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('snippet json must be an object');
+  }
+  final buffer = StringBuffer('<templateSet group="$_snippetGroupName">\n');
+  decoded.forEach((name, rawSnippet) {
+    final snippet = rawSnippet as Map<String, dynamic>;
+    final bodyLines = (snippet['body'] as List).cast<String>();
+    final description = _escapeXml((snippet['description'] ?? name).toString());
+    final variables = <String, String?>{};
+    final value = bodyLines
+        .map((line) => _convertSnippetPlaceholders(line, variables))
+        .join('\n');
+    const endMark = r'$END$';
+    final fullValue = value.contains(endMark) ? value : '$value\n$endMark';
+
+    buffer.writeln('  <template name="${_escapeXml(name)}" '
+        'value="${_escapeXml(fullValue)}" '
+        'description="$description" '
+        'toReformat="true" toShortenFQNames="true">');
+    variables.forEach((varName, defaultValue) {
+      buffer.writeln('    <variable name="$varName" expression="" '
+          'defaultValue="${_escapeXml(defaultValue ?? '')}" '
+          'alwaysStopAt="true" />');
+    });
+    buffer.writeln('    <context>');
+    buffer.writeln('      <option name="DART" value="true" />');
+    buffer.writeln('    </context>');
+    buffer.writeln('  </template>');
+  });
+  buffer.writeln('</templateSet>');
+  return buffer.toString();
+}
+
+/// 剥离 JSONC 注释（字符串感知：不处理字符串内部的 //，如 dart import 路径）
+String _stripJsoncComments(String content) {
+  final buffer = StringBuffer();
+  var inString = false;
+  var i = 0;
+  while (i < content.length) {
+    final char = content[i];
+    if (inString) {
+      buffer.write(char);
+      if (char == r'\' && i + 1 < content.length) {
+        buffer.write(content[i + 1]);
+        i += 2;
+        continue;
+      }
+      if (char == '"') {
+        inString = false;
+      }
+      i++;
+      continue;
+    }
+    if (char == '"') {
+      inString = true;
+      buffer.write(char);
+      i++;
+      continue;
+    }
+    if (char == '/' && i + 1 < content.length) {
+      final next = content[i + 1];
+      if (next == '/') {
+        while (i < content.length && content[i] != '\n') {
+          i++;
+        }
+        continue;
+      }
+      if (next == '*') {
+        i += 2;
+        while (i + 1 < content.length &&
+            !(content[i] == '*' && content[i + 1] == '/')) {
+          i++;
+        }
+        i += 2;
+        continue;
+      }
+    }
+    buffer.write(char);
+    i++;
+  }
+  return buffer.toString();
+}
+
+String _convertSnippetPlaceholders(
+    String text, Map<String, String?> variables) {
+  return text.replaceAllMapped(_snippetPlaceholderExp, (match) {
+    final index = match[1] ?? match[3];
+    final varName = 'V$index';
+    variables.putIfAbsent(varName, () => match[2]);
+    return '\$$varName\$';
+  });
+}
+
+String _escapeXml(String text) {
+  return text
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;');
 }
 
 bool _confirmOverwrite(String targetPath) {

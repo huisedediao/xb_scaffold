@@ -9,7 +9,9 @@ CMDS := \
 	xb.extension \
 	xb.updateimg \
 	xb.parsemodel \
-	xb.newmodel
+	xb.newmodel \
+ 	xb.skill \
+	xb.build
 
 help:
 	@echo "Usage:"
@@ -19,8 +21,9 @@ help:
 	@echo "  make list-cli                        # show command names"
 	@echo ""
 	@echo "After install, you can run:"
-	@echo "  xb.page TestPage"
-	@echo "  xb.page TestPage lib/pages/test_page.dart"
+	@echo "  xb.page test_page lib/src/"
+	@echo "  xb.extension"
+	@echo "  xb.updateimg"
 	@echo "  xb.parsemodel lib/model/user_model.dart"
 	@echo "  xb.newmodel user_model '{\"name\":\"tom\"}'"
 

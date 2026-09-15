@@ -69,6 +69,11 @@ dart run xb_scaffold:xb xb.setup
 4. 自动执行 `xb.extension`（默认目录 `lib/`）
 5. 自动执行 `xb.updateimg`（默认图片目录 `./assets/images`）
 6. 在项目根目录生成 `README_XBScaffold.md`（xb_scaffold 框架完整文档，每次执行静默覆盖为当前包版本）
+7. 安装 `xb_scaffold_code_snippets` 代码片段（每次执行静默覆盖，保持与包版本同步）：
+   - VS Code / Cursor：复制到用户级 snippets 目录（如 macOS 的 `~/Library/Application Support/Code/User/snippets/`）
+   - Android Studio / IntelliJ：转换为 Live Templates 组写入用户级 templates 目录（需重启 IDE 生效）
+
+片段收录 `xb_page`、`xb_widget`、`xb_vmless_widget`、`xb_vm`、`xb_int_parse`、`xb_double_parse`、`xb_string_parse`、`xb_bool_parse`、`xb_list_parse`、`xb_padding`、`xb_dialog`、`xb_select`、`xb_select_multi`、`xb_notifier` 共 14 个，仅包含 xb_scaffold 真实存在的 API，统一 `xb_` 前缀，不会污染其他项目的补全。
 
 注意：`xb.setup` 无法直接刷新你“当前已打开”的终端会话。  
 执行完成后，请在当前终端手动运行：
