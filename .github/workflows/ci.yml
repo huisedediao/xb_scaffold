@@ -37,10 +37,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # 当前遗留 30 个 info 级问题，先用 --no-fatal-infos 保证 CI 可绿；
-      # info 清零后（评审建议 P0-2）可移除该参数
       - name: Analyze
-        run: flutter analyze --no-fatal-infos
+        run: flutter analyze
 
       - name: Test
         run: flutter test
