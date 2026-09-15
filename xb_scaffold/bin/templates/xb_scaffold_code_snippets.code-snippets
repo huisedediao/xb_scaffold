@@ -143,10 +143,10 @@
 			"dialog(",
 			"  title: ${1:'提示'},",
 			"  msg: $2,",
-			"  btnTitles: const ['取消', '确定'],",
+			"  btnTitles: const [${3:'取消', '确定'}],",
 			"  onSelected: (dlIndex) {",
 			"    if (dlIndex == 1) {",
-			"      $3",
+			"      $4",
 			"    }",
 			"  });"
 		],
@@ -167,14 +167,15 @@
 		"scope": "dart",
 		"prefix": "xb_select_multi",
 		"body": [
-			"XBSelectMulti<({${1:int fieldA, String fieldB}})>(",
+			"XBSelectMulti<({${1:int} ${2:fieldA}, ${3:String} ${4:fieldB}})>(",
 			"  selector: (context) => (",
-			"    ${2:fieldA: context.select<${3:PageVM}, int>((vm) => vm.fieldA),}",
+			"    $2: context.select<${5:PageVM}, $1>((vm) => vm.$2),",
+			"    $4: context.select<$5, $3>((vm) => vm.$4),",
 			"  ),",
-			"  builder: (context, v) => $4,",
+			"  builder: (context, v) => $6,",
 			")"
 		],
-		"description": "xb_select_multi: XBSelectMulti 跨 VM 多值订阅"
+		"description": "xb_select_multi: XBSelectMulti 跨 VM 多值订阅（字段名/类型输入后 selector 自动联动；单字段删掉 fieldB 相关两处即可）"
 	},
 	"xb_notifier": {
 		"scope": "dart",
