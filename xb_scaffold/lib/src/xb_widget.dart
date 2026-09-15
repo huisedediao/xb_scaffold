@@ -46,7 +46,10 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
       setState(() {
         final tempVM = vm;
         _generateVM();
-        tempVM.dispose();
+        tempVM.disposeFromHost();
+        // 新 VM 需重新调度 widgetDidBuilt（postFrame 只在 initState
+        // 注册一次的话，reset 后的新 VM 永远收不到该回调）
+        _scheduleWidgetDidBuilt();
       });
     }
   }
@@ -54,6 +57,26 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
   /// 刷新UI
   rebuildUI() {
     vm.notify();
+  }
+
+  /// widgetDidBuilt 回调是否已调度：同一帧内多次 reset 合并，
+  /// 只在帧末回调一次、且回调的是当前 VM（未 build 过的旧 VM 不回调）
+  bool _widgetDidBuiltScheduled = false;
+
+  /// 调度当前帧结束后回调 vm 的 [XBVM.widgetDidBuilt]。
+  ///
+  /// postFrame 回调必须在每次生成新 VM 后重新调度（initState 与 reset），
+  /// 否则 reset 换出的新 VM 永远收不到 widgetDidBuilt，
+  /// 依赖它做首屏初始化的页面会静默失效。
+  void _scheduleWidgetDidBuilt() {
+    if (_widgetDidBuiltScheduled) return;
+    _widgetDidBuiltScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _widgetDidBuiltScheduled = false;
+      if (mounted) {
+        vm.widgetDidBuilt();
+      }
+    });
   }
 
   @override
@@ -74,9 +97,7 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
     _generateVM();
 
     // 在页面构建完成的第一时间执行操作
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      vm.widgetDidBuilt();
-    });
+    _scheduleWidgetDidBuilt();
   }
 
   _generateVM() {
@@ -111,7 +132,9 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
   @override
   void dispose() {
     debugPrint("$runtimeType dispose");
-    vm.dispose();
+    // 先关闭 mounted 防护再销毁：避免 VM 重写的 dispose 及其同步回调
+    // 在销毁窗口期通过 mounted 检查，notify 到正在销毁的 element
+    vm.disposeFromHost();
     super.dispose();
   }
 }

@@ -138,6 +138,18 @@ class XBVM<T> extends ChangeNotifier {
   @mustCallSuper
   void didUpdateWidget(covariant T oldWidget) {}
 
+  /// 宿主 State 销毁/reset VM 时的框架内部入口：先置 [disposed] 再执行 [dispose]。
+  ///
+  /// [dispose] 末尾才置位的话存在销毁窗口期假阳性：重写的 dispose
+  /// （或其中同步触发的回调）调用 notify 时，state.mounted 在宿主
+  /// super.dispose() 之前仍为 true，会通过 mounted 检查并把通知
+  /// 打到正在销毁的 element（"setState() called after dispose()"）。
+  /// 先置位后销毁，让 mounted 在整个销毁链路上保持失效。
+  void disposeFromHost() {
+    _disposed = true;
+    dispose();
+  }
+
   @override
   void dispose() {
     _disposeOwnedNotifiers();

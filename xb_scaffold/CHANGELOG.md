@@ -3,6 +3,11 @@
 > 条目格式约定：每条以「新增 / 修复 / 优化 / 破坏性变更」中文前缀开头，一行一条。
 > 版本按时间升序排列；早期版本中无法考据的 "optimized" 类条目已统一归并为「常规优化与维护」。
 
+## 1.1.10
+
+- 修复 `reset()` 后新 VM 永远收不到 `widgetDidBuilt`：postFrame 回调原来只在 initState 注册一次，现在每次生成新 VM（initState/reset）都会重新调度，同一帧内多次 reset 合并为一次且只回调当前 VM；新增回归测试
+- 修复 VM 销毁窗口期 `mounted` 假阳性：`_disposed` 原来在 dispose 末尾才置位、宿主 `state.mounted` 在 super.dispose() 前仍为 true，重写的 dispose 及其同步回调里的 notify 会通过检查打到正在销毁的 element；新增框架内部入口 `disposeFromHost()`（宿主销毁/reset 前先置 disposed 再执行 dispose），mounted 在整个销毁链路上保持失效；新增回归测试
+
 ## 0.0.1
 
 - base init
