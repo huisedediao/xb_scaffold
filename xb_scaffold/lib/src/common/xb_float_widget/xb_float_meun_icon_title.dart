@@ -22,7 +22,7 @@ class XBFloatMenuIconTitle extends StatelessWidget {
   final TextOverflow? titleOverflow;
   final Color? separatorColor;
   final double? gap;
-  final int type;
+  final XBFloatPosition type;
   final double? contentHeight;
   const XBFloatMenuIconTitle(
       {super.key,
@@ -37,7 +37,7 @@ class XBFloatMenuIconTitle extends StatelessWidget {
       this.titleOverflow,
       this.separatorColor,
       this.gap,
-      this.type = 0,
+      this.type = XBFloatPosition.below,
       this.contentHeight});
 
   @override

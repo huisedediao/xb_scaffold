@@ -22,7 +22,11 @@ showLoadingGlobal(
   _exeTask();
 }
 
-bool get isShowGoabolLoading => _items.isNotEmpty;
+bool get isShowGlobalLoading => _items.isNotEmpty;
+
+/// 修正拼写（Goabol → Global），保留旧名兼容已发布版本的使用方
+@Deprecated('Use isShowGlobalLoading instead')
+bool get isShowGoabolLoading => isShowGlobalLoading;
 
 hideLoadingGlobal() {
   _taskQueue.add(XBLoadingTask(_taskHide));

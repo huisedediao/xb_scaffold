@@ -6,10 +6,13 @@ export 'xb_float_menu_title.dart';
 export 'xb_float_widget_arrow.dart';
 export 'xb_float_menu.dart';
 export 'xb_tip.dart';
+export 'xb_float_position.dart';
 
 class XBFloatWidget extends StatefulWidget {
   final Widget child;
-  final int type;
+
+  /// 浮层内容相对锚点的位置，取代旧版 int 魔数（0=下方，1=上方）
+  final XBFloatPosition type;
   final bool tapContentHide;
 
   /// 内容到屏幕边缘的最小距离
@@ -18,7 +21,7 @@ class XBFloatWidget extends StatefulWidget {
   const XBFloatWidget({
     Key? key,
     required this.child,
-    this.type = 0,
+    this.type = XBFloatPosition.below,
     this.tapContentHide = false,
   }) : super(key: key);
 
@@ -76,7 +79,9 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
             context,
             Offset(
               position.dx + box.size.width / 2,
-              widget.type == 0 ? position.dy + box.size.height : position.dy,
+              widget.type == XBFloatPosition.below
+                  ? position.dy + box.size.height
+                  : position.dy,
             ),
           );
         },
@@ -133,9 +138,12 @@ class _XBFloatWidgetState extends State<XBFloatWidget> {
               )),
               Positioned(
                 left: contentLeft,
-                top: widget.type == 0 ? position.dy : null,
-                bottom: widget.type == 1 ? (screenH - position.dy) : null,
-                child: _buildContent(position, contentLeft, widget.type == 1),
+                top: widget.type == XBFloatPosition.below ? position.dy : null,
+                bottom: widget.type == XBFloatPosition.above
+                    ? (screenH - position.dy)
+                    : null,
+                child: _buildContent(
+                    position, contentLeft, widget.type == XBFloatPosition.above),
               ),
             ],
           ),

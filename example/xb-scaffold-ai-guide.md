@@ -517,7 +517,7 @@ showLoadingGlobal({String? msg, Widget? widget, bool topLeftEnable = true,
                    bool topCenterEnable = false, bool topRightEnable = false,
                    bool contentEnable = false});
 hideLoadingGlobal();
-bool isShowGoabolLoading;
+bool isShowGlobalLoading; // 已修正拼写，旧名 isShowGoabolLoading 保留为 @Deprecated 别名
 ```
 
 Default style (`XBLoadingWidget`): white rounded card (radius 8) with shadow, 60x60 rotating dotted spinner (black54), optional ellipsized grey message. Precedence: passed `widget` > global `loadingBuilder` > default. `XBLoadingMask(loading:, child:, text:, bgColor:)` overlays a spinner on any subtree; `XBLoading(text:)` respects the global builder.
@@ -706,7 +706,8 @@ class MyFloat extends XBFloatWidget {
     return myPanel; // hide() to dismiss
   }
 }
-XBFloatWidget(child: anchorWidget, type: 0 /*below*/ | 1 /*above*/, tapContentHide: false)
+XBFloatWidget(child: anchorWidget, type: XBFloatPosition.below /*或 XBFloatPosition.above*/, tapContentHide: false)
+// 破坏性变更：type 由 int 魔数（0=下方/1=上方）改为枚举 XBFloatPosition（below/above）
 ```
 
 Tap the anchor to show an overlay panel (default content width 280) clamped to 5px screen margins; tapping outside dismisses; intercepts system back via `XBLegacyPopScope`. Ready-made contents: `XBFloatMenu`, `XBFloatMenuTitle`, `XBFloatMenuIconTitle`, `XBTip`.

@@ -15,7 +15,7 @@ class XBFloatMenuTitle extends StatelessWidget {
   final TextStyle? selectedTextStyle;
   final TextOverflow? textOverflow;
   final Color? separatorColor;
-  final int type;
+  final XBFloatPosition type;
   final Color? shadowColor;
   final int selectedIndex;
   const XBFloatMenuTitle(
@@ -33,7 +33,7 @@ class XBFloatMenuTitle extends StatelessWidget {
       this.textOverflow,
       this.separatorColor,
       this.shadowColor,
-      this.type = 0,
+      this.type = XBFloatPosition.below,
       this.selectedIndex = 0});
 
   double get _width {

@@ -43,26 +43,26 @@ class XBFloatWidgetArrow extends XBFloatWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            type == 0
+            type == XBFloatPosition.below
                 ? SizedBox(
                     height: arrowHeight,
                   )
                 : const SizedBox(),
             buildContentWithoutArrow(position, contentLeft, isAbove, hide),
-            type == 1
+            type == XBFloatPosition.above
                 ? SizedBox(
                     height: arrowHeight,
                   )
                 : const SizedBox(),
           ],
         ),
-        type == 0
+        type == XBFloatPosition.below
             ? Positioned(
                 top: 1,
                 child: arrow(position, arrowHeight, arrowStart, arrowWidth),
               )
             : const SizedBox(),
-        type == 1
+        type == XBFloatPosition.above
             ? Positioned(
                 bottom: 1,
                 child: arrow(position, arrowHeight, arrowStart, arrowWidth),

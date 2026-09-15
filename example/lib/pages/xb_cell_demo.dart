@@ -70,7 +70,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
         }
         if (index == 1) {
           return XBTip(
-            type: 1,
+            type: XBFloatPosition.above,
             tip:
                 "提示  提示 XBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitleXBCellTitleSubtitle",
             child: XBDisable(
@@ -363,7 +363,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
                   "555555",
                   "666666"
                 ],
-                type: 1,
+                type: XBFloatPosition.above,
                 onTapItem: (value) {
                   xbLog(value);
                 },
@@ -417,7 +417,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
           return Row(
             children: [
               XBFloatWidget(
-                type: 1,
+                type: XBFloatPosition.above,
                 child: Container(
                   width: 40,
                   height: 40,
@@ -440,7 +440,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
             children: [
               XBTip(
                 tipStyle: const TextStyle(color: Colors.orange),
-                // type: 1,
+                // type: XBFloatPosition.above,
                 tip: "提示提示提示提示提示提示提示提示提示提示提示提示提示提示提示",
                 child: Container(
                   width: 40,
@@ -495,7 +495,7 @@ class XBCellDemo extends XBPage<XBCellDemoVM> {
                 onTapItem: (value) {
                   xbLog(value);
                 },
-                // type: 1,
+                // type: XBFloatPosition.above,
                 paddingLeft: 15,
                 width: 160,
                 child: Container(
