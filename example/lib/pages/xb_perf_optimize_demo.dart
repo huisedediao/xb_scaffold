@@ -15,7 +15,8 @@ const Color _demoCardBG = Color(0xFFF1EBEB);
 /// 2. 点「刷新列表」：只有列表区域重建，未读角标、静态区不重建；
 /// 3. 点「开始倒计时」：每秒只有倒计时文字重建（走 ValueNotifier，
 ///    完全不触发页面 notify，buildWidget 不会重跑）；
-/// 4. 「静态区」select 常量值，任何 notify 都不会让它重建。
+/// 4. 「静态区」select 常量值，任何 notify 都不会让它重建；
+/// 5. 「跨 VM 区」XBSelectMulti 同时订阅页面 VM 与子区域 VM，任一变化都重建。
 class XBPerfOptimizeDemo extends XBPage<XBPerfOptimizeDemoVM> {
   const XBPerfOptimizeDemo({super.key});
 
@@ -141,6 +142,12 @@ class XBPerfOptimizeDemo extends XBPage<XBPerfOptimizeDemoVM> {
           ],
         ),
         const SizedBox(height: 10),
+        _sectionTitle('五、XBSelectMulti：跨 VM / 多值订阅'),
+        // 子区域自带 VM，同时订阅页面 VM 的 unreadCount 和自身 VM 的 label：
+        // 任一变化都重建，无关字段 notify 都不重建
+        const _CrossVMArea(),
+        const SizedBox(height: 10),
+
         const Text(
           '提示：高频值若走 notify()，每秒都会重跑整个 buildWidget；'
           '走 ValueNotifier 则只有上面那行文字重建。',
@@ -156,6 +163,71 @@ class XBPerfOptimizeDemo extends XBPage<XBPerfOptimizeDemoVM> {
       child: Text(title,
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
     );
+  }
+}
+
+/// 跨 VM 订阅演示：子区域有自己的 VM，同时订阅页面 VM（XBSelectMulti）
+class _CrossVMArea extends XBWidget<_CrossVMAreaVM> {
+  const _CrossVMArea();
+
+  @override
+  _CrossVMAreaVM generateVM(BuildContext context) =>
+      _CrossVMAreaVM(context: context);
+
+  @override
+  Widget buildWidget(BuildContext context) {
+    final vm = vmOf(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _demoCardBG,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: XBSelectMulti<({int unread, String label})>(
+              selector: (context) => (
+                unread: context.select<XBPerfOptimizeDemoVM, int>(
+                    (vm) => vm.unreadCount),
+                label:
+                    context.select<_CrossVMAreaVM, String>((vm) => vm.label),
+              ),
+              builder: (context, v) =>
+                  Text('页面VM未读 ${v.unread} / 本区域 ${v.label}'),
+            ),
+          ),
+          XBButton(
+            onTap: () => context
+                .vmOf<XBPerfOptimizeDemoVM>()
+                .bumpUnread(),
+            child: const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text('改页面VM'),
+            ),
+          ),
+          XBButton(
+            onTap: vm.toggle,
+            child: const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text('改本区域'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CrossVMAreaVM extends XBVM<_CrossVMArea> {
+  _CrossVMAreaVM({required super.context});
+
+  String label = 'A';
+
+  void toggle() {
+    label = label == 'A' ? 'B' : 'A';
+    notify();
   }
 }
 

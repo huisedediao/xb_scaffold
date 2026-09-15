@@ -30,5 +30,10 @@ export 'src/utils/xb_utils.dart';
 
 export 'src/xb_error/xb_error.dart';
 
+/// 重新导出 provider 的 context.select 扩展：
+/// 让业务方无需直接依赖 provider 即可在 XBSelect/XBSelectMulti 的
+/// selector 闭包中使用 context.select
+export 'package:provider/provider.dart' show SelectContext;
+
 export 'package:xb_scaffold/src/utils/xb_import.dart'
     if (dart.library.html) 'package:xb_scaffold/src/utils/xb_import_html.dart';

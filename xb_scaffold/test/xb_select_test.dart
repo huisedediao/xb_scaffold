@@ -33,6 +33,33 @@ void main() {
     });
   });
 
+  group('XBSelectMulti 跨 VM 多值订阅', () {
+    testWidgets('任一 VM 的被 select 字段变化都重建，无关字段不触发', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: _OuterPage()));
+
+      // 首帧
+      expect(find.text('0:a'), findsOneWidget);
+      expect(_OuterVM.multiBuildCount, 1);
+
+      // 外层 VM 被订阅字段变化：重建
+      await tester.tap(find.byKey(const Key('outerBump')));
+      await tester.pump();
+      expect(find.text('1:a'), findsOneWidget);
+      expect(_OuterVM.multiBuildCount, 2);
+
+      // 外层 VM 无关字段变化：不重建
+      await tester.tap(find.byKey(const Key('outerOther')));
+      await tester.pump();
+      expect(_OuterVM.multiBuildCount, 2, reason: '无关字段 notify 不应重建 XBSelectMulti');
+
+      // 内层 VM 被订阅字段变化：重建
+      await tester.tap(find.byKey(const Key('innerRename')));
+      await tester.pump();
+      expect(find.text('1:b'), findsOneWidget);
+      expect(_OuterVM.multiBuildCount, 3);
+    });
+  });
+
   group('XBVM createNotifier 托管', () {
     testWidgets('VM dispose 后托管的 ValueNotifier 自动销毁', (tester) async {
       createdNotifier = null;
@@ -113,6 +140,96 @@ class _TestPageVM extends XBVM<_TestPage> {
 
   void touchOther() {
     other++;
+    notify();
+  }
+}
+
+class _OuterPage extends XBWidget<_OuterVM> {
+  const _OuterPage();
+
+  @override
+  _OuterVM generateVM(BuildContext context) => _OuterVM(context: context);
+
+  @override
+  Widget buildWidget(BuildContext context) {
+    final vm = vmOf(context);
+    return Column(
+      children: [
+        ElevatedButton(
+          key: const Key('outerBump'),
+          onPressed: vm.bumpUnread,
+          child: const Text('outerBump'),
+        ),
+        ElevatedButton(
+          key: const Key('outerOther'),
+          onPressed: vm.touchOther,
+          child: const Text('outerOther'),
+        ),
+        const _InnerWidget(),
+      ],
+    );
+  }
+}
+
+class _OuterVM extends XBVM<_OuterPage> {
+  _OuterVM({required super.context});
+
+  /// XBSelectMulti builder 实际执行次数（断言用）
+  static int multiBuildCount = 0;
+
+  int unread = 0;
+  int other = 0;
+
+  void bumpUnread() {
+    unread++;
+    notify();
+  }
+
+  void touchOther() {
+    other++;
+    notify();
+  }
+}
+
+/// 内层 XBWidget：自身的 VM 在里层，同时订阅外层页面的 VM
+class _InnerWidget extends XBWidget<_InnerVM> {
+  const _InnerWidget();
+
+  @override
+  _InnerVM generateVM(BuildContext context) => _InnerVM(context: context);
+
+  @override
+  Widget buildWidget(BuildContext context) {
+    final vm = vmOf(context);
+    return Column(
+      children: [
+        XBSelectMulti<({int unread, String name})>(
+          selector: (context) => (
+            unread: context.select<_OuterVM, int>((vm) => vm.unread),
+            name: context.select<_InnerVM, String>((vm) => vm.name),
+          ),
+          builder: (context, v) {
+            _OuterVM.multiBuildCount++;
+            return Text('${v.unread}:${v.name}');
+          },
+        ),
+        ElevatedButton(
+          key: const Key('innerRename'),
+          onPressed: vm.rename,
+          child: const Text('innerRename'),
+        ),
+      ],
+    );
+  }
+}
+
+class _InnerVM extends XBVM<_InnerWidget> {
+  _InnerVM({required super.context});
+
+  String name = 'a';
+
+  void rename() {
+    name = name == 'a' ? 'b' : 'a';
     notify();
   }
 }

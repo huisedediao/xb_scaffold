@@ -1272,9 +1272,8 @@ class CounterVM extends XBVM<CounterWidget> {
 `XBWidget` 已经把 VM 放进了 Provider，子 Widget（普通的 `StatelessWidget` 即可）可以用 `context.select` 只依赖某个字段，字段不变就不重建：
 
 ```dart
-// 需在业务工程 pubspec 中添加 provider 依赖（xb_scaffold 内部已依赖，但 Dart 要求 import 必须声明直接依赖）
-import 'package:provider/provider.dart';
-
+// context.select 由 xb_scaffold 重新导出（SelectContext 扩展），
+// 无需单独依赖 provider、无需额外 import
 class PriceText extends StatelessWidget {
   const PriceText({super.key});
 
@@ -1308,9 +1307,25 @@ XBSelect<OrderVM, double>(
 
 注意事项：
 
-- `R` 的 `==` 决定是否重建：List/自定义对象须整体替换引用，原地修改（`clear()` + `addAll()`）不会被识别为变化；
+- 重建判定分两层：内层由 Provider 的 select 完成（深比较，List/Map/Set 的**内容变化**——含原地修改 `clear()` + `addAll()`——都会触发重建；超大集合注意每次 notify 的深比较成本）；外层缓存用 `==` 比较聚合值，推荐标量或 Dart 3 record；
 - builder 应只依赖传入的 value 与常量，值未变时会复用缓存的 child，读取其他会变化的外部数据可能拿到过期画面；
 - 高频值（每帧/每秒变化）不要走 notify()，见手段三。
+
+#### 跨 VM / 多值订阅：XBSelectMulti
+
+`XBSelect` 只能订阅单个 VM 的单个值；监听多个值（同一 VM 的多个字段、或跨多个 VM）时用 `XBSelectMulti`：selector 闭包内可调用任意多次 `context.select`，用 record 聚合结果，**任何一个被 select 的值变化都会重建 builder**：
+
+```dart
+XBSelectMulti<({int unread, String userName})>(
+  selector: (context) => (
+    unread: context.select<PageVM, int>((vm) => vm.unreadCount),
+    userName: context.select<UserVM, String>((vm) => vm.name),
+  ),
+  builder: (context, v) => Text('${v.userName}: ${v.unread}'),
+)
+```
+
+外层缓存逻辑与 XBSelect 相同：聚合值未变时返回缓存的 child（identical），无关 notify 时整块跳过。注意所有被 select 的 Provider 必须是该组件的祖先。
 
 #### 手段三：高频更新绕开 VM
 
