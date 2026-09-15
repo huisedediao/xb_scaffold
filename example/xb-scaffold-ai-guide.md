@@ -213,7 +213,7 @@ Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 
 - Multi-theme: `XBThemeVM().changeTheme(i)` to switch; `XBThemeVM().themeIndex` to query the active index (and `registeredThemeCount` for how many are registered); extend via Dart `extension` on `XBThemeColor`/`XBThemeFontSize`/`XBThemeFontFamily`/etc.; `xb.extension` CLI generates starter files; persist the selected index via optional `themeIndexReader`/`themeIndexWriter` on `XBScaffold` (storage delegate, see reference).
 - Data layer: `XBRepository` → `XBService` → `XBDataSource` chain with paired init/dispose; attach via `vm.setRepo(...)`.
-- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`; also installs `xb_`-prefixed code snippets to VS Code (user snippets) and Android Studio (live templates group `xb_scaffold_code_snippets`, restart IDE to load).
+- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`; also installs `xb_`-prefixed code snippets to the project-level `.vscode/` (shared by VS Code/Cursor/Qoder) and Android Studio (user-level live templates group `xb_scaffold_code_snippets`, restart IDE to load).
 
 ## Common pitfalls
 
@@ -865,7 +865,7 @@ class UserRepo extends XBRepository {
 
 One-time setup in a consuming project: `dart run xb_scaffold:xb xb.setup`
 (generates `Makefile`, runs `make install-cli`, fixes PATH, then runs `xb.extension` + `xb.updateimg`; afterwards the short `xb` command is available). `xb.setup` also copies the framework README to the project root as `README_XBScaffold.md` (silent overwrite), generates the AI self-install guide (see `xb.skill` below), and installs editor code snippets (silent overwrite every run):
-- VS Code / Cursor: writes `xb_scaffold_code_snippets.code-snippets` to the user-level snippets dir (e.g. `~/Library/Application Support/Code/User/snippets/` on macOS).
+- VS Code / Cursor / Qoder: writes `xb_scaffold_code_snippets.code-snippets` to the project-level `.vscode/` dir (shared by all VS Code-based IDEs opening the workspace; checked into Git so teammates get the snippets without running setup).
 - Android Studio / IntelliJ: converts the same source to a Live Templates group `xb_scaffold_code_snippets` in the user-level `templates` dir (JetBrains has no project-level live templates; restart the IDE to load). 14 snippets with the `xb_` prefix: `xb_page`, `xb_widget`, `xb_vmless_widget`, `xb_vm`, `xb_int_parse`, `xb_double_parse`, `xb_string_parse`, `xb_bool_parse`, `xb_list_parse`, `xb_padding`, `xb_dialog`, `xb_select`, `xb_select_multi`, `xb_notifier`. Single source of truth: `<packageRoot>/bin/templates/xb_scaffold_code_snippets.code-snippets`.
 
 All commands also work without install via `dart run xb_scaffold:xb <command>`.
