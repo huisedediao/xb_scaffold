@@ -26,6 +26,10 @@ class XBImage extends StatelessWidget {
   final bool isInPackage;
   final Color? svgColor;
 
+  /// [svgColor] 着色的混合模式，仅作用于 SVG 图片；
+  /// 不传时用 [BlendMode.srcIn]（与 flutter_svg 废弃 color 参数的原生行为一致）
+  final BlendMode? svgColorBlendMode;
+
   const XBImage(
     this.img, {
     super.key,
@@ -35,6 +39,7 @@ class XBImage extends StatelessWidget {
     this.errWidget,
     this.isInPackage = false,
     this.svgColor,
+    this.svgColorBlendMode,
     this.fit,
   });
 
@@ -69,6 +74,7 @@ class XBImage extends StatelessWidget {
           height: height,
           fit: fit ?? BoxFit.contain,
           color: svgColor,
+          blendMode: svgColorBlendMode,
           placeholderWidget: placeholderWidget,
         );
       }
@@ -151,7 +157,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      colorFilter: _svgColorFilter(svgColor),
+      colorFilter: _svgColorFilter(),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -162,7 +168,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      colorFilter: _svgColorFilter(svgColor),
+      colorFilter: _svgColorFilter(),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -173,7 +179,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      colorFilter: _svgColorFilter(svgColor),
+      colorFilter: _svgColorFilter(),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -184,7 +190,7 @@ class XBImage extends StatelessWidget {
       width: width,
       height: height,
       fit: fit ?? BoxFit.contain,
-      colorFilter: _svgColorFilter(svgColor),
+      colorFilter: _svgColorFilter(),
       placeholderBuilder: (context) => placeholderWidget ?? Container(),
     );
   }
@@ -192,8 +198,22 @@ class XBImage extends StatelessWidget {
   /// flutter_svg 已废弃 color 参数，color 的内部实现等价于
   /// ColorFilter.mode(color, BlendMode.srcIn)（color 为 null 时不做着色），
   /// 此处保持完全相同的渲染效果
-  ColorFilter? _svgColorFilter(Color? color) =>
-      color == null ? null : ColorFilter.mode(color, BlendMode.srcIn);
+  ColorFilter? _svgColorFilter() =>
+      _buildSvgColorFilter(svgColor, svgColorBlendMode);
+
+  /// 着色解析纯函数：[color] 为 null 不做着色；[blendMode] 不传回退 srcIn
+  @visibleForTesting
+  static (Color, BlendMode)? svgColorFilterParts(
+      Color? color, BlendMode? blendMode) {
+    if (color == null) return null;
+    return (color, blendMode ?? BlendMode.srcIn);
+  }
+
+  static ColorFilter? _buildSvgColorFilter(Color? color, BlendMode? blendMode) {
+    final parts = svgColorFilterParts(color, blendMode);
+    if (parts == null) return null;
+    return ColorFilter.mode(parts.$1, parts.$2);
+  }
 
   Widget _error(Object error) {
     return errWidget ??

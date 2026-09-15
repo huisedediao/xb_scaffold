@@ -19,6 +19,7 @@ Widget buildXBSvgFile({
   double? height,
   BoxFit fit = BoxFit.contain,
   Color? color,
+  BlendMode? blendMode,
   Widget? placeholderWidget,
 }) {
   return placeholderWidget ?? const SizedBox.shrink();

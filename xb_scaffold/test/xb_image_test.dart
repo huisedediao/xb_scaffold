@@ -54,6 +54,54 @@ void main() {
     expect(const XBImage('assets/images/icon.svg').build(ctx), isA<SvgPicture>());
   });
 
+  group('XBImage svgColorBlendMode', () {
+    const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
+    const color = Color(0xFFFF0000);
+
+    test('svgColorFilterParts：不传 blendMode 回退 srcIn（锁定默认行为）', () {
+      final parts = XBImage.svgColorFilterParts(color, null);
+      expect(parts, isNotNull);
+      expect(parts!.$1, color);
+      expect(parts.$2, BlendMode.srcIn);
+    });
+
+    test('svgColorFilterParts：显式传入 blendMode 生效', () {
+      final parts = XBImage.svgColorFilterParts(color, BlendMode.multiply);
+      expect(parts, isNotNull);
+      expect(parts!.$2, BlendMode.multiply);
+    });
+
+    test('svgColorFilterParts：color 为 null 不做着色', () {
+      expect(XBImage.svgColorFilterParts(null, BlendMode.multiply), isNull);
+      expect(XBImage.svgColorFilterParts(null, null), isNull);
+    });
+
+    testWidgets('svgColor 存在时 SvgPicture.colorFilter 生效（默认/自定义均非 null）',
+        (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Column(
+          children: [
+            // 默认：不传 blendMode
+            XBImage(svg, svgColor: color),
+            // 自定义：传入 multiply
+            XBImage(svg,
+                svgColor: color, svgColorBlendMode: BlendMode.multiply),
+          ],
+        ),
+      ));
+      await tester.pump();
+
+      final pictures =
+          tester.widgetList<SvgPicture>(find.byType(SvgPicture)).toList();
+      expect(pictures.length, 2);
+      expect(pictures[0].colorFilter, isNotNull,
+          reason: '不传 svgColorBlendMode 时仍应有着色（默认 srcIn）');
+      expect(pictures[1].colorFilter, isNotNull,
+          reason: '自定义 blendMode 后着色仍生效');
+    });
+  });
+
   group('XBImgSizeUtil', () {
     /// 运行时生成指定宽高的真实 PNG，避免硬编码字节
     Future<Uint8List> genPng(int width, int height) async {

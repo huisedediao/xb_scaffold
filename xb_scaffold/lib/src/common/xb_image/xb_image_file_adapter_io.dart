@@ -32,6 +32,7 @@ Widget buildXBSvgFile({
   double? height,
   BoxFit fit = BoxFit.contain,
   Color? color,
+  BlendMode? blendMode,
   Widget? placeholderWidget,
 }) {
   return SvgPicture.file(
@@ -40,8 +41,11 @@ Widget buildXBSvgFile({
     height: height,
     fit: fit,
     // flutter_svg 已废弃 color 参数，其内部实现等价于
-    // ColorFilter.mode(color, BlendMode.srcIn)（color 为 null 时不做着色）
-    colorFilter: color == null ? null : ColorFilter.mode(color, BlendMode.srcIn),
+    // ColorFilter.mode(color, BlendMode.srcIn)（color 为 null 时不做着色），
+    // blendMode 不传时保持该默认行为
+    colorFilter: color == null
+        ? null
+        : ColorFilter.mode(color, blendMode ?? BlendMode.srcIn),
     placeholderBuilder: (context) => placeholderWidget ?? Container(),
   );
 }

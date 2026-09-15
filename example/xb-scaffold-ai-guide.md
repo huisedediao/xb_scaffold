@@ -648,6 +648,7 @@ XBImage(dynamic img, {
   Widget? placeholderWidget, Widget? errWidget,
   bool isInPackage = false,   // true: asset shipped inside a pub package
   Color? svgColor,            // tint for SVGs
+  BlendMode? svgColorBlendMode, // blend mode for svgColor tint; defaults to srcIn
 })
 ```
 
