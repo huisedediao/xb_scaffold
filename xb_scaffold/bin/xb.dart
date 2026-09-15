@@ -1187,7 +1187,8 @@ const String _snippetFileName = 'xb_scaffold_code_snippets.code-snippets';
 const String _snippetGroupName = 'xb_scaffold_code_snippets';
 
 /// 安装 xb_scaffold 代码片段（每次 xb.setup 静默覆盖，保持与包版本同步）：
-/// - VS Code：片段 JSON 复制到用户级 snippets 目录（无项目级安装需求）；
+/// - VS Code 系（VS Code/Cursor/Qoder 等）：写入项目级 `.vscode/$_snippetFileName`，
+///   随项目走、可进 Git，所有 VS Code 系 IDE 共用同一份；
 /// - Android Studio/IntelliJ：JSON 转换为 Live Templates 组 XML 写入用户级
 ///   templates 目录（JetBrains Live Templates 无项目级存储，仅支持用户级）；
 /// 片段单一数据源：<packageRoot>/bin/templates/$_snippetFileName
@@ -1206,17 +1207,13 @@ Future<void> _installCodeSnippets() async {
   }
   final content = source.readAsStringSync();
 
-  var vsCodeCount = 0;
-  for (final dir in _vsCodeUserSnippetsDirs()) {
-    final target = File('${dir.path}/$_snippetFileName');
-    dir.createSync(recursive: true);
-    target.writeAsStringSync(content);
-    stdout.writeln('Generated (overwrite): ${target.path}');
-    vsCodeCount++;
-  }
-  if (vsCodeCount == 0) {
-    stdout.writeln('xb.setup: VS Code user snippets dir not found, skipped.');
-  }
+  // Project-level snippets dir: shared by all VS Code-based IDEs
+  // (VS Code / Cursor / Qoder read the same .vscode/ of the workspace root).
+  final vsCodeDir = Directory('.vscode');
+  final vsCodeTarget = File('${vsCodeDir.path}/$_snippetFileName');
+  vsCodeDir.createSync(recursive: true);
+  vsCodeTarget.writeAsStringSync(content);
+  stdout.writeln('Generated (overwrite): ${vsCodeTarget.path} (project level, shared by VS Code/Cursor/Qoder)');
 
   var jetBrainsCount = 0;
   for (final dir in _jetBrainsTemplatesDirs()) {
@@ -1240,27 +1237,6 @@ String? _userHomeDir() {
     return Platform.environment['USERPROFILE'];
   }
   return Platform.environment['HOME'];
-}
-
-/// VS Code 用户级 snippets 目录候选（仅返回 IDE 配置目录已存在者）
-List<Directory> _vsCodeUserSnippetsDirs() {
-  final home = _userHomeDir();
-  if (home == null) {
-    return const [];
-  }
-  String base;
-  if (Platform.isMacOS) {
-    base = '$home/Library/Application Support';
-  } else if (Platform.isWindows) {
-    base = Platform.environment['APPDATA'] ?? '';
-  } else {
-    base = '$home/.config';
-  }
-  const ideDirs = ['Code', 'Code - Insiders', 'VSCodium', 'Cursor'];
-  return ideDirs
-      .map((ide) => Directory('$base/$ide/User/snippets'))
-      .where((dir) => dir.parent.existsSync())
-      .toList();
 }
 
 /// Android Studio/IntelliJ 用户级 Live Templates 目录候选

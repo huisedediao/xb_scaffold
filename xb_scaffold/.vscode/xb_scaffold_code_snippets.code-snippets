@@ -1,0 +1,187 @@
+{
+	// xb_scaffold 代码片段（xb.setup 自动安装到 VS Code 用户级 snippets 目录）
+	// Android Studio 的 Live Templates 由 xb.setup 运行时从本文件转换生成。
+	// 仅收录 xb_scaffold 真实存在的 API；prefix 统一 xb_ 前缀。
+	"xb_page": {
+		"scope": "dart",
+		"prefix": "xb_page",
+		"body": [
+			"import 'package:xb_scaffold/xb_scaffold.dart';",
+			"import 'package:flutter/material.dart';",
+			"",
+			"class $1 extends XBPage<$1VM> {",
+			"  const $1({super.key});",
+			"",
+			"  @override",
+			"  $1VM generateVM(BuildContext context) {",
+			"    return $1VM(context: context);",
+			"  }",
+			"",
+			"  @override",
+			"  Widget buildPage(BuildContext context) {",
+			"    final vm = vmOf(context);",
+			"    return Container();",
+			"  }",
+			"}",
+			"",
+			"class $1VM extends XBPageVM<$1> {",
+			"  $1VM({required super.context});",
+			"}"
+		],
+		"description": "xb_page: XBPage + XBPageVM 页面脚手架"
+	},
+	"xb_widget": {
+		"scope": "dart",
+		"prefix": "xb_widget",
+		"body": [
+			"import 'package:xb_scaffold/xb_scaffold.dart';",
+			"import 'package:flutter/material.dart';",
+			"",
+			"class $1 extends XBWidget<$1VM> {",
+			"  const $1({super.key});",
+			"",
+			"  @override",
+			"  $1VM generateVM(BuildContext context) {",
+			"    return $1VM(context: context);",
+			"  }",
+			"",
+			"  @override",
+			"  Widget buildWidget(BuildContext context) {",
+			"    final vm = vmOf(context);",
+			"    return Container();",
+			"  }",
+			"}",
+			"",
+			"class $1VM extends XBVM<$1> {",
+			"  $1VM({required super.context});",
+			"}"
+		],
+		"description": "xb_widget: XBWidget + XBVM 组件脚手架"
+	},
+	"xb_vmless_widget": {
+		"scope": "dart",
+		"prefix": "xb_vmless_widget",
+		"body": [
+			"import 'package:xb_scaffold/xb_scaffold.dart';",
+			"import 'package:flutter/material.dart';",
+			"",
+			"class $1 extends XBVMLessWidget {",
+			"  const $1({super.key});",
+			"",
+			"  @override",
+			"  Widget buildWidget(BuildContext context) {",
+			"    return Container();",
+			"  }",
+			"}"
+		],
+		"description": "xb_vmless_widget: XBVMLessWidget 无 VM 组件脚手架"
+	},
+	"xb_vm": {
+		"scope": "dart",
+		"prefix": "xb_vm",
+		"body": [
+			"import 'package:xb_scaffold/xb_scaffold.dart';",
+			"",
+			"class $1VM extends XBVM<$1> {",
+			"  $1VM({required super.context});",
+			"}"
+		],
+		"description": "xb_vm: XBVM 脚手架"
+	},
+	"xb_int_parse": {
+		"scope": "dart",
+		"prefix": "xb_int_parse",
+		"body": [
+			"xbParse<int>($1)"
+		],
+		"description": "xb_int_parse: xbParse<int>"
+	},
+	"xb_double_parse": {
+		"scope": "dart",
+		"prefix": "xb_double_parse",
+		"body": [
+			"xbParse<double>($1)"
+		],
+		"description": "xb_double_parse: xbParse<double>"
+	},
+	"xb_string_parse": {
+		"scope": "dart",
+		"prefix": "xb_string_parse",
+		"body": [
+			"xbParse<String>($1)"
+		],
+		"description": "xb_string_parse: xbParse<String>"
+	},
+	"xb_bool_parse": {
+		"scope": "dart",
+		"prefix": "xb_bool_parse",
+		"body": [
+			"xbParse<bool>($1)"
+		],
+		"description": "xb_bool_parse: xbParse<bool>"
+	},
+	"xb_list_parse": {
+		"scope": "dart",
+		"prefix": "xb_list_parse",
+		"body": [
+			"xbParseList($1, factory: $2.fromJson)"
+		],
+		"description": "xb_list_parse: xbParseList"
+	},
+	"xb_padding": {
+		"scope": "dart",
+		"prefix": "xb_padding",
+		"body": [
+			"padding: EdgeInsets.only($1),"
+		],
+		"description": "xb_padding: EdgeInsets.only"
+	},
+	"xb_dialog": {
+		"scope": "dart",
+		"prefix": "xb_dialog",
+		"body": [
+			"dialog(",
+			"  title: ${1:'提示'},",
+			"  msg: $2,",
+			"  btnTitles: const ['取消', '确定'],",
+			"  onSelected: (dlIndex) {",
+			"    if (dlIndex == 1) {",
+			"      $3",
+			"    }",
+			"  });"
+		],
+		"description": "xb_dialog: xb_scaffold dialog"
+	},
+	"xb_select": {
+		"scope": "dart",
+		"prefix": "xb_select",
+		"body": [
+			"XBSelect<${1:PageVM}, ${2:int}>(",
+			"  selector: (vm) => vm.${3:field},",
+			"  builder: (context, value) => $4,",
+			")"
+		],
+		"description": "xb_select: XBSelect 字段级订阅"
+	},
+	"xb_select_multi": {
+		"scope": "dart",
+		"prefix": "xb_select_multi",
+		"body": [
+			"XBSelectMulti<({${1:int fieldA, String fieldB}})>(",
+			"  selector: (context) => (",
+			"    ${2:fieldA: context.select<${3:PageVM}, int>((vm) => vm.fieldA),}",
+			"  ),",
+			"  builder: (context, v) => $4,",
+			")"
+		],
+		"description": "xb_select_multi: XBSelectMulti 跨 VM 多值订阅"
+	},
+	"xb_notifier": {
+		"scope": "dart",
+		"prefix": "xb_notifier",
+		"body": [
+			"late final ${1:fieldName} = createNotifier<${2:int}>(${3:0});"
+		],
+		"description": "xb_notifier: VM 托管的 ValueNotifier 字段"
+	}
+}
