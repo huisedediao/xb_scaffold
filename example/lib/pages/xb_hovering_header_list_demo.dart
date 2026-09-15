@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'xb_hovering_header_list.dart';
+import 'package:xb_scaffold/xb_scaffold.dart';
 
 class XBHoveringHeaderListDemo extends StatefulWidget {
   const XBHoveringHeaderListDemo({super.key});

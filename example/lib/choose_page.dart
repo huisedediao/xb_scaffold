@@ -6,6 +6,8 @@ import 'package:example/pages/xb_log_test_page.dart';
 import 'package:example/pages/xb_ios_edge_back_test_page.dart';
 import 'package:example/pages/xb_page_can_pop_test.dart';
 import 'package:example/pages/xb_perf_optimize_demo.dart';
+import 'package:example/pages/xb_refresh_task_demo.dart';
+import 'package:example/pages/xb_hovering_header_list_demo.dart';
 import 'package:example/pages/xb_pop_test.dart';
 import 'package:example/pages/xb_repository_demo.dart';
 import 'package:example/pages/xb_button_demo.dart';
@@ -177,6 +179,14 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBSelect 性能优化 demo',
       pageBuilder: _buildXBPerfOptimizeDemo,
     ),
+    const _ChooseMenuItem(
+      title: 'XBRefreshTask demo',
+      pageBuilder: _buildXBRefreshTaskDemo,
+    ),
+    const _ChooseMenuItem(
+      title: 'XBHoveringHeaderList demo',
+      pageBuilder: _buildXBHoveringHeaderListDemo,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -222,6 +232,9 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBPopTestPage() => const XBPopTest();
   static Widget _buildXBPageCanPopTestPage() => const XBPageCanPopTest();
   static Widget _buildXBPerfOptimizeDemo() => const XBPerfOptimizeDemo();
+  static Widget _buildXBRefreshTaskDemo() => const XBRefreshTaskDemo();
+  static Widget _buildXBHoveringHeaderListDemo() =>
+      const XBHoveringHeaderListDemo();
 }
 
 enum _ChooseNavMode {
