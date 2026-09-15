@@ -5,6 +5,7 @@ import 'package:example/pages/xb_network_test_page.dart';
 import 'package:example/pages/xb_log_test_page.dart';
 import 'package:example/pages/xb_ios_edge_back_test_page.dart';
 import 'package:example/pages/xb_page_can_pop_test.dart';
+import 'package:example/pages/xb_perf_optimize_demo.dart';
 import 'package:example/pages/xb_pop_test.dart';
 import 'package:example/pages/xb_repository_demo.dart';
 import 'package:example/pages/xb_button_demo.dart';
@@ -172,6 +173,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBPageCanPopTest 测试页',
       pageBuilder: _buildXBPageCanPopTestPage,
     ),
+    const _ChooseMenuItem(
+      title: 'XBSelect 性能优化 demo',
+      pageBuilder: _buildXBPerfOptimizeDemo,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -216,6 +221,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBEchoLoggerTestPage() => const XBEchoLoggerTestPage();
   static Widget _buildXBPopTestPage() => const XBPopTest();
   static Widget _buildXBPageCanPopTestPage() => const XBPageCanPopTest();
+  static Widget _buildXBPerfOptimizeDemo() => const XBPerfOptimizeDemo();
 }
 
 enum _ChooseNavMode {

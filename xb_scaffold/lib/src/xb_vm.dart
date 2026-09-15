@@ -67,6 +67,33 @@ class XBVM<T> extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// VM 托管的 ValueNotifier 列表，dispose 时统一销毁
+  final List<ValueNotifier> _ownedNotifiers = [];
+
+  /// 创建由 VM 托管生命周期的 ValueNotifier（大页面性能优化）
+  ///
+  /// 倒计时、进度条、动画值这类每帧/每秒变化的高频值，不要放进普通字段
+  /// 走 `notify()`（每次 notify 都会重建整个 buildWidget），应使用本方法
+  /// 创建 notifier，UI 侧用 `ValueListenableBuilder` 局部订阅，更新时
+  /// 只重建订阅该值的 builder，完全绕开 VM notify。
+  ///
+  /// ```dart
+  /// // VM 中：
+  /// late final secondsLeft = createNotifier<int>(60);
+  /// // UI 中：
+  /// ValueListenableBuilder<int>(
+  ///   valueListenable: vm.secondsLeft,
+  ///   builder: (context, s, _) => Text('$s s'),
+  /// )
+  /// ```
+  ///
+  /// VM dispose 时自动销毁创建的 notifier，无需手动清理。
+  ValueNotifier<V> createNotifier<V>(V initial) {
+    final notifier = ValueNotifier<V>(initial);
+    _ownedNotifiers.add(notifier);
+    return notifier;
+  }
+
   /// 保管 listen 注册的事件回调，防止被 GC 回收
   /// （XBEventBus 为弱注册，回调须由 listener 自己持有）
   final List<Function> _retainedHandlers = [];
@@ -90,6 +117,7 @@ class XBVM<T> extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposeOwnedNotifiers();
     _repo?.dispose();
     String log = "$runtimeType dispose";
     debugPrint(log);
@@ -98,5 +126,14 @@ class XBVM<T> extends ChangeNotifier {
     _retainedHandlers.clear();
     _disposed = true;
     super.dispose();
+  }
+
+  /// 销毁由 [createNotifier] 托管的 notifier（先于 super.dispose，
+  /// 避免监听方在 VM dispose 后收到已销毁 notifier 的通知）
+  void _disposeOwnedNotifiers() {
+    for (final notifier in _ownedNotifiers) {
+      notifier.dispose();
+    }
+    _ownedNotifiers.clear();
   }
 }

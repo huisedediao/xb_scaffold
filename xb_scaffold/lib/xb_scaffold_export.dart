@@ -10,6 +10,7 @@ export './src/repository/xb_service.dart';
 export './src/repository/xb_repository.dart';
 export './src/xb_vmless_widget.dart';
 export './src/xb_vm.dart';
+export './src/xb_select.dart';
 export './src/xb_root_widget.dart';
 export './src/xb_vm_extensions.dart';
 

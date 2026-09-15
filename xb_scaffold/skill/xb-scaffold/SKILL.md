@@ -55,11 +55,11 @@ class MyApp extends StatelessWidget {
 
 ## Pages and widgets (MVVM core)
 
-| Need | Base class | Override | VM base |
-|---|---|---|---|
-| Full-screen page with AppBar | `XBPage<VM>` | `generateVM`, `setTitle`, `buildPage` | `XBPageVM<Page>` |
-| Reusable stateful component | `XBWidget<VM>` | `generateVM`, `buildWidget` | `XBVM<Widget>` |
-| Stateless component | `XBVMLessWidget` | `buildWidget` | none |
+| Need                         | Base class       | Override                              | VM base          |
+| ---------------------------- | ---------------- | ------------------------------------- | ---------------- |
+| Full-screen page with AppBar | `XBPage<VM>`     | `generateVM`, `setTitle`, `buildPage` | `XBPageVM<Page>` |
+| Reusable stateful component  | `XBWidget<VM>`   | `generateVM`, `buildWidget`           | `XBVM<Widget>`   |
+| Stateless component          | `XBVMLessWidget` | `buildWidget`                         | none             |
 
 ```dart
 class HomePage extends XBPage<HomePageVM> {
@@ -91,11 +91,11 @@ class HomePageVM extends XBPageVM<HomePage> {
 - `context.vmOfOrNull<T>()` / `context.vmWatchOrNull<T>()` — null-safe variants.
 - Inside `XBWidget`/`XBPage` subclasses: `vmOf(context)`, `vm`, `vmWatch` getters, `reset()` (new VM), `rebuildUI()`.
 
-**XBVM essentials**: `notify()` refreshes UI; `listen<E>(cb)` subscribes to `XBEventBus` (weak registration, the VM retains the handler; auto-removed on dispose) and `removeListen<E>(cb)` unsubscribes explicitly; `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
+**XBVM essentials**: `notify()` refreshes UI; `createNotifier<V>(initial)` creates a VM-owned `ValueNotifier` (auto-disposed with the VM) for high-frequency values that must bypass `notify()`; `listen<E>(cb)` subscribes to `XBEventBus` (weak registration, the VM retains the handler; auto-removed on dispose) and `removeListen<E>(cb)` unsubscribes explicitly; `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
 
 **XBPageVM extras**: `showLoading({msg})` / `hideLoading()`; `back([result])`; `isTop`; route lifecycle `willShow`/`willHide`/`willDispose`/`didPush`/`didPop`/`didPushNext`/`didPopNext`; `addEnsureAfterPushAnimationTask(fn)`; drawer helpers.
 
-**Large pages**: avoid full rebuilds — split sub-`XBWidget`s, use `context.select` inside independent child widgets, or `ValueNotifier` for high-frequency values (see reference/core.md).
+**Large pages**: avoid full rebuilds — split sub-`XBWidget`s, or use `XBSelect<VM, R>(selector:, builder:)` for field-level subscription (rebuilds only when the selector value changes; returns the cached child when unchanged, so unrelated `notify()` calls skip the whole subtree). For high-frequency values (countdown/progress/animation) never use `notify()` — use `vm.createNotifier(initial)` + `ValueListenableBuilder` so only the subscribing builder rebuilds. Notes: the selected value's `==` decides rebuilds (replace List/object references wholesale, never mutate in place); the `XBSelect` builder should read only its `value` plus constants (cached child is reused otherwise). Example page: `example/lib/pages/xb_perf_optimize_demo.dart`; details in reference/core.md.
 
 ## Page configuration (XBPage overrides)
 

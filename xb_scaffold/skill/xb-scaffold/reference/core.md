@@ -11,15 +11,15 @@ void main() {
 
 `initXBErrorHandler` parameters (all optional except none):
 
-| Parameter | Type | Default | Purpose |
-|---|---|---|---|
-| `reporter` | `FutureOr<void> Function(Object, StackTrace?)` | null | crash reporting callback |
-| `errorWidgetBuilder` | `Widget? Function(BuildContext, FlutterErrorDetails, String? routeName)` | null | custom build-error fallback UI |
-| `dumpFlutterErrorToConsole` | bool | true | print framework errors to console |
-| `enableErrorWidget` | bool | true | replace red error screen with `XBErrorView` |
-| `enablePlatformDispatcherError` | bool | true | catch root-isolate uncaught errors |
-| `enableIsolateError` | bool | false | listen to spawned isolate errors |
-| `appRunner` | `FutureOr<void> Function()?` | null | run inside `runZonedGuarded` |
+| Parameter                       | Type                                                                     | Default | Purpose                                     |
+| ------------------------------- | ------------------------------------------------------------------------ | ------- | ------------------------------------------- |
+| `reporter`                      | `FutureOr<void> Function(Object, StackTrace?)`                           | null    | crash reporting callback                    |
+| `errorWidgetBuilder`            | `Widget? Function(BuildContext, FlutterErrorDetails, String? routeName)` | null    | custom build-error fallback UI              |
+| `dumpFlutterErrorToConsole`     | bool                                                                     | true    | print framework errors to console           |
+| `enableErrorWidget`             | bool                                                                     | true    | replace red error screen with `XBErrorView` |
+| `enablePlatformDispatcherError` | bool                                                                     | true    | catch root-isolate uncaught errors          |
+| `enableIsolateError`            | bool                                                                     | false   | listen to spawned isolate errors            |
+| `appRunner`                     | `FutureOr<void> Function()?`                                             | null    | run inside `runZonedGuarded`                |
 
 Idempotent — repeated calls are ignored. `errorWidgetBuilder` must never throw.
 
@@ -120,7 +120,7 @@ Every `XBPageVM` lifecycle transition is recorded (timestamped with device-local
 `XBWidget` listens to the whole VM via `Consumer<T>`: every `vm.notify()` rebuilds the entire `buildWidget`. Fine for small pages; for large or list-heavy pages, narrow the rebuild scope:
 
 1. **Split sub-`XBWidget`s** (preferred) — extract high-frequency areas into independent `XBWidget`s with their own VMs; `notify()` then only rebuilds that subtree.
-2. **`context.select<T, R>((vm) => vm.field)`** — inside an independent child widget's `build` method (NOT directly inside `buildWidget`, where it has no effect); the child rebuilds only when the selected value changes.
-3. **Bypass the VM for high-frequency values** — countdowns/progress/animation values: use `ValueNotifier` + `ValueListenableBuilder` instead of `vm.notify()`.
+2. **`XBSelect<VM, R>(selector:, builder:)`** (recommended, framework-provided) — wraps `context.select` with the correct usage pattern: rebuilds only when the selector's return value changes (`==` decides; replace List/object references wholesale, never mutate in place), and returns the cached child when the value is unchanged, so unrelated `notify()` calls skip the whole subtree (same effect as a const constructor). The builder should read only its `value` plus constants. Raw `context.select<T, R>((vm) => vm.field)` also works but must live inside an independent child widget's `build` method (NOT directly inside `buildWidget`, where it has no effect).
+3. **Bypass the VM for high-frequency values** — countdowns/progress/animation values: declare `late final seconds = vm.createNotifier<V>(initial)` (auto-disposed with the VM) and subscribe with `ValueListenableBuilder` instead of `vm.notify()`. Every `notify()` still re-runs the whole `buildWidget`; a notifier update touches only its subscribing builder.
 
-Diagnose rebuilds with `debugPrintRebuildDirtyWidgets = true`.
+Example: `example/lib/pages/xb_perf_optimize_demo.dart`. Diagnose rebuilds with `debugPrintRebuildDirtyWidgets = true`.

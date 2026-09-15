@@ -298,11 +298,11 @@ dart run xb_scaffold:xb xb.skill
 xb.skill
 ```
 
-| 参数 | 说明 |
-|---|---|
-| （默认） | 在当前目录生成 `xb-scaffold-ai-guide.md` |
+| 参数           | 说明                                       |
+| -------------- | ------------------------------------------ |
+| （默认）       | 在当前目录生成 `xb-scaffold-ai-guide.md`   |
 | `--out <path>` | 自定义生成位置（如 `docs/xb-scaffold.md`） |
-| `--force` | 覆盖已存在的文件，不再询问 |
+| `--force`      | 覆盖已存在的文件，不再询问                 |
 
 指南文档包含两部分：
 
@@ -430,11 +430,11 @@ dart run xb_scaffold:xb xb.build
 
 所有产物都在 **桌面上的 `xb_build` 文件夹**（即 `~/Desktop/xb_build`）：
 
-| 平台 | 产物文件 | 说明 |
-| --- | --- | --- |
-| iOS | `项目名.xcarchive` | Xcode 归档包。装真机 / TestFlight / 上架还需用 Xcode 再导出一次（可让负责上架的同事操作） |
-| Android | `项目名.apk` | 可直接发给别人安装，或上传各应用市场 |
-| 鸿蒙 | `项目名.hap` / `项目名.app` | 安装到鸿蒙设备，或上传华为应用市场 |
+| 平台    | 产物文件                    | 说明                                                                                      |
+| ------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| iOS     | `项目名.xcarchive`          | Xcode 归档包。装真机 / TestFlight / 上架还需用 Xcode 再导出一次（可让负责上架的同事操作） |
+| Android | `项目名.apk`                | 可直接发给别人安装，或上传各应用市场                                                      |
+| 鸿蒙    | `项目名.hap` / `项目名.app` | 安装到鸿蒙设备，或上传华为应用市场                                                        |
 
 ### 4. 打包前建议先试跑（可选但推荐）
 
@@ -448,25 +448,25 @@ dart run xb_scaffold:xb xb.build --dry-run
 
 ### 5. 常见问题
 
-| 现象 | 原因 | 解决办法 |
-| --- | --- | --- |
-| 提示 `xb.build` 不是有效命令 | 当前依赖的 xb_scaffold 版本还没有 xb.build | 升级 pubspec 里的 xb_scaffold 到含 xb.build 的版本，重新 `flutter pub get` |
-| 签名时报 `No profiles ... were found` / 找不到 team | Team ID 填错，或这台 Mac 的 Xcode 没登录对应 Apple 账号 | 重新核对第 1 步 ④ 的编号；确认 Xcode 已登录（第 1 步 ⑤） |
-| 签名时报 `An App ID with identifier 'com.xxx' is not available` | bundle id（`com.xxx.xxx`）被别人注册过了 | 用 Xcode 打开 iOS 工程 → Signing & Capabilities → 把 Bundle Identifier 改成没被占用的（如 `com.你的公司.你的项目`），提交后重新打包 |
-| 打出来的包没有我最新改的代码 | 未提交的改动不会进包 | 先 `git commit` 再打包，或加 `--no-worktree` 快速自测 |
-| 下载依赖时网络报错 | 网络波动 | 直接重跑打包命令（有缓存，重试通常能过） |
-| 安卓包解析依赖时报 `Read timed out` | 部分依赖只在公司内网 maven 仓库有，且首次必须联网下载 | 连上公司网络/VPN 后重跑一次，成功后依赖永久缓存，之后断网也能打包 |
-| 看到看不懂的报错 | — | 把终端完整输出复制给同事 / 在 XB Scaffold 仓库提 issue |
+| 现象                                                            | 原因                                                    | 解决办法                                                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 提示 `xb.build` 不是有效命令                                    | 当前依赖的 xb_scaffold 版本还没有 xb.build              | 升级 pubspec 里的 xb_scaffold 到含 xb.build 的版本，重新 `flutter pub get`                                                          |
+| 签名时报 `No profiles ... were found` / 找不到 team             | Team ID 填错，或这台 Mac 的 Xcode 没登录对应 Apple 账号 | 重新核对第 1 步 ④ 的编号；确认 Xcode 已登录（第 1 步 ⑤）                                                                            |
+| 签名时报 `An App ID with identifier 'com.xxx' is not available` | bundle id（`com.xxx.xxx`）被别人注册过了                | 用 Xcode 打开 iOS 工程 → Signing & Capabilities → 把 Bundle Identifier 改成没被占用的（如 `com.你的公司.你的项目`），提交后重新打包 |
+| 打出来的包没有我最新改的代码                                    | 未提交的改动不会进包                                    | 先 `git commit` 再打包，或加 `--no-worktree` 快速自测                                                                               |
+| 下载依赖时网络报错                                              | 网络波动                                                | 直接重跑打包命令（有缓存，重试通常能过）                                                                                            |
+| 安卓包解析依赖时报 `Read timed out`                             | 部分依赖只在公司内网 maven 仓库有，且首次必须联网下载   | 连上公司网络/VPN 后重跑一次，成功后依赖永久缓存，之后断网也能打包                                                                   |
+| 看到看不懂的报错                                                | —                                                       | 把终端完整输出复制给同事 / 在 XB Scaffold 仓库提 issue                                                                              |
 
 ### 6. 进阶命令速查
 
-| 命令 | 作用 |
-| --- | --- |
-| `... xb.build --dry-run` | 只检查环境与配置，不打包 |
-| `... xb.build --no-worktree` | 不用 git 已提交代码，直接用当前代码打包（快速自测） |
-| `... xb.build --open` | 打包完成后自动打开产物文件夹 |
-| `... xb.build --project-dir /别的/项目路径` | 在任意目录给其他项目打包 |
-| `... xb.build --platform ios android` | 同时打多个平台 |
+| 命令                                        | 作用                                                |
+| ------------------------------------------- | --------------------------------------------------- |
+| `... xb.build --dry-run`                    | 只检查环境与配置，不打包                            |
+| `... xb.build --no-worktree`                | 不用 git 已提交代码，直接用当前代码打包（快速自测） |
+| `... xb.build --open`                       | 打包完成后自动打开产物文件夹                        |
+| `... xb.build --project-dir /别的/项目路径` | 在任意目录给其他项目打包                            |
+| `... xb.build --platform ios android`       | 同时打多个平台                                      |
 
 
 ## 快速开始
@@ -1289,24 +1289,54 @@ class PriceText extends StatelessWidget {
 
 注意：`select` 必须写在**独立 Widget 的 build** 里才有效。直接写在 `buildWidget` 里没有意义——父级 `Consumer` 已经订阅了整个 VM，每次 `notify()` 都会重建。
 
-#### 手段三：高频更新绕开 VM
+#### 手段二的框架封装：XBSelect（推荐）
 
-倒计时、进度条、动画值这类每帧/每秒都变的状态，不要放进 VM 频繁 `notify()`，用 `ValueNotifier` 局部订阅：
+上面「独立 Widget + select + 值不变时跳过」的固定套路，框架已封装为 `XBSelect`，一步到位，不用再手写 Widget、也不用关心 const：
 
 ```dart
-class CountdownView extends StatelessWidget {
-  final ValueNotifier<int> seconds;
-  const CountdownView({super.key, required this.seconds});
+// 无需 import provider，无需单独定义 Widget
+XBSelect<OrderVM, double>(
+  selector: (vm) => vm.price,
+  builder: (context, price) => Text('¥$price'),
+)
+```
 
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: seconds,
-      builder: (context, value, _) => Text('$value s'),
-    );
+工作机制：
+
+- selector 返回值变化时，`XBSelect` 被 Provider 单独唤醒重建，其他字段 notify 不影响；
+- 值未变时返回上一次缓存的 child（同一实例），父级 `Consumer` 波及重建时 Element 判定 identical 直接跳过整棵子树，等效于 const 的跳过语义。
+
+注意事项：
+
+- `R` 的 `==` 决定是否重建：List/自定义对象须整体替换引用，原地修改（`clear()` + `addAll()`）不会被识别为变化；
+- builder 应只依赖传入的 value 与常量，值未变时会复用缓存的 child，读取其他会变化的外部数据可能拿到过期画面；
+- 高频值（每帧/每秒变化）不要走 notify()，见手段三。
+
+#### 手段三：高频更新绕开 VM
+
+倒计时、进度条、动画值这类每帧/每秒都变的状态，不要放进 VM 频繁 `notify()`——每次 notify 仍会重跑整个 `buildWidget`。用 VM 托管的 `ValueNotifier` 局部订阅，更新时只重建订阅该值的 builder，完全绕开 VM notify：
+
+```dart
+class OrderVM extends XBVM<OrderWidget> {
+  // createNotifier 创建的 notifier 由 VM 托管，dispose 时自动销毁，无需手动清理
+  late final secondsLeft = createNotifier<int>(60);
+
+  void startCountdown() {
+    Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      secondsLeft.value--;   // ← 不调 notify()，只有订阅处重建
+    });
   }
 }
+
+// UI 侧：只有这一小块每秒重建
+ValueListenableBuilder<int>(
+  valueListenable: vm.secondsLeft,
+  builder: (context, seconds, _) => Text('$seconds s'),
+)
 ```
+
+完整示例见 `example/lib/pages/xb_perf_optimize_demo.dart`（含 XBSelect 与 createNotifier 的对照演示，配合 `debugPrintRebuildDirtyWidgets = true` 观察 rebuild 明细）。
 
 #### 怎么判断页面需要优化
 
