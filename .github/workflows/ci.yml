@@ -1,0 +1,46 @@
+# xb_scaffold 包的 CI：flutter analyze + flutter test
+# 包位于 xb_scaffold/ 子目录，因此所有步骤都在该目录下执行
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "xb_scaffold/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "xb_scaffold/**"
+      - ".github/workflows/ci.yml"
+
+# 同一分支的新推送会取消仍在运行的旧流水线
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: xb_scaffold
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本与本地开发环境对齐（Flutter 3.27.x，满足 pubspec 的 >=3.12.0 约束）
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.27.4
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 当前遗留 30 个 info 级问题，先用 --no-fatal-infos 保证 CI 可绿；
+      # info 清零后（评审建议 P0-2）可移除该参数
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
