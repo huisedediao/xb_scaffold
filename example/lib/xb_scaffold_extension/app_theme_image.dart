@@ -2,10 +2,13 @@
 
 
 
+
+
 import 'package:xb_scaffold/xb_scaffold.dart';
 
 extension AppThemeImage on XBThemeImage {
   // 添加需要的图片路径，使用脚本生成
+
 
 
 

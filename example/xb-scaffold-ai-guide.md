@@ -27,6 +27,9 @@ knowledge as a native skill / rule of the tool you are currently running in.
      `reference/<name>.md` next to the main skill file.
    - Keep file names, headings, code blocks and the frontmatter exactly as
      given (translate nothing).
+   - If a previous installation of this skill already exists at the target
+     location, overwrite it entirely with the current content — do not
+     merge or keep stale sections.
 4. When your tool needs an index/description, reuse the skill's `name` and
    `description` from the frontmatter template.
 5. After writing the files, confirm to the user where the skill was
@@ -101,11 +104,11 @@ class MyApp extends StatelessWidget {
 
 ## Pages and widgets (MVVM core)
 
-| Need | Base class | Override | VM base |
-|---|---|---|---|
-| Full-screen page with AppBar | `XBPage<VM>` | `generateVM`, `setTitle`, `buildPage` | `XBPageVM<Page>` |
-| Reusable stateful component | `XBWidget<VM>` | `generateVM`, `buildWidget` | `XBVM<Widget>` |
-| Stateless component | `XBVMLessWidget` | `buildWidget` | none |
+| Need                         | Base class       | Override                              | VM base          |
+| ---------------------------- | ---------------- | ------------------------------------- | ---------------- |
+| Full-screen page with AppBar | `XBPage<VM>`     | `generateVM`, `setTitle`, `buildPage` | `XBPageVM<Page>` |
+| Reusable stateful component  | `XBWidget<VM>`   | `generateVM`, `buildWidget`           | `XBVM<Widget>`   |
+| Stateless component          | `XBVMLessWidget` | `buildWidget`                         | none             |
 
 ```dart
 class HomePage extends XBPage<HomePageVM> {
@@ -137,11 +140,11 @@ class HomePageVM extends XBPageVM<HomePage> {
 - `context.vmOfOrNull<T>()` / `context.vmWatchOrNull<T>()` — null-safe variants.
 - Inside `XBWidget`/`XBPage` subclasses: `vmOf(context)`, `vm`, `vmWatch` getters, `reset()` (new VM), `rebuildUI()`.
 
-**XBVM essentials**: `notify()` refreshes UI; `listen<E>(cb)` subscribes to `XBEventBus` (weak registration, the VM retains the handler; auto-removed on dispose) and `removeListen<E>(cb)` unsubscribes explicitly; `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
+**XBVM essentials**: `notify()` refreshes UI; `createNotifier<V>(initial)` creates a VM-owned `ValueNotifier` (auto-disposed with the VM) for high-frequency values that must bypass `notify()`; `listen<E>(cb)` subscribes to `XBEventBus` (weak registration, the VM retains the handler; auto-removed on dispose) and `removeListen<E>(cb)` unsubscribes explicitly; `repo<R>()` / `setRepo(...)` attach an `XBRepository`; `widget` casts back to the owner widget; `didCreated()` / `widgetDidBuilt()` / `didChangeDependencies()` / `didUpdateWidget()` / `dispose()` are lifecycle hooks (call `super`).
 
 **XBPageVM extras**: `showLoading({msg})` / `hideLoading()`; `back([result])`; `isTop`; route lifecycle `willShow`/`willHide`/`willDispose`/`didPush`/`didPop`/`didPushNext`/`didPopNext`; `addEnsureAfterPushAnimationTask(fn)`; drawer helpers.
 
-**Large pages**: avoid full rebuilds — split sub-`XBWidget`s, use `context.select` inside independent child widgets, or `ValueNotifier` for high-frequency values (see reference/core.md).
+**Large pages**: avoid full rebuilds — split sub-`XBWidget`s, or use `XBSelect<VM, R>(selector:, builder:)` for field-level subscription (rebuilds only when the selector value changes; returns the cached child when unchanged, so unrelated `notify()` calls skip the whole subtree). For multiple fields or cross-VM subscriptions use `XBSelectMulti<R>(selector:, builder:)` — call `context.select` any number of times inside the selector closure (aggregating into a Dart 3 record) and any selected value change rebuilds it. For high-frequency values (countdown/progress/animation) never use `notify()` — use `vm.createNotifier(initial)` + `ValueListenableBuilder` so only the subscribing builder rebuilds. Notes: Provider's select compares with deep equality (List/Map content changes — including in-place mutation — do trigger rebuilds; beware deep-compare cost on huge collections); the builder should read only its `value` plus constants (cached child is reused otherwise). `context.select` is re-exported by xb_scaffold (`SelectContext`), no direct provider dependency needed. Example page: `example/lib/pages/xb_perf_optimize_demo.dart`; details in reference/core.md.
 
 ## Page configuration (XBPage overrides)
 
@@ -210,7 +213,7 @@ Details: [reference/theme-cli-repository.md](reference/theme-cli-repository.md)
 
 - Multi-theme: `XBThemeVM().changeTheme(i)` to switch; `XBThemeVM().themeIndex` to query the active index (and `registeredThemeCount` for how many are registered); extend via Dart `extension` on `XBThemeColor`/`XBThemeFontSize`/`XBThemeFontFamily`/etc.; `xb.extension` CLI generates starter files; persist the selected index via optional `themeIndexReader`/`themeIndexWriter` on `XBScaffold` (storage delegate, see reference).
 - Data layer: `XBRepository` → `XBService` → `XBDataSource` chain with paired init/dispose; attach via `vm.setRepo(...)`.
-- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`.
+- CLI (`xb.setup`, `xb.page`, `xb.widget`, `xb.extension`, `xb.updateimg`, `xb.parsemodel`, `xb.newmodel`, `xb.skill`) — one-time setup: `dart run xb_scaffold:xb xb.setup`; also installs `xb_`-prefixed code snippets to VS Code (user snippets) and Android Studio (live templates group `xb_scaffold_code_snippets`, restart IDE to load).
 
 ## Common pitfalls
 
@@ -247,15 +250,15 @@ void main() {
 
 `initXBErrorHandler` parameters (all optional except none):
 
-| Parameter | Type | Default | Purpose |
-|---|---|---|---|
-| `reporter` | `FutureOr<void> Function(Object, StackTrace?)` | null | crash reporting callback |
-| `errorWidgetBuilder` | `Widget? Function(BuildContext, FlutterErrorDetails, String? routeName)` | null | custom build-error fallback UI |
-| `dumpFlutterErrorToConsole` | bool | true | print framework errors to console |
-| `enableErrorWidget` | bool | true | replace red error screen with `XBErrorView` |
-| `enablePlatformDispatcherError` | bool | true | catch root-isolate uncaught errors |
-| `enableIsolateError` | bool | false | listen to spawned isolate errors |
-| `appRunner` | `FutureOr<void> Function()?` | null | run inside `runZonedGuarded` |
+| Parameter                       | Type                                                                     | Default | Purpose                                     |
+| ------------------------------- | ------------------------------------------------------------------------ | ------- | ------------------------------------------- |
+| `reporter`                      | `FutureOr<void> Function(Object, StackTrace?)`                           | null    | crash reporting callback                    |
+| `errorWidgetBuilder`            | `Widget? Function(BuildContext, FlutterErrorDetails, String? routeName)` | null    | custom build-error fallback UI              |
+| `dumpFlutterErrorToConsole`     | bool                                                                     | true    | print framework errors to console           |
+| `enableErrorWidget`             | bool                                                                     | true    | replace red error screen with `XBErrorView` |
+| `enablePlatformDispatcherError` | bool                                                                     | true    | catch root-isolate uncaught errors          |
+| `enableIsolateError`            | bool                                                                     | false   | listen to spawned isolate errors            |
+| `appRunner`                     | `FutureOr<void> Function()?`                                             | null    | run inside `runZonedGuarded`                |
 
 Idempotent — repeated calls are ignored. `errorWidgetBuilder` must never throw.
 
@@ -356,10 +359,10 @@ Every `XBPageVM` lifecycle transition is recorded (timestamped with device-local
 `XBWidget` listens to the whole VM via `Consumer<T>`: every `vm.notify()` rebuilds the entire `buildWidget`. Fine for small pages; for large or list-heavy pages, narrow the rebuild scope:
 
 1. **Split sub-`XBWidget`s** (preferred) — extract high-frequency areas into independent `XBWidget`s with their own VMs; `notify()` then only rebuilds that subtree.
-2. **`context.select<T, R>((vm) => vm.field)`** — inside an independent child widget's `build` method (NOT directly inside `buildWidget`, where it has no effect); the child rebuilds only when the selected value changes.
-3. **Bypass the VM for high-frequency values** — countdowns/progress/animation values: use `ValueNotifier` + `ValueListenableBuilder` instead of `vm.notify()`.
+2. **`XBSelect<VM, R>(selector:, builder:)`** (recommended, framework-provided) — wraps `context.select` with the correct usage pattern: rebuilds only when the selector's return value changes, and returns the cached child when the value is unchanged, so unrelated `notify()` calls skip the whole subtree (same effect as a const constructor). The builder should read only its `value` plus constants. Raw `context.select<T, R>((vm) => vm.field)` also works but must live inside an independent child widget's `build` method (NOT directly inside `buildWidget`, where it has no effect). For multiple fields (same VM) or cross-VM subscriptions use `XBSelectMulti<R>(selector:, builder:)`: call `context.select` any number of times inside the selector closure, aggregate into a Dart 3 record; any selected value change rebuilds it, and the same cached-child skip applies when nothing changed. Comparison semantics: Provider's select uses deep equality — List/Map/Set content changes (including in-place mutation) trigger rebuilds, but deep-comparing huge collections costs on every notify. `context.select` is re-exported by xb_scaffold (`SelectContext`), no direct provider dependency needed.
+3. **Bypass the VM for high-frequency values** — countdowns/progress/animation values: declare `late final seconds = vm.createNotifier<V>(initial)` (auto-disposed with the VM) and subscribe with `ValueListenableBuilder` instead of `vm.notify()`. Every `notify()` still re-runs the whole `buildWidget`; a notifier update touches only its subscribing builder.
 
-Diagnose rebuilds with `debugPrintRebuildDirtyWidgets = true`.
+Example: `example/lib/pages/xb_perf_optimize_demo.dart`. Diagnose rebuilds with `debugPrintRebuildDirtyWidgets = true`.
 
 
 <!-- section: reference/ui-components.md -->
@@ -861,7 +864,9 @@ class UserRepo extends XBRepository {
 ## CLI tools (`xb.*`)
 
 One-time setup in a consuming project: `dart run xb_scaffold:xb xb.setup`
-(generates `Makefile`, runs `make install-cli`, fixes PATH, then runs `xb.extension` + `xb.updateimg`; afterwards the short `xb` command is available). `xb.setup` also copies the framework README to the project root as `README_XBScaffold.md` (silent overwrite) and generates the AI self-install guide (see `xb.skill` below).
+(generates `Makefile`, runs `make install-cli`, fixes PATH, then runs `xb.extension` + `xb.updateimg`; afterwards the short `xb` command is available). `xb.setup` also copies the framework README to the project root as `README_XBScaffold.md` (silent overwrite), generates the AI self-install guide (see `xb.skill` below), and installs editor code snippets (silent overwrite every run):
+- VS Code / Cursor: writes `xb_scaffold_code_snippets.code-snippets` to the user-level snippets dir (e.g. `~/Library/Application Support/Code/User/snippets/` on macOS).
+- Android Studio / IntelliJ: converts the same source to a Live Templates group `xb_scaffold_code_snippets` in the user-level `templates` dir (JetBrains has no project-level live templates; restart the IDE to load). 14 snippets with the `xb_` prefix: `xb_page`, `xb_widget`, `xb_vmless_widget`, `xb_vm`, `xb_int_parse`, `xb_double_parse`, `xb_string_parse`, `xb_bool_parse`, `xb_list_parse`, `xb_padding`, `xb_dialog`, `xb_select`, `xb_select_multi`, `xb_notifier`. Single source of truth: `<packageRoot>/bin/templates/xb_scaffold_code_snippets.code-snippets`.
 
 All commands also work without install via `dart run xb_scaffold:xb <command>`.
 
