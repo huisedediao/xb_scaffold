@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../xb_print.dart';
+
 /// 全局事件总线
 ///
 /// 订阅为弱注册：Bus 对 listener 及其回调只持弱引用，
@@ -58,7 +60,13 @@ class XBEventBus {
         entries.remove(entry);
         continue;
       }
-      (handler)(event);
+      try {
+        (handler)(event);
+      } catch (e, s) {
+        // 异常隔离：单个订阅者的回调异常不应中断其余订阅者的分发，
+        // 也不应把异常抛回给 fire 的调用方
+        xbError('XBEventBus dispatch error for ${event.runtimeType}: $e\n$s');
+      }
     }
     // 兼容保留：仍向自定义 controller 广播，保证 on<T>() 订阅可用
     if (_controller != null && _controller!.hasListener) {

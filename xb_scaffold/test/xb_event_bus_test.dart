@@ -71,6 +71,22 @@ void main() {
       XBEventBus.removeListener(l2);
     });
 
+    test('单个 handler 抛异常不中断其余订阅者（fire 不抛出）', () {
+      final bad = _Listener();
+      final good = _Listener();
+      // 抛异常的 handler 先注册，验证后面的订阅者不被拖垮
+      XBEventBus.addListener<_TestEvent>(
+          bad, (_TestEvent e) => throw StateError('boom'));
+      XBEventBus.addListener<_TestEvent>(good, good.handler);
+
+      XBEventBus.fire(_TestEvent('isolated'));
+      expect(good.received, ['isolated'],
+          reason: '前面的 handler 抛异常不应影响后面的订阅者');
+
+      XBEventBus.removeListener(bad);
+      XBEventBus.removeListener(good);
+    });
+
     test('removeListener 只影响目标 listener', () {
       final l1 = _Listener();
       final l2 = _Listener();
