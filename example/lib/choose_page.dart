@@ -8,6 +8,7 @@ import 'package:example/pages/xb_page_can_pop_test.dart';
 import 'package:example/pages/xb_perf_optimize_demo.dart';
 import 'package:example/pages/xb_refresh_task_demo.dart';
 import 'package:example/pages/xb_hovering_header_list_demo.dart';
+import 'package:example/pages/xb_loading_demo.dart';
 import 'package:example/pages/xb_pop_test.dart';
 import 'package:example/pages/xb_repository_demo.dart';
 import 'package:example/pages/xb_button_demo.dart';
@@ -187,6 +188,10 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
       title: 'XBHoveringHeaderList demo',
       pageBuilder: _buildXBHoveringHeaderListDemo,
     ),
+    const _ChooseMenuItem(
+      title: 'XBLoading demo（页面级/全局 loading）',
+      pageBuilder: _buildXBLoadingDemo,
+    ),
   ];
 
   int get itemCount => _menuItems.length;
@@ -235,6 +240,7 @@ class ChoosePageVM extends XBPageVM<ChoosePage> with RouteAware {
   static Widget _buildXBRefreshTaskDemo() => const XBRefreshTaskDemo();
   static Widget _buildXBHoveringHeaderListDemo() =>
       const XBHoveringHeaderListDemo();
+  static Widget _buildXBLoadingDemo() => const XBLoadingDemo();
 }
 
 enum _ChooseNavMode {
