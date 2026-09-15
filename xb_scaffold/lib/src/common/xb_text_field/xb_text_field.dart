@@ -72,6 +72,8 @@ class XBTextFieldState extends State<XBTextField> {
     _focusNode = FocusNode();
     _focusNode.addListener(_onFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 极端时序（首帧完成前被移除）下防失效 element 访问
+      if (!mounted) return;
       if (widget.focused) {
         FocusScope.of(context).requestFocus(_focusNode);
       }
