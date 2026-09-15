@@ -40,5 +40,13 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
-      - name: Test
-        run: flutter test
+      - name: Test (with coverage)
+        run: flutter test --coverage
+
+      # 覆盖率报告（lcov 格式）保存为构建产物，供人工查阅
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: xb_scaffold/coverage/lcov.info
+          if-no-files-found: error

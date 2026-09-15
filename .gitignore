@@ -29,3 +29,6 @@ migrate_working_dir/
 .packages
 build/
 !xb_scaffold/tool/build/
+
+# 覆盖率报告
+coverage/
