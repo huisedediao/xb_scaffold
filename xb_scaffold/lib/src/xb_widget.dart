@@ -94,7 +94,9 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
         builder: (context, vm, child) {
           return LayoutBuilder(
             builder: (context, constraints) {
-              vm.widgetSize = Size(constraints.maxWidth, constraints.maxHeight);
+              // build 期仅更新值，widgetSizeDidChanged 回调延迟到帧结束后触发
+              vm.updateWidgetSize(
+                  Size(constraints.maxWidth, constraints.maxHeight));
               return widget.buildWidget(context);
             },
           );

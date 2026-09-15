@@ -309,7 +309,7 @@ The widget wraps itself in `ChangeNotifierProvider<T>.value` + `Consumer<T>` and
 - `removeListen<E>(Function(E) onData)` — unsubscribe a specific handler registered via `listen`.
 - `setRepo(XBRepository?)` / `repo<R>()` — lifecycle-managed repository.
 - `disposed` — check before async work completes.
-- `widgetSize` / `widgetSizeDidChanged()` — react to layout size changes.
+- `widgetSize` / `widgetSizeDidChanged()` — react to layout size changes. The callback fires post-frame (not during build), so calling `notify()` inside it is safe; multiple size changes within one frame coalesce into a single callback.
 
 ### XBPage<T extends XBPageVM> extends XBWidget<T>
 

@@ -20,14 +20,37 @@ class XBVM<T> extends ChangeNotifier {
 
   Size _widgetSize = Size.zero;
   Size get widgetSize => _widgetSize;
-  set widgetSize(Size newValue) {
+
+  bool _widgetSizeCallbackScheduled = false;
+
+  /// 更新布局尺寸（框架由 LayoutBuilder 调用，业务方一般无需手动调用），
+  /// [widgetSizeDidChanged] 回调延迟到当前帧结束后触发。
+  ///
+  /// 更新发生在 LayoutBuilder 的 build 期，若同步触发回调，
+  /// 业务方在回调里调 notify() 会触发
+  /// "setState() or markNeedsBuild() called during build" 断言。
+  /// 同一帧内多次尺寸变化合并为一次回调。
+  void updateWidgetSize(Size newValue) {
     if (_widgetSize == newValue) {
       return;
     }
     _widgetSize = newValue;
-    widgetSizeDidChanged();
+    if (_widgetSizeCallbackScheduled) {
+      return;
+    }
+    _widgetSizeCallbackScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _widgetSizeCallbackScheduled = false;
+      if (mounted) {
+        widgetSizeDidChanged();
+      }
+    });
   }
 
+  /// 保持兼容：等价于 [updateWidgetSize]，回调同样延迟到帧结束后触发
+  set widgetSize(Size newValue) => updateWidgetSize(newValue);
+
+  /// 布局尺寸变化回调（帧结束后触发，一帧内多次变化合并为一次）
   void widgetSizeDidChanged() {}
 
   XBVM({required this.context});
