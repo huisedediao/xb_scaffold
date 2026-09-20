@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +9,7 @@ import '../core/xb_ume_controller.dart';
 import '../core/xb_ume_notice_service.dart';
 import '../core/xb_ume_widget_locator_resolver.dart';
 import '../core/xb_ume_widget_pick_service.dart';
+import '../core/xb_ume_widget_spacing_calculator.dart';
 import 'xb_ume_panel.dart';
 import 'xb_ume_theme.dart';
 
@@ -300,6 +302,18 @@ class _XbUmeHostState extends State<XBUmeHost> {
       return const <Widget>[];
     }
 
+    // 间距测量：以实际参与高亮的 rect 对应的 Element 为目标。
+    final Element spacingTarget =
+        (picked != null && rect == picked)
+            ? result.pickedElement
+            : result.resolvedElement;
+    final XBUmeWidgetSpacing? spacing = const XBUmeWidgetSpacingCalculator(
+      debugLog: kDebugMode,
+    ).calculate(
+      spacingTarget,
+      searchRoot: _appRootKey.currentContext as Element?,
+    );
+
     const bubbleHorizontalPadding = 8.0;
     final bubbleWidth = math.min(560.0, viewportSize.width - 16);
     final left = clamped.left.clamp(
@@ -432,6 +446,16 @@ class _XbUmeHostState extends State<XBUmeHost> {
                     ),
                     const SizedBox(height: 2),
                     Text(_wrapPathForDisplay(parentLocationText)),
+                    if (spacing != null && spacing.hasAny) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'spacing: ${spacing.summaryText}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFFB0BEC5),
+                        ),
+                      ),
+                    ],
                     if (_bubbleExpanded) ..._buildChainRows(result),
                     const SizedBox(height: 6),
                     Row(
@@ -508,6 +532,19 @@ class _XbUmeHostState extends State<XBUmeHost> {
           left: left,
           top: bubbleTop,
           child: bubble,
+        ),
+      // 间距标注：绘制在最上层，避免被高亮框/气泡遮挡影响读数。
+      if (spacing != null && spacing.hasAny)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _SpacingGuidesPainter(
+                spacing: spacing,
+                viewportSize: viewportSize,
+                visibleHeight: visibleHeight,
+              ),
+            ),
+          ),
         ),
     ];
   }
@@ -791,5 +828,186 @@ class _XbUmeHostState extends State<XBUmeHost> {
     final x = offset.dx.clamp(0.0, (maxWidth - size).clamp(0.0, maxWidth));
     final y = offset.dy.clamp(0.0, (maxHeight - size).clamp(0.0, maxHeight));
     return Offset(x, y);
+  }
+}
+
+/// 间距标注绘制：在高亮框四周绘制到同级组件 / 父组件边缘的测量线与数值。
+/// 同级间距用橙色，父边缘间距用绿色，与青色高亮框区分。
+class _SpacingGuidesPainter extends CustomPainter {
+  _SpacingGuidesPainter({
+    required this.spacing,
+    required this.viewportSize,
+    required this.visibleHeight,
+  });
+
+  final XBUmeWidgetSpacing spacing;
+  final Size viewportSize;
+  final double visibleHeight;
+
+  static const Color _componentColor = Color(0xFFFF9800);
+  static const Color _parentEdgeColor = Color(0xFF4CAF50);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final clip = Rect.fromLTWH(0, 0, viewportSize.width, visibleHeight);
+    final target = spacing.targetRect;
+
+    // 参照组件虚线框：按 rect 去重（同一组件作多方向参照只画一个），
+    // 弱于主高亮（虚线、1px、60% 透明度），颜色与对应测量线一致。
+    final framedRects = <Rect>{};
+    for (final item in spacing.items) {
+      final sourceRect = item.sourceRect;
+      if (sourceRect == null || !framedRects.add(sourceRect)) continue;
+      final frame = Rect.fromLTRB(
+        sourceRect.left.clamp(clip.left, clip.right),
+        sourceRect.top.clamp(clip.top, clip.bottom),
+        sourceRect.right.clamp(clip.left, clip.right),
+        sourceRect.bottom.clamp(clip.top, clip.bottom),
+      );
+      if (frame.width < 1 || frame.height < 1) continue;
+      final color = (item.source == XBUmeSpacingSource.component
+              ? _componentColor
+              : _parentEdgeColor)
+          .withValues(alpha: 0.6);
+      _drawDashedRect(canvas, frame, color);
+    }
+
+    for (final item in spacing.items) {
+      final Offset from;
+      final Offset to;
+      if (item.direction == XBUmeSpacingDirection.up) {
+        from = Offset(target.center.dx, target.top);
+        to = Offset(target.center.dx, target.top - item.distance);
+      } else if (item.direction == XBUmeSpacingDirection.down) {
+        from = Offset(target.center.dx, target.bottom);
+        to = Offset(target.center.dx, target.bottom + item.distance);
+      } else if (item.direction == XBUmeSpacingDirection.left) {
+        from = Offset(target.left, target.center.dy);
+        to = Offset(target.left - item.distance, target.center.dy);
+      } else {
+        from = Offset(target.right, target.center.dy);
+        to = Offset(target.right + item.distance, target.center.dy);
+      }
+      final clampedFrom = Offset(
+        from.dx.clamp(clip.left, clip.right),
+        from.dy.clamp(clip.top, clip.bottom),
+      );
+      final clampedTo = Offset(
+        to.dx.clamp(clip.left, clip.right),
+        to.dy.clamp(clip.top, clip.bottom),
+      );
+      final color = item.source == XBUmeSpacingSource.component
+          ? _componentColor
+          : _parentEdgeColor;
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke;
+      final length = (clampedTo - clampedFrom).distance;
+      if (length >= 1) {
+        canvas.drawLine(clampedFrom, clampedTo, paint);
+        _drawTick(canvas, clampedFrom, clampedTo, paint);
+        _drawTick(canvas, clampedTo, clampedFrom, paint);
+      }
+      final mid = length >= 1
+          ? Offset(
+              (clampedFrom.dx + clampedTo.dx) / 2,
+              (clampedFrom.dy + clampedTo.dy) / 2,
+            )
+          : clampedFrom;
+      _drawLabel(canvas, clip, item, mid, color);
+    }
+  }
+
+  /// 绘制虚线圆角边框（dash 4 / gap 3），用于标出间距参照组件。
+  void _drawDashedRect(Canvas canvas, Rect rect, Color color) {
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      var draw = true;
+      while (distance < metric.length) {
+        final next = math.min(
+          distance + (draw ? 4.0 : 3.0),
+          metric.length,
+        );
+        canvas.drawPath(metric.extractPath(distance, next), paint);
+        distance = next;
+        draw = !draw;
+      }
+    }
+  }
+
+  /// 在测量线两端绘制垂直于线段的小刻度。
+  void _drawTick(Canvas canvas, Offset at, Offset towards, Paint paint) {
+    final dir = towards - at;
+    if (dir.distance == 0) return;
+    final unit = dir / dir.distance;
+    final perp = Offset(-unit.dy, unit.dx) * 5;
+    canvas.drawLine(at - perp, at + perp, paint);
+  }
+
+  void _drawLabel(
+    Canvas canvas,
+    Rect clip,
+    XBUmeSpacingItem item,
+    Offset mid,
+    Color color,
+  ) {
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: item.distance.toStringAsFixed(1),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+          decoration: TextDecoration.none,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final bool vertical = item.direction == XBUmeSpacingDirection.up ||
+        item.direction == XBUmeSpacingDirection.down;
+    final Offset topLeft;
+    if (vertical) {
+      topLeft = Offset(mid.dx + 4, mid.dy - textPainter.height / 2);
+    } else {
+      topLeft = Offset(
+        mid.dx - textPainter.width / 2,
+        mid.dy - textPainter.height - 4,
+      );
+    }
+    final double x = topLeft.dx.clamp(
+      clip.left + 2,
+      math.max(clip.left + 2, clip.right - textPainter.width - 2),
+    );
+    final double y = topLeft.dy.clamp(
+      clip.top + 2,
+      math.max(clip.top + 2, clip.bottom - textPainter.height - 2),
+    );
+    final bgRect = Rect.fromLTWH(
+      x - 4,
+      y - 2,
+      textPainter.width + 8,
+      textPainter.height + 4,
+    );
+    // 实底彩色标签：橙 = 到可见组件，绿 = 到父边缘，保证各方向读数清晰。
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
+      Paint()..color = color,
+    );
+    textPainter.paint(canvas, Offset(x, y));
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpacingGuidesPainter oldDelegate) {
+    return oldDelegate.spacing != spacing ||
+        oldDelegate.viewportSize != viewportSize ||
+        oldDelegate.visibleHeight != visibleHeight;
   }
 }

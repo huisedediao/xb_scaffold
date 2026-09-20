@@ -579,7 +579,7 @@ packages:
       path: "../xb_scaffold"
       relative: true
     source: path
-    version: "1.1.9"
+    version: "1.1.10"
   xb_simple_router:
     dependency: "direct main"
     description:
