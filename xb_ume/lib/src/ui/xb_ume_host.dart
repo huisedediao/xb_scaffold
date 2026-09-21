@@ -39,6 +39,10 @@ class _XbUmeHostState extends State<XBUmeHost> {
   bool _pickMode = false;
   XBUmeWidgetLocatorResult? _pickResult;
   bool _bubbleExpanded = false;
+  // 信息气泡相对默认位置的拖拽偏移；切换选中组件时重置。
+  Offset _bubbleDragDelta = Offset.zero;
+  // 用于读取气泡自身尺寸，拖拽时做边界 clamp。
+  final GlobalKey _bubbleKey = GlobalKey(debugLabel: 'xb_ume_bubble');
   XBUmeNotice? _notice;
   String? _lastSelectionLayoutLogKey;
 
@@ -374,16 +378,45 @@ class _XbUmeHostState extends State<XBUmeHost> {
       spaceBelow: spaceBelow,
     );
 
+    // 拖拽偏移边界 clamp：保证气泡四周至少留 8px 在可视区内。
+    Offset clampBubbleDelta(Offset delta) {
+      var bubbleW = bubbleWidth;
+      var bubbleH = 40.0;
+      final bubbleRo = _bubbleKey.currentContext?.findRenderObject();
+      if (bubbleRo is RenderBox && bubbleRo.hasSize) {
+        bubbleW = bubbleRo.size.width;
+        bubbleH = bubbleRo.size.height;
+      }
+      final minX = 8.0 - (left + bubbleW);
+      final maxX = viewportSize.width - 8.0 - left;
+      final minY = 8.0 - bubbleTop;
+      final maxY = visibleHeight - 8.0 - bubbleTop - bubbleH;
+      return Offset(
+        delta.dx.clamp(math.min(minX, maxX), math.max(minX, maxX)).toDouble(),
+        delta.dy.clamp(math.min(minY, maxY), math.max(minY, maxY)).toDouble(),
+      );
+    }
+
     final Widget bubble = Material(
       color: Colors.transparent,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        // 展开态为全屏面板，不参与拖拽；收起态支持拖动。
+        onPanUpdate: _bubbleExpanded
+            ? null
+            : (details) {
+                _setStateSafely(() {
+                  _bubbleDragDelta =
+                      clampBubbleDelta(_bubbleDragDelta + details.delta);
+                });
+              },
         onTap: () {
           _setStateSafely(() {
             _bubbleExpanded = !_bubbleExpanded;
           });
         },
         child: Container(
+          key: _bubbleKey,
           width: _bubbleExpanded ? null : bubbleWidth,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
@@ -408,18 +441,29 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      result.pickedWidgetType != result.resolvedWidgetType
-                          ? 'picked: ${result.pickedWidgetType}'
-                          : result.resolvedWidgetType,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color:
-                            result.pickedWidgetType != result.resolvedWidgetType
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          result.pickedWidgetType != result.resolvedWidgetType
+                              ? 'picked: ${result.pickedWidgetType}'
+                              : result.resolvedWidgetType,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: result.pickedWidgetType !=
+                                    result.resolvedWidgetType
                                 ? const Color(0xFF00E5FF)
                                 : Colors.white,
-                      ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.drag_indicator,
+                          size: 12,
+                          color: const Color(0xFF00E5FF).withValues(alpha: 0.6),
+                        ),
+                      ],
                     ),
                     if (result.pickedWidgetType !=
                         result.resolvedWidgetType) ...[
@@ -529,8 +573,8 @@ class _XbUmeHostState extends State<XBUmeHost> {
         )
       else
         Positioned(
-          left: left,
-          top: bubbleTop,
+          left: left + _bubbleDragDelta.dx,
+          top: bubbleTop + _bubbleDragDelta.dy,
           child: bubble,
         ),
       // 间距标注：绘制在最上层，避免被高亮框/气泡遮挡影响读数。
@@ -795,6 +839,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
     _setStateSafely(() {
       _pickResult = _pickService.selectedResult.value;
       _bubbleExpanded = false;
+      _bubbleDragDelta = Offset.zero;
     });
   }
 
