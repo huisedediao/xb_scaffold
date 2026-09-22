@@ -307,7 +307,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   _bubbleTipText!,
                   style: const TextStyle(
                     fontSize: 11,
-                    color: Color(0xFF4CAF50),
+                    color: Color(0xFF00E5FF),
                   ),
                 ),
               ),
