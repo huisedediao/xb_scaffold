@@ -139,7 +139,7 @@ dart run xb_ume:ide --uninstall        # 卸载
 
 - `flutter run` 或 IDE 运行按钮启动的调试会话会被自动发现并接入：daemon 轮询扫描本机回环监听端口，探测 `GET /getVM` 返回 `type=VM` 的 VM service（覆盖 flutter 工具代理、adb forward / hdc fport、桌面直连等各种暴露方式，无需依赖设备日志或 mDNS）；
 - 同一台电脑多台设备同时调试均支持；App 重启自动重连，会话断开自动清理；
-- IDE 检测顺序可配置（VS Code 系 fork，均支持 `-g file:line:col`）：默认 Qoder（`qodercn`）→ Cursor（`cursor`）→ Trae（`trae`）→ Windsurf（`windsurf`）→ VS Code（`code`）→ Android Studio（命令行 `--line/--column`，`jetbrains://` 深链兜底）；未安装 shell 命令时 macOS 下自动回退到 /Applications 内 app 内置 CLI；可用 `--ide qodercn|cursor|trae|windsurf|code|androidStudio` 显式指定；
+- IDE 检测顺序可配置（VS Code 系 fork，均支持 `-g file:line:col`）：默认 Qoder（`qodercn`）→ Cursor（`cursor`）→ Trae（`trae`）→ Windsurf（`windsurf`）→ VS Code（`code`）→ Android Studio（macOS 走 `idea://` 深链，其他平台命令行 `--line/--column`；注：JetBrains 仅能对**已打开项目内**的文件定位行列，项目外文件只打开——如需定位依赖包源码，请先在 Android Studio 中 File → Open 打开该包目录）；未安装 shell 命令时 macOS 下自动回退到 /Applications 内 app 内置 CLI；可用 `--ide qodercn|cursor|trae|windsurf|code|androidStudio` 显式指定；
 - **自定义 IDE 优先级**：daemon 每次唤起时重新读取 `~/.xb_ume_ide/config.json`，修改立即生效，无需重启：
 
   ```bash

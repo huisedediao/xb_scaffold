@@ -899,8 +899,19 @@ Future<bool> _launchIde(
     return _runChecked(resolved, <String>['-g', location]);
   }
   if (ide == 'androidStudio') {
-    // 命令行启动器：官方参数为 --line/--column，且选项必须位于文件路径之前
-    // （旧实现写成 `path --line N`，行列参数被忽略，只能打开文件）。
+    // macOS：AS 注册的是 idea:// 协议（未注册 jetbrains://，深链无人处理；
+    // 已运行实例经原生 launcher 转发时 --line/--column 被丢弃）。
+    // idea://open 对 AS 已打开项目内的文件可精确定位行列；项目外文件
+    // JetBrains 仅能打开、无法定位（平台限制，需在 AS 中打开该项目才能定位）。
+    if (Platform.isMacOS) {
+      final query = 'file=${Uri.encodeComponent(path)}&line=$line'
+          '${column != null ? '&column=$column' : ''}';
+      if (await _runChecked('open', <String>['idea://open?$query'])) {
+        return true;
+      }
+    }
+    // 非 macOS：命令行启动器，官方参数为 --line/--column，
+    // 且选项必须位于文件路径之前。
     for (final bin in _androidStudioBinaries()) {
       if (await _hasCommand(bin) || File(bin).existsSync()) {
         final args = <String>[
@@ -921,18 +932,6 @@ Future<bool> _launchIde(
             return true;
           }
         }
-      }
-    }
-    // 深链兜底：标准格式为 navigate/reference?path=<file>:<line>:<column>，
-    // 需 URL 编码；open 几乎总返回 0，无法判断真实处理结果，仅作最后手段。
-    if (Platform.isMacOS) {
-      final locationParam =
-          column != null ? '$path:$line:$column' : '$path:$line';
-      final deepLink =
-          'jetbrains://Android-Studio/navigate/reference'
-          '?path=${Uri.encodeComponent(locationParam)}';
-      if (await _runChecked('open', <String>[deepLink])) {
-        return true;
       }
     }
     return false;
