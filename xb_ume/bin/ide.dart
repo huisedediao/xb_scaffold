@@ -899,22 +899,40 @@ Future<bool> _launchIde(
     return _runChecked(resolved, <String>['-g', location]);
   }
   if (ide == 'androidStudio') {
-    if (Platform.isMacOS) {
-      final deepLink =
-          'jetbrains://Android-Studio/open?file=$path&line=$line'
-          '${column != null ? '&column=$column' : ''}';
-      if (await _runChecked('open', <String>[deepLink])) {
-        return true;
+    // 命令行启动器：官方参数为 --line/--column，且选项必须位于文件路径之前
+    // （旧实现写成 `path --line N`，行列参数被忽略，只能打开文件）。
+    for (final bin in _androidStudioBinaries()) {
+      if (await _hasCommand(bin) || File(bin).existsSync()) {
+        final args = <String>[
+          '--line',
+          '$line',
+          if (column != null) ...<String>['--column', '$column'],
+          path,
+        ];
+        if (await _runChecked(bin, args)) {
+          return true;
+        }
+        // 旧版本不识别 --column 时退化为仅 --line 重试。
+        if (column != null) {
+          if (await _runChecked(
+            bin,
+            <String>['--line', '$line', path],
+          )) {
+            return true;
+          }
+        }
       }
     }
-    for (final bin in _androidStudioBinaries()) {
-      final exists = await _hasCommand(bin) || File(bin).existsSync();
-      if (exists) {
-        final cmd = bin.contains('/') ? bin : bin;
-        return _runChecked(
-          cmd,
-          <String>[path, '--line', '$line'],
-        );
+    // 深链兜底：标准格式为 navigate/reference?path=<file>:<line>:<column>，
+    // 需 URL 编码；open 几乎总返回 0，无法判断真实处理结果，仅作最后手段。
+    if (Platform.isMacOS) {
+      final locationParam =
+          column != null ? '$path:$line:$column' : '$path:$line';
+      final deepLink =
+          'jetbrains://Android-Studio/navigate/reference'
+          '?path=${Uri.encodeComponent(locationParam)}';
+      if (await _runChecked('open', <String>[deepLink])) {
+        return true;
       }
     }
     return false;
