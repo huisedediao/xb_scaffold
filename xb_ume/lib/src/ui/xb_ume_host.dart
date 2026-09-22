@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -6,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../core/xb_ume_controller.dart';
+import '../core/xb_ume_ide_jump.dart';
 import '../core/xb_ume_notice_service.dart';
 import '../core/xb_ume_widget_locator_resolver.dart';
 import '../core/xb_ume_widget_pick_service.dart';
@@ -43,6 +45,9 @@ class _XbUmeHostState extends State<XBUmeHost> {
   Offset _bubbleDragDelta = Offset.zero;
   // 用于读取气泡自身尺寸，拖拽时做边界 clamp。
   final GlobalKey _bubbleKey = GlobalKey(debugLabel: 'xb_ume_bubble');
+  // 双击跳转后的临时提示文案（2s 自动消失）。
+  String? _bubbleActionText;
+  Timer? _bubbleActionTimer;
   XBUmeNotice? _notice;
   String? _lastSelectionLayoutLogKey;
 
@@ -65,6 +70,7 @@ class _XbUmeHostState extends State<XBUmeHost> {
 
   @override
   void dispose() {
+    _bubbleActionTimer?.cancel();
     widget.controller.panelVisible.removeListener(_onPanelVisibleChanged);
     _pickService.picking.removeListener(_onPickModeChanged);
     _pickService.selectedResult.removeListener(_onPickResultChanged);
@@ -441,39 +447,53 @@ class _XbUmeHostState extends State<XBUmeHost> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          result.pickedWidgetType != result.resolvedWidgetType
-                              ? 'picked: ${result.pickedWidgetType}'
-                              : result.resolvedWidgetType,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: result.pickedWidgetType !=
+                    // 头部行：_jumpableRow 自带 Expanded 行布局，
+                    // 不可再包无界 Row（Expanded 需有界宽度约束）。
+                    _jumpableRow(
+                      file: result.file,
+                      line: result.line,
+                      column: result.column,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            result.pickedWidgetType !=
                                     result.resolvedWidgetType
-                                ? const Color(0xFF00E5FF)
-                                : Colors.white,
+                                ? 'picked: ${result.pickedWidgetType}'
+                                : result.resolvedWidgetType,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: result.pickedWidgetType !=
+                                      result.resolvedWidgetType
+                                  ? const Color(0xFF00E5FF)
+                                  : Colors.white,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.drag_indicator,
-                          size: 12,
-                          color: const Color(0xFF00E5FF).withValues(alpha: 0.6),
-                        ),
-                      ],
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.drag_indicator,
+                            size: 12,
+                            color: const Color(0xFF00E5FF)
+                                .withValues(alpha: 0.6),
+                          ),
+                        ],
+                      ),
                     ),
                     if (result.pickedWidgetType !=
                         result.resolvedWidgetType) ...[
                       const SizedBox(height: 2),
-                      Text(
-                        'resolved: ${result.resolvedWidgetType}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFFB0BEC5),
+                      _jumpableRow(
+                        file: result.file,
+                        line: result.line,
+                        column: result.column,
+                        child: Text(
+                          'resolved: ${result.resolvedWidgetType}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFFB0BEC5),
+                          ),
                         ),
                       ),
                     ],
@@ -484,12 +504,22 @@ class _XbUmeHostState extends State<XBUmeHost> {
                       Text(lineColumnText),
                     ],
                     const SizedBox(height: 6),
-                    Text(
-                      'parent: ${result.parentWidgetType ?? '-'}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    _jumpableRow(
+                      file: result.parentFile,
+                      line: result.parentLine,
+                      column: result.parentColumn,
+                      child: Text(
+                        'parent: ${result.parentWidgetType ?? '-'}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
                     const SizedBox(height: 2),
-                    Text(_wrapPathForDisplay(parentLocationText)),
+                    _jumpableRow(
+                      file: result.parentFile,
+                      line: result.parentLine,
+                      column: result.parentColumn,
+                      child: Text(_wrapPathForDisplay(parentLocationText)),
+                    ),
                     if (spacing != null && spacing.hasAny) ...[
                       const SizedBox(height: 6),
                       Text(
@@ -501,6 +531,16 @@ class _XbUmeHostState extends State<XBUmeHost> {
                       ),
                     ],
                     if (_bubbleExpanded) ..._buildChainRows(result),
+                    if (_bubbleActionText != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _bubbleActionText!,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF4CAF50),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -638,7 +678,14 @@ class _XbUmeHostState extends State<XBUmeHost> {
         currentFile = file;
         hasGroup = true;
       }
-      rows.add(_buildChainRow(node));
+      rows.add(
+        _jumpableRow(
+          file: node.file,
+          line: node.line,
+          column: node.column,
+          child: _buildChainRow(node),
+        ),
+      );
     }
     return <Widget>[
       const SizedBox(height: 6),
@@ -650,6 +697,11 @@ class _XbUmeHostState extends State<XBUmeHost> {
       const Text(
         'widget chain (root → picked):',
         style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 2),
+      const Text(
+        '点击行尾箭头可在 IDE 打开源码',
+        style: TextStyle(fontSize: 10, color: Color(0xFF8B95A5)),
       ),
       const SizedBox(height: 2),
       ...rows,
@@ -676,6 +728,67 @@ class _XbUmeHostState extends State<XBUmeHost> {
         ],
       ),
     );
+  }
+
+  /// 可跳转行：行尾带箭头按钮，点击经 VM service 事件请求 IDE 打开源码。
+  Widget _jumpableRow({
+    required Widget child,
+    required String? file,
+    required int? line,
+    required int? column,
+  }) {
+    final jumpable = file != null && file.isNotEmpty && line != null;
+    if (!jumpable) {
+      return child;
+    }
+    return Row(
+      children: [
+        Expanded(child: child),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _openSourceFromLocation(
+            file: file,
+            line: line,
+            column: column,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Icon(
+              Icons.north_east,
+              size: 12,
+              color: const Color(0xFF00E5FF).withValues(alpha: 0.85),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openSourceFromLocation({
+    required String? file,
+    required int? line,
+    required int? column,
+  }) async {
+    final sent = await XBUmeIdeJump.requestOpen(
+      file: file,
+      line: line,
+      column: column,
+    );
+    _showBubbleAction(
+      sent ? '已发送 IDE 打开请求，路径已复制' : '路径已复制到剪贴板',
+    );
+  }
+
+  void _showBubbleAction(String text) {
+    _setStateSafely(() {
+      _bubbleActionText = text;
+    });
+    _bubbleActionTimer?.cancel();
+    _bubbleActionTimer = Timer(const Duration(seconds: 2), () {
+      _setStateSafely(() {
+        _bubbleActionText = null;
+      });
+    });
   }
 
   String _wrapPathForDisplay(String path) {
