@@ -287,20 +287,29 @@ class _XbUmeHostState extends State<XBUmeHost> {
           Positioned(
             left: _bubbleTipOffset.dx,
             top: _bubbleTipOffset.dy,
-            child: Container(
-              key: _bubbleTipKey,
-              constraints: const BoxConstraints(maxWidth: 260),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xE6101418),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: const Color(0xFF00E5FF).withValues(alpha: 0.5),
+            // 透明 Material：提供文字渲染上下文，否则 Text 无样式继承
+            // 会显示 Flutter 默认的黄色双下划线。
+            child: Material(
+              type: MaterialType.transparency,
+              child: Container(
+                key: _bubbleTipKey,
+                constraints: const BoxConstraints(maxWidth: 260),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xE6101418),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: const Color(0xFF00E5FF).withValues(alpha: 0.5),
+                  ),
                 ),
-              ),
-              child: Text(
-                _bubbleTipText!,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF4CAF50)),
+                child: Text(
+                  _bubbleTipText!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF4CAF50),
+                  ),
+                ),
               ),
             ),
           ),
