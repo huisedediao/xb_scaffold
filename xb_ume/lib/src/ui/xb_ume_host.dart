@@ -45,8 +45,11 @@ class _XbUmeHostState extends State<XBUmeHost> {
   Offset _bubbleDragDelta = Offset.zero;
   // 用于读取气泡自身尺寸，拖拽时做边界 clamp。
   final GlobalKey _bubbleKey = GlobalKey(debugLabel: 'xb_ume_bubble');
-  // 双击跳转后的临时提示文案（2s 自动消失）。
-  String? _bubbleActionText;
+  // 跳转请求发出后的浮动提示（锚定被点击的箭头，2s 自动消失）。
+  String? _bubbleTipText;
+  Rect? _bubbleTipAnchor;
+  Offset _bubbleTipOffset = Offset.zero;
+  final GlobalKey _bubbleTipKey = GlobalKey(debugLabel: 'xb_ume_bubble_tip');
   Timer? _bubbleActionTimer;
   XBUmeNotice? _notice;
   String? _lastSelectionLayoutLogKey;
@@ -71,6 +74,8 @@ class _XbUmeHostState extends State<XBUmeHost> {
   @override
   void dispose() {
     _bubbleActionTimer?.cancel();
+    _bubbleTipText = null;
+    _bubbleTipAnchor = null;
     widget.controller.panelVisible.removeListener(_onPanelVisibleChanged);
     _pickService.picking.removeListener(_onPickModeChanged);
     _pickService.selectedResult.removeListener(_onPickResultChanged);
@@ -275,6 +280,29 @@ class _XbUmeHostState extends State<XBUmeHost> {
             result: result!,
             viewportSize: viewportSize,
             visibleHeight: visibleHeight,
+          ),
+        // 跳转反馈浮动提示：锚定被点击的箭头，置于 Stack 顶层，
+        // 不受气泡展开/滚动影响。
+        if (_bubbleTipText != null && _bubbleTipAnchor != null)
+          Positioned(
+            left: _bubbleTipOffset.dx,
+            top: _bubbleTipOffset.dy,
+            child: Container(
+              key: _bubbleTipKey,
+              constraints: const BoxConstraints(maxWidth: 260),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xE6101418),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: const Color(0xFF00E5FF).withValues(alpha: 0.5),
+                ),
+              ),
+              child: Text(
+                _bubbleTipText!,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF4CAF50)),
+              ),
+            ),
           ),
       ],
     );
@@ -531,16 +559,6 @@ class _XbUmeHostState extends State<XBUmeHost> {
                       ),
                     ],
                     if (_bubbleExpanded) ..._buildChainRows(result),
-                    if (_bubbleActionText != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        _bubbleActionText!,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Color(0xFF4CAF50),
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 6),
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -744,21 +762,34 @@ class _XbUmeHostState extends State<XBUmeHost> {
     return Row(
       children: [
         Expanded(child: child),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _openSourceFromLocation(
-            file: file,
-            line: line,
-            column: column,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Icon(
-              Icons.north_east,
-              size: 12,
-              color: const Color(0xFF00E5FF).withValues(alpha: 0.85),
-            ),
-          ),
+        // 热区：图标外加四向 padding，保证点击目标 ≥ 28x28。
+        Builder(
+          builder: (buttonContext) {
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                Rect? anchorRect;
+                final ro = buttonContext.findRenderObject();
+                if (ro is RenderBox && ro.hasSize) {
+                  anchorRect = ro.localToGlobal(Offset.zero) & ro.size;
+                }
+                _openSourceFromLocation(
+                  file: file,
+                  line: line,
+                  column: column,
+                  anchorRect: anchorRect,
+                );
+              },
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Icon(
+                  Icons.north_east,
+                  size: 12,
+                  color: Color(0xFF00E5FF),
+                ),
+              ),
+            );
+          },
         ),
       ],
     );
@@ -768,27 +799,67 @@ class _XbUmeHostState extends State<XBUmeHost> {
     required String? file,
     required int? line,
     required int? column,
+    Rect? anchorRect,
   }) async {
     final sent = await XBUmeIdeJump.requestOpen(
       file: file,
       line: line,
       column: column,
     );
-    _showBubbleAction(
-      sent ? '已发送 IDE 打开请求，路径已复制' : '路径已复制到剪贴板',
-    );
+    if (anchorRect != null) {
+      _showBubbleAction(
+        sent ? '已发送 IDE 打开请求，路径已复制' : '路径已复制到剪贴板',
+        anchorRect: anchorRect,
+      );
+    }
   }
 
-  void _showBubbleAction(String text) {
+  /// 在被点击的箭头旁展示浮动提示（host Stack 顶层，2s 自动消失）。
+  void _showBubbleAction(String text, {required Rect anchorRect}) {
     _setStateSafely(() {
-      _bubbleActionText = text;
+      _bubbleTipText = text;
+      _bubbleTipAnchor = anchorRect;
+      _bubbleTipOffset = _tipOffsetFor(
+        anchorRect,
+        const Size(240, 32), // 插入前的估算尺寸，post frame 后实测修正。
+      );
     });
     _bubbleActionTimer?.cancel();
     _bubbleActionTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
       _setStateSafely(() {
-        _bubbleActionText = null;
+        _bubbleTipText = null;
+        _bubbleTipAnchor = null;
       });
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _bubbleTipText == null || _bubbleTipAnchor == null) {
+        return;
+      }
+      final ro = _bubbleTipKey.currentContext?.findRenderObject();
+      if (ro is RenderBox && ro.hasSize) {
+        final offset = _tipOffsetFor(_bubbleTipAnchor!, ro.size);
+        if (offset != _bubbleTipOffset) {
+          _setStateSafely(() {
+            _bubbleTipOffset = offset;
+          });
+        }
+      }
+    });
+  }
+
+  /// 计算提示浮层位置：默认在锚点上方居中，空间不足时放到下方，
+  /// 并 clamp 在可视区内。
+  Offset _tipOffsetFor(Rect anchor, Size tipSize) {
+    final size = MediaQuery.of(context).size;
+    var dx = anchor.center.dx - tipSize.width / 2;
+    dx = dx.clamp(8.0, math.max(8.0, size.width - tipSize.width - 8));
+    var dy = anchor.top - tipSize.height - 8;
+    if (dy < 8) {
+      dy = anchor.bottom + 8;
+    }
+    dy = dy.clamp(8.0, math.max(8.0, size.height - tipSize.height - 8));
+    return Offset(dx, dy);
   }
 
   String _wrapPathForDisplay(String path) {
