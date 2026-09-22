@@ -130,8 +130,15 @@ Locator 选中组件后，展开气泡中的链条行 / picked / parent 行**行
 cd /path/to/your/app   # 依赖 xb_ume 的项目目录
 flutter pub get
 dart run xb_ume:ide --install          # macOS：注册 LaunchAgent（登录自启 + 崩溃自拉起）
+                                       # Windows：写 HKCU 注册表 Run 键（登录自启）
 dart run xb_ume:ide --uninstall        # 卸载
 ```
+
+平台差异说明：
+
+- 会话自动发现：macOS/Linux 用 `lsof`，Windows 用自带 `netstat -ano`，能力一致；
+- IDE 唤起：VS Code 系三平台一致（PATH 优先 + app 内置 CLI 回退）；Android Studio 在 macOS 走 `idea://` 深链（行列定位，仅限已打开项目内文件），Windows/Linux 走命令行 `--line/--column`（行列定位效果取决于 JetBrains launcher，未实测）；
+- `--install` 自启：macOS LaunchAgent 崩溃自拉起；Windows Run 键仅登录自启、无崩溃自拉起。
 
 安装过程中若在终端运行，会列出本机检测到的 IDE 并让你按优先级选择（如输入 `2 1 3`，直接回车则使用默认顺序），选择结果写入 `~/.xb_ume_ide/config.json`。
 

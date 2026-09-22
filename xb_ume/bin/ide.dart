@@ -6,7 +6,8 @@
 //
 // 用法（零新增依赖，运行于宿主机）：
 //   dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]
-//       一次性安装：注册 macOS LaunchAgent（登录自启 + 崩溃自拉起）并立即启动；
+//       一次性安装（macOS 注册 LaunchAgent 登录自启 + 崩溃自拉起；
+//       Windows 写 HKCU 注册表 Run 键登录自启）；
 //       有终端时交互选择 IDE 优先级并写入 ~/.xb_ume_ide/config.json（回车=默认顺序）。
 //   dart run xb_ume:ide --configure [--ide-order "..."] [--show]
 //       查看/修改 IDE 优先级（daemon 每次跳转时重读配置，改完即生效）。
@@ -37,15 +38,20 @@ const String kLabel = 'com.xbume.ide';
 const String kInstallDirName = '.xb_ume_ide';
 const String kPlistName = '$kLabel.plist';
 const String kConfigName = 'config.json';
+const String kWinRunKeyPath =
+    r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
+const String kWinRunKeyName = 'XBumeIde';
 
 const Duration kPollInterval = Duration(seconds: 3);
 
-final String _home = Platform.environment['HOME'] ?? '.';
+/// 用户主目录：Windows 用 USERPROFILE（HOME 通常不存在），其余用 HOME。
+final String _home =
+    Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
 
 void _printUsage() {
   print('''
 用法:
-  dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]  安装并启动守护进程（仅一次）
+  dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]  安装并启动守护进程（macOS/Windows）
   dart run xb_ume:ide --configure [--ide-order "..."] [--show]                   查看/修改 IDE 优先级
   dart run xb_ume:ide --uninstall                                卸载
   dart run xb_ume:ide --daemon [--ide ...]                       前台运行守护进程
@@ -94,8 +100,8 @@ Future<void> main(List<String> args) async {
 // ---------------------------------------------------------------------------
 
 Future<void> install(List<String> args) async {
-  if (!Platform.isMacOS) {
-    print('[xbume-ide] --install 仅支持 macOS；其他平台请用 --daemon 前台运行。');
+  if (!Platform.isMacOS && !Platform.isWindows) {
+    print('[xbume-ide] --install 仅支持 macOS/Windows；Linux 请用 --daemon 前台运行。');
     exitCode = 1;
     return;
   }
@@ -108,17 +114,62 @@ Future<void> install(List<String> args) async {
   final installDir = Directory('$_home/$kInstallDirName');
   await installDir.create(recursive: true);
   final deployedScript =
-      '${installDir.path}/ide.dart';
+      '${installDir.path}${Platform.pathSeparator}ide.dart';
   await File(deployedScript).writeAsString(File(scriptPath).readAsStringSync());
 
   final dartBin = Platform.resolvedExecutable;
-  final logPath = '$_home/Library/Logs/xb_ume_ide.log';
   final ide = _argValue(args, '--ide') ?? 'auto';
+
+  final bool ok;
+  final String detailPath;
+  final String logPath;
+  if (Platform.isMacOS) {
+    logPath = '$_home/Library/Logs/xb_ume_ide.log';
+    detailPath = '$_home/Library/LaunchAgents/$kPlistName';
+    ok = await _installMacosLaunchAgent(
+      dartBin: dartBin,
+      scriptPath: deployedScript,
+      logPath: logPath,
+      ide: ide,
+    );
+  } else {
+    logPath = '$installDir${Platform.pathSeparator}daemon.log';
+    detailPath = kWinRunKeyPath;
+    ok = await _installWindowsRunKey(
+      dartBin: dartBin,
+      scriptPath: deployedScript,
+      logPath: logPath,
+      ide: ide,
+    );
+  }
+  if (!ok) {
+    exitCode = 1;
+    return;
+  }
+
+  await _resolveAndSaveIdeOrder(
+    orderArg: _argValue(args, '--ide-order'),
+    ideArg: ide,
+  );
+  print('[xbume-ide] 安装完成，守护进程已启动。');
+  print('  注册: $detailPath');
+  print('  脚本 : $deployedScript');
+  print('  日志 : $logPath');
+  print('卸载: dart run xb_ume:ide --uninstall');
+}
+
+/// macOS：写 LaunchAgent plist 并注册立即启动。返回是否成功。
+Future<bool> _installMacosLaunchAgent({
+  required String dartBin,
+  required String scriptPath,
+  required String logPath,
+  required String ide,
+}) async {
   final plistPath = '$_home/Library/LaunchAgents/$kPlistName';
   await Directory('$_home/Library/LaunchAgents').create(recursive: true);
   await File(plistPath).writeAsString(_buildPlist(
     dartBin: dartBin,
-    scriptPath: deployedScript,
+    scriptPath: scriptPath,
     logPath: logPath,
     ide: ide,
   ));
@@ -140,29 +191,63 @@ Future<void> install(List<String> args) async {
     );
     if (loaded.exitCode != 0) {
       print('[xbume-ide] launchctl 注册失败: ${loaded.stderr}');
-      exitCode = 1;
-      return;
+      return false;
     }
   }
-  await _resolveAndSaveIdeOrder(
-    orderArg: _argValue(args, '--ide-order'),
-    ideArg: ide,
+  return true;
+}
+
+/// Windows：写 HKCU 注册表 Run 键实现登录自启（等效 macOS LaunchAgent）。
+/// Run 键由 explorer 在登录时启动，无 KeepAlive 等效物（崩溃不自拉起）；
+/// 如需查看日志可手动 `dart bin/ide.dart --daemon` 前台运行。
+/// 返回是否成功。
+Future<bool> _installWindowsRunKey({
+  required String dartBin,
+  required String scriptPath,
+  required String logPath,
+  required String ide,
+}) async {
+  final ideArgs = ide == 'auto' ? '' : ' --ide $ide';
+  // 通过 cmd 包装实现输出重定向到日志（Run 键自身不支持重定向）。
+  final value = 'cmd /c ""$dartBin" "$scriptPath" --daemon$ideArgs'
+      ' >> "$logPath" 2>&1"';
+  final result = await Process.run(
+    'reg',
+    <String>[
+      'add', kWinRunKeyPath, '/v', kWinRunKeyName,
+      '/t', 'REG_SZ', '/d', value, '/f',
+    ],
   );
-  print('[xbume-ide] 安装完成，守护进程已启动。');
-  print('  plist: $plistPath');
-  print('  脚本 : $deployedScript');
-  print('  日志 : $logPath');
-  print('卸载: dart run xb_ume:ide --uninstall');
+  if (result.exitCode != 0) {
+    print('[xbume-ide] 注册表写入失败: ${result.stderr}');
+    return false;
+  }
+  // 立即启动一次（不等下次登录）。
+  final start = await Process.start(
+    'cmd',
+    <String>['/c', 'start', '/b', '', dartBin, scriptPath, '--daemon'],
+    runInShell: true,
+  );
+  unawaited(start.exitCode);
+  return true;
 }
 
 Future<void> uninstall() async {
-  final uid = (await Process.run('id', <String>['-u'])).stdout.toString().trim();
-  final plistPath = '$_home/Library/LaunchAgents/$kPlistName';
-  await Process.run('launchctl', <String>['bootout', 'gui/$uid', plistPath]);
-  await Process.run('launchctl', <String>['remove', kLabel]);
-  final plist = File(plistPath);
-  if (plist.existsSync()) {
-    await plist.delete();
+  if (Platform.isMacOS) {
+    final uid =
+        (await Process.run('id', <String>['-u'])).stdout.toString().trim();
+    final plistPath = '$_home/Library/LaunchAgents/$kPlistName';
+    await Process.run('launchctl', <String>['bootout', 'gui/$uid', plistPath]);
+    await Process.run('launchctl', <String>['remove', kLabel]);
+    final plist = File(plistPath);
+    if (plist.existsSync()) {
+      await plist.delete();
+    }
+  } else if (Platform.isWindows) {
+    await Process.run(
+      'reg',
+      <String>['delete', kWinRunKeyPath, '/v', kWinRunKeyName, '/f'],
+    );
   }
   final dir = Directory('$_home/$kInstallDirName');
   if (dir.existsSync()) {
@@ -569,12 +654,21 @@ Future<Map<String, (String, String)>> _discoverLocalVmServices() async {
 /// 列出本机回环地址上的 TCP 监听端口。
 Future<List<int>> _loopbackListeningPorts() async {
   final ports = <int>{};
-  final output = await _runText(
-    'lsof',
-    const <String>['-nP', '-iTCP', '-sTCP:LISTEN'],
-  );
+  final String output;
+  if (Platform.isWindows) {
+    // Windows 无 lsof，用自带的 netstat：TCP 127.0.0.1:PORT ... LISTENING pid。
+    output = await _runText('netstat', const <String>['-ano']);
+  } else {
+    output = await _runText(
+      'lsof',
+      const <String>['-nP', '-iTCP', '-sTCP:LISTEN'],
+    );
+  }
   final pattern = RegExp(r'(?:127\.0\.0\.1|\*|\[::1\]):(\d+)\s');
   for (final line in output.split('\n')) {
+    if (Platform.isWindows && !line.contains('LISTENING')) {
+      continue;
+    }
     final match = pattern.firstMatch(line);
     if (match != null) {
       ports.add(int.parse(match.group(1)!));
@@ -780,7 +874,7 @@ const List<String> _vscodeLikeClis = <String>[
 const List<String> _defaultIdeOrder = <String>[..._vscodeLikeClis, 'androidStudio'];
 
 /// macOS 上未安装 shell 命令时，按 app 内置 CLI 兜底查找。
-const Map<String, List<String>> _vscodeLikeAppClis =
+const Map<String, List<String>> _macosVscodeLikeAppClis =
     <String, List<String>>{
   'qoder-cn': <String>[
     '/Applications/Qoder CN IDE.app/Contents/Resources/app/bin/qoder-cn',
@@ -805,12 +899,58 @@ const Map<String, List<String>> _vscodeLikeAppClis =
   ],
 };
 
-/// 解析 CLI 实际可执行路径：优先 PATH，macOS 下回退 app 内置 CLI。
+/// 未安装 shell 命令时按 app 内置 CLI 兜底查找。
+/// Windows 常见安装路径（Electron 应用结构，发行渠道众多，未逐一实测）。
+Map<String, List<String>> get _vscodeLikeAppClis {
+  if (Platform.isMacOS) {
+    return _macosVscodeLikeAppClis;
+  }
+  if (Platform.isWindows) {
+    final lad = Platform.environment['LOCALAPPDATA'];
+    if (lad == null) {
+      return const <String, List<String>>{};
+    }
+    String user(String app) => '$lad\\Programs\\$app\\resources\\app\\bin';
+    String system(String app) => 'C:\\Program Files\\$app\\resources\\app\\bin';
+    return <String, List<String>>{
+      'qoder-cn': <String>[
+        '${user('Qoder CN')}\\qoder-cn.cmd',
+        '${user('Qoder')}\\qoder-cn.cmd',
+        '${system('Qoder CN')}\\qoder-cn.cmd',
+      ],
+      'qodercn': <String>[
+        '${user('Qoder CN')}\\qodercn.cmd',
+        '${user('Qoder')}\\qodercn.cmd',
+        '${system('Qoder CN')}\\qodercn.cmd',
+      ],
+      'cursor': <String>[
+        '${user('Cursor')}\\cursor.cmd',
+        '${system('Cursor')}\\cursor.cmd',
+      ],
+      'trae': <String>[
+        '${user('Trae')}\\trae.cmd',
+        '${user('Trae CN')}\\trae.cmd',
+        '${system('Trae')}\\trae.cmd',
+      ],
+      'windsurf': <String>[
+        '${user('Windsurf')}\\windsurf.cmd',
+        '${system('Windsurf')}\\windsurf.cmd',
+      ],
+      'code': <String>[
+        '$lad\\Programs\\Microsoft VS Code\\bin\\code.cmd',
+        'C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd',
+      ],
+    };
+  }
+  return const <String, List<String>>{};
+}
+
+/// 解析 CLI 实际可执行路径：优先 PATH，macOS/Windows 下回退 app 内置 CLI。
 Future<String?> _resolveCliPath(String cli) async {
   if (await _hasCommand(cli)) {
     return cli;
   }
-  if (!Platform.isMacOS) {
+  if (!Platform.isMacOS && !Platform.isWindows) {
     return null;
   }
   for (final path in _vscodeLikeAppClis[cli] ?? const <String>[]) {
@@ -871,12 +1011,22 @@ Future<String?> _firstAvailable(List<String> commands) async {
 }
 
 List<String> _androidStudioBinaries() {
-  return Platform.isMacOS
-      ? <String>[
-          '/Applications/Android Studio.app/Contents/MacOS/studio',
-          '/Applications/Android Studio Preview.app/Contents/MacOS/studio',
-        ]
-      : <String>['studio', 'android-studio'];
+  if (Platform.isMacOS) {
+    return <String>[
+      '/Applications/Android Studio.app/Contents/MacOS/studio',
+      '/Applications/Android Studio Preview.app/Contents/MacOS/studio',
+    ];
+  }
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    return <String>[
+      r'C:\Program Files\Android\Android Studio\bin\studio64.exe',
+      r'C:\Program Files\Android\Android Studio Preview\bin\studio64.exe',
+      if (localAppData != null)
+        '$localAppData\\Programs\\Android Studio\\bin\\studio64.exe',
+    ];
+  }
+  return <String>['studio', 'android-studio'];
 }
 
 Future<bool> _launchIde(
@@ -987,7 +1137,10 @@ String _toFilePath(String uri) {
 
 Future<bool> _hasCommand(String command) async {
   try {
-    final result = await Process.run('which', <String>[command]);
+    // Windows 无 which，用自带的 where。
+    final result = Platform.isWindows
+        ? await Process.run('where', <String>[command])
+        : await Process.run('which', <String>[command]);
     return result.exitCode == 0;
   } catch (_) {
     return false;
@@ -996,7 +1149,13 @@ Future<bool> _hasCommand(String command) async {
 
 Future<bool> _runChecked(String command, List<String> args) async {
   try {
-    final result = await Process.run(command, args);
+    // Windows：CLI 多为 .cmd 批处理（code/cursor 等），CreateProcess
+    // 不会解析 .cmd，须走 shell。
+    final result = await Process.run(
+      command,
+      args,
+      runInShell: Platform.isWindows,
+    );
     return result.exitCode == 0;
   } catch (_) {
     return false;
