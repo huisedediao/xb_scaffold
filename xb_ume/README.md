@@ -133,11 +133,22 @@ dart run xb_ume:ide --install          # macOS：注册 LaunchAgent（登录自�
 dart run xb_ume:ide --uninstall        # 卸载
 ```
 
+安装过程中若在终端运行，会列出本机检测到的 IDE 并让你按优先级选择（如输入 `2 1 3`，直接回车则使用默认顺序），选择结果写入 `~/.xb_ume_ide/config.json`。
+
 安装后日常零操作：
 
 - `flutter run` 或 IDE 运行按钮启动的调试会话会被自动发现并接入：daemon 轮询扫描本机回环监听端口，探测 `GET /getVM` 返回 `type=VM` 的 VM service（覆盖 flutter 工具代理、adb forward / hdc fport、桌面直连等各种暴露方式，无需依赖设备日志或 mDNS）；
 - 同一台电脑多台设备同时调试均支持；App 重启自动重连，会话断开自动清理；
-- IDE 自动检测顺序（VS Code 系 fork，均支持 `-g file:line:col`）：Qoder（`qodercn`）→ Cursor（`cursor`）→ Trae（`trae`）→ Windsurf（`windsurf`）→ VS Code（`code`）→ Android Studio（`jetbrains://` 深链 / 可执行文件）；未安装 shell 命令时 macOS 下自动回退到 /Applications 内 app 内置 CLI；可用 `--ide qodercn|cursor|trae|windsurf|code|androidStudio` 显式指定；
+- IDE 检测顺序可配置（VS Code 系 fork，均支持 `-g file:line:col`）：默认 Qoder（`qodercn`）→ Cursor（`cursor`）→ Trae（`trae`）→ Windsurf（`windsurf`）→ VS Code（`code`）→ Android Studio（`jetbrains://` 深链 / 可执行文件）；未安装 shell 命令时 macOS 下自动回退到 /Applications 内 app 内置 CLI；可用 `--ide qodercn|cursor|trae|windsurf|code|androidStudio` 显式指定；
+- **自定义 IDE 优先级**：daemon 每次唤起时重新读取 `~/.xb_ume_ide/config.json`，修改立即生效，无需重启：
+
+  ```bash
+  dart run xb_ume:ide --configure                       # 交互式重新选择（同安装时）
+  dart run xb_ume:ide --configure --ide-order "cursor,qodercn,code"   # 非交互直接设置
+  dart run xb_ume:ide --configure --show                # 查看当前顺序与各 IDE 可用状态
+  ```
+
+  也可直接编辑 `~/.xb_ume_ide/config.json`；顺序中未安装的 IDE 自动跳过，配置缺失/损坏时回退默认顺序；
 - 不安装脚本时点击箭头仍可用（仅复制路径到剪贴板）；release 模式无 VM service，事件发送会静默降级。
 
 手动模式（自动发现不可用时的兑底）：

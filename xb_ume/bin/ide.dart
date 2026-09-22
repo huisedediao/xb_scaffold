@@ -5,20 +5,21 @@
 // IDE（VS Code / Android Studio）定位到对应源码行列。
 //
 // 用法（零新增依赖，运行于宿主机）：
-//   dart run xb_ume:ide --install [--ide auto|qodercn|cursor|trae|windsurf|code|androidStudio]
+//   dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]
 //       一次性安装：注册 macOS LaunchAgent（登录自启 + 崩溃自拉起）并立即启动；
+//       有终端时交互选择 IDE 优先级并写入 ~/.xb_ume_ide/config.json（回车=默认顺序）。
+//   dart run xb_ume:ide --configure [--ide-order "..."] [--show]
+//       查看/修改 IDE 优先级（daemon 每次跳转时重读配置，改完即生效）。
 //   dart run xb_ume:ide --uninstall
-//       卸载守护进程与安装文件；
+//       卸载守护进程与安装文件（含 config.json）。
 //   dart run xb_ume:ide --daemon [--ide ...]
 //       前台运行守护进程（不注册自启）；
 //   dart run xb_ume:ide --uri <ws-url> [--ide ...]
 //       手动监听单个 VM service（自动发现不可用时的兜底）。
 //
 // 自动发现（daemon 模式）：
-//   - adb / hdc 设备：轮询设备日志中 Flutter 标准输出
-//     "A Dart VM Service on ... is available at: http://127.0.0.1:PORT/.../"
-//     并做端口转发（adb forward / hdc fport）后连接；
-//   - macOS 桌面会话：dns-sd 浏览 _dartvmService._tcp（best-effort）。
+//   每 3s 轮询 lsof 列出本机回环监听端口，逐个 GET /getVM 探测，
+//   返回 {"result":{"type":"VM",...}} 即 VM service，连后订阅 Extension 流。
 // 同一台电脑可同时接入多台设备/多个会话；会话断开自动清理。
 //
 // ignore_for_file: avoid_print
@@ -35,6 +36,7 @@ const String kEventKind = 'xb_ume:openSource';
 const String kLabel = 'com.xbume.ide';
 const String kInstallDirName = '.xb_ume_ide';
 const String kPlistName = '$kLabel.plist';
+const String kConfigName = 'config.json';
 
 const Duration kPollInterval = Duration(seconds: 3);
 
@@ -43,10 +45,11 @@ final String _home = Platform.environment['HOME'] ?? '.';
 void _printUsage() {
   print('''
 用法:
-  dart run xb_ume:ide --install [--ide auto|qodercn|cursor|trae|windsurf|code|androidStudio]  安装并启动守护进程（仅一次）
-  dart run xb_ume:ide --uninstall                                  卸载
-  dart run xb_ume:ide --daemon [--ide ...]                         前台运行守护进程
-  dart run xb_ume:ide --uri <ws-url> [--ide ...]                   手动监听单个 VM service''');
+  dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]  安装并启动守护进程（仅一次）
+  dart run xb_ume:ide --configure [--ide-order "..."] [--show]                   查看/修改 IDE 优先级
+  dart run xb_ume:ide --uninstall                                卸载
+  dart run xb_ume:ide --daemon [--ide ...]                       前台运行守护进程
+  dart run xb_ume:ide --uri <ws-url> [--ide ...]                 手动监听单个 VM service''');
 }
 
 String? _argValue(List<String> args, String name) {
@@ -64,6 +67,13 @@ Future<void> main(List<String> args) async {
   }
   if (args.contains('--uninstall')) {
     await uninstall();
+    return;
+  }
+  if (args.contains('--configure')) {
+    await configure(
+      orderArg: _argValue(args, '--ide-order'),
+      show: args.contains('--show'),
+    );
     return;
   }
   final ide = _argValue(args, '--ide') ?? 'auto';
@@ -134,6 +144,10 @@ Future<void> install(List<String> args) async {
       return;
     }
   }
+  await _resolveAndSaveIdeOrder(
+    orderArg: _argValue(args, '--ide-order'),
+    ideArg: ide,
+  );
   print('[xbume-ide] 安装完成，守护进程已启动。');
   print('  plist: $plistPath');
   print('  脚本 : $deployedScript');
@@ -235,6 +249,231 @@ String? _selfScriptPath() {
     // ignored
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// IDE 优先级配置（~/.xb_ume_ide/config.json）
+//
+// daemon 在每次唤起 IDE 时重新读取，修改配置立即生效，无需重启。
+// 配置缺失/损坏时回退内置默认顺序；--ide 显式参数优先级最高。
+// ---------------------------------------------------------------------------
+
+File _configFile() => File('$_home/$kInstallDirName/$kConfigName');
+
+/// 全部合法的 IDE 名称（供 --ide-order 校验）。
+Set<String> get _knownIdeNames => <String>{..._vscodeLikeClis, 'androidStudio'};
+
+/// 读取 IDE 优先级配置；缺失/损坏时返回 null（回退内置默认顺序）。
+List<String>? loadIdeOrder() {
+  try {
+    final file = _configFile();
+    if (!file.existsSync()) {
+      return null;
+    }
+    final parsed = jsonDecode(file.readAsStringSync());
+    if (parsed is! Map<String, Object?>) {
+      return null;
+    }
+    final order = parsed['ideOrder'];
+    if (order is! List) {
+      return null;
+    }
+    final names =
+        order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    return names.isEmpty ? null : names;
+  } catch (e) {
+    print('[xbume-ide] 配置读取失败，回退默认顺序: $e');
+    return null;
+  }
+}
+
+Future<void> saveIdeOrder(List<String> order) async {
+  final file = _configFile();
+  await file.parent.create(recursive: true);
+  await file.writeAsString(
+    const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+      'ideOrder': order,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }),
+  );
+}
+
+/// 安装时确定 IDE 顺序：--ide-order > 交互选择 > 不写配置（保持默认）。
+/// 显式 --ide（非 auto）保持旧行为，不写配置。
+Future<void> _resolveAndSaveIdeOrder({
+  String? orderArg,
+  required String ideArg,
+}) async {
+  if (ideArg != 'auto') {
+    print('[xbume-ide] 已显式指定 IDE=$ideArg，跳过顺序配置。');
+    return;
+  }
+  if (orderArg != null) {
+    final order = _parseIdeOrder(orderArg);
+    if (order == null) {
+      exitCode = 1;
+      return;
+    }
+    await saveIdeOrder(order);
+    print('[xbume-ide] IDE 顺序已写入 ${_configFile().path}');
+    await _printEffectiveOrder();
+    return;
+  }
+  if (!stdin.hasTerminal) {
+    print('[xbume-ide] 非交互环境，未写 IDE 顺序配置（可用 --configure 配置）。');
+    return;
+  }
+  await _interactiveIdeSetup();
+}
+
+/// 交互式选择 IDE 优先级并写配置；用户回车跳过则不写。
+Future<void> _interactiveIdeSetup() async {
+  final candidates = await _availableIdeCandidates();
+  if (candidates.isEmpty) {
+    print('[xbume-ide] 未检测到可用 IDE，未写顺序配置（保持默认顺序）。');
+    return;
+  }
+  print('检测到可用的 IDE：');
+  for (var i = 0; i < candidates.length; i++) {
+    print('  [${i + 1}] ${candidates[i].label} (${candidates[i].name})');
+  }
+  stdout.write(
+    '请按优先级输入编号（如 "2 1 3"，空格/逗号分隔；直接回车=默认顺序）: ',
+  );
+  final line = (stdin.readLineSync() ?? '').trim();
+  if (line.isEmpty) {
+    print('[xbume-ide] 保持默认顺序，未写配置（可随时 --configure 修改）。');
+    return;
+  }
+  final order = _orderFromIndexes(line, candidates);
+  if (order == null) {
+    print('[xbume-ide] 输入无效，保持默认顺序（可随时 --configure 修改）。');
+    return;
+  }
+  await saveIdeOrder(order);
+  print('[xbume-ide] IDE 顺序已写入 ${_configFile().path}');
+  await _printEffectiveOrder();
+}
+
+Future<void> configure({String? orderArg, bool show = false}) async {
+  if (orderArg != null) {
+    final order = _parseIdeOrder(orderArg);
+    if (order == null) {
+      exitCode = 1;
+      return;
+    }
+    await saveIdeOrder(order);
+    print('[xbume-ide] IDE 顺序已写入 ${_configFile().path}');
+  } else if (!show && stdin.hasTerminal) {
+    await _interactiveIdeSetup();
+    return;
+  }
+  await _printEffectiveOrder();
+}
+
+Future<void> _printEffectiveOrder() async {
+  final configured = loadIdeOrder();
+  final names = configured ?? _defaultIdeOrder;
+  stdout.writeln(
+    '配置文件: ${_configFile().path}${configured == null ? '（不存在，使用默认顺序）' : ''}',
+  );
+  stdout.writeln('当前生效顺序:');
+  for (final name in names) {
+    if (name == 'androidStudio') {
+      final ok = await _hasAndroidStudio();
+      stdout.writeln('  - androidStudio ${ok ? '✓ 可用' : '✗ 未检测到'}');
+    } else {
+      final path = await _resolveCliPath(name);
+      stdout.writeln('  - $name ${path == null ? '✗ 未检测到' : '✓ $path'}');
+    }
+  }
+  stdout
+      .writeln('修改: dart run xb_ume:ide --configure [--ide-order "qodercn,cursor,code"]');
+}
+
+/// 解析 "2 1 3" / "2,1,3" 形式的编号输入为 IDE 名称列表。
+List<String>? _orderFromIndexes(String line, List<_IdeCandidate> candidates) {
+  final tokens =
+      line.split(RegExp(r'[,\s]+')).where((e) => e.isNotEmpty).toList();
+  final order = <String>[];
+  for (final token in tokens) {
+    final index = int.tryParse(token);
+    if (index == null || index < 1 || index > candidates.length) {
+      print('无效编号: $token');
+      return null;
+    }
+    final name = candidates[index - 1].name;
+    if (!order.contains(name)) {
+      order.add(name);
+    }
+  }
+  return order.isEmpty ? null : order;
+}
+
+/// 校验并解析 --ide-order 参数；非法名称返回 null 并打印可选值。
+List<String>? _parseIdeOrder(String arg) {
+  final tokens =
+      arg.split(RegExp(r'[,\s]+')).where((e) => e.isNotEmpty).toList();
+  if (tokens.isEmpty) {
+    print('[xbume-ide] --ide-order 为空（可选: ${_knownIdeNames.join(', ')}）。');
+    return null;
+  }
+  final order = <String>[];
+  for (final token in tokens) {
+    if (!_knownIdeNames.contains(token)) {
+      print(
+        '[xbume-ide] 未知的 IDE 名称: $token（可选: ${_knownIdeNames.join(', ')}）。',
+      );
+      return null;
+    }
+    if (!order.contains(token)) {
+      order.add(token);
+    }
+  }
+  return order;
+}
+
+class _IdeCandidate {
+  const _IdeCandidate(this.name, this.label);
+
+  final String name;
+  final String label;
+}
+
+/// 探测本机实际可用的 IDE（供交互选择列表）；同名别名去重。
+Future<List<_IdeCandidate>> _availableIdeCandidates() async {
+  final result = <_IdeCandidate>[];
+  for (final cli in _vscodeLikeClis) {
+    // qodercn 与 qoder-cn 为同一 IDE 的别名，仅展示一次。
+    if (cli == 'qoder-cn' && result.any((c) => c.name == 'qodercn')) {
+      continue;
+    }
+    if (await _hasIdeCli(cli)) {
+      result.add(_IdeCandidate(cli, _ideLabel(cli)));
+    }
+  }
+  if (await _hasAndroidStudio()) {
+    result.add(const _IdeCandidate('androidStudio', 'Android Studio'));
+  }
+  return result;
+}
+
+String _ideLabel(String cli) {
+  switch (cli) {
+    case 'qodercn':
+    case 'qoder-cn':
+      return 'Qoder';
+    case 'cursor':
+      return 'Cursor';
+    case 'trae':
+      return 'Trae';
+    case 'windsurf':
+      return 'Windsurf';
+    case 'code':
+      return 'VS Code';
+    default:
+      return cli;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -514,7 +753,8 @@ Future<void> openInIde({
     // 显式指定了具体 CLI（如 qodercn），映射为 vscode 系。
     ide = 'vscode:$ide';
   } else if (ide == 'vscode') {
-    final cli = await _firstAvailable(_vscodeLikeClis);
+    // 未指定具体 CLI：按配置顺序（无配置时用内置默认）找第一个可用。
+    final cli = await _firstAvailable(_configuredClis());
     ide = cli == null ? null : 'vscode:$cli';
   }
   if (ide != null && await _launchIde(ide, path, line, column)) {
@@ -535,6 +775,9 @@ const List<String> _vscodeLikeClis = <String>[
   'windsurf',
   'code',
 ];
+
+/// 未配置时的默认检测顺序（兼容旧行为：CLI 全部不可用时兜底 Android Studio）。
+const List<String> _defaultIdeOrder = <String>[..._vscodeLikeClis, 'androidStudio'];
 
 /// macOS 上未安装 shell 命令时，按 app 内置 CLI 兜底查找。
 const Map<String, List<String>> _vscodeLikeAppClis =
@@ -582,23 +825,40 @@ Future<bool> _hasIdeCli(String cli) async {
   return await _resolveCliPath(cli) != null;
 }
 
+/// 生效的 vscode 系 CLI 顺序：配置文件优先，无配置时用内置默认。
+List<String> _configuredClis() {
+  final order = loadIdeOrder() ?? _vscodeLikeClis;
+  final clis = order.where((name) => name != 'androidStudio').toList();
+  return clis.isEmpty ? _vscodeLikeClis : clis;
+}
+
 Future<String?> _detectIde() async {
-  for (final cli in _vscodeLikeClis) {
-    if (await _hasIdeCli(cli)) {
-      return 'vscode:$cli';
+  // 优先级顺序：配置文件（~/.xb_ume_ide/config.json）优先，
+  // 无配置时回退内置默认；列表内未安装的自动跳过。
+  for (final name in loadIdeOrder() ?? _defaultIdeOrder) {
+    if (name == 'androidStudio') {
+      if (await _hasAndroidStudio()) {
+        return 'androidStudio';
+      }
+    } else if (await _hasIdeCli(name)) {
+      return 'vscode:$name';
     }
   }
+  return null;
+}
+
+Future<bool> _hasAndroidStudio() async {
   if (await _hasCommand('studio')) {
-    return 'androidStudio';
+    return true;
   }
   if (Platform.isMacOS) {
     for (final bin in _androidStudioBinaries()) {
       if (File(bin).existsSync()) {
-        return 'androidStudio';
+        return true;
       }
     }
   }
-  return null;
+  return false;
 }
 
 Future<String?> _firstAvailable(List<String> commands) async {
