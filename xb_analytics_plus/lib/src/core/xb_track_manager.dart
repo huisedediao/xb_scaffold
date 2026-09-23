@@ -11,6 +11,7 @@ import '../store/xb_local_track_store.dart';
 import 'xb_track_config.dart';
 import 'xb_track_event.dart';
 import 'xb_track_exporter.dart';
+import 'xb_track_markdown.dart';
 import 'xb_track_sink.dart';
 import 'xb_track_store.dart';
 import 'xb_track_types.dart';
@@ -255,6 +256,12 @@ class XBTrackManager implements XBTrackExporter {
       buffer.writeln(event.toJsonString());
     }
     return buffer.toString();
+  }
+
+  /// 导出为 Markdown 复现步骤（页面章节 + 点击步骤 + 源码位置）。
+  Future<String> exportAsMarkdown({int? limit}) async {
+    final events = await _readForExport(limit: limit);
+    return xbTrackEventsToMarkdown(events);
   }
 
   Future<void> requestShareLatest({int? limit}) async {

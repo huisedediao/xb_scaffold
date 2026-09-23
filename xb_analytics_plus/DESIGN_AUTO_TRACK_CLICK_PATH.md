@@ -136,7 +136,7 @@ class XBAutoTrackFingerprint {
 | 阶段 | 内容 | 产出 |
 |---|---|---|
 | **P1（验证）✅ 已完成** | XBAutoTrackListener + XBChainFingerprinter（类型链+文本+routeName）+ 黑名单/噪声过滤 | 已交付：`lib/src/autotrack/`（5 文件）+ 5 个 widget 测试全绿；example 里点一遍，console 打出指纹序列 |
-| P2（核心） | XBRouteTracker 页面序列（标准 NavigatorObserver）+ debug 接 locator 取源码位置 + track_debug_page 时间线视图 + Markdown 导出 | 测试同学可用：跑完操作直接导出带源码定位的复现步骤 |
+| **P2（核心）✅ 已完成** | XBRouteTracker（标准 NavigatorObserver + 手动兜底）+ 源码位置（官方诊断接口，零依赖）+ 时间线视图 + Markdown 导出 | 测试同学可用：跑完操作直接导出带源码定位的复现步骤 |
 | P3（release） | LocalStoreSink 落盘验证 + XBHttpExporter 批量上传 + 脱敏 + dart-define 开关 | release 测试包可采集上传 |
 | P4（增强，可选） | UmeDaemonSink 实时通道 + XBButton 等显式 trackId + 会话回放聚合 | 全形态 |
 
@@ -150,6 +150,9 @@ class XBAutoTrackFingerprint {
 3. **黑名单必须整条事件放弃**：最内层命中黑名单后不能回退到外层 hitTest entry 重建（外层在黑名单组件之外，会绕过过滤）。
 4. **路由名**：P1 直接用 `ModalRoute.of(element).settings.name`（无需等 P2 的 NavigatorObserver）；MaterialApp 默认路由名为 `/`。
 5. **事件管道是队列+批量**：Manager track() 先入 `_queue`，攒满 `flushBatchSize`（默认 20）或定时才分发 sink——实时性敏感场景（如 P4 UmeDaemonSink）需考虑直发或主动 flush。
+6. **源码位置无需跨包依赖**：xb_ume locator 同款机制其实是 Flutter 官方诊断接口——`element.toDiagnosticsNode().toJsonMap(InspectorSerializationDelegate(...))` 读 `creationLocation`（`--track-widget-creation` 编译期注入）。xb_analytics_plus 直接内置同款实现（`_captureCreationLocation`），release 产物无该数据自动降级 null，保持零生态依赖。
+7. **测试环境陷阱**：`XBTrackConfig.enableLocalStoreSink` 默认 true——若 Manager 被 close 后 track() 会以默认 config 自举，flush 时 XBLocalStoreSink 走 path_provider IO，在 widget test 中挂死。测试必须「先 close 再 initSinks」，且 close 后不得再让 track 发生在 pumpWidget 之前无 init 的状态。
+8. **自定义 sinks 不参与 export**：`exportAsJson/Markdown` 只读内置 memorySink/store；需要导出能力的场景要开 `enableMemorySink`。
 
 ## 八、风险与对策
 

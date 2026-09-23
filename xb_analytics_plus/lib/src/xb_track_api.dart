@@ -59,6 +59,10 @@ Future<String> xbExportTrackAsText({int? limit}) {
   return XBTrackManager.shared.exportAsText(limit: limit);
 }
 
+Future<String> xbExportTrackAsMarkdown({int? limit}) {
+  return XBTrackManager.shared.exportAsMarkdown(limit: limit);
+}
+
 Future<void> xbShareTrackExport({int? limit}) {
   return XBTrackManager.shared.requestShareLatest(limit: limit);
 }

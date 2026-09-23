@@ -139,12 +139,38 @@ class XBChainFingerprinter {
     }
     if (dropped || types.isEmpty) return null;
 
+    final location = _captureCreationLocation(start);
     return XBAutoTrackFingerprint(
       typeChain: types,
       depth: types.length,
       routeName: _routeNameOf(start),
       text: text,
+      file: location?['file']?.toString(),
+      line: (location?['line'] as num?)?.toInt(),
+      column: (location?['column'] as num?)?.toInt(),
     );
+  }
+
+  /// 读取命中组件构造点的源码位置。
+  ///
+  /// 与 xb_ume locator 同款机制：`--track-widget-creation` 把每个 Widget
+  /// 构造调用的位置编译进产物，经 widget inspector 诊断序列化读取。
+  /// release 产物剥离该数据，返回 null 自然降级；异常静默不影响采集。
+  Map<String, dynamic>? _captureCreationLocation(Element element) {
+    try {
+      final jsonNode = element.toDiagnosticsNode().toJsonMap(
+            InspectorSerializationDelegate(
+              service: WidgetInspectorService.instance,
+              includeProperties: false,
+              subtreeDepth: 1,
+            ),
+          );
+      final location = jsonNode['creationLocation'];
+      if (location is Map) return location.cast<String, dynamic>();
+    } catch (_) {
+      // 位置拿不到不阻断指纹。
+    }
+    return null;
   }
 
   bool _isBlacklisted(String typeName) {
