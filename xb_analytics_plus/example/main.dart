@@ -19,7 +19,16 @@ Future<void> main() async {
     ),
   );
 
-  runApp(const MyApp());
+  // P1 验收：点击任意位置，console 应打出 auto_click 的语义指纹序列。
+  runApp(
+    const XBAutoTrackListener(
+      config: XBAutoTrackConfig(
+        // 过滤调试工具自身 UI 的点击污染（示例）。
+        blacklist: <String>['XBUme'],
+      ),
+      child: MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -105,6 +114,14 @@ class _DemoPageState extends State<DemoPage> with WidgetsBindingObserver {
               child: const Text('Track Custom Event'),
             ),
             const SizedBox(height: 12),
+            // 自定义业务组件：验证类型链能穿透组合组件拿到业务类型名。
+            _PathCard(
+              title: 'Custom Card Demo',
+              onTap: () {
+                xbTrack('card_tap', params: {'source': 'auto_track_demo'});
+              },
+            ),
+            const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).push(
@@ -117,6 +134,26 @@ class _DemoPageState extends State<DemoPage> with WidgetsBindingObserver {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 模拟业务里的组合组件（无独立 RenderObject），
+/// 用于验证自动采集的类型链能拿到业务类型名。
+class _PathCard extends StatelessWidget {
+  const _PathCard({required this.title, this.onTap});
+
+  final String title;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        title: Text(title),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
       ),
     );
   }

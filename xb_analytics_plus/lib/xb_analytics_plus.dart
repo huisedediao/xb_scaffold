@@ -13,3 +13,4 @@ export 'src/sinks/xb_memory_sink.dart';
 export 'src/sinks/xb_local_store_sink.dart';
 export 'src/store/xb_local_track_store.dart';
 export 'src/ui/xb_track_debug_page.dart';
+export 'src/autotrack/xb_auto_track.dart';
