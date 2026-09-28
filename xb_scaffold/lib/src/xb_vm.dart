@@ -6,7 +6,13 @@ class XBVM<T> extends ChangeNotifier {
 
   T get widget => context.widget as T;
 
-  late XBWidgetState state;
+  XBWidgetState? _state;
+  XBWidgetState? get state => _state;
+  @mustCallSuper
+  void initState(XBWidgetState state) {
+    if (_state != null) return;
+    _state = state;
+  }
 
   XBRepository? _repo;
 
@@ -66,7 +72,7 @@ class XBVM<T> extends ChangeNotifier {
   /// if (!mounted) return;
   /// notify();
   /// ```
-  bool get mounted => !disposed && state.mounted;
+  bool get mounted => !disposed && (state?.mounted ?? false);
 
   /// 已经完成创建
   @mustCallSuper
