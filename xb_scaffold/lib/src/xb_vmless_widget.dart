@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:xb_scaffold/src/xb_vm.dart';
-import 'package:xb_scaffold/src/xb_widget.dart';
+import 'package:xb_scaffold/src/xb_vm.dart'; // 含 part: xb_widget.dart
 
 abstract class XBVMLessWidget extends XBWidget<XBVM> {
   const XBVMLessWidget({super.key});

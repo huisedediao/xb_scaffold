@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:xb_scaffold/xb_scaffold.dart';
+
+part 'xb_widget.dart';
 
 class XBVM<T> extends ChangeNotifier {
   final BuildContext context;
@@ -8,8 +11,11 @@ class XBVM<T> extends ChangeNotifier {
 
   XBWidgetState? _state;
   XBWidgetState? get state => _state;
-  @mustCallSuper
-  void initState(XBWidgetState state) {
+  /// 框架内部挂载入口（库私有，外部与子类均不可调用或重写）。
+  ///
+  /// 由宿主 [XBWidgetState._generateVM] 在创建 VM 后立即调用；
+  /// 子类如需在挂载时机执行初始化，请重写 [didCreated]（紧接着本方法触发）。
+  void _initState(XBWidgetState state) {
     if (_state != null) return;
     _state = state;
   }

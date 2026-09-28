@@ -3,13 +3,14 @@ export './src/xb_theme/xb_theme_mixin.dart';
 
 export './src/xb_page.dart';
 export './src/xb_page_vm.dart';
-export './src/xb_widget.dart';
+// xb_widget.dart 是 xb_vm.dart 的 part，其中的 XBWidget/XBWidgetState
+// 随下方 export './src/xb_vm.dart' 一并导出，不能单独 export part 文件
 
 export './src/repository/xb_data_source.dart';
 export './src/repository/xb_service.dart';
 export './src/repository/xb_repository.dart';
 export './src/xb_vmless_widget.dart';
-export './src/xb_vm.dart';
+export './src/xb_vm.dart'; // 含 part: xb_widget.dart
 export './src/xb_select.dart';
 export './src/xb_root_widget.dart';
 export './src/xb_vm_extensions.dart';

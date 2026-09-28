@@ -1,6 +1,4 @@
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'xb_vm.dart';
+part of 'xb_vm.dart';
 
 abstract class XBWidget<T extends XBVM> extends StatefulWidget {
   const XBWidget({super.key});
@@ -102,7 +100,7 @@ class XBWidgetState<T extends XBVM> extends State<XBWidget<T>>
 
   _generateVM() {
     vm = widget.generateVM(context);
-    vm.initState(this);
+    vm._initState(this);
     vm.didCreated();
   }
 
