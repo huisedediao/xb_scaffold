@@ -3,11 +3,6 @@
 > 条目格式约定：每条以「新增 / 修复 / 优化 / 破坏性变更」中文前缀开头，一行一条。
 > 版本按时间升序排列；早期版本中无法考据的 "optimized" 类条目已统一归并为「常规优化与维护」。
 
-## 1.1.10
-
-- 修复 `reset()` 后新 VM 永远收不到 `widgetDidBuilt`：postFrame 回调原来只在 initState 注册一次，现在每次生成新 VM（initState/reset）都会重新调度，同一帧内多次 reset 合并为一次且只回调当前 VM；新增回归测试
-- 修复 VM 销毁窗口期 `mounted` 假阳性：`_disposed` 原来在 dispose 末尾才置位、宿主 `state.mounted` 在 super.dispose() 前仍为 true，重写的 dispose 及其同步回调里的 notify 会通过检查打到正在销毁的 element；新增框架内部入口 `disposeFromHost()`（宿主销毁/reset 前先置 disposed 再执行 dispose），mounted 在整个销毁链路上保持失效；新增回归测试
-
 ## 0.0.1
 
 - base init
@@ -980,3 +975,15 @@
 - `xb.extension` 生成逻辑改为文件级跳过：已存在的文件保留不动（不覆盖用户定制），仅补齐缺失的文件；退出码不再因存在旧文件而报非 0，存量工程执行 `xb.setup`/`xb.extension` 可自动补齐新增模板
 - 主题系统新增 `XBThemeFontFamily`（全局 getter `fontFamilies`，默认 `def` 为 null 即系统默认字体，业务通过 extension 添加自定义字体族）；`xb.extension`/`xb.setup` 模板同步新增 `app_theme_font_family.dart`
 - `XBDialogStyle` 新增 `maxWidth`：dialog/dialogContent/XBDialogInput 卡片宽度三级取值（调用处 maxWidth > 全局样式 maxWidth > 框架默认 screenW - gapDef*2），超宽自动 cap，适配横屏收窄弹窗宽度
+
+## 1.1.10
+
+- 修复 `reset()` 后新 VM 永远收不到 `widgetDidBuilt`：postFrame 回调原来只在 initState 注册一次，现在每次生成新 VM（initState/reset）都会重新调度，同一帧内多次 reset 合并为一次且只回调当前 VM；新增回归测试
+- 修复 VM 销毁窗口期 `mounted` 假阳性：`_disposed` 原来在 dispose 末尾才置位、宿主 `state.mounted` 在 super.dispose() 前仍为 true，重写的 dispose 及其同步回调里的 notify 会通过检查打到正在销毁的 element；新增框架内部入口 `disposeFromHost()`（宿主销毁/reset 前先置 disposed 再执行 dispose），mounted 在整个销毁链路上保持失效；新增回归测试
+
+## 1.1.11
+
+- 破坏性变更：`XBVM.state` 由公开可写非空字段（`late XBWidgetState state`）改为只读可空 getter，宿主 State 的挂载改由框架内部管理，业务代码不应再读写该属性（读写均会导致编译错误）
+- 修复 VM 挂载完成前访问 `mounted` 抛 `LateInitializationError` 的问题：现在挂载完成前安全返回 `false`，异步回调中可放心先判 `mounted` 再使用
+- 优化：VM 挂载入口收为框架内部实现（库私有），外部与子类均不可调用或重写；子类如需在挂载时机执行初始化，请重写 `didCreated()`（框架在挂载后立即触发）
+- `xb_widget.dart` 并入 `xb_vm.dart` 同一 library（part），对外导出的 `XBWidget`/`XBWidgetState`/`XBVM` API 不变；请勿直接 `import 'src/xb_widget.dart'`，统一经由包主入口 `package:xb_scaffold/xb_scaffold.dart` 使用
