@@ -567,6 +567,15 @@ class _XbUmeHostState extends State<XBUmeHost> {
                         ),
                       ),
                     ],
+                    // 组件真实宽高（未 clamp，组件超出屏幕时仍显示真实值）。
+                    Text(
+                      'size: ${rect.width.toStringAsFixed(1)} '
+                          '× ${rect.height.toStringAsFixed(1)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFFB0BEC5),
+                      ),
+                    ),
                     if (_bubbleExpanded) ..._buildChainRows(result),
                     const SizedBox(height: 6),
                     Row(
@@ -643,6 +652,22 @@ class _XbUmeHostState extends State<XBUmeHost> {
           left: left + _bubbleDragDelta.dx,
           top: bubbleTop + _bubbleDragDelta.dy,
           child: bubble,
+        ),
+      // 宽高标注：收起态下在高亮框边缘标注组件真实宽高；
+      // 展开态为全屏面板，不绘制框上标签。置于间距标注之下，
+      // 避免遮盖已有的间距读数。
+      if (!_bubbleExpanded)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _SizeGuidesPainter(
+                rect: clamped,
+                trueSize: Size(rect.width, rect.height),
+                viewportSize: viewportSize,
+                visibleHeight: visibleHeight,
+              ),
+            ),
+          ),
         ),
       // 间距标注：绘制在最上层，避免被高亮框/气泡遮挡影响读数。
       if (spacing != null && spacing.hasAny)
@@ -1196,50 +1221,23 @@ class _SpacingGuidesPainter extends CustomPainter {
     Offset mid,
     Color color,
   ) {
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: item.distance.toStringAsFixed(1),
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          height: 1.0,
-          decoration: TextDecoration.none,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
     final bool vertical = item.direction == XBUmeSpacingDirection.up ||
         item.direction == XBUmeSpacingDirection.down;
-    final Offset topLeft;
-    if (vertical) {
-      topLeft = Offset(mid.dx + 4, mid.dy - textPainter.height / 2);
-    } else {
-      topLeft = Offset(
-        mid.dx - textPainter.width / 2,
-        mid.dy - textPainter.height - 4,
-      );
-    }
-    final double x = topLeft.dx.clamp(
-      clip.left + 2,
-      math.max(clip.left + 2, clip.right - textPainter.width - 2),
+    _paintGuideTag(
+      canvas,
+      clip,
+      item.distance.toStringAsFixed(1),
+      (textSize) {
+        if (vertical) {
+          return Offset(mid.dx + 4, mid.dy - textSize.height / 2);
+        }
+        return Offset(
+          mid.dx - textSize.width / 2,
+          mid.dy - textSize.height - 4,
+        );
+      },
+      color,
     );
-    final double y = topLeft.dy.clamp(
-      clip.top + 2,
-      math.max(clip.top + 2, clip.bottom - textPainter.height - 2),
-    );
-    final bgRect = Rect.fromLTWH(
-      x - 4,
-      y - 2,
-      textPainter.width + 8,
-      textPainter.height + 4,
-    );
-    // 实底彩色标签：橙 = 到可见组件，绿 = 到父边缘，保证各方向读数清晰。
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
-      Paint()..color = color,
-    );
-    textPainter.paint(canvas, Offset(x, y));
   }
 
   @override
@@ -1248,4 +1246,112 @@ class _SpacingGuidesPainter extends CustomPainter {
         oldDelegate.viewportSize != viewportSize ||
         oldDelegate.visibleHeight != visibleHeight;
   }
+}
+
+/// 宽高标注绘制：在高亮框边缘标注选中组件的真实宽高（逻辑像素）。
+/// 标签为青色实底，与高亮框同色系，区别于橙（组件间距）/绿（父边缘间距）。
+/// rect 为高亮框（已 clamp 到可视区，仅用于定位标签）；
+/// trueSize 为组件未 clamp 的真实尺寸（组件超出屏幕时仍显示真实值）。
+class _SizeGuidesPainter extends CustomPainter {
+  _SizeGuidesPainter({
+    required this.rect,
+    required this.trueSize,
+    required this.viewportSize,
+    required this.visibleHeight,
+  });
+
+  final Rect rect;
+  final Size trueSize;
+  final Size viewportSize;
+  final double visibleHeight;
+
+  static const Color _sizeColor = Color(0xFF00E5FF);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final clip = Rect.fromLTWH(0, 0, viewportSize.width, visibleHeight);
+
+    // 宽度标签：框够高时放框内底部居中，否则移到框下方，
+    // 避免遮挡组件本体（越界由标签内 clamp 兜底）。
+    _paintGuideTag(
+      canvas,
+      clip,
+      'W ${trueSize.width.toStringAsFixed(1)}',
+      (textSize) {
+        final double y = rect.height >= 26
+            ? rect.bottom - textSize.height - 6
+            : rect.bottom + 4;
+        return Offset(rect.center.dx - textSize.width / 2, y);
+      },
+      _sizeColor,
+    );
+
+    // 高度标签：框够宽时放框内右侧居中，否则移到框右侧外。
+    _paintGuideTag(
+      canvas,
+      clip,
+      'H ${trueSize.height.toStringAsFixed(1)}',
+      (textSize) {
+        final double x = rect.width >= 64
+            ? rect.right - textSize.width - 6
+            : rect.right + 4;
+        return Offset(x, rect.center.dy - textSize.height / 2);
+      },
+      _sizeColor,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SizeGuidesPainter oldDelegate) {
+    return oldDelegate.rect != rect ||
+        oldDelegate.trueSize != trueSize ||
+        oldDelegate.viewportSize != viewportSize ||
+        oldDelegate.visibleHeight != visibleHeight;
+  }
+}
+
+/// 在视口 clip 内绘制实底彩色标签（圆角背景 + 白色粗体文字），
+/// 位置越界时 clamp 在视口内。
+/// 间距标注与宽高标注共用；topLeftFor 接收实测文字尺寸，
+/// 由调用方决定标签锚点，保证两种标注各自布局行为不变。
+void _paintGuideTag(
+  Canvas canvas,
+  Rect clip,
+  String text,
+  Offset Function(Size textSize) topLeftFor,
+  Color color,
+) {
+  final textPainter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        height: 1.0,
+        decoration: TextDecoration.none,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final topLeft = topLeftFor(Size(textPainter.width, textPainter.height));
+  final double x = topLeft.dx.clamp(
+    clip.left + 2,
+    math.max(clip.left + 2, clip.right - textPainter.width - 2),
+  );
+  final double y = topLeft.dy.clamp(
+    clip.top + 2,
+    math.max(clip.top + 2, clip.bottom - textPainter.height - 2),
+  );
+  final bgRect = Rect.fromLTWH(
+    x - 4,
+    y - 2,
+    textPainter.width + 8,
+    textPainter.height + 4,
+  );
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
+    Paint()..color = color,
+  );
+  textPainter.paint(canvas, Offset(x, y));
 }
