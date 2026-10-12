@@ -49,7 +49,13 @@ const Duration kPollInterval = Duration(seconds: 3);
 /// 持锁实例收到 [kEvictToken] 后自动退出（接管语义：只保留最新实例）。
 const int kLockPort = 46128;
 const String kEvictToken = 'xbume-ide-takeover';
+
+/// GUI（ide_gui.dart）经互斥端口查询 daemon 状态的协议令牌。
+const String kStatusToken = 'xbume-ide-status';
 ServerSocket? _lockServer;
+
+/// daemon 启动时间（供 status 协议上报运行时长）。
+DateTime _daemonStartedAt = DateTime.now();
 
 /// 用户主目录：Windows 用 USERPROFILE（HOME 通常不存在），其余用 HOME。
 final String _home =
@@ -95,6 +101,20 @@ Future<void> main(List<String> args) async {
     await _runSingleSession(uri, ide);
     return;
   }
+  if (args.contains('--gui')) {
+    final guiScript = File('$_home/$kInstallDirName/ide_gui.dart');
+    if (!guiScript.existsSync()) {
+      print('[xbume-ide] 未找到 GUI 脚本，请先执行 dart run xb_ume:ide --install');
+      exitCode = 1;
+      return;
+    }
+    await Process.start(
+      Platform.resolvedExecutable,
+      <String>[guiScript.path],
+      mode: ProcessStartMode.detached,
+    );
+    return;
+  }
   if (args.contains('--daemon')) {
     await runDaemon(ide);
     return;
@@ -126,6 +146,9 @@ Future<void> install(List<String> args) async {
 
   final dartBin = Platform.resolvedExecutable;
   final ide = _argValue(args, '--ide') ?? 'auto';
+
+  // 部署 GUI 工具箱（bin/ide_gui.dart 与本文件同目录）。
+  await _deployGui(scriptPath, installDir.path, dartBin);
 
   final bool ok;
   final String detailPath;
@@ -162,8 +185,128 @@ Future<void> install(List<String> args) async {
   print('  注册: $detailPath');
   print('  脚本 : $deployedScript');
   print('  日志 : $logPath');
+  print('  GUI  : ${installDir.path}${Platform.pathSeparator}ide_gui.dart（启动器见同目录，或 dart run xb_ume:ide --gui）');
   print('卸载: dart run xb_ume:ide --uninstall');
 }
+
+/// GUI 桌面入口名称（macOS 应用包 / Windows 桌面快捷方式）。
+const String kGuiAppName = 'xb_ume 工具箱';
+
+/// 部署 GUI 工具箱脚本并生成可双击的启动器（best-effort，失败不影响 daemon 安装）。
+Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin) async {
+  try {
+    final binDir = File(ideScriptPath).parent.path;
+    final guiSource = File('$binDir${Platform.pathSeparator}ide_gui.dart');
+    if (!guiSource.existsSync()) {
+      print('[xbume-ide] 未找到 ide_gui.dart，跳过 GUI 部署。');
+      return;
+    }
+    final sep = Platform.pathSeparator;
+    await File('$installDir${sep}ide_gui.dart')
+        .writeAsString(guiSource.readAsStringSync());
+    if (Platform.isWindows) {
+      await File('$installDir${sep}XBumeGui.bat').writeAsString(
+        '@echo off\r\nstart "xbume-gui" /min "$dartBin" "$installDir${sep}ide_gui.dart"\r\n',
+      );
+    } else {
+      final launcher = File('$installDir${sep}xb_ume_gui.command');
+      await launcher.writeAsString('#!/bin/bash\n"$dartBin" "$installDir/ide_gui.dart"\n');
+      try {
+        await Process.run('chmod', <String>['+x', launcher.path]);
+      } catch (_) {
+        // ignored
+      }
+    }
+    await _installGuiDesktopEntry(installDir, dartBin);
+    print('[xbume-ide] GUI 工具箱已部署。');
+  } catch (e) {
+    print('[xbume-ide] GUI 部署失败（不影响守护进程）: $e');
+  }
+}
+
+/// 安装 GUI 桌面入口：macOS 在应用程序文件夹创建 .app（Launchpad/Spotlight 可搜），
+/// Windows 在桌面创建快捷方式（最小化运行）。
+Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
+  if (Platform.isMacOS) {
+    final guiScript = '$installDir/ide_gui.dart';
+    for (final root in <String>['/Applications', '$_home/Applications']) {
+      final appDir = Directory('$root/$kGuiAppName.app');
+      try {
+        await appDir.create(recursive: true);
+      } catch (_) {
+        continue; // 无写权限则尝试下一个位置
+      }
+      final contents = '${appDir.path}/Contents';
+      await Directory('$contents/MacOS').create(recursive: true);
+      await Directory('$contents/Resources').create(recursive: true);
+      await File('$contents/Info.plist').writeAsString(_guiAppPlist);
+      final exec = File('$contents/MacOS/xbumegui');
+      await exec.writeAsString('#!/bin/bash\nexec "$dartBin" "$guiScript"\n');
+      try {
+        await Process.run('chmod', <String>['+x', exec.path]);
+      } catch (_) {
+        // ignored
+      }
+      // 图标：复制系统通用应用图标（best-effort）。
+      const systemIcon =
+          '/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns';
+      final icon = File(systemIcon);
+      if (icon.existsSync()) {
+        try {
+          await icon.copy('$contents/Resources/xbumegui.icns');
+        } catch (_) {
+          // ignored
+        }
+      }
+      print('[xbume-ide] GUI 应用已安装: ${appDir.path}（可从 Launchpad/Spotlight 启动）');
+      return;
+    }
+    print('[xbume-ide] GUI 应用安装失败（应用程序文件夹无写权限），仍可用启动器 .command 或 --gui 启动。');
+  } else if (Platform.isWindows) {
+    final winScript = '$installDir\\ide_gui.dart';
+    final ps = '\$ws = New-Object -ComObject WScript.Shell; '
+        "\$desktop = [Environment]::GetFolderPath('Desktop'); "
+        '\$s = \$ws.CreateShortcut("\$desktop\\$kGuiAppName.lnk"); '
+        "\$s.TargetPath = '$dartBin'; "
+        "\$s.Arguments = '$winScript'; "
+        "\$s.WorkingDirectory = '$installDir'; "
+        "\$s.IconLocation = '$dartBin,0'; "
+        '\$s.WindowStyle = 7; '
+        '\$s.Save()';
+    final result = await Process.run(
+      'powershell',
+      <String>['-NoProfile', '-Command', ps],
+      runInShell: true,
+    );
+    if (result.exitCode == 0) {
+      print('[xbume-ide] 桌面快捷方式已创建: $kGuiAppName.lnk');
+    } else {
+      print('[xbume-ide] 桌面快捷方式创建失败: ${result.stderr}');
+    }
+  }
+}
+
+const String _guiAppPlist = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>XBume Toolbox</string>
+  <key>CFBundleDisplayName</key>
+  <string>xb_ume 工具箱</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.xbume.gui</string>
+  <key>CFBundleExecutable</key>
+  <string>xbumegui</string>
+  <key>CFBundleIconFile</key>
+  <string>xbumegui</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+''';
 
 /// macOS：写 LaunchAgent plist 并注册立即启动。返回是否成功。
 Future<bool> _installMacosLaunchAgent({
@@ -258,6 +401,27 @@ Future<void> uninstall() async {
   }
   // 停止所有仍在运行的 daemon 实例（含手动 --daemon 启动的）。
   await _killOtherDaemons();
+  // 移除 GUI 桌面入口。
+  if (Platform.isMacOS) {
+    for (final root in <String>['/Applications', '$_home/Applications']) {
+      final appDir = Directory('$root/$kGuiAppName.app');
+      if (appDir.existsSync()) {
+        await appDir.delete(recursive: true);
+      }
+    }
+  } else if (Platform.isWindows) {
+    await Process.run(
+      'powershell',
+      <String>[
+        '-NoProfile',
+        '-Command',
+        "\$desktop = [Environment]::GetFolderPath('Desktop'); "
+            'Remove-Item -Force -ErrorAction SilentlyContinue '
+            '"\$desktop\\$kGuiAppName.lnk"',
+      ],
+      runInShell: true,
+    );
+  }
   final dir = Directory('$_home/$kInstallDirName');
   if (dir.existsSync()) {
     await dir.delete(recursive: true);
@@ -656,19 +820,33 @@ Future<void> _requestEviction() async {
   }
 }
 
-/// 持锁侧：收到接管令牌即退出。
+/// 持锁侧：接管令牌即退出；status 查询令牌则应答 JSON 后保持连接。
 void _onLockConnection(Socket socket) {
   socket.listen((data) {
-    if (utf8.decode(data, allowMalformed: true).contains(kEvictToken)) {
+    final text = utf8.decode(data, allowMalformed: true);
+    if (text.contains(kEvictToken)) {
       print('[xbume-ide] 检测到新实例接管，本实例退出。');
       _lockServer?.close();
       exit(0);
+    }
+    if (text.contains(kStatusToken)) {
+      socket.write(jsonEncode(<String, Object?>{
+        'type': 'status',
+        'pid': pid,
+        'uptimeSec': DateTime.now().difference(_daemonStartedAt).inSeconds,
+        'sessions': <Map<String, Object?>>[
+          for (final session in _sessions.values)
+            if (session.alive)
+              <String, Object?>{'source': session.source, 'uri': session.wsUrl},
+        ],
+      }));
     }
   });
 }
 
 Future<void> runDaemon(String ide) async {
   await _acquireSingletonLock();
+  _daemonStartedAt = DateTime.now();
   print(
     '[xbume-ide] daemon 启动 (pid=$pid)，每 ${kPollInterval.inSeconds}s 轮询，'
     'IDE=$ide。Ctrl-C 退出。',

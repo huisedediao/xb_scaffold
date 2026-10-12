@@ -150,7 +150,23 @@ dart run xb_ume:ide --ide qodercn        # 单次显式指定 IDE（优先级最
 | Windows 登录后 daemon 没起来 | 注册表自启依赖 `dart` 在 PATH 中，确认终端能直接运行 `dart --version` |
 | Web 平台 | 不支持（无 dart:io） |
 
-## 八、卸载
+## 八、GUI 工具箱（设备 / 守护进程 / 日志）
+
+`--install` 会额外部署本机 Web GUI，并创建桌面入口：macOS 在「应用程序」文件夹安装 `xb_ume 工具箱.app`（Launchpad/Spotlight 可搜，无写权限时装到 `~/Applications`）；Windows 在桌面创建快捷方式「xb_ume 工具箱」（最小化运行）。也可用命令启动：
+
+```bash
+dart run xb_ume:ide --gui
+```
+
+启动后自动打开浏览器页面（单实例），三个 Tab：
+
+- **设备**：自动发现连接的手机（Android adb / 鸿蒙 hdc / iOS 模拟器与真机，iOS 真机需 `brew install libimobiledevice`），可选定一台；
+- **守护进程**：运行状态（pid / 时长 / 已接入调试会话）、一键重启（新实例自动接管旧实例）、IDE 优先级展示与配置直达；
+- **日志**：实时展示选中设备的全量设备日志（logcat / hilog / iOS log）与全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出的部分，含控制台不打印的日志）；支持来源/级别/关键字过滤、暂停、清屏、导出 txt。
+
+详细使用说明见 [GUI_GUIDE.md](GUI_GUIDE.md)。
+
+## 九、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
