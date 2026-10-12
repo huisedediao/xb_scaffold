@@ -100,12 +100,23 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/daemon') {
       final status = await queryDaemonStatus();
+      // 合并 GUI 侧解析的应用包名（daemon 只知道 uri/source，不知道应用名）。
+      final sessions = ((status?['sessions'] as List?) ?? <Object?>[]).map((s) {
+        if (s is Map) {
+          final uri = s['uri']?.toString();
+          final app = uri == null ? null : state.appNameFor(uri);
+          if (app != null && app.isNotEmpty) {
+            return <String, Object?>{...s, 'app': app};
+          }
+        }
+        return s;
+      }).toList();
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'running': status != null,
         'pid': status?['pid'],
         'uptimeSec': status?['uptimeSec'],
-        'sessions': status?['sessions'] ?? <Object?>[],
+        'sessions': sessions,
         'config': readGuiIdeOrder(),
       }));
       await req.response.close();
@@ -131,9 +142,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'attachment; filename="xbume-logs.txt"',
       );
       for (final entry in state.buffer) {
+        final ts = entry['ts'];
+        final time = (ts is String && ts.isNotEmpty) ? ts : entry['rcv'];
         req.response.write(
-          '${entry['ts'] ?? entry['rcv']} [${entry['source']}] '
-          '${entry['level']}/${entry['tag']}: ${entry['msg']}\n',
+          '$time [${entry['source']}] '
+          '${entry['level']}/${entry['app'] ?? entry['tag']}: ${entry['msg']}\n',
         );
       }
       await req.response.close();
@@ -166,9 +179,10 @@ class GuiState {
   final Map<String, _VmSession> _vmSessions = <String, _VmSession>{};
   Timer? _pollTimer;
   Timer? _flushTimer;
-  Process? _deviceLogProcess;
-  String? _deviceLogKey;
-  bool _deviceLogStartFailed = false;
+
+  /// 每台设备一个日志流进程（所有设备并行采集，选择器只做前端过滤）。
+  final Map<String, Process> _deviceLogProcesses = <String, Process>{};
+  final Set<String> _deviceLogStartFailed = <String>{};
   List<Map<String, String>> devices = <Map<String, String>>[];
   String? selectedId;
 
@@ -186,10 +200,23 @@ class GuiState {
     });
   }
 
+  /// 会话 uri → 应用包名（每个 uri 有 Stdout/Stderr 两条 _VmSession）。
+  /// 供 /api/daemon 响应合并展示「会话对应哪个应用」。
+  String? appNameFor(String uri) {
+    for (final entry in _vmSessions.entries) {
+      if (entry.key.startsWith('$uri|')) {
+        return entry.value.appName;
+      }
+    }
+    return null;
+  }
+
   Future<void> dispose() async {
     _pollTimer?.cancel();
     _flushTimer?.cancel();
-    _deviceLogProcess?.kill();
+    for (final process in _deviceLogProcesses.values) {
+      process.kill();
+    }
     for (final session in _vmSessions.values) {
       session.close();
     }
@@ -204,7 +231,7 @@ class GuiState {
 
   // -- 设备管理模块 ----------------------------------------------------------
 
-  /// 轮询设备列表并维护日志源生命周期。
+  /// 轮询设备列表并维护日志源生命周期（全部设备并行采集）。
   Future<void> poll() async {
     try {
       devices = await discoverDevices();
@@ -212,34 +239,24 @@ class GuiState {
       print('[xbume-gui] 设备发现异常: $e');
     }
     broadcast(<String, Object?>{'type': 'devices', 'devices': devices});
-    Map<String, String>? selected;
+    final ids = devices.map((d) => d['id'] ?? '').toSet();
     for (final device in devices) {
-      if (device['id'] == selectedId) {
-        selected = device;
-      }
+      await _ensureDeviceLogSource(device);
     }
-    if (selected == null) {
-      await _stopDeviceLogSource();
-    } else {
-      await _ensureDeviceLogSource(selected);
+    for (final id in _deviceLogProcesses.keys.toList()) {
+      if (!ids.contains(id)) {
+        await _stopDeviceLogSource(id);
+      }
     }
     await _syncVmSessions();
   }
 
+  /// 选择设备只影响前端过滤，不再切换日志源/清空缓冲。
   Future<void> selectDevice(String? id) async {
     if (selectedId == id) {
       return;
     }
     selectedId = id;
-    _buffer.clear();
-    _pending.clear();
-    await _stopDeviceLogSource();
-    for (final device in devices) {
-      if (device['id'] == id) {
-        await _ensureDeviceLogSource(device);
-      }
-    }
-    broadcast(<String, Object?>{'type': 'cleared'});
     broadcast(<String, Object?>{'type': 'devices', 'devices': devices});
   }
 
@@ -282,11 +299,10 @@ class GuiState {
   }
 
   Future<void> _ensureDeviceLogSource(Map<String, String> device) async {
-    final key = '${device['id']}@${device['platform']}';
-    if (_deviceLogKey == key && _deviceLogProcess != null) {
+    final id = device['id'] ?? '';
+    if (id.isEmpty || _deviceLogProcesses.containsKey(id)) {
       return;
     }
-    await _stopDeviceLogSource();
     final command = _deviceLogCommand(device);
     if (command == null) {
       return;
@@ -298,35 +314,38 @@ class GuiState {
         command.sublist(1),
         environment: <String, String>{'PATH': await _toolPath()},
       );
-      _deviceLogProcess = process;
-      _deviceLogKey = key;
-      _deviceLogStartFailed = false;
+      _deviceLogProcesses[id] = process;
+      _deviceLogStartFailed.remove(id);
       process.stdout
           .transform(utf8.decoder)
           .transform(const LineSplitter())
-          .listen((line) => addLog(line, source));
+          .listen((line) => addDeviceLog(id, source, line));
+      process.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => addDeviceLog(id, source, line));
       unawaited(process.exitCode.then((_) {
-        if (_deviceLogProcess == process) {
-          _deviceLogProcess = null;
-          _deviceLogKey = null;
+        if (_deviceLogProcesses[id] == process) {
+          _deviceLogProcesses.remove(id);
         }
       }));
     } catch (e) {
       // 避免每 3s 轮询刷屏：同一设备只提示一次。
-      if (!_deviceLogStartFailed) {
-        _deviceLogStartFailed = true;
-        addLog('[GUI] 无法启动 ${command.first}（未安装或不在 PATH）: $e', source);
+      if (_deviceLogStartFailed.add(id)) {
+        addDeviceLog(id, source, '[GUI] 无法启动 ${command.first}（未安装或不在 PATH）: $e');
       }
     }
   }
 
-  Future<void> _stopDeviceLogSource() async {
-    _deviceLogProcess?.kill();
-    _deviceLogProcess = null;
-    _deviceLogKey = null;
+  Future<void> _stopDeviceLogSource(String id) async {
+    _deviceLogProcesses.remove(id)?.kill();
   }
 
   /// 同步 VM service stdout 会话（flutter run 控制台输出来源）。
+  ///
+  /// 实测（v0.1.5）：flutter run 的控制台输出不走 kind=Stdout 事件，而是
+  /// DDS 重发的 kind=WriteEvent（无 source 字段），且连接即回放启动以来
+  /// 的缓冲历史；stdout/stderr 仅能靠分别订阅两条流区分，故每会话双连接。
   Future<void> _syncVmSessions() async {
     final status = await queryDaemonStatus();
     final uris = <String>{};
@@ -346,30 +365,74 @@ class GuiState {
       }
     }
     for (final uri in uris) {
-      if (!_vmSessions.containsKey(uri)) {
+      for (final stream in const <String>['Stdout', 'Stderr']) {
+        final key = '$uri|$stream';
+        if (_vmSessions.containsKey(key)) {
+          continue;
+        }
         // 多个 Flutter 应用同时接入时，用会话来源（如 adb:xxx）区分输出。
         final label = (labels[uri] != null && labels[uri]!.isNotEmpty)
             ? labels[uri]!
             : uri;
-        final session = _VmSession(
+        late final _VmSession session;
+        session = _VmSession(
           uri,
-          (line, isStderr) => _addFlutterLine(label, line, isStderr),
-        );
-        _vmSessions[uri] = session;
-        unawaited(session.connect());
+          stream,
+          stream == 'Stderr',
+          (line, isStderr) => _addFlutterLine(label, line, isStderr, session),
+        )..connect();
+        _vmSessions[key] = session;
       }
     }
     for (final key in _vmSessions.keys.toList()) {
-      if (!uris.contains(key)) {
+      if (!uris.contains(key.split('|').first)) {
         _vmSessions.remove(key)!.close();
       }
     }
   }
 
-  void _addFlutterLine(String app, String line, bool isStderr) {
+  /// 从会话来源解析精确所属设备（如 adb:SERIAL#port:x → SERIAL；
+  /// port:x → null，此时由前端按 VM 平台与设备平台推断归属）。
+  static String? _deviceFromSource(String source) {
+    final m = RegExp(r'^(?:adb|hdc):([^#]+)#').firstMatch(source);
+    return m?.group(1);
+  }
+
+  void _addFlutterLine(
+    String app,
+    String line,
+    bool isStderr,
+    _VmSession session,
+  ) {
     final entry = makeLogEntry(line, isStderr ? 'flutter-stderr' : 'flutter');
     // tag 列存会话来源：多应用同时调试时可区分与过滤（stderr 由 source 列区分）。
     entry['tag'] = app;
+    // 记录 VM 所属平台（来自 getVM），供「选中设备 → 包含该设备上的 VM」匹配。
+    final os = session.os;
+    if (os != null && os.isNotEmpty) {
+      entry['os'] = os;
+    }
+    // 精确归属：来源带设备号时记录，供「VM × 设备」交集过滤。
+    final device = _deviceFromSource(app);
+    if (device != null && device.isNotEmpty) {
+      entry['device'] = device;
+    }
+    // 应用包名（连接后异步获取，后续行自动带上），供前端展示会话对应的应用。
+    final appName = session.appName;
+    if (appName != null && appName.isNotEmpty) {
+      entry['app'] = appName;
+    }
+    // 错误通道输出（异常堆栈多走这里）标为 E·错误，便于着色与筛选定位。
+    if (isStderr) {
+      entry['level'] = 'E';
+    }
+    addEntry(entry);
+  }
+
+  /// 设备日志条目：额外携带设备 id，供按设备过滤。
+  void addDeviceLog(String deviceId, String source, String raw) {
+    final entry = makeLogEntry(raw, source);
+    entry['device'] = deviceId;
     addEntry(entry);
   }
 
@@ -443,12 +506,25 @@ class GuiState {
 }
 
 class _VmSession {
-  _VmSession(this.uri, this.onLine);
+  _VmSession(this.uri, this.streamId, this.isStderr, this.onLine);
 
   final String uri;
+
+  /// 订阅的流：Stdout / Stderr（WriteEvent 无 source 字段，
+  /// 只能靠分别订阅两条流区分 stdout 与 stderr）。
+  final String streamId;
+  final bool isStderr;
   final void Function(String line, bool isStderr) onLine;
   WebSocket? _socket;
   String _remainder = '';
+
+  /// VM 所属平台（getVM 的 operatingSystem：android/ohos/ios/macos...），
+  /// 供「选中设备 → 包含该设备上的 VM」匹配。
+  String? os;
+
+  /// 应用包名（getIsolate 的 libraries 中 package:<pkg>/main.dart 的 <pkg>），
+  /// 供会话选择器与日志行展示「这是哪个应用」。
+  String? appName;
 
   Future<void> connect() async {
     try {
@@ -459,14 +535,21 @@ class _VmSession {
         onDone: () => _socket = null,
         onError: (dynamic _) => _socket = null,
       );
+      // params 必须是 {streamId: ...} 对象（实测传数组会静默订阅失败）。
       socket.add(jsonEncode(<String, Object?>{
         'jsonrpc': '2.0',
-        'id': '1',
+        'id': 'sl',
         'method': 'streamListen',
-        'params': <String>['Stdout'],
+        'params': <String, String>{'streamId': streamId},
+      }));
+      // 查询所属平台。
+      socket.add(jsonEncode(<String, Object?>{
+        'jsonrpc': '2.0',
+        'id': 'vm',
+        'method': 'getVM',
       }));
     } catch (e) {
-      print('[xbume-gui] VM service 连接失败 $uri: $e');
+      print('[xbume-gui] VM service 连接失败 $uri($streamId): $e');
       _socket = null;
     }
   }
@@ -484,19 +567,59 @@ class _VmSession {
     if (parsed is! Map) {
       return;
     }
+    // getVM 响应：记录所属平台，并查询 root isolate 拿应用包名。
+    if (parsed['id'] == 'vm' && parsed['result'] is Map) {
+      final result = parsed['result'] as Map;
+      os = result['operatingSystem']?.toString();
+      final isolates = result['isolates'];
+      if (isolates is List && isolates.isNotEmpty && isolates.first is Map) {
+        final isolateId = isolates.first['id']?.toString();
+        if (isolateId != null && isolateId.isNotEmpty) {
+          _socket?.add(jsonEncode(<String, Object?>{
+            'jsonrpc': '2.0',
+            'id': 'iso',
+            'method': 'getIsolate',
+            'params': <String, String>{'isolateId': isolateId},
+          }));
+        }
+      }
+      return;
+    }
+    // getIsolate 响应：从 libraries 解析应用包名（rootLib 实测为空，不可用）。
+    if (parsed['id'] == 'iso' && parsed['result'] is Map) {
+      final libraries = (parsed['result'] as Map)['libraries'];
+      if (libraries is List) {
+        for (final lib in libraries) {
+          final libUri = lib is Map ? lib['uri']?.toString() : null;
+          final m = libUri == null
+              ? null
+              : RegExp(r'^package:([^/]+)/main\.dart$').firstMatch(libUri);
+          if (m != null) {
+            appName = m.group(1);
+            break;
+          }
+        }
+      }
+      return;
+    }
     final params = parsed['params'];
     if (params is! Map) {
       return;
     }
     final event = params['event'];
-    if (event is! Map || event['kind'] != 'Stdout') {
+    if (event is! Map) {
+      return;
+    }
+    final kind = event['kind']?.toString();
+    // flutter run 的控制台输出实测为 kind=WriteEvent（DDS 转发）。
+    if (kind != 'Stdout' && kind != 'Stderr' && kind != 'WriteEvent') {
       return;
     }
     final bytes = event['bytes'];
     if (bytes is! String) {
       return;
     }
-    final isStderr = event['source'] == 'Stderr';
+    final isStderr = this.isStderr || event['source'] == 'Stderr';
     final text = utf8.decode(base64.decode(bytes), allowMalformed: true);
     final lines = (_remainder + text).split('\n');
     _remainder = lines.removeLast();
@@ -1048,6 +1171,12 @@ const String guiHtml = r'''
   .tag { color:var(--acc); }
   .src { color:#b07de8; }
   label.chk { margin-right:6px; color:var(--dim); cursor:pointer; }
+  .fgroup { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:4px 10px; background:#0e141c; }
+  .fgroup .gtitle { color:var(--acc); font-size:12px; font-weight:600; }
+  .fgroup .gsep { width:1px; height:16px; background:var(--line); }
+  .vlv { display:flex; align-items:center; gap:2px; }
+  .vlv.dim { opacity:.45; }
+  .vlv.dim label { pointer-events:none; }
 </style>
 </head>
 <body>
@@ -1076,24 +1205,36 @@ const String guiHtml = r'''
   </section>
   <section class="page" id="page-logs">
     <div class="row">
-      <label class="chk"><input type="checkbox" id="f-src-device" checked onchange="renderLogs()">设备日志</label>
-      <label class="chk"><input type="checkbox" id="f-src-flutter" checked onchange="renderLogs()">Flutter 输出</label>
-      <label class="chk" title="Verbose：最详细的跟踪日志，量最大，一般排查用不到"><input type="checkbox" class="f-lv" value="V" checked onchange="renderLogs()">V·详细</label>
-      <label class="chk" title="Debug：调试日志，开发期输出"><input type="checkbox" class="f-lv" value="D" checked onchange="renderLogs()">D·调试</label>
-      <label class="chk" title="Info：一般信息，正常运行日志"><input type="checkbox" class="f-lv" value="I" checked onchange="renderLogs()">I·信息</label>
-      <label class="chk" title="Warning：警告，潜在问题"><input type="checkbox" class="f-lv" value="W" checked onchange="renderLogs()">W·警告</label>
-      <label class="chk" title="Error：错误/异常/崩溃"><input type="checkbox" class="f-lv" value="E" checked onchange="renderLogs()">E·错误</label>
+      <div class="fgroup">
+        <b class="gtitle">设备日志</b>
+        <label class="chk"><input type="checkbox" id="f-src-device" checked onchange="renderLogs();syncGroup()">启用</label>
+        <span class="gsep"></span>
+        <span class="vlv" id="vlv">
+          <label class="chk" title="Verbose：最详细的跟踪日志，量最大，一般排查用不到"><input type="checkbox" class="f-lv" value="V" checked onchange="renderLogs()">V·详细</label>
+          <label class="chk" title="Debug：调试日志，开发期输出"><input type="checkbox" class="f-lv" value="D" checked onchange="renderLogs()">D·调试</label>
+          <label class="chk" title="Info：一般信息，正常运行日志"><input type="checkbox" class="f-lv" value="I" checked onchange="renderLogs()">I·信息</label>
+          <label class="chk" title="Warning：警告，潜在问题"><input type="checkbox" class="f-lv" value="W" checked onchange="renderLogs()">W·警告</label>
+          <label class="chk" title="Error：错误/异常/崩溃"><input type="checkbox" class="f-lv" value="E" checked onchange="renderLogs()">E·错误</label>
+        </span>
+      </div>
+      <div class="fgroup" title="Flutter 输出不受级别筛选影响；来源由页头右侧的会话下拉框选择">
+        <b class="gtitle">Flutter 输出</b>
+        <label class="chk"><input type="checkbox" id="f-src-flutter" checked onchange="renderLogs()">启用</label>
+        <span class="gsep"></span>
+        <span class="muted" style="font-size:12px">按页头会话选择</span>
+      </div>
       <input id="f-kw" placeholder="关键字过滤" oninput="renderLogs()">
       <button onclick="togglePause(this)">暂停</button>
       <button onclick="clearLogs()">清屏</button>
       <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
     </div>
     <div id="logview"><span class="muted">暂无日志</span></div>
-    <div class="muted" style="margin-top:6px">「Flutter 输出」= 全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出的部分）；「设备日志」= 选中设备的全量系统日志（logcat/hilog/iOS log），包含控制台不打印的内容。</div>
+    <div class="muted" style="margin-top:6px">打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
   </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
+var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兜底展示）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws');
@@ -1128,7 +1269,8 @@ function renderHdrDev() {
 }
 function refreshDevices(){ ws.send(JSON.stringify({type:'refresh'})); }
 function refreshAll(){ refreshDevices(); refreshDaemon(); }
-function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); logs = []; renderLogs(); renderHdrDev(); }
+function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); renderLogs(); renderHdrDev(); }
+var osByPlatform = { android: 'android', ohos: 'ohos', 'ios-sim': 'ios', 'ios-real': 'ios' };
 function renderLogs() {
   var view = document.getElementById('logview');
   var wantDevice = document.getElementById('f-src-device').checked;
@@ -1136,18 +1278,43 @@ function renderLogs() {
   var lv = {}; document.querySelectorAll('.f-lv').forEach(function(c){ lv[c.value] = c.checked; });
   var kw = document.getElementById('f-kw').value.toLowerCase();
   var html = '';
+  var dev = null;
+  if (selected) { devices.forEach(function(d){ if (d.id === selected) dev = d; }); }
+  var devOs = dev ? osByPlatform[dev.platform] : null;
   logs.forEach(function(l){
     var isFlutter = l.source && l.source.indexOf('flutter') === 0;
-    if (isFlutter && !wantFlutter) return;
-    // 选定了某个调试会话时，Flutter 输出只显示该会话的日志。
-    if (isFlutter && vmFilter && (l.tag || '') !== vmFilter) return;
-    if (!isFlutter && !wantDevice) return;
-    if (!lv[l.level]) return;
-    if (kw && ((l.msg || '') + ' ' + (l.tag || '')).toLowerCase().indexOf(kw) < 0) return;
+    // 过滤规则：未选 VM 也未选设备时不打印；选 VM 只看该会话的 Flutter 输出；
+    // 选设备看该设备的日志及其上的 VM；都选则两个源并集（互不约束）。
+    if (isFlutter) {
+      if (!wantFlutter) return;
+      if (vmFilter) {
+        // 选了 VM：仅该会话的输出（不再要求归属于选中设备）。
+        if ((l.tag || '') !== vmFilter) return;
+      } else if (selected) {
+        // 只选设备：仅属于该设备的 VM（来源带设备号则精确匹配，否则按平台推断）。
+        var belong = (l.device && l.device === selected) ||
+          (!l.device && devOs && l.os && l.os === devOs);
+        if (!belong) return;
+      } else {
+        return;
+      }
+    } else {
+      if (!wantDevice) return;
+      if (!lv[l.level]) return;
+      if (selected) {
+        if ((l.device || '') !== selected) return;
+      } else {
+        return;
+      }
+    }
+    if (kw && ((l.msg || '') + ' ' + (l.tag || '') + ' ' + (l.app || '')).toLowerCase().indexOf(kw) < 0) return;
     var t = l.ts || l.rcv || '';
-    html += '<div class="lv-' + (l.level || 'I') + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(l.source) + ']</span> <span class="tag">' + esc(l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
+    var src = l.source + (l.device ? '·' + l.device : '');
+    html += '<div class="lv-' + (l.level || 'I') + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
   });
-  view.innerHTML = html || '<span class="muted">暂无日志</span>';
+  view.innerHTML = html || (!vmFilter && !selected
+    ? '<span class="muted">未选择 VM 或设备，不显示日志（请在页头右侧选择）</span>'
+    : '<span class="muted">暂无日志</span>');
   if (!paused) view.scrollTop = view.scrollHeight;
 }
 function togglePause(btn){ paused = !paused; btn.textContent = paused ? '继续' : '暂停'; if (!paused) renderLogs(); }
@@ -1163,14 +1330,17 @@ function refreshDaemon(){
       sel.style.display = 'none';
     } else {
       var ss = d.sessions || [];
-      var sess = ss.map(function(s){ return esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
+      var sess = ss.map(function(s){ return (s.app ? s.app + ' · ' : '') + esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
       el.innerHTML = '<span class="ok">运行中</span> pid=' + d.pid + '，已运行 ' + Math.floor(d.uptimeSec / 60) + ' 分 ' + (d.uptimeSec % 60) + ' 秒<br>调试会话：<br>' + sess;
       vm.style.display = 'none';
       sel.style.display = '';
-      var html = '<option value="">全部会话（' + ss.length + '）</option>';
+      var html = '<option value="">未选择会话（共 ' + ss.length + ' 个）</option>';
       ss.forEach(function(s){
+        if (s.app) vmApps[s.source || s.uri] = s.app;
+        // 显示应用包名（如有），value 仍为会话来源，保证过滤匹配不变。
         var v = s.source || s.uri;
-        html += '<option value="' + esc(v) + '" ' + (v === vmFilter ? 'selected' : '') + '>' + esc(v) + '</option>';
+        var text = (s.app ? s.app + ' · ' : '') + v;
+        html += '<option value="' + esc(v) + '" ' + (v === vmFilter ? 'selected' : '') + '>' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
       vmFilter = sel.value; // 选中会话消失时自动回退到全部
@@ -1182,6 +1352,13 @@ function refreshDaemon(){
 }
 setInterval(refreshDaemon, 5000);
 function setVmFilter(v){ vmFilter = v; renderLogs(); }
+function syncGroup(){
+  var on = document.getElementById('f-src-device').checked;
+  var g = document.getElementById('vlv');
+  g.classList.toggle('dim', !on);
+  g.querySelectorAll('input').forEach(function(c){ c.disabled = !on; });
+}
+syncGroup();
 function restartDaemon(){
   if (!confirm('重启守护进程？正在进行的调试会话会自动重连。')) return;
   fetch('/api/daemon/restart', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){ alert(d.message); refreshDaemon(); });
