@@ -32,6 +32,10 @@ import 'dart:io';
 const int kDaemonLockPort = 46128;
 const String kDaemonStatusToken = 'xbume-ide-status';
 
+/// 与 daemon（bin/ide.dart）约定的安装目录与配置文件名。
+const String kInstallDirName = '.xb_ume_ide';
+const String kConfigName = 'config.json';
+
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
 
@@ -216,6 +220,138 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode({'error': e.toString()}));
         await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
+    // -- 路由跳转定位 -------------------------------------------------------
+    // 点击路由栈条目 → 找到该路由子树中第一个用户代码 Widget 类 → 解析
+    // 本机源文件 → 用配置的 IDE 打开（优先级与 daemon 的 IDE 跳转一致）。
+    if (path == '/api/routelocate') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final nav = int.tryParse(req.uri.queryParameters['nav'] ?? '') ?? -1;
+      final idx = int.tryParse(req.uri.queryParameters['idx'] ?? '') ?? -1;
+      if (uri.isEmpty || nav < 0 || idx < 0) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
+        req.response.statusCode = code;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      final rpc = _SandboxRpc(uri);
+      try {
+        // 第 1 步：收集该路由子树的候选 widget（浅→深；单行 IIFE）。
+        final expr =
+            "(() { final root = WidgetsBinding.instance.renderViewElement; "
+            "if (root == null) return 'NO_ROOT'; "
+            "final navigators = <NavigatorState>[]; "
+            "void walkN(Element e) { final w = e.widget; "
+            "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) { navigators.add(e.state as NavigatorState); } "
+            "e.visitChildren(walkN); } "
+            "root.visitChildren(walkN); "
+            "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+            "if ($idx < 0 || $idx >= navigators[$nav]._history.length) return 'BAD_IDX'; "
+            "final route = navigators[$nav]._history[$idx].route; "
+            "final cands = <Widget>[]; "
+            "void walk(Element e) { if (identical(ModalRoute.of(e), route)) cands.add(e.widget); "
+            "e.visitChildren(walk); } "
+            "root.visitChildren(walk); "
+            "return cands.length > 250 ? cands.sublist(0, 250) : cands; })()";
+        final libId = await rpc
+            .libraryId('package:flutter/src/widgets/navigator.dart');
+        final isoId = await rpc.isolateId();
+        final listRes = await rpc.rawRpc('evaluate', {
+          'isolateId': isoId,
+          'targetId': libId,
+          'expression': expr,
+        });
+        final listKind = listRes['kind']?.toString();
+        if (listKind == 'String') {
+          // NO_ROOT / BAD_NAV / BAD_IDX：直接作为错误提示。
+          throw listRes['valueAsString']?.toString() ?? '定位失败';
+        }
+        if (listKind != 'List') {
+          throw '候选收集失败（kind=$listKind）';
+        }
+        final listId = listRes['id']?.toString();
+        if (listId == null || listId.isEmpty) {
+          throw '候选列表引用无效';
+        }
+
+        // 第 2 步：从 isolate 的 file:/// 库提取项目根，预加载包路径表。
+        final iso = await rpc.rawRpc('getIsolate', {'isolateId': isoId});
+        final fileUris = ((iso['libraries'] as List? ?? <Object?>[])
+                .whereType<Map>()
+                .map((l) => l['uri']?.toString() ?? '')
+                .where((u) => u.startsWith('file:///'))
+                .toList())
+            .cast<String>();
+        final projectRoot = _projectRootFor(fileUris);
+        if (projectRoot != null) {
+          _pkgRootsFor(projectRoot);
+        }
+
+        // 第 3 步：逐个候选查类定义库，取第一个能解析到本机文件的用户类。
+        final listObj = await rpc.rawRpc('getObject', {
+          'isolateId': isoId,
+          'objectId': listId,
+        });
+        final elements =
+            (listObj['elements'] as List? ?? <Object?>[]).whereType<Map>();
+        var scanned = 0;
+        var framework = 0;
+        for (final el in elements) {
+          if (scanned >= 250) break;
+          scanned++;
+          final cls = el['class'];
+          final clsId = cls is Map ? cls['id']?.toString() : null;
+          final clsName = cls is Map ? cls['name']?.toString() ?? '' : '';
+          if (clsId == null || clsId.isEmpty) continue;
+          Map<String, Object?>? classObj;
+          try {
+            final res = await rpc.rawRpc('getObject', {
+              'isolateId': isoId,
+              'objectId': clsId,
+            });
+            classObj = res;
+          } catch (_) {
+            continue; // 类可能已被回收（Sentinel）。
+          }
+          final libUri =
+              ((classObj['library'] as Map?)?['uri'] ?? '').toString();
+          if (libUri.startsWith('dart:') ||
+              libUri.startsWith('package:flutter/')) {
+            framework++;
+            continue;
+          }
+          final file = _resolveLibraryFile(libUri);
+          if (file == null) continue; // 该用户库不在本机（如仅发布包），试下一个。
+          final line = _findClassDeclLine(file, clsName);
+          final ideError = await _guiLaunchIde(file, line);
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+            jsonEncode(<String, Object?>{
+              'file': file,
+              'line': line,
+              'className': clsName,
+              if (ideError != null) 'message': ideError,
+            }),
+          );
+          await req.response.close();
+          return;
+        }
+        throw scanned == 0
+            ? '未找到该路由的页面元素（路由可能尚未构建完成）'
+            : '无法定位：${scanned - framework} 个用户类均未解析到本机文件（依赖包可能不在本机）';
+      } catch (e, st) {
+        stderr.writeln('[routelocate] $e\n$st');
+        await fail(e);
       } finally {
         await rpc.close();
       }
@@ -1036,6 +1172,26 @@ class _SandboxRpc {
     );
   }
 
+  /// 通用 VM service 调用（供路由定位使用 evaluate/getObject 等）。
+  Future<Map<String, Object?>> rawRpc(
+    String method, [
+    Map<String, Object?>? params,
+  ]) async {
+    await _ensureConnected();
+    await _resolveTarget();
+    return _rpc(method, params);
+  }
+
+  /// 当前 isolate id（须先经 rawRpc 或 evalString 触发连接）。
+  Future<String> isolateId() async {
+    await _ensureConnected();
+    await _resolveTarget();
+    return _isolateId!;
+  }
+
+  /// 按库 uri 查找库 id（公开版本）。
+  Future<String> libraryId(String uri) => _libraryId(uri);
+
   /// 单次 JSON-RPC 请求-响应。
   Future<Map<String, Object?>> _rpc(
     String method, [
@@ -1057,6 +1213,7 @@ class _SandboxRpc {
 
   /// 解析 isolateId（每连接一次）；库 id 由 _libraryId 按需解析并缓存。
   Future<void> _resolveTarget() async {
+    await _ensureConnected();
     if (_isolateId != null) return;
     final vm = await _rpc('getVM');
     final isolates = vm['isolates'];
@@ -1410,6 +1567,279 @@ Future<ProcessResult> _runTool(String exe, List<String> args) async {
     args,
     environment: <String, String>{'PATH': await _toolPath()},
   );
+}
+
+// -- 路由跳转：类 → 源文件解析与 IDE 唤起 ---------------------------------
+
+/// 与 daemon 共用的 IDE 优先级名单（~/.xb_ume_ide/config.json 的 ideOrder）。
+const List<String> _guiDefaultIdeOrder = <String>[
+  'qodercn',
+  'qoder-cn',
+  'cursor',
+  'trae',
+  'windsurf',
+  'code',
+  'androidStudio',
+];
+
+/// macOS 上未安装 shell 命令时，按 app 内置 CLI 兑底查找（与 daemon 一致）。
+const Map<String, List<String>> _guiMacosVscodeAppClis = <String, List<String>>{
+  'qoder-cn': <String>[
+    '/Applications/Qoder CN IDE.app/Contents/Resources/app/bin/qoder-cn',
+    '/Applications/Qoder.app/Contents/Resources/app/bin/qoder-cn',
+  ],
+  'qodercn': <String>[
+    '/Applications/Qoder CN IDE.app/Contents/Resources/app/bin/qodercn',
+    '/Applications/Qoder.app/Contents/Resources/app/bin/qodercn',
+  ],
+  'cursor': <String>[
+    '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+  ],
+  'trae': <String>[
+    '/Applications/Trae.app/Contents/Resources/app/bin/trae',
+    '/Applications/Trae CN.app/Contents/Resources/app/bin/trae',
+  ],
+  'windsurf': <String>[
+    '/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf',
+  ],
+  'code': <String>[
+    '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
+  ],
+};
+
+List<String> _guiAndroidStudioBinaries() {
+  if (Platform.isMacOS) {
+    return <String>[
+      '/Applications/Android Studio.app/Contents/MacOS/studio',
+      '/Applications/Android Studio Preview.app/Contents/MacOS/studio',
+    ];
+  }
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
+    return <String>[
+      r'C:\Program Files\Android\Android Studio\bin\studio64.exe',
+      r'C:\Program Files\Android\Android Studio Preview\bin\studio64.exe',
+      if (localAppData.isNotEmpty)
+        '$localAppData\\Programs\\Android Studio\\bin\\studio64.exe',
+    ];
+  }
+  return <String>['studio', 'android-studio'];
+}
+
+Future<bool> _guiHasCommand(String command) async {
+  try {
+    final result = Platform.isWindows
+        ? await Process.run('where', <String>[command])
+        : await Process.run('which', <String>[command]);
+    return result.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _guiRunChecked(String command, List<String> args) async {
+  try {
+    final result = await Process.run(
+      command,
+      args,
+      runInShell: Platform.isWindows,
+      environment: <String, String>{'PATH': await _toolPath()},
+    );
+    return result.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> _guiCopyClipboard(String text) async {
+  try {
+    if (Platform.isMacOS) {
+      final process = await Process.start('pbcopy', const <String>[]);
+      process.stdin.write(text);
+      await process.stdin.close();
+      await process.exitCode;
+    } else if (Platform.isLinux) {
+      final process = await Process.start(
+        'xclip',
+        const <String>['-selection', 'clipboard'],
+      );
+      process.stdin.write(text);
+      await process.stdin.close();
+      await process.exitCode;
+    } else if (Platform.isWindows) {
+      await Process.run(
+        'cmd',
+        <String>['/c', 'echo $text|clip'],
+        runInShell: true,
+      );
+    }
+  } catch (_) {
+    // ignored
+  }
+}
+
+/// 读取 IDE 优先级配置（与 daemon 同一份 ~/.xb_ume_ide/config.json）。
+List<String> _guiIdeOrder() {
+  try {
+    final file = File('$_home/$kInstallDirName/$kConfigName');
+    if (!file.existsSync()) return _guiDefaultIdeOrder;
+    final parsed = jsonDecode(file.readAsStringSync());
+    final order = parsed is Map<String, Object?> ? parsed['ideOrder'] : null;
+    if (order is! List) return _guiDefaultIdeOrder;
+    final names = order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    return names.isEmpty ? _guiDefaultIdeOrder : names;
+  } catch (_) {
+    return _guiDefaultIdeOrder;
+  }
+}
+
+/// 用配置的 IDE 打开源文件（优先级与 daemon 的 IDE 跳转一致）。
+/// 返回 null 表示成功，否则返回失败原因文案（已复制路径到剪贴板兑底）。
+Future<String?> _guiLaunchIde(String path, int line) async {
+  for (final ide in _guiIdeOrder()) {
+    if (ide == 'androidStudio') {
+      if (Platform.isMacOS) {
+        final query = 'file=${Uri.encodeComponent(path)}&line=$line';
+        if (await _guiRunChecked('open', <String>['idea://open?$query'])) {
+          return null;
+        }
+      } else {
+        for (final bin in _guiAndroidStudioBinaries()) {
+          if ((await _guiHasCommand(bin)) || File(bin).existsSync()) {
+            if (await _guiRunChecked(bin, <String>['--line', '$line', path])) {
+              return null;
+            }
+          }
+        }
+      }
+      continue;
+    }
+    // vscode-like：CLI 名即 ide 名（qodercn/code/...）。
+    String? cli;
+    if (await _guiHasCommand(ide)) {
+      cli = ide;
+    } else if (Platform.isMacOS) {
+      for (final p in _guiMacosVscodeAppClis[ide] ?? const <String>[]) {
+        if (File(p).existsSync()) {
+          cli = p;
+          break;
+        }
+      }
+    }
+    if (cli == null) continue;
+    if (await _guiRunChecked(cli, <String>['-g', '$path:$line'])) {
+      return null;
+    }
+  }
+  await _guiCopyClipboard('$path:$line');
+  return '未找到可用的 IDE，已复制路径到剪贴板';
+}
+
+/// 包名 → 包根路径缓存（来自项目 .dart_tool/package_config.json）。
+final Map<String, Map<String, String>> _pkgRootsCache = <String, Map<String, String>>{};
+
+/// 从 isolate 的 file:/// 库 uri 提取 Flutter 项目根目录。
+String? _projectRootFor(List<String> fileUris) {
+  for (final uri in fileUris) {
+    const marker = '/.dart_tool/flutter_build/';
+    final idx = uri.indexOf(marker);
+    // 注意截取起点是 'file://'（7 字符），保留第三个斜杠作路径根。
+    if (idx > 0) return uri.substring('file://'.length, idx);
+  }
+  for (final uri in fileUris) {
+    final idx = uri.indexOf('/lib/');
+    if (idx > 'file://'.length) return uri.substring('file://'.length, idx);
+  }
+  return null;
+}
+
+/// 读取项目的 .dart_tool/package_config.json，返回 包名 → 包根路径。
+Map<String, String>? _pkgRootsFor(String projectRoot) {
+  final cached = _pkgRootsCache[projectRoot];
+  if (cached != null) return cached;
+  try {
+    final file = File('$projectRoot/.dart_tool/package_config.json');
+    if (!file.existsSync()) return null;
+    final parsed = jsonDecode(file.readAsStringSync());
+    if (parsed is! Map<String, Object?>) return null;
+    final packages = parsed['packages'];
+    if (packages is! List) return null;
+    final roots = <String, String>{};
+    for (final pkg in packages) {
+      if (pkg is! Map) continue;
+      final name = pkg['name']?.toString();
+      final rootUri = pkg['rootUri']?.toString();
+      if (name == null || rootUri == null) continue;
+      var root = rootUri.startsWith('file://')
+          ? rootUri.substring('file://'.length) // 'file:///a' → '/a'
+          : _normalizeLocalPath('$projectRoot/.dart_tool/$rootUri');
+      while (root.endsWith('/')) {
+        root = root.substring(0, root.length - 1);
+      }
+      roots[name] = root;
+    }
+    _pkgRootsCache[projectRoot] = roots;
+    return roots;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 归一化本机路径（处理 ../ 与 ./，package_config 的相对 rootUri 用）。
+String _normalizeLocalPath(String p) {
+  final abs = p.startsWith('/');
+  final out = <String>[];
+  for (final seg in p.split('/')) {
+    if (seg.isEmpty || seg == '.') continue;
+    if (seg == '..') {
+      if (out.isNotEmpty) out.removeLast();
+      continue;
+    }
+    out.add(seg);
+  }
+  return (abs ? '/' : '') + out.join('/');
+}
+
+/// 把库 uri 解析为本机存在的源文件路径；找不到返回 null。
+/// package:<pkg>/<p> → <pkgRoot>/lib/<p>；file:/// 直接映射。
+String? _resolveLibraryFile(String uri) {
+  String candidate;
+  if (uri.startsWith('file:///')) {
+    candidate = uri.substring('file:///'.length);
+  } else if (uri.startsWith('package:')) {
+    final rest = uri.substring('package:'.length);
+    final slash = rest.indexOf('/');
+    if (slash <= 0) return null;
+    final pkg = rest.substring(0, slash);
+    final path = rest.substring(slash + 1);
+    // 从缓存的所有项目根里找包含该包的。
+    for (final roots in _pkgRootsCache.values) {
+      final pkgRoot = roots[pkg];
+      if (pkgRoot != null) {
+        final f = File('$pkgRoot/lib/$path');
+        if (f.existsSync()) return f.path;
+      }
+    }
+    return null;
+  } else {
+    return null;
+  }
+  final f = File(candidate);
+  return f.existsSync() ? f.path : null;
+}
+
+/// 在源文件中找类/mixin/enum 声明行（1-based）；找不到返回 1。
+int _findClassDeclLine(String path, String className) {
+  try {
+    final lines = File(path).readAsLinesSync();
+    final pattern = RegExp('^(?:abstract\\s+)?(?:class|enum|mixin|extension)\\s+$className\\b');
+    for (var i = 0; i < lines.length; i++) {
+      if (pattern.hasMatch(lines[i])) return i + 1;
+    }
+  } catch (_) {
+    // ignored
+  }
+  return 1;
 }
 
 /// 发现本机连接的设备：Android（adb）/ 鸿蒙（hdc）/ iOS（仅 macOS）。
@@ -1828,7 +2258,7 @@ const String guiHtml = r'''
       <span class="muted">选中会话 app 的 Navigator 路由栈（栈底 → 栈顶，当前路由高亮）</span>
     </div>
     <div id="rt-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。</div>
+    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。</div>
   </section>
 </main>
 <script>
@@ -1986,7 +2416,7 @@ function rtRender(d){
     var routes = nav.routes || [];
     html += '<div style="margin:8px 0 2px"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span></div>';
     if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
-    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>类型</th><th>参数</th></tr>';
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>类型</th><th>参数</th><th>定位</th></tr>';
     routes.forEach(function(r, i){
       var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
       var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
@@ -1994,11 +2424,27 @@ function rtRender(d){
       var args = r.argsType
         ? '<span title="' + esc(r.argsType + (r.args ? ' ' + r.args : '')) + '">' + esc((r.args || '').length > 60 ? r.args.substring(0, 60) + '…' : (r.args || '空')) + ' <span class="muted">(' + esc(r.argsType) + ')</span></span>'
         : '<span class="muted">—</span>';
-      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td><td>' + esc(r.type) + '</td><td>' + args + '</td></tr>';
+      var jump = '<a href="javascript:void(0)" onclick="rtJump(' + nav.index + ',' + i + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
+      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td><td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
     });
     html += '</table>';
   });
   return html;
+}
+function rtJump(nav, idx, a){
+  var uri = rtUri();
+  if (!uri) return;
+  a.textContent = '定位中…';
+  fetch('/api/routelocate?uri=' + encodeURIComponent(uri) + '&nav=' + nav + '&idx=' + idx)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { a.outerHTML = '<span class="bad" title="' + esc(d.error) + '">失败</span>'; return; }
+      var fileName = (d.file || '').split('/').pop();
+      var pos = fileName + (d.line ? ':' + d.line : '');
+      var tip = (d.file || '') + (d.line ? ':' + d.line : '') + (d.className ? '（' + d.className + '）' : '');
+      a.outerHTML = '<span style="color:var(--ok,#7ee787)" title="' + esc(tip + (d.message ? '；' + d.message : '')) + '">✓ ' + esc(pos) + '</span>';
+    })
+    .catch(function(e){ a.outerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
 }
 
 // -- 应用沙盒 Tab -----------------------------------------------------------

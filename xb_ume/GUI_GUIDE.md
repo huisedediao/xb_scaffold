@@ -153,9 +153,12 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - **路由名**（`settings.name`；匿名 push 的页面显示 `<unnamed>`）；
 - **类型**（MaterialPageRoute / DialogRoute / BottomSheet 等，弹窗也是路由栈的一层）；
 - **参数**（`settings.arguments` 的摘要，悬停看完整内容；复杂对象只显示 toString/类型）；
+- **定位**（行尾「跳转」链接，见下文）；
 - 栈顶当前路由带 **● 当前** 高亮标记。
 
-嵌套 Navigator（如底部导航每个 Tab 内的 Navigator）分组展示为 Navigator #1、#2…。
+嵌套 Navigator（如底部导航每个 Tab 内的 Navigator）分组展示为 Navigator #1、#2… 。
+
+**跳转到源码**：点击行尾「跳转」会用配置的 IDE 打开该页面对应的源码文件（定位到页面 Widget 类声明行，不到具体行列）。实现原理：收集该路由子树内的 widget（浅→深）→ 逐个查其类的定义库 → 跳过 Flutter 框架内置类，取第一个能解析到本机源文件的用户类 → 按 `ideOrder` 优先级唤起 IDE（与守护进程的 IDE 跳转同一份 `~/.xb_ume_ide/config.json` 配置）。项目根从调试会话的库路径自动推导，包依赖经项目的 `.dart_tool/package_config.json` 解析；依赖包源码不在本机或整条路由都是框架组件时会提示失败原因。IDE 一个都没找到时会把路径复制到剪贴板兑底。
 
 **刷新方式**：切换到本 Tab 自动拉取一次；也可点「刷新」手动拉取（导航、开关弹窗后点刷新即可看到最新栈）。
 
