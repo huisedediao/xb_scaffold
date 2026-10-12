@@ -27,7 +27,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data' show BytesBuilder;
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
@@ -170,8 +169,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
+      final rpc = _SandboxRpc(uri);
       try {
-        final rpc = _SandboxRpc(uri);
         final info = await rpc.evalString(
           "Platform.operatingSystem + '\\t' + "
           "(Platform.environment['HOME'] ?? Directory.current.path)",
@@ -225,6 +224,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       } catch (e) {
         await fail(e);
+      } finally {
+        await rpc.close();
       }
       return;
     }
@@ -236,9 +237,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
-      const maxFileBytes = 20 * 1024 * 1024;
-      const maxDirBytes = 100 * 1024 * 1024;
-      const maxDirFiles = 2000;
+      final rpc = _SandboxRpc(uri);
       Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
         req.response.statusCode = code;
         req.response.headers.contentType = ContentType.json;
@@ -246,35 +245,52 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
-      /// 从 app 读单个文件的字节（evaluate join(',') + 分页）。
-      Future<List<int>> readFile(String rpcFile) async {
-        final rpc = _SandboxRpc(uri);
+      // 分段读取文件：每次 evaluate 读 1MB 并 gzip 压缩传输，
+      // app 端与 GUI 端内存峰值均为常数级，文件大小无上限。
+      Future<void> readFileChunks(
+        String rpcFile,
+        void Function(List<int> chunk) onChunk,
+      ) async {
         final size = int.parse(
           (await rpc.evalString("File('${_escPath(rpcFile)}').lengthSync()"))
               .trim(),
         );
-        if (size > maxFileBytes) {
-          throw '单文件超过 ${maxFileBytes ~/ (1024 * 1024)}MB，不支持下载';
+        const chunkSize = 1024 * 1024;
+        for (var offset = 0; offset < size; offset += chunkSize) {
+          final n = size - offset < chunkSize ? size - offset : chunkSize;
+          final data = await rpc.evalString(
+            "(() { final fh = File('${_escPath(rpcFile)}').openSync(); "
+            "try { fh.setPositionSync($offset); final b = fh.readSync($n); "
+            "return gzip.encode(b).join(','); } finally { fh.closeSync(); } })()",
+          );
+          if (data.isEmpty) continue;
+          final gz = data.split(',').map(int.parse).toList();
+          if (gz.isNotEmpty) {
+            final plain = gzip.decode(gz);
+            if (plain.isNotEmpty) onChunk(plain);
+          }
         }
-        final data = await rpc
-            .evalString("File('${_escPath(rpcFile)}').readAsBytesSync().join(',')");
-        return data.isEmpty ? <int>[] : data.split(',').map(int.parse).toList();
       }
 
+      var streaming = false; // 响应已开始流式输出（此时不能再改状态码）
       try {
         if (path == '/api/sandbox/download') {
-          final bytes = await readFile(target);
+          final size = int.parse(
+            (await rpc.evalString("File('${_escPath(target)}').lengthSync()"))
+                .trim(),
+          );
           req.response.headers.contentType = ContentType.binary;
           req.response.headers.set(
             'Content-Disposition',
             'attachment; filename="${Uri.encodeComponent(_baseName(target, ''))}"',
           );
-          req.response.add(bytes);
+          req.response.contentLength = size;
+          streaming = true;
+          await readFileChunks(target, req.response.add);
           await req.response.close();
           return;
         }
-        // 文件夹：递归列出文件，逐个拉取后打包 USTAR tar（无压缩）。
-        final rpc = _SandboxRpc(uri);
+        // 文件夹：递归列出全部文件，逐个流式写入 USTAR tar（无压缩）。
         final info = await rpc.evalString(
           "Platform.operatingSystem + '\\t' + Directory.current.path",
         );
@@ -283,63 +299,57 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           "(() { final files = Directory('${_escPath(target)}')"
           ".listSync(recursive: true, followLinks: false).whereType<File>().toList(); "
           "final sb = StringBuffer()..writeln(files.length); "
-          "for (final f in files.take($maxDirFiles)) { "
+          "for (final f in files) { "
           "try { sb..write(f.path)..write('\\t')..write(f.lengthSync())..write('\\t')"
           "..write(f.lastModifiedSync().millisecondsSinceEpoch)..writeln(); } catch (_) {} } "
           "return sb.toString(); })()",
         );
         final lines = listing.split('\n').where((l) => l.isNotEmpty).toList();
-        final count = int.tryParse(lines.first.trim()) ?? 0;
         final files = <List<String>>[];
-        var total = 0;
         for (final line in lines.skip(1)) {
           final parts = line.split('\t');
           if (parts.length < 3) continue;
-          final size = int.tryParse(parts[1]) ?? 0;
-          total += size;
-          files.add(<String>[parts[0], '$size', parts[2]]);
+          files.add(<String>[parts[0], parts[1], parts[2]]);
         }
-        if (count > maxDirFiles) {
-          await fail(
-            '文件夹含 $count 个文件，超过 $maxDirFiles，请逐层下载',
-            code: HttpStatus.requestEntityTooLarge,
-          );
-          return;
-        }
-        if (total > maxDirBytes) {
-          await fail(
-            '文件夹总大小超过 ${maxDirBytes ~/ (1024 * 1024)}MB，请逐层下载',
-            code: HttpStatus.requestEntityTooLarge,
-          );
-          return;
-        }
-        final tar = BytesBuilder();
-        var skipped = 0;
-        final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        for (final f in files) {
-          if (int.parse(f[1]) > maxFileBytes) {
-            skipped++;
-            continue;
-          }
-          final bytes = await readFile(f[0]);
-          if (!_tarAppendFile(tar, _relativeTo(f[0], target, os), bytes, nowSec)) {
-            skipped++;
-          }
-        }
-        tar.add(_tarEnd());
         final name = _baseName(target, os);
         req.response.headers.contentType = ContentType.binary;
         req.response.headers.set(
           'Content-Disposition',
           'attachment; filename="${Uri.encodeComponent(name.isEmpty ? 'sandbox' : name)}.tar"',
         );
-        if (skipped > 0) {
-          print('[xbume-gui] 沙盒下载：$skipped 个文件超限或路径过长已跳过');
+        streaming = true;
+        var skipped = 0;
+        for (final f in files) {
+          final size = int.tryParse(f[1]) ?? 0;
+          final mtimeSec = (int.tryParse(f[2]) ?? 0) ~/ 1000;
+          final header = _tarHeader(_relativeTo(f[0], target, os), size, mtimeSec);
+          if (header == null) {
+            skipped++;
+            continue;
+          }
+          req.response.add(header);
+          await readFileChunks(f[0], req.response.add);
+          final padding = (512 - (size % 512)) % 512;
+          if (padding > 0) {
+            req.response.add(List<int>.filled(padding, 0));
+          }
         }
-        req.response.add(tar.takeBytes());
+        req.response.add(_tarEnd());
         await req.response.close();
+        if (skipped > 0) {
+          print('[xbume-gui] 沙盒下载：$skipped 个条目路径过长已跳过');
+        }
       } catch (e) {
-        await fail(e);
+        if (streaming) {
+          // 流式输出已开始，只能截断连接（浏览器报下载失败）。
+          try {
+            await req.response.close();
+          } catch (_) {}
+        } else {
+          await fail(e);
+        }
+      } finally {
+        await rpc.close();
       }
       return;
     }
@@ -861,18 +871,64 @@ class _SandboxRpc {
 
   final String uri;
   int _seq = 0;
+  WebSocket? _socket;
+  StreamSubscription<dynamic>? _sub;
+  final Map<String, Completer<Object?>> _pending = {};
+  String? _isolateId;
+  String? _ioLibId;
+
+  /// 建立连接（懒加载；同一连接复用多次 evaluate，避免分段读反复握手）。
+  Future<void> _ensureConnected() async {
+    if (_socket != null) return;
+    final socket = await WebSocket.connect(uri);
+    _socket = socket;
+    _sub = socket.listen(
+      (message) {
+        if (message is! String) return;
+        Object? parsed;
+        try {
+          parsed = jsonDecode(message);
+        } catch (_) {
+          return;
+        }
+        if (parsed is! Map) return;
+        final id = parsed['id']?.toString();
+        final completer = _pending.remove(id);
+        if (completer == null) return;
+        if (parsed['error'] is Map) {
+          completer.completeError(
+            (parsed['error'] as Map)['message']?.toString() ?? 'VM service 错误',
+          );
+        } else {
+          completer.complete(parsed['result']);
+        }
+      },
+      onDone: () {
+        for (final c in _pending.values) {
+          c.completeError('连接已关闭');
+        }
+        _pending.clear();
+        _socket = null;
+      },
+      onError: (Object e) {
+        for (final c in _pending.values) {
+          c.completeError(e);
+        }
+        _pending.clear();
+        _socket = null;
+      },
+    );
+  }
 
   /// 单次 JSON-RPC 请求-响应。
   Future<Map<String, Object?>> _rpc(
-    WebSocket socket,
-    Map<String, Completer<Object?>> pending,
     String method, [
     Map<String, Object?>? params,
   ]) {
     final id = 'r${_seq++}';
     final completer = Completer<Object?>();
-    pending[id] = completer;
-    socket.add(
+    _pending[id] = completer;
+    _socket!.add(
       jsonEncode(<String, Object?>{
         'jsonrpc': '2.0',
         'id': id,
@@ -883,146 +939,115 @@ class _SandboxRpc {
     return completer.future.then((v) => v as Map<String, Object?>);
   }
 
+  /// 解析 isolateId 与 dart:io 库 id（每连接一次）。
+  Future<void> _resolveTarget() async {
+    if (_ioLibId != null) return;
+    final vm = await _rpc('getVM');
+    final isolates = vm['isolates'];
+    final isolateId = isolates is List && isolates.isNotEmpty
+        ? (isolates.first as Map)['id']?.toString()
+        : null;
+    if (isolateId == null || isolateId.isEmpty) {
+      throw '未找到可用的 isolate';
+    }
+    final iso = await _rpc('getIsolate', {'isolateId': isolateId});
+    for (final lib in (iso['libraries'] as List? ?? <Object?>[])) {
+      if (lib is Map && lib['uri'] == 'dart:io') {
+        _ioLibId = lib['id']?.toString();
+        break;
+      }
+    }
+    if (_ioLibId == null) {
+      throw 'app 未加载 dart:io 库';
+    }
+    _isolateId = isolateId;
+  }
+
   /// 在 app 的 dart:io 库上下文执行表达式，返回完整字符串。
   /// 超过 VM 截断阈值时用 getObject 分页拉全。
   Future<String> evalString(String expression) async {
-    final socket = await WebSocket.connect(uri);
-    final pending = <String, Completer<Object?>>{};
-    late StreamSubscription<dynamic> sub;
-    sub = socket.listen((message) {
-      if (message is! String) return;
-      Object? parsed;
-      try {
-        parsed = jsonDecode(message);
-      } catch (_) {
-        return;
-      }
-      if (parsed is! Map) return;
-      final id = parsed['id']?.toString();
-      final completer = pending.remove(id);
-      if (completer == null) return;
-      if (parsed['error'] is Map) {
-        completer.completeError(
-          (parsed['error'] as Map)['message']?.toString() ?? 'VM service 错误',
-        );
-      } else {
-        completer.complete(parsed['result']);
-      }
-    }, onDone: () {
-      for (final c in pending.values) {
-        c.completeError('连接已关闭');
-      }
-      pending.clear();
-    }, onError: (Object e) {
-      for (final c in pending.values) {
-        c.completeError(e);
-      }
-      pending.clear();
+    await _ensureConnected();
+    await _resolveTarget();
+    final result = await _rpc('evaluate', {
+      'isolateId': _isolateId,
+      'targetId': _ioLibId,
+      'expression': expression,
     });
-    try {
-      final vm = await _rpc(socket, pending, 'getVM');
-      final isolates = vm['isolates'];
-      final isolateId = isolates is List && isolates.isNotEmpty
-          ? (isolates.first as Map)['id']?.toString()
-          : null;
-      if (isolateId == null || isolateId.isEmpty) {
-        throw '未找到可用的 isolate';
-      }
-      final iso = await _rpc(socket, pending, 'getIsolate', {
-        'isolateId': isolateId,
-      });
-      String? ioLibId;
-      for (final lib in (iso['libraries'] as List? ?? <Object?>[])) {
-        if (lib is Map && lib['uri'] == 'dart:io') {
-          ioLibId = lib['id']?.toString();
-          break;
-        }
-      }
-      if (ioLibId == null) {
-        throw 'app 未加载 dart:io 库';
-      }
-      final result = await _rpc(socket, pending, 'evaluate', {
-        'isolateId': isolateId,
-        'targetId': ioLibId,
-        'expression': expression,
-      });
-      // evaluate 返回临时引用：type 为 @Instance（非固定 id 的 InstanceRef）。
-      final resultType = result['type']?.toString();
-      if (resultType != 'Instance' && resultType != '@Instance') {
-        // ErrorRef / Sentinel：表达式编译失败或运行时异常（如路径不存在）。
-        final message =
-            result['message']?.toString() ?? result['valueAsString']?.toString();
-        throw message == null || message.isEmpty
-            ? '执行失败：${jsonEncode(result)}'
-            : message;
-      }
-      var value = result['valueAsString']?.toString() ?? '';
-      if (result['valueAsStringIsTruncated'] != true) {
-        return value;
-      }
-      // 字符串被 VM 截断：分页拉取全文。
-      final objectId = result['id']?.toString();
-      final total = result['length'] is int ? result['length'] as int : 0;
-      if (objectId == null || objectId.isEmpty || total <= value.length) {
-        return value;
-      }
-      final sb = StringBuffer(value);
-      var offset = value.length;
-      const pageSize = 4 * 1024 * 1024;
-      while (offset < total) {
-        final page = await _rpc(socket, pending, 'getObject', {
-          'isolateId': isolateId,
-          'objectId': objectId,
-          'offset': offset,
-          'count': pageSize,
-        });
-        final part = page['valueAsString']?.toString() ?? '';
-        if (part.isEmpty) break;
-        sb.write(part);
-        offset += part.length;
-      }
-      return sb.toString();
-    } finally {
-      await sub.cancel();
-      try {
-        await socket.close();
-      } catch (_) {
-        // ignored
-      }
+    // evaluate 返回临时引用：type 为 @Instance（非固定 id 的 InstanceRef）。
+    final resultType = result['type']?.toString();
+    if (resultType != 'Instance' && resultType != '@Instance') {
+      // ErrorRef / Sentinel：表达式编译失败或运行时异常（如路径不存在）。
+      final message =
+          result['message']?.toString() ?? result['valueAsString']?.toString();
+      throw message == null || message.isEmpty
+          ? '执行失败：${jsonEncode(result)}'
+          : message;
     }
+    var value = result['valueAsString']?.toString() ?? '';
+    if (result['valueAsStringIsTruncated'] != true) {
+      return value;
+    }
+    // 字符串被 VM 截断：分页拉取全文。
+    final objectId = result['id']?.toString();
+    final total = result['length'] is int ? result['length'] as int : 0;
+    if (objectId == null || objectId.isEmpty || total <= value.length) {
+      return value;
+    }
+    final sb = StringBuffer(value);
+    var offset = value.length;
+    const pageSize = 4 * 1024 * 1024;
+    while (offset < total) {
+      final page = await _rpc('getObject', {
+        'isolateId': _isolateId,
+        'objectId': objectId,
+        'offset': offset,
+        'count': pageSize,
+      });
+      final part = page['valueAsString']?.toString() ?? '';
+      if (part.isEmpty) break;
+      sb.write(part);
+      offset += part.length;
+    }
+    return sb.toString();
+  }
+
+  /// 关闭连接（请求方在 finally 中调用）。
+  Future<void> close() async {
+    await _sub?.cancel();
+    try {
+      await _socket?.close();
+    } catch (_) {
+      // ignored
+    }
+    _socket = null;
   }
 }
 
-/// 把单个文件追加进 tar（USTAR 格式，无压缩）。
-/// name 为 tar 内相对路径；超过 255 字节时跳过并返回 false。
-bool _tarAppendFile(
-  BytesBuilder tar,
-  String name,
-  List<int> bytes,
-  int mtimeSec,
-) {
+/// 生成单个 tar 文件条目的 512 字节 USTAR header；路径超长返回 null。
+/// 数据与填充由调用方流式写入（分段读取，不整文件驻留内存）。
+List<int>? _tarHeader(String name, int size, int mtimeSec) {
   if (name.length > 255) {
-    return false;
+    return null;
   }
   final header = List<int>.filled(512, 0);
-  void writeField(int offset, int size, String value) {
+  void writeField(int offset, int fieldSize, String value) {
     final codes = value.codeUnits;
-    for (var i = 0; i < size && i < codes.length; i++) {
+    for (var i = 0; i < fieldSize && i < codes.length; i++) {
       header[offset + i] = codes[i] & 0xff;
     }
   }
 
-  // 长路径拆分：prefix(155) + '/' + name(100)，另加 1 字节分隔余量。
+  // 长路径拆分：prefix(155) + '/' + name(100)。
   var fileName = name;
   var prefix = '';
   if (name.length > 100) {
     final split = name.lastIndexOf('/', 99);
     if (split < 0 || name.length - split - 1 > 100) {
-      return false;
+      return null;
     }
     prefix = name.substring(0, split);
     if (prefix.length > 155) {
-      return false;
+      return null;
     }
     fileName = name.substring(split + 1);
   }
@@ -1030,7 +1055,7 @@ bool _tarAppendFile(
   writeField(100, 8, '0000644');
   writeField(108, 8, '0000000');
   writeField(116, 8, '0000000');
-  writeField(124, 12, '${bytes.length.toRadixString(8).padLeft(11, '0')} ');
+  writeField(124, 12, '${size.toRadixString(8).padLeft(11, '0')} ');
   writeField(
     136,
     12,
@@ -1054,13 +1079,7 @@ bool _tarAppendFile(
   }
   header[154] = 0;
   header[155] = 0x20;
-  tar.add(header);
-  tar.add(bytes);
-  final padding = (512 - (bytes.length % 512)) % 512;
-  if (padding > 0) {
-    tar.add(List<int>.filled(padding, 0));
-  }
-  return true;
+  return header;
 }
 
 /// tar 结束块（两个 512 全零块）。
@@ -1665,7 +1684,7 @@ const String guiHtml = r'''
   </section>
   <section class="page" id="page-sandbox">
     <div id="sb-body"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹可下载（文件夹为 .tar，单文件限 20MB，文件夹限 2000 个/100MB）。</div>
+    <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。</div>
   </section>
 </main>
 <script>
