@@ -176,10 +176,10 @@ dart run xb_ume:ide --gui          # 推荐入口
 
 或双击桌面入口（`--install` 自动创建）：macOS「应用程序」中的 `xb_ume 工具箱`（Launchpad/Spotlight 可搜）；Windows 桌面快捷方式「xb_ume 工具箱」。备用启动器：`~/.xb_ume_ide/xb_ume_gui.command`（macOS）/ `%USERPROFILE%\.xb_ume_ide\XBumeGui.bat`（Windows）。
 
-启动后自动打开浏览器页面（单实例：重复启动只会再开一个页面），三个 Tab：
+启动后自动打开浏览器页面（单实例：重复启动只会再开一个页面）。页头右侧为全局设备选择器与 VM 会话状态（不随 Tab 切换），主体两个 Tab：
 
-- **设备**：自动发现 adb（Android）/ hdc（鸿蒙）/ Xcode 模拟器 / idevice_id（iOS 真机，需 libimobiledevice）连接的设备，可选定一台；
+- **设备选择（页头右侧）**：自动发现 adb（Android）/ hdc（鸿蒙）/ Xcode 模拟器 / idevice_id（iOS 真机，需 libimobiledevice）连接的设备，可选定一台；旁为 VM 会话选择器，可选定某个调试会话（默认全部）；
 - **守护进程**：状态（pid / 运行时长 / 已接入调试会话，经互斥端口 status 协议查询）、一键重启（复用单实例接管锁）、IDE 优先级展示与配置文件直达；
-- **日志**：选中设备的全量设备日志（logcat / hilog / iOS log stream / idevicesyslog）+ 全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出部分），实时推送、来源/级别/关键字过滤、暂停、清屏、导出 txt。
+- **日志**：选中设备的全量设备日志（logcat / hilog / iOS log stream / idevicesyslog）+ 全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出的部分，tag 列为会话来源、多应用可区分），实时推送、来源/级别/关键字过滤、暂停、清屏、导出 txt。
 
 详细使用说明见 [GUI_GUIDE.md](GUI_GUIDE.md)。

@@ -293,7 +293,11 @@ class GuiState {
     }
     final source = _sourceForPlatform(device['platform'] ?? '');
     try {
-      final process = await Process.start(command.first, command.sublist(1));
+      final process = await Process.start(
+        command.first,
+        command.sublist(1),
+        environment: <String, String>{'PATH': await _toolPath()},
+      );
       _deviceLogProcess = process;
       _deviceLogKey = key;
       _deviceLogStartFailed = false;
@@ -326,6 +330,7 @@ class GuiState {
   Future<void> _syncVmSessions() async {
     final status = await queryDaemonStatus();
     final uris = <String>{};
+    final labels = <String, String>{};
     if (status != null) {
       final sessions = status['sessions'];
       if (sessions is List) {
@@ -334,6 +339,7 @@ class GuiState {
             final uri = session['uri']?.toString();
             if (uri != null && uri.isNotEmpty) {
               uris.add(uri);
+              labels[uri] = session['source']?.toString() ?? '';
             }
           }
         }
@@ -341,7 +347,14 @@ class GuiState {
     }
     for (final uri in uris) {
       if (!_vmSessions.containsKey(uri)) {
-        final session = _VmSession(uri, _addFlutterLine);
+        // 多个 Flutter 应用同时接入时，用会话来源（如 adb:xxx）区分输出。
+        final label = (labels[uri] != null && labels[uri]!.isNotEmpty)
+            ? labels[uri]!
+            : uri;
+        final session = _VmSession(
+          uri,
+          (line, isStderr) => _addFlutterLine(label, line, isStderr),
+        );
         _vmSessions[uri] = session;
         unawaited(session.connect());
       }
@@ -353,9 +366,10 @@ class GuiState {
     }
   }
 
-  void _addFlutterLine(String line, bool isStderr) {
+  void _addFlutterLine(String app, String line, bool isStderr) {
     final entry = makeLogEntry(line, isStderr ? 'flutter-stderr' : 'flutter');
-    entry['tag'] = isStderr ? 'stderr' : 'stdout';
+    // tag 列存会话来源：多应用同时调试时可区分与过滤（stderr 由 source 列区分）。
+    entry['tag'] = app;
     addEntry(entry);
   }
 
@@ -637,17 +651,80 @@ Map<String, Object?> readGuiIdeOrder() {
 // 设备发现与日志行解析（纯函数，供单测覆盖）
 // ---------------------------------------------------------------------------
 
+String? _toolPathEnv;
+
+/// 拼接开发工具常见安装目录到 PATH。
+/// GUI 从桌面入口（launchd / 资源管理器）启动时系统 PATH 只有默认目录，
+/// 而 adb（Android SDK / brew）、hdc（DevEco SDK）、idevice（brew）都不在其中，
+/// 导致设备发现与设备日志源全部失败；终端里测试正常是因为 shell PATH 齐全。
+Future<String> _toolPath() async {
+  if (_toolPathEnv != null) return _toolPathEnv!;
+  final dirs = <String>[
+    if (!Platform.isWindows) '/opt/homebrew/bin',
+    if (!Platform.isWindows) '/usr/local/bin',
+  ];
+  final androidHome = Platform.environment['ANDROID_HOME'];
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
+    dirs.addAll(<String>[
+      if (androidHome != null) '$androidHome\\platform-tools',
+      if (localAppData.isNotEmpty)
+        '$localAppData\\Android\\Sdk\\platform-tools',
+    ]);
+    final sdkRoot = Directory(r'C:\Program Files\Huawei\DevEco Studio\sdk');
+    if (sdkRoot.existsSync()) {
+      for (final entry in sdkRoot.listSync()) {
+        final toolchain = Directory('${entry.path}\\openharmony\\toolchains');
+        if (toolchain.existsSync()) dirs.add(toolchain.path);
+      }
+    }
+  } else {
+    dirs.addAll(<String>[
+      if (androidHome != null) '$androidHome/platform-tools',
+      '$_home/Library/Android/sdk/platform-tools',
+      '$_home/Android/Sdk/platform-tools',
+    ]);
+    // DevEco Studio SDK 的 hdc 工具链（可能存在多版本目录）。
+    final sdkRoot = Directory('/Applications/DevEco-Studio.app/Contents/sdk');
+    if (sdkRoot.existsSync()) {
+      try {
+        for (final entry in sdkRoot.listSync()) {
+          final toolchain = Directory('${entry.path}/openharmony/toolchains');
+          if (toolchain.existsSync()) dirs.add(toolchain.path);
+        }
+      } catch (_) {
+        // ignored
+      }
+    }
+  }
+  final current = Platform.environment['PATH'] ?? '';
+  _toolPathEnv = <String>[
+    ...dirs.where((d) => d.isNotEmpty),
+    current,
+  ].join(Platform.isWindows ? ';' : ':');
+  return _toolPathEnv!;
+}
+
+/// 以增强 PATH 运行设备工具（adb / hdc / simctl / idevice 等）。
+Future<ProcessResult> _runTool(String exe, List<String> args) async {
+  return Process.run(
+    exe,
+    args,
+    environment: <String, String>{'PATH': await _toolPath()},
+  );
+}
+
 /// 发现本机连接的设备：Android（adb）/ 鸿蒙（hdc）/ iOS（仅 macOS）。
 Future<List<Map<String, String>>> discoverDevices() async {
   final devices = <Map<String, String>>[];
   try {
-    final result = await Process.run('adb', <String>['devices', '-l']);
+    final result = await _runTool('adb', <String>['devices', '-l']);
     devices.addAll(parseAdbDevices(result.stdout.toString()));
   } catch (_) {
-    // adb 未安装或不在 PATH。
+    // adb 未安装。
   }
   try {
-    final result = await Process.run('hdc', <String>['list', 'targets']);
+    final result = await _runTool('hdc', <String>['list', 'targets']);
     for (final id in parseHdcTargets(result.stdout.toString())) {
       devices.add(<String, String>{
         'id': id,
@@ -661,7 +738,7 @@ Future<List<Map<String, String>>> discoverDevices() async {
   }
   if (Platform.isMacOS) {
     try {
-      final result = await Process.run(
+      final result = await _runTool(
         'xcrun',
         <String>['simctl', 'list', 'devices', 'booted'],
       );
@@ -677,7 +754,7 @@ Future<List<Map<String, String>>> discoverDevices() async {
       // Xcode 命令行工具不可用。
     }
     try {
-      final result = await Process.run('idevice_id', <String>['-l']);
+      final result = await _runTool('idevice_id', <String>['-l']);
       for (final udid in parseIdeviceIds(result.stdout.toString())) {
         devices.add(<String, String>{
           'id': udid,
@@ -951,7 +1028,8 @@ const String guiHtml = r'''
   header h1 { font-size:15px; font-weight:600; color:var(--acc); margin-right:12px; }
   .tab { padding:6px 14px; border:1px solid var(--line); border-radius:6px; cursor:pointer; color:var(--dim); }
   .tab.active { color:var(--acc); border-color:var(--acc); }
-  #wsdot { width:8px; height:8px; border-radius:50%; background:#e5484d; margin-left:auto; }
+  #hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+  #wsdot { width:8px; height:8px; border-radius:50%; background:#e5484d; }
   #wsdot.on { background:#46d68c; }
   main { flex:1; overflow:auto; padding:16px; }
   .page { display:none; } .page.active { display:block; }
@@ -975,23 +1053,18 @@ const String guiHtml = r'''
 <body>
 <header>
   <h1>xb_ume 工具箱</h1>
-  <div class="tab active" data-tab="devices">设备</div>
-  <div class="tab" data-tab="daemon">守护进程</div>
+  <div class="tab active" data-tab="daemon">守护进程</div>
   <div class="tab" data-tab="logs">日志</div>
-  <div id="wsdot" title="连接状态"></div>
+  <div id="hdr-right">
+    <span id="vmstat" class="bad" style="display:none"></span>
+    <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
+    <select id="hdrdev" onchange="selectDevice(this.value)"></select>
+    <button onclick="refreshAll()" title="立即扫描设备并刷新调试会话状态">刷新</button>
+    <div id="wsdot" title="页面连接状态"></div>
+  </div>
 </header>
 <main>
-  <section class="page active" id="page-devices">
-    <div class="row">
-      <button class="primary" onclick="refreshDevices()">刷新设备</button>
-      <span class="muted">选中设备将作为「日志」页的设备日志来源</span>
-    </div>
-    <table>
-      <thead><tr><th>选择</th><th>平台</th><th>名称</th><th>设备 ID</th><th>状态</th></tr></thead>
-      <tbody id="devrows"><tr><td colspan="5" class="muted">扫描中…</td></tr></tbody>
-    </table>
-  </section>
-  <section class="page" id="page-daemon">
+  <section class="page active" id="page-daemon">
     <div class="card">
       <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button></div>
       <div id="daemon-status" class="muted">查询中…</div>
@@ -1003,14 +1076,13 @@ const String guiHtml = r'''
   </section>
   <section class="page" id="page-logs">
     <div class="row">
-      <label>设备 <select id="logdev" onchange="selectDevice(this.value)"></select></label>
       <label class="chk"><input type="checkbox" id="f-src-device" checked onchange="renderLogs()">设备日志</label>
       <label class="chk"><input type="checkbox" id="f-src-flutter" checked onchange="renderLogs()">Flutter 输出</label>
-      <label class="chk"><input type="checkbox" class="f-lv" value="V" checked onchange="renderLogs()">V</label>
-      <label class="chk"><input type="checkbox" class="f-lv" value="D" checked onchange="renderLogs()">D</label>
-      <label class="chk"><input type="checkbox" class="f-lv" value="I" checked onchange="renderLogs()">I</label>
-      <label class="chk"><input type="checkbox" class="f-lv" value="W" checked onchange="renderLogs()">W</label>
-      <label class="chk"><input type="checkbox" class="f-lv" value="E" checked onchange="renderLogs()">E</label>
+      <label class="chk" title="Verbose：最详细的跟踪日志，量最大，一般排查用不到"><input type="checkbox" class="f-lv" value="V" checked onchange="renderLogs()">V·详细</label>
+      <label class="chk" title="Debug：调试日志，开发期输出"><input type="checkbox" class="f-lv" value="D" checked onchange="renderLogs()">D·调试</label>
+      <label class="chk" title="Info：一般信息，正常运行日志"><input type="checkbox" class="f-lv" value="I" checked onchange="renderLogs()">I·信息</label>
+      <label class="chk" title="Warning：警告，潜在问题"><input type="checkbox" class="f-lv" value="W" checked onchange="renderLogs()">W·警告</label>
+      <label class="chk" title="Error：错误/异常/崩溃"><input type="checkbox" class="f-lv" value="E" checked onchange="renderLogs()">E·错误</label>
       <input id="f-kw" placeholder="关键字过滤" oninput="renderLogs()">
       <button onclick="togglePause(this)">暂停</button>
       <button onclick="clearLogs()">清屏</button>
@@ -1021,7 +1093,7 @@ const String guiHtml = r'''
   </section>
 </main>
 <script>
-var ws = null, devices = [], selected = null, logs = [], paused = false;
+var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws');
@@ -1029,8 +1101,8 @@ function connect() {
   ws.onclose = function(){ document.getElementById('wsdot').classList.remove('on'); setTimeout(connect, 1500); };
   ws.onmessage = function(e){
     var msg = JSON.parse(e.data);
-    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; renderDevices(); renderLogdev(); renderLogs(); refreshDaemon(); }
-    else if (msg.type === 'devices') { devices = msg.devices; renderDevices(); renderLogdev(); }
+    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; renderHdrDev(); renderLogs(); refreshDaemon(); }
+    else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
     else if (msg.type === 'logs') { logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) renderLogs(); }
     else if (msg.type === 'cleared') { logs = []; renderLogs(); }
   };
@@ -1046,26 +1118,17 @@ document.querySelectorAll('.tab').forEach(function(t){
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
-function renderDevices() {
-  var rows = document.getElementById('devrows');
-  if (!devices.length) { rows.innerHTML = '<tr><td colspan="5" class="muted">未发现设备（确认 adb / hdc / Xcode 工具可用且设备已连接）</td></tr>'; return; }
-  var html = '';
+function renderHdrDev() {
+  var html = '<option value="">未选择设备</option>';
   devices.forEach(function(d){
-    html += '<tr><td><input type="radio" name="dev" ' + (d.id === selected ? 'checked' : '') + ' onchange="selectDevice(\'' + d.id + '\')"></td>'
-      + '<td>' + (platformNames[d.platform] || d.platform) + '</td><td>' + esc(d.name) + '</td><td>' + esc(d.id) + '</td>'
-      + '<td class="' + (d.state === 'device' || d.state === 'ok' ? 'ok' : 'bad') + '">' + esc(d.state) + '</td></tr>';
+    html += '<option value="' + esc(d.id) + '" ' + (d.id === selected ? 'selected' : '') + '>'
+      + (platformNames[d.platform] || d.platform) + ' · ' + esc(d.name) + '（' + esc(d.state) + '）</option>';
   });
-  rows.innerHTML = html;
-}
-function renderLogdev() {
-  var html = '<option value="">未选择</option>';
-  devices.forEach(function(d){
-    html += '<option value="' + esc(d.id) + '" ' + (d.id === selected ? 'selected' : '') + '>' + (platformNames[d.platform] || d.platform) + ' · ' + esc(d.name) + '</option>';
-  });
-  document.getElementById('logdev').innerHTML = html;
+  document.getElementById('hdrdev').innerHTML = html;
 }
 function refreshDevices(){ ws.send(JSON.stringify({type:'refresh'})); }
-function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); logs = []; renderLogs(); renderDevices(); }
+function refreshAll(){ refreshDevices(); refreshDaemon(); }
+function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); logs = []; renderLogs(); renderHdrDev(); }
 function renderLogs() {
   var view = document.getElementById('logview');
   var wantDevice = document.getElementById('f-src-device').checked;
@@ -1076,6 +1139,8 @@ function renderLogs() {
   logs.forEach(function(l){
     var isFlutter = l.source && l.source.indexOf('flutter') === 0;
     if (isFlutter && !wantFlutter) return;
+    // 选定了某个调试会话时，Flutter 输出只显示该会话的日志。
+    if (isFlutter && vmFilter && (l.tag || '') !== vmFilter) return;
     if (!isFlutter && !wantDevice) return;
     if (!lv[l.level]) return;
     if (kw && ((l.msg || '') + ' ' + (l.tag || '')).toLowerCase().indexOf(kw) < 0) return;
@@ -1090,15 +1155,33 @@ function clearLogs(){ logs = []; renderLogs(); }
 function refreshDaemon(){
   fetch('/api/daemon').then(function(r){ return r.json(); }).then(function(d){
     var el = document.getElementById('daemon-status');
-    if (!d.running) { el.innerHTML = '<span class="bad">未运行</span>（启动：dart run xb_ume:ide --install）'; }
-    else {
-      var sess = (d.sessions || []).map(function(s){ return esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
+    var vm = document.getElementById('vmstat');
+    var sel = document.getElementById('vmsel');
+    if (!d.running) {
+      el.innerHTML = '<span class="bad">未运行</span>（启动：dart run xb_ume:ide --install）';
+      vm.style.display = ''; vm.textContent = 'VM 未连接'; vm.title = '守护进程未运行';
+      sel.style.display = 'none';
+    } else {
+      var ss = d.sessions || [];
+      var sess = ss.map(function(s){ return esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
       el.innerHTML = '<span class="ok">运行中</span> pid=' + d.pid + '，已运行 ' + Math.floor(d.uptimeSec / 60) + ' 分 ' + (d.uptimeSec % 60) + ' 秒<br>调试会话：<br>' + sess;
+      vm.style.display = 'none';
+      sel.style.display = '';
+      var html = '<option value="">全部会话（' + ss.length + '）</option>';
+      ss.forEach(function(s){
+        var v = s.source || s.uri;
+        html += '<option value="' + esc(v) + '" ' + (v === vmFilter ? 'selected' : '') + '>' + esc(v) + '</option>';
+      });
+      sel.innerHTML = html;
+      vmFilter = sel.value; // 选中会话消失时自动回退到全部
+      sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
     var order = d.config && d.config.ideOrder;
     document.getElementById('ide-order').textContent = (order && order.length) ? order.join(' → ') : '（默认顺序）';
-  }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; });
+  }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
+setInterval(refreshDaemon, 5000);
+function setVmFilter(v){ vmFilter = v; renderLogs(); }
 function restartDaemon(){
   if (!confirm('重启守护进程？正在进行的调试会话会自动重连。')) return;
   fetch('/api/daemon/restart', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){ alert(d.message); refreshDaemon(); });

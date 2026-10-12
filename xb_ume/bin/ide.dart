@@ -914,14 +914,64 @@ Future<void> _poll(String ide) async {
 
 Future<Map<String, (String, String)>> _discoverLocalVmServices() async {
   final ports = await _loopbackListeningPorts();
-  final found = <String, (String, String)>{};
+  final devices = await _forwardedPortsByDevice();
+  final fingerprints = <int, String>{};
   await Future.wait(ports.map((port) async {
     final fingerprint = await _probeVmServiceFingerprint(port);
-    if (fingerprint == null) return;
-    if (_knownFingerprints.contains(fingerprint)) return;
-    found['ws://127.0.0.1:$port/ws'] = ('port:$port', fingerprint);
+    if (fingerprint != null) fingerprints[port] = fingerprint;
   }));
+  // 同一实例可能同时经多个端口可达（flutter 工具的本机代理端口 +
+  // adb/hdc 转发端口），按指纹去重；优先选有设备转发映射的端口，
+  // 使多设备/多应用场景下会话来源可读（如 hdc:SERIAL#port:xxx）。
+  final byFingerprint = <String, List<int>>{};
+  fingerprints.forEach((port, fingerprint) {
+    byFingerprint.putIfAbsent(fingerprint, () => <int>[]).add(port);
+  });
+  final found = <String, (String, String)>{};
+  for (final entry in byFingerprint.entries) {
+    if (_knownFingerprints.contains(entry.key)) continue;
+    final candidates = entry.value.toList()
+      ..sort((a, b) {
+        final da = devices.containsKey(a);
+        final db = devices.containsKey(b);
+        if (da != db) return da ? -1 : 1;
+        return a.compareTo(b);
+      });
+    final port = candidates.first;
+    final device = devices[port];
+    found['ws://127.0.0.1:$port/ws'] = (
+      device == null ? 'port:$port' : '$device#port:$port',
+      entry.key,
+    );
+  }
   return found;
+}
+
+/// 通过 adb/hdc 端口转发表把本机转发端口映射到设备标识。
+Future<Map<int, String>> _forwardedPortsByDevice() async {
+  final result = <int, String>{};
+  // adb forward --list："<serial> tcp:<local> tcp:<remote>"
+  final adb = await _runText('adb', <String>['forward', '--list']);
+  for (final line in adb.trim().split('\n')) {
+    final m = RegExp(r'^(\S+)\s+tcp:(\d+)\s+').firstMatch(line.trim());
+    if (m != null) {
+      result[int.parse(m.group(2)!)] = 'adb:${m.group(1)}';
+    }
+  }
+  // hdc -t <target> fport ls：每行含 "tcp:<local> tcp:<remote>"
+  final targets = await _runText('hdc', <String>['list', 'targets']);
+  for (final target in targets.trim().split('\n')) {
+    final t = target.trim();
+    if (t.isEmpty || t.contains('[') || t.contains('error')) continue;
+    final ls = await _runText('hdc', <String>['-t', t, 'fport', 'ls']);
+    for (final line in ls.split('\n')) {
+      final m = RegExp(r'tcp:(\d+)\s+tcp:\d+').firstMatch(line);
+      if (m != null) {
+        result.putIfAbsent(int.parse(m.group(1)!), () => 'hdc:$t');
+      }
+    }
+  }
+  return result;
 }
 
 /// 列出本机回环地址上的 TCP 监听端口。
@@ -1437,9 +1487,68 @@ Future<bool> _runChecked(String command, List<String> args) async {
 
 Future<String> _runText(String command, List<String> args) async {
   try {
-    final result = await Process.run(command, args);
+    final result = await Process.run(
+      command,
+      args,
+      // launchd / 注册表自启时 PATH 只有系统默认目录，
+      // adb（Android SDK / brew）、hdc（DevEco SDK）不在其中，需拼接。
+      environment: <String, String>{'PATH': _augmentedToolPath()},
+    );
     return '${result.stdout}';
   } catch (_) {
     return '';
   }
+}
+
+/// 拼接开发工具常见安装目录到系统 PATH。
+String _augmentedToolPath() {
+  final dirs = <String>[
+    if (!Platform.isWindows) '/opt/homebrew/bin',
+    if (!Platform.isWindows) '/usr/local/bin',
+  ];
+  final home = Platform.environment['USERPROFILE'] ??
+      Platform.environment['HOME'] ??
+      '';
+  final androidHome = Platform.environment['ANDROID_HOME'];
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
+    dirs.addAll(<String>[
+      if (androidHome != null) '$androidHome\\platform-tools',
+      if (localAppData.isNotEmpty)
+        '$localAppData\\Android\\Sdk\\platform-tools',
+    ]);
+    final sdkRoot = Directory(r'C:\Program Files\Huawei\DevEco Studio\sdk');
+    if (sdkRoot.existsSync()) {
+      try {
+        for (final entry in sdkRoot.listSync()) {
+          final toolchain = Directory('${entry.path}\\openharmony\\toolchains');
+          if (toolchain.existsSync()) dirs.add(toolchain.path);
+        }
+      } catch (_) {
+        // ignored
+      }
+    }
+  } else {
+    dirs.addAll(<String>[
+      if (androidHome != null) '$androidHome/platform-tools',
+      '$home/Library/Android/sdk/platform-tools',
+      '$home/Android/Sdk/platform-tools',
+    ]);
+    final sdkRoot = Directory('/Applications/DevEco-Studio.app/Contents/sdk');
+    if (sdkRoot.existsSync()) {
+      try {
+        for (final entry in sdkRoot.listSync()) {
+          final toolchain = Directory('${entry.path}/openharmony/toolchains');
+          if (toolchain.existsSync()) dirs.add(toolchain.path);
+        }
+      } catch (_) {
+        // ignored
+      }
+    }
+  }
+  final current = Platform.environment['PATH'] ?? '';
+  return <String>[
+    ...dirs.where((d) => d.isNotEmpty),
+    current,
+  ].join(Platform.isWindows ? ';' : ':');
 }
