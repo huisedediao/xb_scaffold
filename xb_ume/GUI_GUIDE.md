@@ -47,6 +47,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 守护进程 | daemon 管理 | 查看守护进程状态、一键重启、IDE 优先级 |
 | Tab 日志 | 日志查看 | 实时展示选中手机的日志 + Flutter 控制台输出 |
 | Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载选中调试会话（app）沙盒内的目录与文件，详见下文「应用沙盒」 |
+| Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 
 ## 三、功能详细使用说明
 
@@ -142,7 +143,25 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意**：可浏览范围是 app 进程可见的全部路径，请勿在不可信环境开启本功能。
 
-## 五、常见问题
+## 五、路由栈（Tab「路由栈」）
+
+**前提**：在页头右侧选中某个 VM 会话后，本 Tab 才展示内容；未选择时显示「请先选择 VM」。
+
+**展示内容**：app 内所有 Navigator 的路由栈，按栈底 → 栈顶排列；每条显示：
+
+- **栈序**（含「栈底」「栈顶」标注）；
+- **路由名**（`settings.name`；匿名 push 的页面显示 `<unnamed>`）；
+- **类型**（MaterialPageRoute / DialogRoute / BottomSheet 等，弹窗也是路由栈的一层）；
+- **参数**（`settings.arguments` 的摘要，悬停看完整内容；复杂对象只显示 toString/类型）；
+- 栈顶当前路由带 **● 当前** 高亮标记。
+
+嵌套 Navigator（如底部导航每个 Tab 内的 Navigator）分组展示为 Navigator #1、#2…。
+
+**刷新方式**：切换到本 Tab 自动拉取一次；也可点「刷新」手动拉取（导航、开关弹窗后点刷新即可看到最新栈）。
+
+**原理**：通过 VM service 在 app 进程内（`navigator.dart` 库上下文）读取 NavigatorState 的路由历史，零 app 端改动；仅 debug 模式可用。
+
+## 六、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -154,7 +173,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | 跑 `flutter test` 时报 `Unable to connect to flutter_tester process` | daemon 会轮询本机 VM service，可能干扰测试进程握手；跑全量测试前先停 daemon（`pgrep -fl ide.dart` 找到 pid 后 kill） |
 | Windows 下启动器窗口一闪而过 | 先用命令 `dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart` 前台启动看报错（常见原因：dart 不在 PATH） |
 
-## 六、卸载
+## 七、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -162,7 +181,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 七、相关文档
+## 八、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

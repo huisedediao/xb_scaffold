@@ -152,6 +152,75 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // -- 路由栈 -------------------------------------------------------------
+    // 经 VM service evaluate 在 app 进程内读取 Navigator 路由栈（debug 模式可用）。
+    if (path == '/api/routestack') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        // 单行 IIFE（VM eval 对多行 IIFE 会返回未调用的 Closure）。
+        // 在 navigator.dart 库上下文执行：可访问 NavigatorState 的私有 _history。
+        final raw = await rpc.evalStringOn(
+          'package:flutter/src/widgets/navigator.dart',
+          "(() { final root = WidgetsBinding.instance.renderViewElement; "
+          "if (root == null) return 'NO_ROOT'; "
+          "final navigators = <NavigatorState>[]; "
+          "void walk(Element e) { final w = e.widget; "
+          "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) { navigators.add(e.state as NavigatorState); } "
+          "e.visitChildren(walk); } "
+          "root.visitChildren(walk); "
+          "final sb = StringBuffer()..write(navigators.length); "
+          "for (var i = 0; i < navigators.length; i++) { "
+          "for (final entry in navigators[i]._history) { "
+          "final r = entry.route; "
+          "final args = r.settings.arguments; "
+          "sb..writeln()..write(i)..write('\\t')..write(r.runtimeType.toString())..write('\\t')..write(r.settings.name ?? '')..write('\\t')..write(r.isCurrent ? '1' : '0')..write('\\t')..write(args?.runtimeType.toString() ?? '')..write('\\t')..write(args?.toString().replaceAll('\\t', ' ').replaceAll('\\n', ' ') ?? ''); } } "
+          "return sb.toString(); })()",
+        );
+        final navigators = <Map<String, Object?>>[];
+        if (raw != 'NO_ROOT') {
+          final lines = raw.split('\n');
+          final navCount = int.tryParse(lines.first.trim()) ?? 0;
+          for (var i = 0; i < navCount; i++) {
+            navigators
+                .add(<String, Object?>{'index': i, 'routes': <Object?>[]});
+          }
+          for (final line in lines.skip(1)) {
+            if (line.isEmpty) continue;
+            final parts = line.split('\t');
+            if (parts.length < 6) continue;
+            final navIndex = int.tryParse(parts[0]) ?? -1;
+            if (navIndex < 0 || navIndex >= navCount) continue;
+            (navigators[navIndex]['routes'] as List).add(<String, Object?>{
+              // 栈内顺序即 _history 顺序：首条为栈底，末条为栈顶。
+              'type': parts[1].replaceFirst(RegExp(r'<[^>]*>$'), ''),
+              'name': parts[2],
+              'current': parts[3] == '1',
+              'argsType': parts[4],
+              'args': parts.sublist(5).join('\t'),
+            });
+          }
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'navigators': navigators}),
+        );
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
     // -- 应用沙盒 -----------------------------------------------------------
     // 经 VM service evaluate 在 app 进程内读写文件系统（debug 模式可用）。
     if (path == '/api/sandbox/list') {
@@ -920,7 +989,9 @@ class _SandboxRpc {
   StreamSubscription<dynamic>? _sub;
   final Map<String, Completer<Object?>> _pending = {};
   String? _isolateId;
-  String? _ioLibId;
+
+  /// 已解析的库 id 缓存（uri → Library id，每连接有效）。
+  final Map<String, String> _libIds = {};
 
   /// 建立连接（懒加载；同一连接复用多次 evaluate，避免分段读反复握手）。
   Future<void> _ensureConnected() async {
@@ -984,9 +1055,9 @@ class _SandboxRpc {
     return completer.future.then((v) => v as Map<String, Object?>);
   }
 
-  /// 解析 isolateId 与 dart:io 库 id（每连接一次）。
+  /// 解析 isolateId（每连接一次）；库 id 由 _libraryId 按需解析并缓存。
   Future<void> _resolveTarget() async {
-    if (_ioLibId != null) return;
+    if (_isolateId != null) return;
     final vm = await _rpc('getVM');
     final isolates = vm['isolates'];
     final isolateId = isolates is List && isolates.isNotEmpty
@@ -995,27 +1066,42 @@ class _SandboxRpc {
     if (isolateId == null || isolateId.isEmpty) {
       throw '未找到可用的 isolate';
     }
-    final iso = await _rpc('getIsolate', {'isolateId': isolateId});
+    _isolateId = isolateId;
+  }
+
+  /// 按库 uri 查找库 id（每连接每库一次）。
+  Future<String> _libraryId(String uri) async {
+    final cached = _libIds[uri];
+    if (cached != null) return cached;
+    await _resolveTarget();
+    final iso = await _rpc('getIsolate', {'isolateId': _isolateId});
     for (final lib in (iso['libraries'] as List? ?? <Object?>[])) {
-      if (lib is Map && lib['uri'] == 'dart:io') {
-        _ioLibId = lib['id']?.toString();
-        break;
+      if (lib is Map && lib['uri'] == uri) {
+        final id = lib['id']?.toString();
+        if (id != null && id.isNotEmpty) {
+          _libIds[uri] = id;
+          return id;
+        }
       }
     }
-    if (_ioLibId == null) {
-      throw 'app 未加载 dart:io 库';
-    }
-    _isolateId = isolateId;
+    throw uri == 'dart:io' ? 'app 未加载 dart:io 库' : 'app 未加载 $uri 库（非 Flutter 调试会话？）';
   }
 
   /// 在 app 的 dart:io 库上下文执行表达式，返回完整字符串。
   /// 超过 VM 截断阈值时用 getObject 分页拉全。
-  Future<String> evalString(String expression) async {
+  Future<String> evalString(String expression) =>
+      evalStringOn('dart:io', expression);
+
+  /// 在 app 的指定库上下文执行表达式（库上下文可访问该库私有成员），
+  /// 返回完整字符串；超过 VM 截断阈值时用 getObject 分页拉全。
+  /// 注意：表达式须为单行 IIFE——实测 VM eval 对多行 IIFE 会返回未调用的
+  /// Closure（kind=Closure）而非执行结果。
+  Future<String> evalStringOn(String libraryUri, String expression) async {
     await _ensureConnected();
-    await _resolveTarget();
+    final libId = await _libraryId(libraryUri);
     final result = await _rpc('evaluate', {
       'isolateId': _isolateId,
-      'targetId': _ioLibId,
+      'targetId': libId,
       'expression': expression,
     });
     // evaluate 返回临时引用：type 为 @Instance（非固定 id 的 InstanceRef）。
@@ -1684,6 +1770,7 @@ const String guiHtml = r'''
   <div class="tab active" data-tab="daemon">守护进程</div>
   <div class="tab" data-tab="logs">日志</div>
   <div class="tab" data-tab="sandbox">应用沙盒</div>
+  <div class="tab" data-tab="routes">路由栈</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -1735,6 +1822,14 @@ const String guiHtml = r'''
     <div id="sb-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。</div>
   </section>
+  <section class="page" id="page-routes">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="rtRefresh()" title="重新拉取当前会话的路由栈">刷新</button>
+      <span class="muted">选中会话 app 的 Navigator 路由栈（栈底 → 栈顶，当前路由高亮）</span>
+    </div>
+    <div id="rt-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -1762,6 +1857,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     document.getElementById('page-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'daemon') refreshDaemon();
     else if (t.dataset.tab === 'sandbox') sbRefresh();
+    else if (t.dataset.tab === 'routes') rtRefresh();
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -1860,7 +1956,50 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); }
+function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); }
+
+// -- 路由栈 Tab -------------------------------------------------------------
+function rtActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'routes'; }
+function rtUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function rtRefresh(){
+  if (!rtActive()) return;
+  var uri = rtUri();
+  var body = document.getElementById('rt-body');
+  if (!uri) {
+    body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；仅 debug 模式的调试会话可用）</span>';
+    return;
+  }
+  body.innerHTML = '<span class="muted">加载中…</span>';
+  fetch('/api/routestack?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
+      body.innerHTML = rtRender(d);
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(String(e)) + '</span>'; });
+}
+function rtRender(d){
+  var navs = d.navigators || [];
+  if (!navs.length) return '<span class="muted">未找到 Navigator（应用可能尚未完成首帧构建）</span>';
+  var html = '';
+  navs.forEach(function(nav){
+    var routes = nav.routes || [];
+    html += '<div style="margin:8px 0 2px"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span></div>';
+    if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>类型</th><th>参数</th></tr>';
+    routes.forEach(function(r, i){
+      var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
+      var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
+      var cur = r.current ? ' <span style="color:var(--acc);font-weight:600">● 当前</span>' : '';
+      var args = r.argsType
+        ? '<span title="' + esc(r.argsType + (r.args ? ' ' + r.args : '')) + '">' + esc((r.args || '').length > 60 ? r.args.substring(0, 60) + '…' : (r.args || '空')) + ' <span class="muted">(' + esc(r.argsType) + ')</span></span>'
+        : '<span class="muted">—</span>';
+      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td><td>' + esc(r.type) + '</td><td>' + args + '</td></tr>';
+    });
+    html += '</table>';
+  });
+  return html;
+}
 
 // -- 应用沙盒 Tab -----------------------------------------------------------
 var sbPath = null, sbOs = '', sbHome = '', sbRoot = '', sbRoots = [];
