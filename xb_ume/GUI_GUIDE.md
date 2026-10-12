@@ -46,6 +46,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | 页头右侧 | VM 会话选择器 | 下拉列出已接入的调试会话（默认项 `未选择会话（共 N 个）`，选择后才打印对应会话的日志；每个会话**显示应用包名**如 `example · port:56782`，取自 `package:<包名>/main.dart`），选中某个会话后「日志」页的 Flutter 输出只显示该应用，日志行的 tag 列也显示应用包名；守护进程未运行时显示红色 `VM 未连接`；悬停看会话详情 |
 | Tab 守护进程 | daemon 管理 | 查看守护进程状态、一键重启、IDE 优先级 |
 | Tab 日志 | 日志查看 | 实时展示选中手机的日志 + Flutter 控制台输出 |
+| Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载选中调试会话（app）沙盒内的目录与文件，详见下文「应用沙盒」 |
 
 ## 三、功能详细使用说明
 
@@ -125,7 +126,23 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - 「Flutter 输出」源覆盖**所有**调试会话：多个 Flutter 应用同时接入（无论多台手机还是同一台手机装多个 app）时，每行 tag 列显示会话来源（如 `adb:设备号#port:本机端口`），可用关键字过滤区分不同应用的输出；IDE 跳转各会话独立处理，互不影响；
 - 设备日志流在设备断开时自动重连；对应命令行工具（adb/hdc 等）未安装时会提示一次，不会刷屏。
 
-## 四、常见问题
+## 四、应用沙盒（Tab「应用沙盒」）
+
+**前提**：在页头右侧选中某个 VM 会话后，本 Tab 才展示内容；未选择时显示「请先选择 VM」。
+
+**原理**：通过 VM service 的 evaluate 在 **app 进程内**执行 dart:io 代码读写文件系统，零 app 端改动，适用于任何 debug 模式的 Flutter 应用（release 无 VM service，不可用）。
+
+**使用**：
+
+1. 页头右侧选中调试会话后，Tab 内自动列出 app 沙盒根目录（macOS 为 app 容器 `Containers/<包名>/Data`；iOS 为沙盒根；Android 为 app 数据目录附近；桌面应用无沙盒限制时为主目录）；
+2. 点目录名逐层进入，点面包屑逐级返回；列表显示名称/大小/修改时间，`[链接]` 标记的是符号链接（不可进入，下载时按文件尝试）；
+3. 文件点「下载」保存原文件；目录点「下载 .tar」递归打包（USTAR 无压缩）下载。
+
+**限制**：单文件 ≤ 20MB；文件夹 ≤ 2000 个文件且总量 ≤ 100MB（超出提示改为逐层下载）；tar 不保留空目录；文件内容经 VM service 分页中转（本地回环），大文件下载耗时随体积增长。
+
+**注意**：可浏览范围是 app 进程可见的全部路径，请勿在不可信环境开启本功能。
+
+## 五、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -137,7 +154,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | 跑 `flutter test` 时报 `Unable to connect to flutter_tester process` | daemon 会轮询本机 VM service，可能干扰测试进程握手；跑全量测试前先停 daemon（`pgrep -fl ide.dart` 找到 pid 后 kill） |
 | Windows 下启动器窗口一闪而过 | 先用命令 `dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart` 前台启动看报错（常见原因：dart 不在 PATH） |
 
-## 五、卸载
+## 六、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -145,7 +162,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 六、相关文档
+## 七、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

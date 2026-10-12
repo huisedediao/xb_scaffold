@@ -27,6 +27,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data' show BytesBuilder;
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
@@ -150,6 +151,196 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         );
       }
       await req.response.close();
+      return;
+    }
+    // -- 应用沙盒 -----------------------------------------------------------
+    // 经 VM service evaluate 在 app 进程内读写文件系统（debug 模式可用）。
+    if (path == '/api/sandbox/list') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final dir = req.uri.queryParameters['path'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      Future<void> fail(Object e) async {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      try {
+        final rpc = _SandboxRpc(uri);
+        final info = await rpc.evalString(
+          "Platform.operatingSystem + '\\t' + "
+          "(Platform.environment['HOME'] ?? Directory.current.path)",
+        );
+        final sep = info.indexOf('\t');
+        final os = sep < 0 ? '' : info.substring(0, sep);
+        final home = sep < 0 ? info : info.substring(sep + 1);
+        // path 为空时仅返回 os/home（前端用于定位沙盒根），不列目录。
+        final listing = dir.isEmpty
+            ? ''
+            : await rpc.evalString(
+          "(() { final sb = StringBuffer(); "
+          "for (final e in Directory('${_escPath(dir)}').listSync(followLinks: false)) { "
+          "var size = -1; var mtime = 0; "
+          "try { final st = e.statSync(); "
+          "size = e is File ? st.size : -1; "
+          "mtime = st.modified.millisecondsSinceEpoch; } catch (_) {} "
+          "sb..write(e.path)..write('\\t')..write(e is Directory ? '1' : (e is Link ? '2' : '0'))..write('\\t')"
+          "..write(size)..write('\\t')..write(mtime)..writeln(); } "
+          "return sb.toString(); })()",
+        );
+        final entries = <Map<String, Object?>>[];
+        for (final line in listing.split('\n')) {
+          if (line.isEmpty) continue;
+          final parts = line.split('\t');
+          if (parts.length < 4) continue;
+          entries.add(<String, Object?>{
+            'name': _baseName(parts[0], os),
+            'path': parts[0],
+            // 1=目录，2=链接（不可进入，下载时按文件尝试），0=文件
+            'dir': parts[1] == '1',
+            'link': parts[1] == '2',
+            'size': int.tryParse(parts[2]) ?? -1,
+            'mtime': int.tryParse(parts[3]) ?? 0,
+          });
+        }
+        entries.sort((a, b) {
+          if ((a['dir'] as bool) != (b['dir'] as bool)) {
+            return (a['dir'] as bool) ? -1 : 1;
+          }
+          return (a['name'] as String).toLowerCase().compareTo(
+                (b['name'] as String).toLowerCase(),
+              );
+        });
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(
+            <String, Object?>{'os': os, 'home': home, 'entries': entries},
+          ),
+        );
+        await req.response.close();
+      } catch (e) {
+        await fail(e);
+      }
+      return;
+    }
+    if (path == '/api/sandbox/download' || path == '/api/sandbox/downloadDir') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final target = req.uri.queryParameters['path'] ?? '';
+      if (uri.isEmpty || target.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      const maxFileBytes = 20 * 1024 * 1024;
+      const maxDirBytes = 100 * 1024 * 1024;
+      const maxDirFiles = 2000;
+      Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
+        req.response.statusCode = code;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      /// 从 app 读单个文件的字节（evaluate join(',') + 分页）。
+      Future<List<int>> readFile(String rpcFile) async {
+        final rpc = _SandboxRpc(uri);
+        final size = int.parse(
+          (await rpc.evalString("File('${_escPath(rpcFile)}').lengthSync()"))
+              .trim(),
+        );
+        if (size > maxFileBytes) {
+          throw '单文件超过 ${maxFileBytes ~/ (1024 * 1024)}MB，不支持下载';
+        }
+        final data = await rpc
+            .evalString("File('${_escPath(rpcFile)}').readAsBytesSync().join(',')");
+        return data.isEmpty ? <int>[] : data.split(',').map(int.parse).toList();
+      }
+
+      try {
+        if (path == '/api/sandbox/download') {
+          final bytes = await readFile(target);
+          req.response.headers.contentType = ContentType.binary;
+          req.response.headers.set(
+            'Content-Disposition',
+            'attachment; filename="${Uri.encodeComponent(_baseName(target, ''))}"',
+          );
+          req.response.add(bytes);
+          await req.response.close();
+          return;
+        }
+        // 文件夹：递归列出文件，逐个拉取后打包 USTAR tar（无压缩）。
+        final rpc = _SandboxRpc(uri);
+        final info = await rpc.evalString(
+          "Platform.operatingSystem + '\\t' + Directory.current.path",
+        );
+        final os = info.split('\t').first;
+        final listing = await rpc.evalString(
+          "(() { final files = Directory('${_escPath(target)}')"
+          ".listSync(recursive: true, followLinks: false).whereType<File>().toList(); "
+          "final sb = StringBuffer()..writeln(files.length); "
+          "for (final f in files.take($maxDirFiles)) { "
+          "try { sb..write(f.path)..write('\\t')..write(f.lengthSync())..write('\\t')"
+          "..write(f.lastModifiedSync().millisecondsSinceEpoch)..writeln(); } catch (_) {} } "
+          "return sb.toString(); })()",
+        );
+        final lines = listing.split('\n').where((l) => l.isNotEmpty).toList();
+        final count = int.tryParse(lines.first.trim()) ?? 0;
+        final files = <List<String>>[];
+        var total = 0;
+        for (final line in lines.skip(1)) {
+          final parts = line.split('\t');
+          if (parts.length < 3) continue;
+          final size = int.tryParse(parts[1]) ?? 0;
+          total += size;
+          files.add(<String>[parts[0], '$size', parts[2]]);
+        }
+        if (count > maxDirFiles) {
+          await fail(
+            '文件夹含 $count 个文件，超过 $maxDirFiles，请逐层下载',
+            code: HttpStatus.requestEntityTooLarge,
+          );
+          return;
+        }
+        if (total > maxDirBytes) {
+          await fail(
+            '文件夹总大小超过 ${maxDirBytes ~/ (1024 * 1024)}MB，请逐层下载',
+            code: HttpStatus.requestEntityTooLarge,
+          );
+          return;
+        }
+        final tar = BytesBuilder();
+        var skipped = 0;
+        final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        for (final f in files) {
+          if (int.parse(f[1]) > maxFileBytes) {
+            skipped++;
+            continue;
+          }
+          final bytes = await readFile(f[0]);
+          if (!_tarAppendFile(tar, _relativeTo(f[0], target, os), bytes, nowSec)) {
+            skipped++;
+          }
+        }
+        tar.add(_tarEnd());
+        final name = _baseName(target, os);
+        req.response.headers.contentType = ContentType.binary;
+        req.response.headers.set(
+          'Content-Disposition',
+          'attachment; filename="${Uri.encodeComponent(name.isEmpty ? 'sandbox' : name)}.tar"',
+        );
+        if (skipped > 0) {
+          print('[xbume-gui] 沙盒下载：$skipped 个文件超限或路径过长已跳过');
+        }
+        req.response.add(tar.takeBytes());
+        await req.response.close();
+      } catch (e) {
+        await fail(e);
+      }
       return;
     }
     req.response.statusCode = HttpStatus.notFound;
@@ -640,6 +831,240 @@ class _VmSession {
     _socket = null;
   }
 }
+
+/// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
+String _escPath(String p) =>
+    p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+/// 取路径最后一段（os 为 app 端 Platform.operatingSystem）。
+String _baseName(String p, String os) {
+  final sep = os == 'windows' ? r'\' : '/';
+  final idx = p.lastIndexOf(sep);
+  return idx < 0 ? p : p.substring(idx + 1);
+}
+
+/// 计算 p 相对于 root 的 tar 内路径（同一 os 分隔符体系）。
+String _relativeTo(String p, String root, String os) {
+  final sep = os == 'windows' ? r'\' : '/';
+  final prefix = root.endsWith(sep) ? root : '$root$sep';
+  if (p.startsWith(prefix)) {
+    return p.substring(prefix.length);
+  }
+  return p;
+}
+
+/// 应用沙盒浏览器：通过 VM service evaluate 在 app 进程内执行 dart:io 代码，
+/// 零 app 端改动（debug 模式即可，release 无 VM service）。
+/// 每次请求新建临时连接，用完即断。
+class _SandboxRpc {
+  _SandboxRpc(this.uri);
+
+  final String uri;
+  int _seq = 0;
+
+  /// 单次 JSON-RPC 请求-响应。
+  Future<Map<String, Object?>> _rpc(
+    WebSocket socket,
+    Map<String, Completer<Object?>> pending,
+    String method, [
+    Map<String, Object?>? params,
+  ]) {
+    final id = 'r${_seq++}';
+    final completer = Completer<Object?>();
+    pending[id] = completer;
+    socket.add(
+      jsonEncode(<String, Object?>{
+        'jsonrpc': '2.0',
+        'id': id,
+        'method': method,
+        if (params != null) 'params': params,
+      }),
+    );
+    return completer.future.then((v) => v as Map<String, Object?>);
+  }
+
+  /// 在 app 的 dart:io 库上下文执行表达式，返回完整字符串。
+  /// 超过 VM 截断阈值时用 getObject 分页拉全。
+  Future<String> evalString(String expression) async {
+    final socket = await WebSocket.connect(uri);
+    final pending = <String, Completer<Object?>>{};
+    late StreamSubscription<dynamic> sub;
+    sub = socket.listen((message) {
+      if (message is! String) return;
+      Object? parsed;
+      try {
+        parsed = jsonDecode(message);
+      } catch (_) {
+        return;
+      }
+      if (parsed is! Map) return;
+      final id = parsed['id']?.toString();
+      final completer = pending.remove(id);
+      if (completer == null) return;
+      if (parsed['error'] is Map) {
+        completer.completeError(
+          (parsed['error'] as Map)['message']?.toString() ?? 'VM service 错误',
+        );
+      } else {
+        completer.complete(parsed['result']);
+      }
+    }, onDone: () {
+      for (final c in pending.values) {
+        c.completeError('连接已关闭');
+      }
+      pending.clear();
+    }, onError: (Object e) {
+      for (final c in pending.values) {
+        c.completeError(e);
+      }
+      pending.clear();
+    });
+    try {
+      final vm = await _rpc(socket, pending, 'getVM');
+      final isolates = vm['isolates'];
+      final isolateId = isolates is List && isolates.isNotEmpty
+          ? (isolates.first as Map)['id']?.toString()
+          : null;
+      if (isolateId == null || isolateId.isEmpty) {
+        throw '未找到可用的 isolate';
+      }
+      final iso = await _rpc(socket, pending, 'getIsolate', {
+        'isolateId': isolateId,
+      });
+      String? ioLibId;
+      for (final lib in (iso['libraries'] as List? ?? <Object?>[])) {
+        if (lib is Map && lib['uri'] == 'dart:io') {
+          ioLibId = lib['id']?.toString();
+          break;
+        }
+      }
+      if (ioLibId == null) {
+        throw 'app 未加载 dart:io 库';
+      }
+      final result = await _rpc(socket, pending, 'evaluate', {
+        'isolateId': isolateId,
+        'targetId': ioLibId,
+        'expression': expression,
+      });
+      // evaluate 返回临时引用：type 为 @Instance（非固定 id 的 InstanceRef）。
+      final resultType = result['type']?.toString();
+      if (resultType != 'Instance' && resultType != '@Instance') {
+        // ErrorRef / Sentinel：表达式编译失败或运行时异常（如路径不存在）。
+        final message =
+            result['message']?.toString() ?? result['valueAsString']?.toString();
+        throw message == null || message.isEmpty
+            ? '执行失败：${jsonEncode(result)}'
+            : message;
+      }
+      var value = result['valueAsString']?.toString() ?? '';
+      if (result['valueAsStringIsTruncated'] != true) {
+        return value;
+      }
+      // 字符串被 VM 截断：分页拉取全文。
+      final objectId = result['id']?.toString();
+      final total = result['length'] is int ? result['length'] as int : 0;
+      if (objectId == null || objectId.isEmpty || total <= value.length) {
+        return value;
+      }
+      final sb = StringBuffer(value);
+      var offset = value.length;
+      const pageSize = 4 * 1024 * 1024;
+      while (offset < total) {
+        final page = await _rpc(socket, pending, 'getObject', {
+          'isolateId': isolateId,
+          'objectId': objectId,
+          'offset': offset,
+          'count': pageSize,
+        });
+        final part = page['valueAsString']?.toString() ?? '';
+        if (part.isEmpty) break;
+        sb.write(part);
+        offset += part.length;
+      }
+      return sb.toString();
+    } finally {
+      await sub.cancel();
+      try {
+        await socket.close();
+      } catch (_) {
+        // ignored
+      }
+    }
+  }
+}
+
+/// 把单个文件追加进 tar（USTAR 格式，无压缩）。
+/// name 为 tar 内相对路径；超过 255 字节时跳过并返回 false。
+bool _tarAppendFile(
+  BytesBuilder tar,
+  String name,
+  List<int> bytes,
+  int mtimeSec,
+) {
+  if (name.length > 255) {
+    return false;
+  }
+  final header = List<int>.filled(512, 0);
+  void writeField(int offset, int size, String value) {
+    final codes = value.codeUnits;
+    for (var i = 0; i < size && i < codes.length; i++) {
+      header[offset + i] = codes[i] & 0xff;
+    }
+  }
+
+  // 长路径拆分：prefix(155) + '/' + name(100)，另加 1 字节分隔余量。
+  var fileName = name;
+  var prefix = '';
+  if (name.length > 100) {
+    final split = name.lastIndexOf('/', 99);
+    if (split < 0 || name.length - split - 1 > 100) {
+      return false;
+    }
+    prefix = name.substring(0, split);
+    if (prefix.length > 155) {
+      return false;
+    }
+    fileName = name.substring(split + 1);
+  }
+  writeField(0, 100, fileName);
+  writeField(100, 8, '0000644');
+  writeField(108, 8, '0000000');
+  writeField(116, 8, '0000000');
+  writeField(124, 12, '${bytes.length.toRadixString(8).padLeft(11, '0')} ');
+  writeField(
+    136,
+    12,
+    '${mtimeSec.clamp(0, 8589934591).toRadixString(8).padLeft(11, '0')} ',
+  );
+  writeField(257, 6, 'ustar');
+  writeField(263, 2, '00');
+  writeField(345, 155, prefix);
+  header[156] = 0x30; // typeflag '0'（普通文件）
+  // checksum：先填空格求和，再写入 6 位八进制 + \0 + 空格。
+  for (var i = 148; i < 156; i++) {
+    header[i] = 0x20;
+  }
+  var sum = 0;
+  for (final b in header) {
+    sum += b;
+  }
+  final chk = sum.toRadixString(8).padLeft(6, '0');
+  for (var i = 0; i < 6; i++) {
+    header[148 + i] = chk.codeUnitAt(i);
+  }
+  header[154] = 0;
+  header[155] = 0x20;
+  tar.add(header);
+  tar.add(bytes);
+  final padding = (512 - (bytes.length % 512)) % 512;
+  if (padding > 0) {
+    tar.add(List<int>.filled(padding, 0));
+  }
+  return true;
+}
+
+/// tar 结束块（两个 512 全零块）。
+List<int> _tarEnd() => List<int>.filled(1024, 0);
 
 // ---------------------------------------------------------------------------
 // 守护进程控制模块
@@ -1171,6 +1596,12 @@ const String guiHtml = r'''
   .tag { color:var(--acc); }
   .src { color:#b07de8; }
   label.chk { margin-right:6px; color:var(--dim); cursor:pointer; }
+  .sbtable { width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
+  .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
+  .sbtable th { color:var(--dim); font-weight:600; }
+  .sbtable a { color:var(--acc); cursor:pointer; text-decoration:none; }
+  .sbcrumb { font-size:13px; word-break:break-all; }
+  .sbcrumb a { color:var(--acc); cursor:pointer; text-decoration:none; }
   .fgroup { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:8px; padding:4px 10px; background:#0e141c; }
   .fgroup .gtitle { color:var(--acc); font-size:12px; font-weight:600; }
   .fgroup .gsep { width:1px; height:16px; background:var(--line); }
@@ -1184,6 +1615,7 @@ const String guiHtml = r'''
   <h1>xb_ume 工具箱</h1>
   <div class="tab active" data-tab="daemon">守护进程</div>
   <div class="tab" data-tab="logs">日志</div>
+  <div class="tab" data-tab="sandbox">应用沙盒</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -1231,10 +1663,15 @@ const String guiHtml = r'''
     <div id="logview"><span class="muted">暂无日志</span></div>
     <div class="muted" style="margin-top:6px">打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
   </section>
+  <section class="page" id="page-sandbox">
+    <div id="sb-body"><span class="muted">请先选择 VM</span></div>
+    <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹可下载（文件夹为 .tar，单文件限 20MB，文件夹限 2000 个/100MB）。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
-var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兜底展示）
+var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
+var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws');
@@ -1256,6 +1693,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     t.classList.add('active');
     document.getElementById('page-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'daemon') refreshDaemon();
+    else if (t.dataset.tab === 'sandbox') sbRefresh();
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -1337,13 +1775,16 @@ function refreshDaemon(){
       var html = '<option value="">未选择会话（共 ' + ss.length + ' 个）</option>';
       ss.forEach(function(s){
         if (s.app) vmApps[s.source || s.uri] = s.app;
+        vmUriBySource[s.source || s.uri] = s.uri; // 沙盒 Tab 用来源找 uri
         // 显示应用包名（如有），value 仍为会话来源，保证过滤匹配不变。
         var v = s.source || s.uri;
         var text = (s.app ? s.app + ' · ' : '') + v;
         html += '<option value="' + esc(v) + '" ' + (v === vmFilter ? 'selected' : '') + '>' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
+      var prevVmFilter = vmFilter;
       vmFilter = sel.value; // 选中会话消失时自动回退到全部
+      if (vmFilter !== prevVmFilter) sbRefresh();
       sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
     var order = d.config && d.config.ideOrder;
@@ -1351,7 +1792,71 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; renderLogs(); }
+function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); }
+
+// -- 应用沙盒 Tab -----------------------------------------------------------
+var sbPath = null, sbOs = '', sbHome = '';
+function sbActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'sandbox'; }
+function sbUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function sbRefresh(){
+  if (!sbActive()) return;
+  var uri = sbUri();
+  var body = document.getElementById('sb-body');
+  if (!uri) {
+    body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；仅 debug 模式的调试会话可用）</span>';
+    return;
+  }
+  sbLoad(sbPath == null ? '' : sbPath);
+}
+function sbLoad(p){
+  var uri = sbUri();
+  if (!uri) return;
+  var body = document.getElementById('sb-body');
+  body.innerHTML = '<span class="muted">加载中…</span>';
+  fetch('/api/sandbox/list?uri=' + encodeURIComponent(uri) + '&path=' + encodeURIComponent(p))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
+      if (p === '') { sbHome = d.home || ''; sbOs = d.os || ''; if (!sbHome) { body.innerHTML = '<span class="bad">无法定位 app 沙盒根目录</span>'; return; } sbPath = sbHome; sbLoad(sbHome); return; }
+      sbPath = p; sbOs = d.os || sbOs; if (!sbHome) sbHome = d.home || '';
+      body.innerHTML = sbRender(d);
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(e) + '</span>'; });
+}
+function sbGoBtn(el){ sbLoad(decodeURIComponent(el.dataset.p)); }
+function fmtSize(n){
+  if (n == null || n < 0) return '—';
+  if (n < 1024) return n + ' B';
+  var u = ['KB', 'MB', 'GB', 'TB']; var i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(1) + ' ' + u[i];
+}
+function sbRender(d){
+  var sep = sbOs === 'windows' ? '\\' : '/';
+  var homeName = (sbHome.split(sep).filter(Boolean).pop()) || sbHome || '根目录';
+  var rel = (sbHome && sbPath.indexOf(sbHome) === 0) ? sbPath.substring(sbHome.length) : sbPath;
+  var segs = rel.split(sep).filter(Boolean);
+  var crumb = '<a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(sbHome) + '">' + esc(homeName) + '</a>';
+  var acc = sbHome;
+  segs.forEach(function(s){
+    acc = acc.endsWith(sep) ? acc + s : acc + sep + s;
+    crumb += ' / <a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(acc) + '">' + esc(s) + '</a>';
+  });
+  var html = '<div class="sbcrumb">' + crumb + '</div>';
+  if (!d.entries || !d.entries.length) { html += '<span class="muted">空目录</span>'; return html; }
+  html += '<table class="sbtable"><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr>';
+  d.entries.forEach(function(e){
+    var q = encodeURIComponent(sbUri()), p = encodeURIComponent(e.path);
+    var act = e.dir
+      ? '<a href="/api/sandbox/downloadDir?uri=' + q + '&path=' + p + '"><button title="递归打包为 tar（无压缩）下载">下载 .tar</button></a>'
+      : '<a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>';
+    var name = e.dir
+      ? '<a href="javascript:void(0)" data-p="' + p + '" onclick="sbGoBtn(this)">' + esc(e.name) + '/</a>'
+      : esc(e.name) + (e.link ? ' <span class="muted">[链接]</span>' : '');
+    html += '<tr><td>' + name + '</td><td>' + (e.dir ? '目录' : fmtSize(e.size)) + '</td><td class="muted">' + (e.mtime ? new Date(e.mtime).toLocaleString() : '') + '</td><td>' + act + '</td></tr>';
+  });
+  return html + '</table>';
+}
 function syncGroup(){
   var on = document.getElementById('f-src-device').checked;
   var g = document.getElementById('vlv');
