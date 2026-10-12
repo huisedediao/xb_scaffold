@@ -232,6 +232,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final nav = int.tryParse(req.uri.queryParameters['nav'] ?? '') ?? -1;
       final idx = int.tryParse(req.uri.queryParameters['idx'] ?? '') ?? -1;
+      // open=0：仅解析文件（路由栈「文件」列预填用），不唤起 IDE。
+      final open = req.uri.queryParameters['open'] != '0';
       if (uri.isEmpty || nav < 0 || idx < 0) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
@@ -333,7 +335,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final file = _resolveLibraryFile(libUri);
           if (file == null) continue; // 该用户库不在本机（如仅发布包），试下一个。
           final line = _findClassDeclLine(file, clsName);
-          final ideError = await _guiLaunchIde(file, line);
+          String? ideError;
+          if (open) ideError = await _guiLaunchIde(file, line);
           req.response.headers.contentType = ContentType.json;
           req.response.write(
             jsonEncode(<String, Object?>{
@@ -2405,6 +2408,9 @@ function rtRefresh(){
     .then(function(d){
       if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
       body.innerHTML = rtRender(d);
+      (d.navigators || []).forEach(function(nav){
+        (nav.routes || []).forEach(function(r, i){ rtResolve(nav.index, i); });
+      });
     })
     .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(String(e)) + '</span>'; });
 }
@@ -2416,20 +2422,36 @@ function rtRender(d){
     var routes = nav.routes || [];
     html += '<div style="margin:8px 0 2px"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span></div>';
     if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
-    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>类型</th><th>参数</th><th>定位</th></tr>';
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th></tr>';
     routes.forEach(function(r, i){
       var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
       var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
       var cur = r.current ? ' <span style="color:var(--acc);font-weight:600">● 当前</span>' : '';
+      var fileCell = '<td id="rtf-' + nav.index + '-' + i + '"><span class="muted">…</span></td>';
       var args = r.argsType
         ? '<span title="' + esc(r.argsType + (r.args ? ' ' + r.args : '')) + '">' + esc((r.args || '').length > 60 ? r.args.substring(0, 60) + '…' : (r.args || '空')) + ' <span class="muted">(' + esc(r.argsType) + ')</span></span>'
         : '<span class="muted">—</span>';
       var jump = '<a href="javascript:void(0)" onclick="rtJump(' + nav.index + ',' + i + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
-      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td><td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
+      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
     });
     html += '</table>';
   });
   return html;
+}
+function rtResolve(nav, i){
+  var uri = rtUri();
+  if (!uri) return;
+  fetch('/api/routelocate?uri=' + encodeURIComponent(uri) + '&nav=' + nav + '&idx=' + i + '&open=0')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var cell = document.getElementById('rtf-' + nav + '-' + i);
+      if (!cell) return;
+      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(d.error || '未定位到文件') + '">—</span>'; return; }
+      var fileName = d.file.split('/').pop();
+      var pos = fileName + (d.line ? ':' + d.line : '');
+      cell.innerHTML = '<span title="' + esc(d.file + (d.className ? '（' + d.className + '）' : '')) + '">' + esc(pos) + '</span>';
+    })
+    .catch(function(){ var cell = document.getElementById('rtf-' + nav + '-' + i); if (cell) cell.innerHTML = '<span class="muted">—</span>'; });
 }
 function rtJump(nav, idx, a){
   var uri = rtUri();
@@ -2442,7 +2464,7 @@ function rtJump(nav, idx, a){
       var fileName = (d.file || '').split('/').pop();
       var pos = fileName + (d.line ? ':' + d.line : '');
       var tip = (d.file || '') + (d.line ? ':' + d.line : '') + (d.className ? '（' + d.className + '）' : '');
-      a.outerHTML = '<span style="color:var(--ok,#7ee787)" title="' + esc(tip + (d.message ? '；' + d.message : '')) + '">✓ ' + esc(pos) + '</span>';
+      a.outerHTML = '<span style="color:var(--ok,#7ee787)" title="' + esc(tip + (d.message ? '；' + d.message : '')) + '">✓ 已打开</span>';
     })
     .catch(function(e){ a.outerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
 }
