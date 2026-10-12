@@ -406,22 +406,35 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         var listing = '';
         if (dir.isEmpty) {
           final candidates = <String>[
-            if (home.isNotEmpty) home,
+            // Android HOME 常为 '/'（无导航意义），跳过。
+            if (home.isNotEmpty &&
+                !(os == 'android' && (home == '/' || home == '')))
+              home,
             // 鸿蒙应用沙箱映射路径（app 进程内可见）。
             if (os == 'ohos') '/data/storage/el2/base',
             if (os == 'ohos') '/data/storage/el1/base',
             if (os == 'ohos') '/data/app/el2/100/base',
             if (os == 'ohos') '/data/app/el1/100/base',
-            // Android 常见沙盒与外存。
-            if (os == 'android') '/data/data',
-            if (os == 'android') '/data/user/0',
-            if (os == 'android') '/storage/emulated/0',
           ];
           final quoted =
               candidates.map((c) => "'${_escPath(c)}'").join(',');
+          final quotedPart = quoted.isEmpty ? '' : '$quoted, ';
+          // Android 11+ 分区存储：无法列出其他应用的目录（Android/data 顶层
+          // 也是 errno=13），但本包名目录可访问；包名经 /proc/self/cmdline 取。
+          final pkgProbe = os == 'android'
+              ? "var pkg = ''; "
+                  "try { pkg = File('/proc/self/cmdline')"
+                  ".readAsStringSync().split(String.fromCharCode(0))[0].trim(); } "
+                  "catch (_) {} "
+                  "final cand = <String>[ ...(pkg.isNotEmpty ? <String>["
+                  "'/data/data/' + pkg, '/data/user/0/' + pkg, "
+                  "'/storage/emulated/0/Android/data/' + pkg + '/files', "
+                  "'/storage/emulated/0/Android/data/' + pkg + '/cache'] : <String>[]), "
+                  "$quotedPart Directory.systemTemp.path, '/']; "
+              : "final cand = <String>[$quotedPart "
+                  "Directory.systemTemp.path, '/']; ";
           final rootsRaw = await rpc.evalString(
-            "(() { final cand = <String>[$quoted, "
-            "Directory.systemTemp.path, '/']; "
+            "(() { $pkgProbe"
             "final ok = <String>[]; "
             "for (final c in cand) { "
             "if (ok.contains(c)) continue; "
@@ -2509,6 +2522,9 @@ function sbError(msg, raw){
   var body = document.getElementById('sb-body');
   var html = '<span class="bad">' + esc(msg) + '</span>';
   if (raw) html += '<div class="muted" style="margin-top:4px;word-break:break-all">' + esc(raw) + '</div>';
+  if (sbOs === 'android' && /Permission denied|errno = 13|Operation not permitted/.test(raw || msg)) {
+    html += '<div class="muted" style="margin-top:4px">提示：Android 分区存储限制，应用无法列出其他应用的目录（含 /storage/emulated/0/Android/data 顶层）；本应用沙盒已预填为默认入口。</div>';
+  }
   if (sbRoots && sbRoots.length) {
     var links = sbRoots.map(function(r){
       var name = r.split('/').filter(Boolean).pop() || r;
