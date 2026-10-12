@@ -991,11 +991,11 @@ Future<bool> _hasAndroidStudio() async {
   if (await _hasCommand('studio')) {
     return true;
   }
-  if (Platform.isMacOS) {
-    for (final bin in _androidStudioBinaries()) {
-      if (File(bin).existsSync()) {
-        return true;
-      }
+  for (final bin in _androidStudioBinaries()) {
+    // macOS/Windows 条目为绝对路径；Linux 条目为命令名（如 studio）。
+    final isPath = bin.contains('/') || bin.contains('\\');
+    if (isPath ? File(bin).existsSync() : await _hasCommand(bin)) {
+      return true;
     }
   }
   return false;
