@@ -1663,6 +1663,10 @@ const String guiHtml = r'''
   .sbtable { width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
   .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
   .sbtable th { color:var(--dim); font-weight:600; }
+  /* 行悬停高亮：标记鼠标当前所在行（匹配 td，不影响表头行） */
+  .sbtable tr { transition: background .12s; }
+  .sbtable tr:hover td { background:#182231; }
+  .sbtable tr:hover a { text-decoration:underline; }
   .sbtable a { color:var(--acc); cursor:pointer; text-decoration:none; }
   .sbcrumb { font-size:13px; word-break:break-all; }
   .sbcrumb a { color:var(--acc); cursor:pointer; text-decoration:none; }
