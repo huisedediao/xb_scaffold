@@ -1654,6 +1654,17 @@ Future<bool> _guiRunChecked(String command, List<String> args) async {
   }
 }
 
+/// vscode 系 ide 名 → macOS app 名（CLI 打开文件后用 open -a 激活窗口）。
+/// CLI（如 qodercn -g file:line）只向已运行实例发 IPC，不会把窗口带到前台。
+const Map<String, String> _guiMacosIdeAppNames = <String, String>{
+  'qodercn': 'Qoder CN IDE',
+  'qoder-cn': 'Qoder',
+  'cursor': 'Cursor',
+  'trae': 'Trae',
+  'windsurf': 'Windsurf',
+  'code': 'Visual Studio Code',
+};
+
 Future<void> _guiCopyClipboard(String text) async {
   try {
     if (Platform.isMacOS) {
@@ -1731,6 +1742,17 @@ Future<String?> _guiLaunchIde(String path, int line) async {
     }
     if (cli == null) continue;
     if (await _guiRunChecked(cli, <String>['-g', '$path:$line'])) {
+      // 后台进程唤起不会激活 IDE 窗口，补一次 open -a 把它带到前台。
+      if (Platform.isMacOS) {
+        final appName = _guiMacosIdeAppNames[ide];
+        if (appName != null) {
+          try {
+            await Process.run('open', <String>['-a', appName]);
+          } catch (_) {
+            // 激活失败不影响打开结果。
+          }
+        }
+      }
       return null;
     }
   }
@@ -2456,17 +2478,21 @@ function rtResolve(nav, i){
 function rtJump(nav, idx, a){
   var uri = rtUri();
   if (!uri) return;
+  var td = a.parentElement;
+  var orig = '<a href="javascript:void(0)" onclick="rtJump(' + nav + ',' + idx + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
   a.textContent = '定位中…';
   fetch('/api/routelocate?uri=' + encodeURIComponent(uri) + '&nav=' + nav + '&idx=' + idx)
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d.error) { a.outerHTML = '<span class="bad" title="' + esc(d.error) + '">失败</span>'; return; }
+      if (d.error) { td.innerHTML = '<span class="bad" title="' + esc(d.error) + '">失败</span>'; return; }
       var fileName = (d.file || '').split('/').pop();
       var pos = fileName + (d.line ? ':' + d.line : '');
       var tip = (d.file || '') + (d.line ? ':' + d.line : '') + (d.className ? '（' + d.className + '）' : '');
-      a.outerHTML = '<span style="color:var(--ok,#7ee787)" title="' + esc(tip + (d.message ? '；' + d.message : '')) + '">✓ 已打开</span>';
+      td.innerHTML = '<span style="color:var(--ok,#7ee787)" title="' + esc(tip + (d.message ? '；' + d.message : '')) + '">✓ 已打开</span>';
+      // 2 秒后重置回可再次点击的「跳转」。
+      setTimeout(function(){ td.innerHTML = orig; }, 2000);
     })
-    .catch(function(e){ a.outerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
+    .catch(function(e){ td.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
 }
 
 // -- 应用沙盒 Tab -----------------------------------------------------------
