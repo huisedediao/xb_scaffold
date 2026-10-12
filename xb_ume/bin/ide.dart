@@ -12,9 +12,9 @@
 //   dart run xb_ume:ide --configure [--ide-order "..."] [--show]
 //       查看/修改 IDE 优先级（daemon 每次跳转时重读配置，改完即生效）。
 //   dart run xb_ume:ide --uninstall
-//       卸载守护进程与安装文件（含 config.json）。
+//       卸载守护进程与安装文件（含 config.json），并停止所有 daemon 实例。
 //   dart run xb_ume:ide --daemon [--ide ...]
-//       前台运行守护进程（不注册自启）；
+//       前台运行守护进程（不注册自启）；单实例锁：新实例自动接管，旧实例退出；
 //   dart run xb_ume:ide --uri <ws-url> [--ide ...]
 //       手动监听单个 VM service（自动发现不可用时的兜底）。
 //
@@ -43,6 +43,13 @@ const String kWinRunKeyPath =
 const String kWinRunKeyName = 'XBumeIde';
 
 const Duration kPollInterval = Duration(seconds: 3);
+
+/// 单实例互斥：固定回环端口锁。
+/// 新实例启动时先按命令行匹配停止其他 daemon 进程，再绑定本端口；
+/// 持锁实例收到 [kEvictToken] 后自动退出（接管语义：只保留最新实例）。
+const int kLockPort = 46128;
+const String kEvictToken = 'xbume-ide-takeover';
+ServerSocket? _lockServer;
 
 /// 用户主目录：Windows 用 USERPROFILE（HOME 通常不存在），其余用 HOME。
 final String _home =
@@ -249,11 +256,13 @@ Future<void> uninstall() async {
       <String>['delete', kWinRunKeyPath, '/v', kWinRunKeyName, '/f'],
     );
   }
+  // 停止所有仍在运行的 daemon 实例（含手动 --daemon 启动的）。
+  await _killOtherDaemons();
   final dir = Directory('$_home/$kInstallDirName');
   if (dir.existsSync()) {
     await dir.delete(recursive: true);
   }
-  print('[xbume-ide] 已卸载。');
+  print('[xbume-ide] 已停止守护进程并卸载。');
 }
 
 String _buildPlist({
@@ -573,7 +582,93 @@ final Map<String, _Session> _sessions = <String, _Session>{};
 final Set<String> _knownFingerprints = <String>{};
 bool _polling = false;
 
+/// 停止本机上其他 `ide.dart --daemon` 进程（排除自身）。
+/// 旧版本脚本没有端口锁，只能按命令行匹配兕底。
+Future<void> _killOtherDaemons() async {
+  try {
+    if (Platform.isWindows) {
+      // 命令行同时含 ide.dart 与 --daemon 的进程，排除自身后强制结束。
+      final ps = "Get-CimInstance Win32_Process | Where-Object { "
+          "\$_.CommandLine -match 'ide\\.dart' -and "
+          "\$_.CommandLine -match '--daemon' -and \$_.ProcessId -ne $pid } | "
+          "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
+      await Process.run(
+        'powershell',
+        <String>['-NoProfile', '-Command', ps],
+      );
+    } else {
+      // macOS/Linux：pgrep 按完整命令行匹配，排除自身后 kill。
+      final pgrep = await Process.run(
+        'pgrep',
+        <String>['-f', r'ide\.dart.*--daemon'],
+      );
+      for (final line in pgrep.stdout.toString().split('\n')) {
+        final other = int.tryParse(line.trim());
+        if (other != null && other != pid) {
+          await Process.run('kill', <String>['-9', '$other']);
+        }
+      }
+    }
+  } catch (_) {
+    // 清理失败不阻塞启动。
+  }
+}
+
+/// 获取单实例锁：停止旧实例 → 绑定互斥端口 → 监听接管请求。
+Future<void> _acquireSingletonLock() async {
+  await _killOtherDaemons();
+  // 最多等 3s 让被停进程释放端口。
+  for (var attempt = 0; attempt < 10; attempt++) {
+    try {
+      _lockServer = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        kLockPort,
+      );
+      break;
+    } on SocketException {
+      // 端口仍被占用（如被杀进程未完全退出或锁被外部占用）：
+      // 通知持有者退出后重试。
+      await _requestEviction();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+  }
+  final server = _lockServer;
+  if (server == null) {
+    print('[xbume-ide] 警告：互斥端口 $kLockPort 被占用，本次运行无单实例保护。');
+    return;
+  }
+  server.listen(_onLockConnection);
+}
+
+/// 通知当前持锁实例退出（接管协议）。
+Future<void> _requestEviction() async {
+  try {
+    final socket = await Socket.connect(
+      InternetAddress.loopbackIPv4,
+      kLockPort,
+      timeout: const Duration(milliseconds: 500),
+    );
+    socket.write(kEvictToken);
+    await socket.flush();
+    socket.destroy();
+  } catch (_) {
+    // 持有者可能已退出或非本脚本占用，忽略。
+  }
+}
+
+/// 持锁侧：收到接管令牌即退出。
+void _onLockConnection(Socket socket) {
+  socket.listen((data) {
+    if (utf8.decode(data, allowMalformed: true).contains(kEvictToken)) {
+      print('[xbume-ide] 检测到新实例接管，本实例退出。');
+      _lockServer?.close();
+      exit(0);
+    }
+  });
+}
+
 Future<void> runDaemon(String ide) async {
+  await _acquireSingletonLock();
   print(
     '[xbume-ide] daemon 启动 (pid=$pid)，每 ${kPollInterval.inSeconds}s 轮询，'
     'IDE=$ide。Ctrl-C 退出。',

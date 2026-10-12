@@ -76,6 +76,8 @@ dart run xb_ume:ide --install
 
 安装后日常**零操作**：正常 `flutter run` 或 IDE 运行按钮启动调试即可，daemon 会自动发现会话。
 
+守护进程**单实例运行**：`--install` / `--daemon` 启动的新实例会自动接管（停止旧实例，只保留最新实例）；重复安装/启动不会出现多个实例重复响应点击的问题。
+
 ## 四、日常使用
 
 1. 电脑上启动 debug 会话（`flutter run` 或 IDE 运行按钮）；
@@ -141,6 +143,7 @@ dart run xb_ume:ide --ide qodercn        # 单次显式指定 IDE（优先级最
 
 | 现象 | 排查步骤 |
 |---|---|
+| 点一次箭头唤起了多个 IDE | 旧版本存在多实例重复消费事件的问题，已加入单实例接管锁：更新脚本后重新 `--install`（新实例自动停止旧实例）即可 |
 | 点箭头只提示「路径已复制到剪贴板」 | daemon 未运行：`--configure --show` 查看状态；或前台运行 `dart run xb_ume:ide --daemon` 看日志 |
 | IDE 打开了文件但没定位到行列 | Android Studio 平台限制，见第六节；或旧版命令行工具不支持 `--column` |
 | 自动发现不到调试会话 | 手动兜底：`dart run xb_ume:ide --uri <ws-uri>`，URI 取自 `flutter run` 控制台输出 |
@@ -153,4 +156,4 @@ dart run xb_ume:ide --ide qodercn        # 单次显式指定 IDE（优先级最
 dart run xb_ume:ide --uninstall
 ```
 
-会清理守护脚本、配置文件与自启项（macOS LaunchAgent / Windows 注册表键）。不卸载脚本时点箭头仍可用（仅复制路径到剪贴板）。
+会停止所有守护进程实例，并清理守护脚本、配置文件与自启项（macOS LaunchAgent / Windows 注册表键）。不卸载脚本时点箭头仍可用（仅复制路径到剪贴板）。
