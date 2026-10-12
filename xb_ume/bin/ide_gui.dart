@@ -170,6 +170,18 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
 
       final rpc = _SandboxRpc(uri);
+      // 列目录的 app 端表达式（d 须为绝对路径）。
+      String listExpr(String d) =>
+          "(() { final sb = StringBuffer(); "
+          "for (final e in Directory('${_escPath(d)}').listSync(followLinks: false)) { "
+          "var size = -1; var mtime = 0; "
+          "try { final st = e.statSync(); "
+          "size = e is File ? st.size : -1; "
+          "mtime = st.modified.millisecondsSinceEpoch; } catch (_) {} "
+          "sb..write(e.path)..write('\\t')..write(e is Directory ? '1' : (e is Link ? '2' : '0'))..write('\\t')"
+          "..write(size)..write('\\t')..write(mtime)..writeln(); } "
+          "return sb.toString(); })()";
+
       try {
         final info = await rpc.evalString(
           "Platform.operatingSystem + '\\t' + "
@@ -178,20 +190,47 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final sep = info.indexOf('\t');
         final os = sep < 0 ? '' : info.substring(0, sep);
         final home = sep < 0 ? info : info.substring(sep + 1);
-        // path 为空时仅返回 os/home（前端用于定位沙盒根），不列目录。
-        final listing = dir.isEmpty
-            ? ''
-            : await rpc.evalString(
-          "(() { final sb = StringBuffer(); "
-          "for (final e in Directory('${_escPath(dir)}').listSync(followLinks: false)) { "
-          "var size = -1; var mtime = 0; "
-          "try { final st = e.statSync(); "
-          "size = e is File ? st.size : -1; "
-          "mtime = st.modified.millisecondsSinceEpoch; } catch (_) {} "
-          "sb..write(e.path)..write('\\t')..write(e is Directory ? '1' : (e is Link ? '2' : '0'))..write('\\t')"
-          "..write(size)..write('\\t')..write(mtime)..writeln(); } "
-          "return sb.toString(); })()",
-        );
+
+        // path 为空时探测可用起点：app 进程的 HOME 不一定可访问
+        // （如鸿蒙真机 HOME=/storage/Users/currentUser 无权限），
+        // 逐个尝试候选路径，收集能成功 listSync 的作为入口。
+        var roots = <String>[];
+        var listing = '';
+        if (dir.isEmpty) {
+          final candidates = <String>[
+            if (home.isNotEmpty) home,
+            // 鸿蒙应用沙箱映射路径（app 进程内可见）。
+            if (os == 'ohos') '/data/storage/el2/base',
+            if (os == 'ohos') '/data/storage/el1/base',
+            if (os == 'ohos') '/data/app/el2/100/base',
+            if (os == 'ohos') '/data/app/el1/100/base',
+            // Android 常见沙盒与外存。
+            if (os == 'android') '/data/data',
+            if (os == 'android') '/data/user/0',
+            if (os == 'android') '/storage/emulated/0',
+          ];
+          final quoted =
+              candidates.map((c) => "'${_escPath(c)}'").join(',');
+          final rootsRaw = await rpc.evalString(
+            "(() { final cand = <String>[$quoted, "
+            "Directory.systemTemp.path, '/']; "
+            "final ok = <String>[]; "
+            "for (final c in cand) { "
+            "if (ok.contains(c)) continue; "
+            "try { Directory(c).listSync(followLinks: false); ok.add(c); } "
+            "catch (_) {} } return ok.join('\\n'); })()",
+          );
+          roots = rootsRaw
+              .split('\n')
+              .where((l) => l.isNotEmpty)
+              .toList();
+          if (roots.isNotEmpty) {
+            listing = await rpc.evalString(listExpr(roots.first));
+          }
+        } else {
+          listing = await rpc.evalString(listExpr(dir));
+        }
+        final actualRoot = dir.isEmpty ? (roots.isEmpty ? '' : roots.first) : dir;
         final entries = <Map<String, Object?>>[];
         for (final line in listing.split('\n')) {
           if (line.isEmpty) continue;
@@ -218,7 +257,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.headers.contentType = ContentType.json;
         req.response.write(
           jsonEncode(
-            <String, Object?>{'os': os, 'home': home, 'entries': entries},
+            <String, Object?>{
+              'os': os,
+              'home': home,
+              'roots': roots,
+              'root': actualRoot,
+              'entries': entries,
+            },
           ),
         );
         await req.response.close();
@@ -1814,7 +1859,28 @@ setInterval(refreshDaemon, 5000);
 function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); }
 
 // -- 应用沙盒 Tab -----------------------------------------------------------
-var sbPath = null, sbOs = '', sbHome = '';
+var sbPath = null, sbOs = '', sbHome = '', sbRoot = '', sbRoots = [];
+function sbEntryLinks(){
+  if (!sbRoots || sbRoots.length < 2) return '';
+  var links = sbRoots.map(function(r){
+    var name = r.split('/').filter(Boolean).pop() || r;
+    return '<a href="javascript:void(0)" data-p="' + encodeURIComponent(r) + '" onclick="sbGoBtn(this)">' + esc(name) + '</a>';
+  });
+  return '<div class="muted" style="margin:4px 0">入口：' + links.join(' · ') + '</div>';
+}
+function sbError(msg, raw){
+  var body = document.getElementById('sb-body');
+  var html = '<span class="bad">' + esc(msg) + '</span>';
+  if (raw) html += '<div class="muted" style="margin-top:4px;word-break:break-all">' + esc(raw) + '</div>';
+  if (sbRoots && sbRoots.length) {
+    var links = sbRoots.map(function(r){
+      var name = r.split('/').filter(Boolean).pop() || r;
+      return '<a href="javascript:void(0)" data-p="' + encodeURIComponent(r) + '" onclick="sbGoBtn(this)">' + esc(name) + '</a>';
+    });
+    html += '<div style="margin-top:6px">可尝试其他入口：' + links.join(' · ') + '</div>';
+  }
+  body.innerHTML = html;
+}
 function sbActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'sandbox'; }
 function sbUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function sbRefresh(){
@@ -1835,12 +1901,27 @@ function sbLoad(p){
   fetch('/api/sandbox/list?uri=' + encodeURIComponent(uri) + '&path=' + encodeURIComponent(p))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
-      if (p === '') { sbHome = d.home || ''; sbOs = d.os || ''; if (!sbHome) { body.innerHTML = '<span class="bad">无法定位 app 沙盒根目录</span>'; return; } sbPath = sbHome; sbLoad(sbHome); return; }
-      sbPath = p; sbOs = d.os || sbOs; if (!sbHome) sbHome = d.home || '';
-      body.innerHTML = sbRender(d);
+      if (d.error) {
+        var perm = /Operation not permitted|errno = 1|Permission denied/.test(d.error);
+        sbError(perm ? '无权限访问该目录（app 进程访问受限）' : '加载失败', d.error);
+        return;
+      }
+      sbHome = d.home || sbHome; sbOs = d.os || sbOs;
+      if (p === '') {
+        sbRoots = d.roots || [];
+        if (!sbRoots.length) {
+          sbError('无法定位可访问的目录：app 进程的文件系统访问受限（HOME=' + sbHome + '）');
+          return;
+        }
+        sbRoot = d.root || sbRoots[0]; sbPath = sbRoot;
+        body.innerHTML = sbEntryLinks() + sbRender(d);
+        return;
+      }
+      sbRoot = sbRoot || d.root || sbHome;
+      sbPath = p;
+      body.innerHTML = sbEntryLinks() + sbRender(d);
     })
-    .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(e) + '</span>'; });
+    .catch(function(e){ sbError('加载失败', String(e)); });
 }
 function sbGoBtn(el){ sbLoad(decodeURIComponent(el.dataset.p)); }
 function fmtSize(n){
@@ -1852,11 +1933,12 @@ function fmtSize(n){
 }
 function sbRender(d){
   var sep = sbOs === 'windows' ? '\\' : '/';
-  var homeName = (sbHome.split(sep).filter(Boolean).pop()) || sbHome || '根目录';
-  var rel = (sbHome && sbPath.indexOf(sbHome) === 0) ? sbPath.substring(sbHome.length) : sbPath;
+  var root = sbRoot || sbHome || sbPath;
+  var rootName = (root.split(sep).filter(Boolean).pop()) || '根目录';
+  var rel = (root && sbPath.indexOf(root) === 0) ? sbPath.substring(root.length) : sbPath;
   var segs = rel.split(sep).filter(Boolean);
-  var crumb = '<a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(sbHome) + '">' + esc(homeName) + '</a>';
-  var acc = sbHome;
+  var crumb = '<a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(root) + '">' + esc(rootName) + '</a>';
+  var acc = root;
   segs.forEach(function(s){
     acc = acc.endsWith(sep) ? acc + s : acc + sep + s;
     crumb += ' / <a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(acc) + '">' + esc(s) + '</a>';
