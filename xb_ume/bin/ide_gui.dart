@@ -39,6 +39,11 @@ const String kConfigName = 'config.json';
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
 
+/// 容错 UTF-8 解码：logcat 输出、外部 HTTP 响应可能含非法字节序列，
+/// 默认 utf8.decoder 遇到会抛 FormatException——且流回调里的异常
+/// 不会被 handler 的 try/catch 捕获，直接杀死整个 GUI 进程（曾致闪退）。
+const Utf8Codec _lenientUtf8 = Utf8Codec(allowMalformed: true);
+
 /// 日志环形缓冲上限（内存保护）。
 const int kMaxBufferLines = 5000;
 
@@ -46,6 +51,13 @@ final String _home =
     Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
 
 Future<void> main(List<String> args) async {
+  // 兜底：任何流回调/事件循环里的未捕获异常只记日志，不杀进程。
+  return runZonedGuarded(() => _mainImpl(args), (e, st) {
+    stderr.writeln('[uncaught] $e\n$st');
+  });
+}
+
+Future<void> _mainImpl(List<String> args) async {
   HttpServer? server;
   var port = kGuiPortBase;
   for (; port < kGuiPortBase + 10; port++) {
@@ -354,6 +366,238 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             : '无法定位：${scanned - framework} 个用户类均未解析到本机文件（依赖包可能不在本机）';
       } catch (e, st) {
         stderr.writeln('[routelocate] $e\n$st');
+        await fail(e);
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
+    // -- Network（手机端 ume Network 模块同源数据）---------------------------
+    // 在 xb_ume core 库上下文 eval 读 XBUme.controller.network（同步 getter）。
+    // 结构化串约定：字段间 \u0001，键值间 \u0003，条目间 \u0004。
+    if (path == '/api/network' ||
+        path == '/api/network/detail' ||
+        path == '/api/network/clear' ||
+        path == '/api/network/replay') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final id = req.uri.queryParameters['id'] ?? '';
+      if (uri.isEmpty ||
+          (path != '/api/network' && path != '/api/network/clear' && id.isEmpty)) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
+        req.response.statusCode = code;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      final rpc = _SandboxRpc(uri);
+      try {
+        // 校验 xb_ume core 库可达（未接入 xb_ume 的 app 会在此报错）。
+        await rpc.libraryId('package:xb_ume/src/core/xb_ume.dart');
+        Future<String> evalNet(String inner) => rpc.evalStringOn(
+          'package:xb_ume/src/core/xb_ume.dart',
+          "(() { $inner })()",
+        );
+
+        if (path == '/api/network') {
+          final raw = await evalNet(
+            "final n = XBUme.controller.network; "
+            "return n.map((e) => [e.id, e.time.toIso8601String(), e.method, e.url, "
+            "(e.statusCode ?? '').toString(), (e.durationMs ?? '').toString(), "
+            "e.status.name, e.error ?? ''].join('\\u0001')).join('\\u0002'); ",
+          );
+          final items = <Map<String, Object?>>[];
+          for (final line in raw.split('\u0002')) {
+            if (line.isEmpty) continue;
+            final p = line.split('\u0001');
+            if (p.length < 8) continue;
+            items.add(<String, Object?>{
+              'id': p[0], 'time': p[1], 'method': p[2], 'url': p[3],
+              'statusCode': p[4], 'durationMs': p[5], 'status': p[6], 'error': p[7],
+            });
+          }
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({'items': items.reversed.toList()}));
+          await req.response.close();
+          return;
+        }
+        if (path == '/api/network/clear') {
+          await evalNet('XBUme.controller.clearNetwork(); return \'ok\'; ');
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({'ok': true}));
+          await req.response.close();
+          return;
+        }
+        // detail / replay 共用：结构化拉取单条请求的全部字段。
+        Future<Map<String, Object?>?> fetchItem() async {
+          final raw = await evalNet(
+            "XBUmeNetworkItem? e; "
+            "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
+            "if (e == null) return 'NOT_FOUND'; "
+            "String kv(Map<String, dynamic>? m) => m == null ? '' : "
+            "m.entries.map((en) => en.key + '\\u0003' + en.value.toString()).join('\\u0004'); "
+            "String toS(Object? v) => v == null ? '' : v.toString(); "
+            "return [kv(e.queryParameters), kv(e.requestHeaders), toS(e.requestBody), "
+            "kv(e.responseHeaders), toS(e.responseBody), e.stack ?? ''].join('\\u0001'); ",
+          );
+          if (raw == 'NOT_FOUND') return null;
+          final p = raw.split('\u0001');
+          List<Map<String, String>> parseKv(String s) => s.isEmpty
+              ? <Map<String, String>>[]
+              : s
+                  .split('\u0004')
+                  .map((e) {
+                    final i = e.indexOf('\u0003');
+                    return <String, String>{
+                      'k': i < 0 ? e : e.substring(0, i),
+                      'v': i < 0 ? '' : e.substring(i + 1),
+                    };
+                  })
+                  .toList();
+          return <String, Object?>{
+            'query': parseKv(p.isNotEmpty ? p[0] : ''),
+            'requestHeaders': parseKv(p.length > 1 ? p[1] : ''),
+            'requestBody': p.length > 2 ? p[2] : '',
+            'responseHeaders': parseKv(p.length > 3 ? p[3] : ''),
+            'responseBody': p.length > 4 ? p[4] : '',
+            'stack': p.length > 5 ? p[5] : '',
+          };
+        }
+        if (path == '/api/network/detail') {
+          final item = await fetchItem();
+          if (item == null) throw '请求不存在（可能已被清除）';
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(item));
+          await req.response.close();
+          return;
+        }
+        // replay：GUI 端直接按原 method/url/headers/body 发起 HTTP 请求。
+        // 先拿 method 与 url（列表里没带，单独 eval）。
+        final mu = await evalNet(
+          "XBUmeNetworkItem? e; "
+          "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
+          "if (e == null) return 'NOT_FOUND'; "
+          "return e.method + '\\u0001' + e.url; ",
+        );
+        if (mu == 'NOT_FOUND') throw '请求不存在（可能已被清除）';
+        final sep = mu.indexOf('\u0001');
+        final method = sep < 0 ? 'GET' : mu.substring(0, sep);
+        final url = sep < 0 ? mu : mu.substring(sep + 1);
+        final item = await fetchItem();
+        final headers = <String, String>{
+          for (final h in (item?['requestHeaders'] as List? ?? <Map<String, String>>[]))
+            if ((h['k'] ?? '').toString().isNotEmpty)
+              h['k']!.toString(): h['v']?.toString() ?? '',
+        };
+        final body = (item?['requestBody'] as String? ?? '');
+        final client = HttpClient();
+        try {
+          final rq = await client.openUrl(method, Uri.parse(url));
+          headers.forEach(rq.headers.set);
+          if (body.isNotEmpty &&
+              method != 'GET' &&
+              method != 'HEAD') {
+            rq.add(utf8.encode(body));
+          }
+          final rs = await rq.close();
+          final respBody = await rs.transform(_lenientUtf8.decoder).join();
+          // HttpHeaders 不能直接 jsonEncode，手动拍平。
+          final respHeaders = <String, List<String>>{};
+          rs.headers.forEach((k, v) => respHeaders[k] = v);
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            'statusCode': rs.statusCode,
+            'headers': respHeaders,
+            'body': respBody.length > 200 * 1024
+                ? respBody.substring(0, 200 * 1024)
+                : respBody,
+          }));
+          await req.response.close();
+          return;
+        } finally {
+          client.close(force: true);
+        }
+      } catch (e, st) {
+        stderr.writeln('[$path] $e\n$st');
+        await fail(e);
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
+    // -- Storage（shared_prefs XML 直读直写，重启 app 后生效）----------------
+    if (path == '/api/storage/list' || path == '/api/storage/read' || path == '/api/storage/write') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
+        req.response.statusCode = code;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      final rpc = _SandboxRpc(uri);
+      try {
+        // 包名与 shared_prefs 目录探测。
+        final pkg = (await rpc.evalString(
+          "(() { try { return File('/proc/self/cmdline')"
+          ".readAsStringSync().split(String.fromCharCode(0))[0].trim(); } "
+          "catch (_) { return ''; } })()",
+        )).trim();
+        if (pkg.isEmpty) throw '无法获取应用包名（/proc/self/cmdline）';
+        final prefsDir = '/data/data/$pkg/shared_prefs';
+        final listXml = await rpc.evalString(
+          "(() { try { return Directory('$prefsDir').listSync()"
+          ".where((e) => e.path.endsWith('.xml'))"
+          ".map((e) => e.path).join('\\n'); } catch (_) { return ''; } })()",
+        );
+        final files = listXml.split('\n').where((l) => l.isNotEmpty).toList();
+        if (path == '/api/storage/list') {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            'pkg': pkg,
+            'prefsDir': prefsDir,
+            'files': files,
+          }));
+          await req.response.close();
+          return;
+        }
+        final file = req.uri.queryParameters['file'] ??
+            (files.isEmpty ? '' : files.first);
+        if (file.isEmpty) {
+          throw '未找到 shared_prefs（app 可能尚未写入过 preferences，或平台存储格式不同）';
+        }
+        if (path == '/api/storage/read') {
+          final xml = await rpc.evalString(
+            "File('${_escPath(file)}').readAsStringSync()",
+          );
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            'file': file,
+            'xml': xml,
+          }));
+          await req.response.close();
+          return;
+        }
+        // write：POST body 为新 XML 全文。
+        final xml = await _lenientUtf8.decoder.bind(req).join();
+        await rpc.evalString(
+          "File('${_escPath(file)}').writeAsStringSync('${_escEvalString(xml)}'); "
+          "return 'ok'; ",
+        );
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'ok': true}));
+        await req.response.close();
+      } catch (e, st) {
+        stderr.writeln('[$path] $e\n$st');
         await fail(e);
       } finally {
         await rpc.close();
@@ -784,11 +1028,11 @@ class GuiState {
       _deviceLogProcesses[id] = process;
       _deviceLogStartFailed.remove(id);
       process.stdout
-          .transform(utf8.decoder)
+          .transform(_lenientUtf8.decoder)
           .transform(const LineSplitter())
           .listen((line) => addDeviceLog(id, source, line));
       process.stderr
-          .transform(utf8.decoder)
+          .transform(_lenientUtf8.decoder)
           .transform(const LineSplitter())
           .listen((line) => addDeviceLog(id, source, line));
       unawaited(process.exitCode.then((_) {
@@ -1112,6 +1356,16 @@ class _VmSession {
 String _escPath(String p) =>
     p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
 
+/// 任意文本嵌入 evaluate 表达式字符串字面量的转义（XML 写回等）。
+/// 注意 $ 是 Dart 字符串插值符，必须一并转义。
+String _escEvalString(String s) => s
+    .replaceAll(r'\', r'\\')
+    .replaceAll(r'$', r'\$')
+    .replaceAll("'", r"\'")
+    .replaceAll('\n', r'\n')
+    .replaceAll('\r', r'\r')
+    .replaceAll('\t', r'\t');
+
 /// 取路径最后一段（os 为 app 端 Platform.operatingSystem）。
 String _baseName(String p, String os) {
   final sep = os == 'windows' ? r'\' : '/';
@@ -1148,7 +1402,11 @@ class _SandboxRpc {
   /// 建立连接（懒加载；同一连接复用多次 evaluate，避免分段读反复握手）。
   Future<void> _ensureConnected() async {
     if (_socket != null) return;
-    final socket = await WebSocket.connect(uri);
+    // 死会话（app 已断但端口仍在）会让握手挂起，必须限时。
+    final socket = await WebSocket.connect(uri).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => throw '连接 VM service 超时（会话可能已断开）',
+    );
     _socket = socket;
     _sub = socket.listen(
       (message) {
@@ -1224,7 +1482,13 @@ class _SandboxRpc {
         if (params != null) 'params': params,
       }),
     );
-    return completer.future.then((v) => v as Map<String, Object?>);
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _pending.remove(id);
+        throw 'VM service 响应超时（会话可能已挂起或断开）';
+      },
+    ).then((v) => v as Map<String, Object?>);
   }
 
   /// 解析 isolateId（每连接一次）；库 id 由 _libraryId 按需解析并缓存。
@@ -2136,7 +2400,7 @@ Future<bool> pingGui(int port) async {
         .getUrl(Uri.parse('http://127.0.0.1:$port/ping'))
         .timeout(const Duration(seconds: 1));
     final response = await request.close().timeout(const Duration(seconds: 1));
-    final body = await response.transform(utf8.decoder).join();
+    final body = await response.transform(_lenientUtf8.decoder).join();
     return body.trim() == 'xbume-gui';
   } catch (_) {
     return false;
@@ -2239,6 +2503,8 @@ const String guiHtml = r'''
   <div class="tab" data-tab="logs">日志</div>
   <div class="tab" data-tab="sandbox">应用沙盒</div>
   <div class="tab" data-tab="routes">路由栈</div>
+  <div class="tab" data-tab="network">Network</div>
+  <div class="tab" data-tab="storage">Storage</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -2298,6 +2564,27 @@ const String guiHtml = r'''
     <div id="rt-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。</div>
   </section>
+  <section class="page" id="page-network">
+    <div style="display:flex;align-items:center;gap:10px">
+      <input id="nw-kw" placeholder="关键字过滤（URL/方法/状态）" oninput="nwRender()" style="width:260px">
+      <button onclick="nwRefresh()" title="重新拉取 app 内 ume 已捕获的请求">刷新</button>
+      <button onclick="nwClear()" title="清空 app 内 ume 的 Network 记录">清空</button>
+      <span class="muted">选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源）</span>
+    </div>
+    <div id="nw-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div class="muted" style="margin-top:6px">数据来自 app 内 xb_ume 的 Network 模块（需 app 接入 xb_ume 并配置 HttpOverrides/Dio 拦截）。点击行展开/收起详情（可同时展开多条，互不影响）；行内 cURL 复制到剪贴板；「重发」在电脑上直接按原方法/URL/请求头/请求体发起请求（不经过手机），结果附在该条详情下方。</div>
+  </section>
+  <section class="page" id="page-storage">
+    <div style="display:flex;align-items:center;gap:10px">
+      <select id="st-file" onchange="stLoad()" style="max-width:420px"></select>
+      <button onclick="stLoad()" title="重新读取选中的 shared_prefs 文件">刷新</button>
+      <input id="st-kw" placeholder="关键字过滤" oninput="stRender()" style="width:180px">
+      <button onclick="stAddRow()">新增</button>
+      <span class="muted">shared_preferences 存储（shared_prefs XML）</span>
+    </div>
+    <div id="st-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android；经 VM service 写回手机）。修改/删除/新增后立即写入文件，但 shared_preferences 插件在 app 内有内存缓存——重启 app 后生效。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -2326,6 +2613,8 @@ document.querySelectorAll('.tab').forEach(function(t){
     if (t.dataset.tab === 'daemon') refreshDaemon();
     else if (t.dataset.tab === 'sandbox') sbRefresh();
     else if (t.dataset.tab === 'routes') rtRefresh();
+    else if (t.dataset.tab === 'network') nwRefresh();
+    else if (t.dataset.tab === 'storage') stRefresh();
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -2424,7 +2713,7 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); }
+function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
 
 // -- 路由栈 Tab -------------------------------------------------------------
 function rtActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'routes'; }
@@ -2506,6 +2795,288 @@ function rtJump(nav, idx, a){
       setTimeout(function(){ td.innerHTML = orig; }, 2000);
     })
     .catch(function(e){ td.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
+}
+
+// -- Network Tab ------------------------------------------------------------
+var nwItems = [], nwDetails = {}, nwOpen = {}, nwReplays = {}, nwFetching = {};
+function nwActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'network'; }
+function nwUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function nwRefresh(){
+  if (!nwActive()) return;
+  var uri = nwUri();
+  var body = document.getElementById('nw-body');
+  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；需 app 接入 xb_ume）</span>'; return; }
+  body.innerHTML = '<span class="muted">加载中…</span>';
+  fetch('/api/network?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
+      nwItems = d.items || [];
+      nwRender();
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(String(e)) + '</span>';
+  });
+}
+function nwStatusColor(s, code){
+  if (s === 'failure' || s === 'cancelled') return 'var(--bad,#f85149)';
+  if (s === 'pending') return 'var(--muted,#8b949e)';
+  if (code >= 200 && code < 400) return 'var(--ok,#7ee787)';
+  return 'var(--bad,#f85149)';
+}
+function nwRender(){
+  var body = document.getElementById('nw-body');
+  var kw = (document.getElementById('nw-kw').value || '').toLowerCase();
+  var rows = nwItems.filter(function(it){
+    if (!kw) return true;
+    return ((it.method || '') + ' ' + (it.url || '') + ' ' + (it.statusCode || '') + ' ' + (it.error || '')).toLowerCase().indexOf(kw) >= 0;
+  });
+  if (!rows.length) { body.innerHTML = '<span class="muted">' + (nwItems.length ? '无匹配请求' : '暂无请求（触发一次网络请求后点刷新）') + '</span>'; return; }
+  var html = '<div class="muted" style="margin:2px 0">共 ' + rows.length + ' 条</div>';
+  html += '<table class="sbtable"><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>操作</th></tr>';
+  rows.forEach(function(it, i){
+    var code = parseInt(it.statusCode, 10);
+    var codeHtml = isNaN(code) ? '<span class="muted">…</span>' : '<span style="color:' + nwStatusColor(it.status, code) + '">' + code + '</span>';
+    var t = (it.time || '').replace('T', ' ').substring(5);
+    var url = it.url || '';
+    var short = url.length > 80 ? url.substring(0, 80) + '…' : url;
+    var open = !!nwOpen[it.id];
+    html += '<tr style="cursor:pointer;' + (open ? 'background:var(--bg2,#161b22)' : '') + '" onclick="nwToggle(\'' + esc(it.id) + '\')">'
+      + '<td>' + esc(t) + '</td><td>' + esc(it.method) + '</td>'
+      + '<td title="' + esc(url) + '">' + esc(short) + '</td>'
+      + '<td>' + codeHtml + '</td><td>' + (it.durationMs ? it.durationMs + 'ms' : '') + '</td>'
+      + '<td onclick="event.stopPropagation()">'
+      + '<a href="javascript:void(0)" onclick="nwCurl(\'' + esc(it.id) + '\',this)">cURL</a> '
+      + '<a href="javascript:void(0)" onclick="nwReplay(\'' + esc(it.id) + '\',this)">重发</a></td></tr>';
+    // 展开行：详情内嵌在该行下方，多条互不影响。
+    if (open) html += '<tr><td colspan="6" id="nwd-' + esc(it.id) + '" style="padding:8px 12px;background:var(--bg2,#161b22)">' + nwDetailRowHtml(it.id) + '</td></tr>';
+  });
+  html += '</table>';
+  body.innerHTML = html;
+}
+function nwDetailHtml(id, d){
+  function kvTable(rows){
+    if (!rows || !rows.length) return '<span class="muted">—</span>';
+    return '<table class="sbtable">' + rows.map(function(r){ return '<tr><td style="white-space:nowrap">' + esc(r.k) + '</td><td style="word-break:break-all">' + esc(r.v) + '</td></tr>'; }).join('') + '</table>';
+  }
+  function pretty(s){
+    if (!s) return '<span class="muted">—</span>';
+    try { var o = JSON.parse(s); return '<pre style="white-space:pre-wrap;word-break:break-all;margin:0">' + esc(JSON.stringify(o, null, 2)) + '</pre>'; }
+    catch (_) { return '<pre style="white-space:pre-wrap;word-break:break-all;margin:0">' + esc(s) + '</pre>';
+    }
+  }
+  var sec = function(title, inner){ return '<div style="margin:8px 0 2px"><b>' + title + '</b></div>' + inner; };
+  var html = '<div class="card">';
+  html += sec('Query', kvTable(d.query));
+  html += sec('请求头', kvTable(d.requestHeaders));
+  html += sec('请求体', pretty(d.requestBody));
+  html += sec('响应头', kvTable(d.responseHeaders));
+  html += sec('响应体', pretty(d.responseBody));
+  if (d.stack) html += sec('错误堆栈', pretty(d.stack));
+  return html + '</div>';
+}
+function nwDetailRowHtml(id){
+  var it = nwItems.filter(function(x){ return x.id === id; })[0] || {};
+  var d = nwDetails[id];
+  var head = '<div style="margin:2px 0 6px"><b>' + esc(it.method + ' ' + (it.url || '')) + '</b> '
+    + '<a href="javascript:void(0)" onclick="nwCurl(\'' + esc(id) + '\',this)">复制 cURL</a> '
+    + '<a href="javascript:void(0)" onclick="nwReplay(\'' + esc(id) + '\',this)">重发</a></div>';
+  if (d && d.error) return head + '<span class="bad">' + esc(d.error) + '</span>';
+  if (!d) { nwFetchDetail(id); return head + '<span class="muted">加载详情…</span>'; }
+  var rep = nwReplays[id];
+  var repHtml = '';
+  if (rep) {
+    if (rep.error) {
+      repHtml = '<div style="margin:8px 0 2px"><b>重发响应</b></div><span class="bad">重发失败：' + esc(rep.error) + '</span>';
+    } else {
+      var bodyHtml;
+      try { bodyHtml = '<pre style="white-space:pre-wrap;word-break:break-all;margin:0">' + esc(JSON.stringify(JSON.parse(rep.body), null, 2)) + '</pre>'; }
+      catch (_) { bodyHtml = '<pre style="white-space:pre-wrap;word-break:break-all;margin:0">' + esc(rep.body || '') + '</pre>'; }
+      repHtml = '<div style="margin:8px 0 2px"><b>重发响应</b>（电脑直发，不经手机）</div>'
+        + '<div class="card"><div><b>状态码：</b><span style="color:' + nwStatusColor('success', rep.statusCode) + '">' + rep.statusCode + '</span></div>'
+        + '<div style="margin:6px 0 2px"><b>响应头</b></div><table class="sbtable">'
+        + Object.keys(rep.headers || {}).map(function(k){ return '<tr><td>' + esc(k) + '</td><td>' + esc((rep.headers[k] || []).join(', ')) + '</td></tr>'; }).join('')
+        + '</table><div style="margin:6px 0 2px"><b>响应体</b></div>' + bodyHtml + '</div>';
+    }
+  }
+  return head + nwDetailHtml(id, d) + repHtml;
+}
+function nwToggle(id){
+  nwOpen[id] = !nwOpen[id];
+  nwRender();
+}
+function nwFetchDetail(id){
+  if (nwDetails[id] || nwFetching[id]) return;
+  var uri = nwUri(); if (!uri) return;
+  nwFetching[id] = true;
+  var done = function(d){
+    nwDetails[id] = d; delete nwFetching[id];
+    var cell = document.getElementById('nwd-' + id);
+    if (cell && nwOpen[id]) cell.innerHTML = nwDetailRowHtml(id);
+  };
+  fetch('/api/network/detail?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id))
+    .then(function(r){ return r.json(); }).then(done)
+    .catch(function(e){ done({ error: String(e) }); });
+}
+function nwGetDetail(id, cb){
+  if (nwDetails[id]) { cb(nwDetails[id]); return; }
+  var uri = nwUri(); if (!uri) return;
+  fetch('/api/network/detail?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) { alert(d.error); return; } nwDetails[id] = d; cb(d); })
+    .catch(function(e){ alert(String(e)); });
+}
+function nwCurl(id, a){
+  var it = nwItems.filter(function(x){ return x.id === id; })[0];
+  if (!it) return;
+  nwGetDetail(id, function(d){
+    var parts = ["curl -X " + (it.method || 'GET') + " '" + (it.url || '').replace(/'/g, "'\\''") + "'"];
+    (d.requestHeaders || []).forEach(function(h){
+      if (!h.k) return;
+      parts.push("-H '" + h.k + ": " + (h.v || '').replace(/'/g, "'\\''") + "'");
+    });
+    if (d.requestBody) parts.push("--data '" + String(d.requestBody).replace(/'/g, "'\\''") + "'");
+    var cmd = parts.join(' \\\n  ');
+    if (navigator.clipboard) navigator.clipboard.writeText(cmd);
+    var old = a.textContent; a.textContent = '已复制'; setTimeout(function(){ a.textContent = old; }, 1500);
+  });
+}
+function nwReplay(id, a){
+  var uri = nwUri(); if (!uri) return;
+  var old = a.textContent; a.textContent = '发送中…';
+  fetch('/api/network/replay?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      a.textContent = old;
+      nwReplays[id] = d.error ? { error: d.error } : d;
+      var cell = document.getElementById('nwd-' + id);
+      if (cell) { cell.innerHTML = nwDetailRowHtml(id); return; }
+      nwOpen[id] = true;
+      nwRender();
+    })
+    .catch(function(e){ a.textContent = old; alert(String(e)); });
+}
+function nwClear(){
+  var uri = nwUri(); if (!uri) return;
+  if (!confirm('清空 app 内 ume 的 Network 记录？')) return;
+  fetch('/api/network/clear?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (d.error) { alert(d.error); return; } nwItems = []; nwDetails = {}; nwOpen = {}; nwReplays = {}; nwRender(); })
+    .catch(function(e){ alert(String(e)); });
+}
+
+// -- Storage Tab（shared_prefs XML 直读直写）--------------------------------
+var stFiles = [], stXml = '', stRows = [], stFile = '';
+function stActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'storage'; }
+function stUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function escXml(s){
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function stRefresh(){
+  if (!stActive()) return;
+  var uri = stUri();
+  var body = document.getElementById('st-body');
+  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；仅 Android debug 会话可用）</span>'; return; }
+  body.innerHTML = '<span class="muted">加载中…</span>';
+  fetch('/api/storage/list?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
+      stFiles = d.files || [];
+      var sel = document.getElementById('st-file');
+      sel.innerHTML = stFiles.length
+        ? stFiles.map(function(f){ return '<option value="' + esc(f) + '">' + esc(f.split('/').pop()) + '</option>'; }).join('')
+        : '<option value="">（无 shared_prefs 文件）</option>';
+      if (!stFiles.length) { body.innerHTML = '<span class="muted">app 尚未写入过 shared_prefs（先在 app 里产生一次 preferences 写入）</span>'; return; }
+      stLoad();
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">加载失败：' + esc(String(e)) + '</span>'; });
+}
+function stLoad(){
+  var uri = stUri(); if (!uri) return;
+  stFile = document.getElementById('st-file').value || stFiles[0] || '';
+  if (!stFile) return;
+  var body = document.getElementById('st-body');
+  body.innerHTML = '<span class="muted">读取中…</span>';
+  fetch('/api/storage/read?uri=' + encodeURIComponent(uri) + '&file=' + encodeURIComponent(stFile))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">读取失败：' + esc(d.error) + '</span>'; return; }
+      stXml = d.xml || '';
+      stParse();
+      stRender();
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">读取失败：' + esc(String(e)) + '</span>'; });
+}
+function stParse(){
+  stRows = [];
+  var doc = new DOMParser().parseFromString(stXml, 'text/xml');
+  if (doc.querySelector('parsererror')) { stRows = [{ name: '', type: 'raw', value: stXml }]; return; }
+  var map = doc.documentElement;
+  if (!map) return;
+  Array.prototype.forEach.call(map.children, function(el){
+    var type = el.tagName, name = el.getAttribute('name') || '';
+    var value;
+    if (type === 'string') value = el.textContent;
+    else if (type === 'set') value = Array.prototype.map.call(el.getElementsByTagName('string'), function(s){ return s.textContent; }).join(', ');
+    else value = el.getAttribute('value') || '';
+    stRows.push({ name: name, type: type, value: value });
+  });
+}
+function stRender(){
+  var body = document.getElementById('st-body');
+  var kw = (document.getElementById('st-kw').value || '').toLowerCase();
+  var rows = stRows.map(function(r, i){ return { r: r, i: i }; }).filter(function(x){
+    return !kw || ((x.r.name || '') + ' ' + (x.r.value || '')).toLowerCase().indexOf(kw) >= 0;
+  });
+  var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（修改后点「保存写入」）</div>';
+  if (stRows.length === 1 && stRows[0].type === 'raw') { body.innerHTML = head + '<pre style="white-space:pre-wrap;word-break:break-all">' + esc(stXml) + '</pre>'; return; }
+  var html = '<table class="sbtable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
+  rows.forEach(function(x){
+    var r = x.r, i = x.i;
+    var valHtml;
+    if (r.type === 'boolean') {
+      valHtml = '<select onchange="stSet(' + i + ',\'value\',this.value)"><option value="true"' + (r.value === 'true' ? ' selected' : '') + '>true</option><option value="false"' + (r.value !== 'true' ? ' selected' : '') + '>false</option></select>';
+    } else {
+      var tip = r.type === 'set' ? 'set 类型，逗号分隔各成员' : '';
+      valHtml = '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
+    }
+    html += '<tr><td><input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%"></td>'
+      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)">' + ['string','boolean','int','long','float','set'].map(function(t){
+          return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></td>'
+      + '<td>' + valHtml + '</td>'
+      + '<td><a href="javascript:void(0)" onclick="stDel(' + i + ')" class="bad">删除</a></td></tr>';
+  });
+  html += '</table>';
+  html += '<div style="margin-top:8px"><button onclick="stSave()">保存写入（写回手机）</button></div>';
+  body.innerHTML = head + html;
+}
+function stSet(i, k, v){ if (stRows[i]) stRows[i][k] = v; }
+function stDel(i){ stRows.splice(i, 1); stRender(); }
+function stAddRow(){ stRows.push({ name: '', type: 'string', value: '' }); stRender(); }
+function stSave(){
+  var uri = stUri(); if (!uri || !stFile) return;
+  var lines = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); }).map(function(r){
+    var n = escXml(r.name.trim());
+    if (r.type === 'string') return '    <string name="' + n + '">' + escXml(r.value) + '</string>';
+    if (r.type === 'set') {
+      var members = String(r.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+      return '    <set name="' + n + '">' + members.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('') + '</set>';
+    }
+    if (r.type === 'boolean') return '    <boolean name="' + n + '" value="' + (r.value === 'true' ? 'true' : 'false') + '" />';
+    return '    <' + r.type + ' name="' + n + '" value="' + escXml(r.value) + '" />';
+  });
+  var xml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
+  fetch('/api/storage/write?uri=' + encodeURIComponent(uri) + '&file=' + encodeURIComponent(stFile), {
+    method: 'POST', body: xml
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var btn = document.getElementById('st-body').querySelector('button');
+      if (d.error) { alert('写入失败：' + d.error); return; }
+      if (btn) { btn.textContent = '✓ 已写入（重启 app 生效）'; setTimeout(function(){ btn.textContent = '保存写入（写回手机）'; }, 2000); }
+    })
+    .catch(function(e){ alert(String(e)); });
 }
 
 // -- 应用沙盒 Tab -----------------------------------------------------------

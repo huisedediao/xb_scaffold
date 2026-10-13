@@ -48,6 +48,8 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 日志 | 日志查看 | 实时展示选中手机的日志 + Flutter 控制台输出 |
 | Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载选中调试会话（app）沙盒内的目录与文件，详见下文「应用沙盒」 |
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
+| Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
+| Tab Storage | shared_preferences 读写 | 读写 Android app 的 shared_prefs XML（key/值可编辑、删除、新增，写回手机），详见下文「Storage」 |
 
 ## 三、功能详细使用说明
 
@@ -165,7 +167,36 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：通过 VM service 在 app 进程内（`navigator.dart` 库上下文）读取 NavigatorState 的路由历史，零 app 端改动；仅 debug 模式可用。
 
-## 六、常见问题
+## 六、Network（Tab「Network」）
+
+展示**选中调试会话 app 内 xb_ume Network 模块捕获的请求**（与手机端 ume 面板同源数据，不是 GUI 自己抓包），需 app 接入 xb_ume 并配置了网络拦截（`XBUmeHttpClient` / `XBUmeDioInterceptor`）。
+
+**使用**：
+1. 页头右侧选中调试会话后切到本 Tab 自动拉取；也可点「刷新」重新拉取；
+2. 顶部输入框实时过滤（匹配 URL/方法/状态码/错误信息）；
+3. **点击行展开/收起详情**（可同时展开多条，互不影响；展开的行高亮）：Query、请求头（app 端已对敏感头脱敏，如 `Authorization: ***`）、请求体、响应头、响应体（JSON 自动格式化）、失败时附错误堆栈；
+4. 行尾或详情顶部可操作：
+   - **cURL**：把该请求复制为 curl 命令（含方法/URL/请求头/请求体）到剪贴板；
+   - **重发**：在**电脑上**按原方法/URL/请求头/请求体直接发起 HTTP 请求（不经手机），结果附在该条详情下方（状态码/响应头/响应体）；适合排查「换环境/换参数是否还报错」；
+   - **清空**：清空 app 内 ume 的 Network 记录（与手机端面板的清空等效）；
+
+**原理**：通过 VM service 在 `package:xb_ume` core 库上下文读 `XBUme.controller.network`（同步 getter，零 app 端改动）；仅 debug 模式可用，app 未接入 xb_ume 时会提示错误。
+
+## 七、Storage（Tab「Storage」）
+
+读写 Android app 的 **shared_preferences 数据**（即 `/data/data/<包名>/shared_prefs/*.xml`）：列出全部 prefs 文件，展示每个 key 的类型与值，可直接编辑。
+
+**使用**：
+1. 顶部下拉选择 prefs 文件，点「刷新」重新读取；
+2. 表格中可编辑：key 名、类型（string/boolean/int/long/float/set）、值（boolean 用下拉；set 用逗号分隔成员）；点行尾「删除」移除该项；点「新增」添加空行；
+3. 点「**保存写入（写回手机）**」把整份 XML 写回手机；按钮短暂变为「✓ 已写入」；
+4. 关键字过滤实时匹配 key/value；
+
+**生效时机（重要）**：修改写入的是手机上的 XML 文件，但 shared_preferences 插件在 app 内有**内存缓存**——已加载过的值不会立刻变化，**重启 app 后生效**。
+
+**原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名、直读/覆写 shared_prefs XML 文件（零 app 端改动）；仅 Android debug 会话可用（其他平台会提示无法获取包名）。
+
+## 八、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -176,8 +207,9 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | 日志页没有「设备日志」 | 未选中设备，或选中设备的平台工具不可用；「Flutter 输出」源不依赖设备选择，但需要 daemon 正在运行且有调试会话接入 |
 | 跑 `flutter test` 时报 `Unable to connect to flutter_tester process` | daemon 会轮询本机 VM service，可能干扰测试进程握手；跑全量测试前先停 daemon（`pgrep -fl ide.dart` 找到 pid 后 kill） |
 | Windows 下启动器窗口一闪而过 | 先用命令 `dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart` 前台启动看报错（常见原因：dart 不在 PATH） |
+| Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 
-## 七、卸载
+## 九、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -185,7 +217,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 八、相关文档
+## 十、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)
