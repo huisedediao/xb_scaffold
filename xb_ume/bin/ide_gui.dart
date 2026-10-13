@@ -3854,16 +3854,30 @@ function pushText(text){
 }
 
 function hlLine(line){
-  var s = searchKw.toLowerCase(), l = line.toLowerCase();
-  if (!s) return esc(line);
-  var out = '', i = 0;
-  while (true) {
-    var idx = l.indexOf(s, i);
-    if (idx < 0) { out += esc(line.substring(i)); break; }
-    out += esc(line.substring(i, idx)) + '<mark>' + esc(line.substring(idx, idx + s.length)) + '</mark>';
-    i = idx + s.length;
+  // 搜索字与过滤字都高亮；两关键字可能重叠，先收集区间再合并后包裹。
+  var s = searchKw.toLowerCase(), f = filterKw.toLowerCase(), l = line.toLowerCase();
+  if (!s && !f) return esc(line);
+  var marks = [];
+  function collect(kw){
+    if (!kw) return;
+    var j = 0;
+    while (true) { var k = l.indexOf(kw, j); if (k < 0) break; marks.push([k, k + kw.length]); j = k + kw.length; }
   }
-  return out;
+  collect(s); collect(f);
+  if (!marks.length) return esc(line);
+  marks.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
+  var merged = [];
+  for (var i = 0; i < marks.length; i++) {
+    var m = merged[merged.length - 1];
+    if (m && marks[i][0] < m[1]) { if (marks[i][1] > m[1]) m[1] = marks[i][1]; }
+    else merged.push([marks[i][0], marks[i][1]]);
+  }
+  var out = '', i = 0;
+  for (var j = 0; j < merged.length; j++) {
+    out += esc(line.substring(i, merged[j][0])) + '<mark>' + esc(line.substring(merged[j][0], merged[j][1])) + '</mark>';
+    i = merged[j][1];
+  }
+  return out + esc(line.substring(i));
 }
 
 function render(){
