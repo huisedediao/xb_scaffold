@@ -555,16 +555,29 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           "catch (_) { return ''; } })()",
         )).trim();
         final os = (await rpc.evalString('Platform.operatingSystem')).trim();
-        if (os != 'ohos' && pkg.isEmpty) {
+        if (os != 'ohos' && os != 'ios' && pkg.isEmpty) {
           throw '无法获取应用包名（/proc/self/cmdline）';
         }
-        final prefsDirs = os == 'ohos'
-            ? const <String>[
-                '/data/storage/el2/base/preferences',
-                '/data/storage/el1/base/preferences',
-              ]
-            : <String>['/data/data/$pkg/shared_prefs'];
-        final ext = os == 'ohos' ? '' : '.xml';
+        String home = '';
+        final List<String> prefsDirs;
+        final String ext;
+        if (os == 'ohos') {
+          prefsDirs = const <String>[
+            '/data/storage/el2/base/preferences',
+            '/data/storage/el1/base/preferences',
+          ];
+          ext = '';
+        } else if (os == 'ios') {
+          // iOS：NSUserDefaults 落盘在沙盒 Library/Preferences/<bundleId>.plist。
+          home = (await rpc.evalString("Platform.environment['HOME'] ?? ''"))
+              .trim();
+          if (home.isEmpty) throw '无法获取 app 沙盒 HOME（iOS）';
+          prefsDirs = <String>['$home/Library/Preferences'];
+          ext = '.plist';
+        } else {
+          prefsDirs = <String>['/data/data/$pkg/shared_prefs'];
+          ext = '.xml';
+        }
         final dirList =
             prefsDirs.map((d) => "'${_escPath(d)}'").join(',');
         final listXml = await rpc.evalString(
@@ -596,6 +609,42 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           throw '未找到 shared_prefs（app 可能尚未写入过 preferences，或平台存储格式不同）';
         }
         if (path == '/api/storage/read') {
+          if (os == 'ios') {
+            // binary plist：读回字节，本机 plutil 转 XML 再交给前端。
+            final dataRaw = await rpc.evalString(
+              "gzip.encode(File('${_escPath(file)}')"
+              ".readAsBytesSync()).join(',')",
+            );
+            if (dataRaw.isEmpty) throw '读取失败：文件为空？';
+            final bytes = gzip.decode(
+              dataRaw.split(',').map(int.parse).toList(),
+            );
+            final tmpBin = File(
+              '${Directory.systemTemp.path}/xbume_pref_'
+              '${DateTime.now().microsecondsSinceEpoch}.plist',
+            );
+            final tmpXml = '${tmpBin.path}.xml';
+            try {
+              await tmpBin.writeAsBytes(bytes);
+              final pr = await Process.run('plutil', <String>[
+                '-convert', 'xml1', '-o', tmpXml, tmpBin.path,
+              ]);
+              if (pr.exitCode != 0) {
+                throw 'plutil 转换失败：${pr.stderr}';
+              }
+              final xml = await File(tmpXml).readAsString();
+              req.response.headers.contentType = ContentType.json;
+              req.response.write(jsonEncode(<String, Object?>{
+                'file': file,
+                'xml': xml,
+              }));
+              await req.response.close();
+              return;
+            } finally {
+              try { await tmpBin.delete(); } catch (_) {}
+              try { await File(tmpXml).delete(); } catch (_) {}
+            }
+          }
           final xml = await rpc.evalString(
             "File('${_escPath(file)}').readAsStringSync()",
           );
@@ -607,12 +656,38 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           await req.response.close();
           return;
         }
-        // write：POST body 为新 XML 全文。
+        // write：POST body 为新存储文件全文（Android/鸿蒙 XML、iOS 为 XML plist）。
         final xml = await _lenientUtf8.decoder.bind(req).join();
-        await rpc.evalString(
-          "File('${_escPath(file)}').writeAsStringSync('${_escEvalString(xml)}'); "
-          "return 'ok'; ",
-        );
+        if (os == 'ios') {
+          // XML plist → 本机 plutil 转 binary plist → 写回手机。
+          final tmpXml = File(
+            '${Directory.systemTemp.path}/xbume_pref_'
+            '${DateTime.now().microsecondsSinceEpoch}.xml',
+          );
+          final tmpBin = '${tmpXml.path}.bplist';
+          try {
+            await tmpXml.writeAsString(xml);
+            final pr = await Process.run('plutil', <String>[
+              '-convert', 'binary1', '-o', tmpBin, tmpXml.path,
+            ]);
+            if (pr.exitCode != 0) {
+              throw 'plutil 转换失败（XML plist 可能非法）：${pr.stderr}';
+            }
+            final csv = (await File(tmpBin).readAsBytes()).join(',');
+            await rpc.evalString(
+              "File('${_escPath(file)}')"
+              ".writeAsBytesSync(<int>[$csv])",
+            );
+          } finally {
+            try { await tmpXml.delete(); } catch (_) {}
+            try { await File(tmpBin).delete(); } catch (_) {}
+          }
+        } else {
+          await rpc.evalString(
+            "File('${_escPath(file)}').writeAsStringSync('${_escEvalString(xml)}'); "
+            "return 'ok'; ",
+          );
+        }
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode({'ok': true}));
         await req.response.close();
@@ -2996,7 +3071,7 @@ function stRefresh(){
   if (!stActive()) return;
   var uri = stUri();
   var body = document.getElementById('st-body');
-  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；Android / 鸿蒙 debug 会话可用）</span>'; return; }
+  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；Android / 鸿蒙 / iOS debug 会话可用）</span>'; return; }
   body.innerHTML = '<span class="muted">加载中…</span>';
   fetch('/api/storage/list?uri=' + encodeURIComponent(uri))
     .then(function(r){ return r.json(); })
@@ -3035,8 +3110,23 @@ function stParse(){
   if (doc.querySelector('parsererror')) { stRows = [{ name: '', type: 'raw', value: stXml }]; return; }
   var map = doc.documentElement;
   if (!map) return;
-  // Android：根 <map>，name 属性；鸿蒙：根 <preferences>，key 属性，bool 标签。
-  stFmt = map.tagName === 'preferences' ? 'ohos' : 'android';
+  // Android：根 <map>，name 属性；鸿蒙：根 <preferences>，key 属性；iOS：根 <plist>。
+  stFmt = map.tagName === 'preferences' ? 'ohos' : (map.tagName === 'plist' ? 'ios' : 'android');
+  if (stFmt === 'ios') {
+    var dict = map.getElementsByTagName('dict')[0];
+    var kids = dict ? dict.children : [];
+    for (var j = 0; j + 1 < kids.length; j += 2) {
+      if (kids[j].tagName !== 'key') break;
+      var vEl = kids[j + 1], tag = vEl.tagName;
+      var row = { name: kids[j].textContent, type: tag, value: '' };
+      if (tag === 'true' || tag === 'false') { row.type = 'boolean'; row.value = tag; }
+      else if (tag === 'array') row.value = Array.prototype.map.call(vEl.getElementsByTagName('string'), function(s){ return s.textContent; }).join(', ');
+      else if (tag === 'string' || tag === 'integer' || tag === 'real') row.value = vEl.textContent;
+      else { row.type = 'rawios'; row.raw = new XMLSerializer().serializeToString(vEl); }
+      stRows.push(row);
+    }
+    return;
+  }
   var attr = stFmt === 'ohos' ? 'key' : 'name';
   Array.prototype.forEach.call(map.children, function(el){
     var tag = el.tagName;
@@ -3056,20 +3146,23 @@ function stRender(){
     return !kw || ((x.r.name || '') + ' ' + (x.r.value || '')).toLowerCase().indexOf(kw) >= 0;
   });
   var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（'
-    + (stFmt === 'ohos' ? '鸿蒙 preferences 格式' : 'Android shared_prefs 格式') + ' · 修改后点「保存写入」）</div>';
+    + (stFmt === 'ohos' ? '鸿蒙 preferences 格式' : stFmt === 'ios' ? 'iOS plist 格式' : 'Android shared_prefs 格式') + ' · 修改后点「保存写入」）</div>';
   if (stRows.length === 1 && stRows[0].type === 'raw') { body.innerHTML = head + '<pre style="white-space:pre-wrap;word-break:break-all">' + esc(stXml) + '</pre>'; return; }
   var html = '<table class="sbtable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
   rows.forEach(function(x){
     var r = x.r, i = x.i;
     var valHtml;
-    if (r.type === 'boolean') {
+    if (r.type === 'rawios') {
+      valHtml = '<span class="muted" title="iOS plist 复杂类型，保留原样">（不支持编辑）</span>';
+    } else if (r.type === 'boolean') {
       valHtml = '<select onchange="stSet(' + i + ',\'value\',this.value)"><option value="true"' + (r.value === 'true' ? ' selected' : '') + '>true</option><option value="false"' + (r.value !== 'true' ? ' selected' : '') + '>false</option></select>';
     } else {
       var tip = r.type === 'set' ? 'set 类型，逗号分隔各成员' : '';
       valHtml = '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
     }
     html += '<tr><td><input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%"></td>'
-      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)">' + (stFmt === 'ohos' ? ['string','boolean','int','long','float','double'] : ['string','boolean','int','long','float','set']).map(function(t){
+      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)"' + (r.type === 'rawios' ? ' disabled' : '') + '>'
+      + (stFmt === 'ohos' ? ['string','boolean','int','long','float','double'] : stFmt === 'ios' ? ['string','integer','real','boolean','array'] : ['string','boolean','int','long','float','set']).map(function(t){
           return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></td>'
       + '<td>' + valHtml + '</td>'
       + '<td><a href="javascript:void(0)" onclick="stDel(' + i + ')" class="bad">删除</a></td></tr>';
@@ -3083,22 +3176,40 @@ function stDel(i){ stRows.splice(i, 1); stRender(); }
 function stAddRow(){ stRows.push({ name: '', type: 'string', value: '' }); stRender(); }
 function stSave(){
   var uri = stUri(); if (!uri || !stFile) return;
-  var ohos = stFmt === 'ohos';
-  var attr = ohos ? 'key' : 'name';
-  var lines = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); }).map(function(r){
-    var n = escXml(r.name.trim());
-    if (r.type === 'string') return '<string ' + attr + '="' + n + '">' + escXml(r.value) + '</string>';
-    if (r.type === 'set' || r.type === 'array') {
-      var members = String(r.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
-      var inner = members.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('');
-      return '<' + (ohos ? 'array' : 'set') + ' ' + attr + '="' + n + '">' + inner + '</' + (ohos ? 'array' : 'set') + '>';
-    }
-    if (r.type === 'boolean') return '<' + (ohos ? 'bool' : 'boolean') + ' ' + attr + '="' + n + '" value="' + (r.value === 'true' ? 'true' : 'false') + '" />';
-    return '<' + r.type + ' ' + attr + '="' + n + '" value="' + escXml(r.value) + '" />';
-  });
-  var xml = ohos
-    ? '<?xml version="1.0" encoding="UTF-8"?>\n<preferences version="1.0">' + lines.join('') + '</preferences>'
-    : "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
+  var rows = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); });
+  var xml;
+  if (stFmt === 'ios') {
+    var items = rows.map(function(r){
+      var k = '<key>' + escXml(r.name.trim()) + '</key>';
+      if (r.type === 'rawios') return k + r.raw;
+      if (r.type === 'boolean') return k + (r.value === 'true' ? '<true/>' : '<false/>');
+      if (r.type === 'integer' || r.type === 'real') return k + '<' + r.type + '>' + escXml(r.value) + '</' + r.type + '>';
+      if (r.type === 'array') {
+        var ms = String(r.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        return k + '<array>' + ms.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('') + '</array>';
+      }
+      return k + '<string>' + escXml(r.value) + '</string>';
+    });
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n'
+      + items.join('\n') + '\n</dict>\n</plist>';
+  } else {
+    var ohos = stFmt === 'ohos';
+    var attr = ohos ? 'key' : 'name';
+    var lines = rows.map(function(r){
+      var n = escXml(r.name.trim());
+      if (r.type === 'string') return '<string ' + attr + '="' + n + '">' + escXml(r.value) + '</string>';
+      if (r.type === 'set' || r.type === 'array') {
+        var members = String(r.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        var inner = members.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('');
+        return '<' + (ohos ? 'array' : 'set') + ' ' + attr + '="' + n + '">' + inner + '</' + (ohos ? 'array' : 'set') + '>';
+      }
+      if (r.type === 'boolean') return '<' + (ohos ? 'bool' : 'boolean') + ' ' + attr + '="' + n + '" value="' + (r.value === 'true' ? 'true' : 'false') + '" />';
+      return '<' + r.type + ' ' + attr + '="' + n + '" value="' + escXml(r.value) + '" />';
+    });
+    xml = ohos
+      ? '<?xml version="1.0" encoding="UTF-8"?>\n<preferences version="1.0">' + lines.join('') + '</preferences>'
+      : "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
+  }
   fetch('/api/storage/write?uri=' + encodeURIComponent(uri) + '&file=' + encodeURIComponent(stFile), {
     method: 'POST', body: xml
   })

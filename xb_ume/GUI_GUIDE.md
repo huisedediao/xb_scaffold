@@ -49,7 +49,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载选中调试会话（app）沙盒内的目录与文件，详见下文「应用沙盒」 |
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
-| Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
+| Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
 
 ## 三、功能详细使用说明
 
@@ -184,7 +184,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 ## 七、Storage（Tab「Storage」）
 
-读写 app 的 **shared_preferences 数据**——Android 为 `/data/data/<包名>/shared_prefs/*.xml`，鸿蒙为 app 沙盒 preferences 目录（`/data/storage/el2/base/preferences/`，如 `FlutterSharedPreferences`，无扩展名，`<preferences>` 格式）：列出全部 prefs 文件，展示每个 key 的类型与值，可直接编辑。
+读写 app 的 **shared_preferences 数据**——Android 为 `/data/data/<包名>/shared_prefs/*.xml`（`<map>` 格式）；鸿蒙为 app 沙盒 preferences 目录（`/data/storage/el2/base/preferences/`，如 `FlutterSharedPreferences`，无扩展名，`<preferences>` 格式）；iOS 为沙盒 `Library/Preferences/<bundleId>.plist`（binary plist，GUI 端经 plutil 转换读写）：列出全部 prefs 文件，展示每个 key 的类型与值，可直接编辑。
 
 **使用**：
 1. 顶部下拉选择 prefs 文件，点「刷新」重新读取；
@@ -194,7 +194,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **生效时机（重要）**：修改写入的是手机上的存储文件，但 shared_preferences 插件在 app 内有**内存缓存**——已加载过的值不会立刻变化，**重启 app 后生效**。
 
-**原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 debug 会话可用（iOS 未验证）。保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>`）。
+**原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 / iOS debug 会话可用。保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>` / iOS plist 经 plutil 转 binary 写回）。iOS 的 plist 复杂类型（dict/date/data）不支持编辑但保存时原样保留。
 
 ## 八、常见问题
 
