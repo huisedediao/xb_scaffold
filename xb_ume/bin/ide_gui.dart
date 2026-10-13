@@ -946,7 +946,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           target.isEmpty ||
           offset < 0 ||
           max < 0 ||
-          max > (1 << 20)) {
+          max > (1 << 21)) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(
@@ -979,10 +979,10 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final dataRaw = await rpc.evalString(
             "(() { final fh = File('${_escPath(target)}').openSync(); "
             "try { fh.setPositionSync($offset); final b = fh.readSync($n); "
-            "return gzip.encode(b).join(','); } finally { fh.closeSync(); } })()",
+            // base64 比 join(',') 减少 VM service 传输量（约 1.3x vs 2.5x）。
+            "return base64.encode(gzip.encode(b)); } finally { fh.closeSync(); } })()",
           );
-          final gz = dataRaw.split(',').map(int.parse).toList();
-          final bytes = gz.isNotEmpty ? gzip.decode(gz) : <int>[];
+          final bytes = dataRaw.isEmpty ? <int>[] : gzip.decode(base64.decode(dataRaw));
           // 按 UTF-8 序列边界截尾，避免多字节字符被 max 切断产生替换符；
           // 截掉的部分由调用方以下一次请求的 offset 续读。
           final cut = _utf8CompleteBoundary(bytes);
@@ -3825,7 +3825,7 @@ var lines = [], pending = '';
 var searchKw = '', filterKw = '';
 var offset = 0, started = false, stopped = false, paused = false;
 var renderTimer = null;
-var CHUNK = 256 * 1024;
+var CHUNK = 1024 * 1024;
 
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtSize(n){
@@ -3946,27 +3946,54 @@ function poll(){
 }
 
 if (MODE === 'view') {
-  // 后端单次响应限 1MB，这里分块循环读，直到读完整个文件（不限大小）。
-  var buf = '';
-  (function next(off){
-    apiRead(off, CHUNK, function(d){
-      if (!d.ok) {
-        setStatus('读取失败：' + (d.error === 'missing' ? '文件不存在' : (d.error || d)), true);
-        render();
-        return;
+  // 分块读整个文件（不限大小）；首块拿到 fileSize 后，剩余块并行预取
+  // （并发 3），全部到齐后一次性渲染，避免逐块串行等待。
+  var bufs = [], size = 0, failed = null;
+  function setStatusProgress(){
+    var loaded = 0;
+    for (var i = 0; i < bufs.length; i++) if (bufs[i] != null) loaded += bufs[i].length;
+    setStatus('读取中… ' + fmtSize(loaded) + ' / ' + fmtSize(size));
+  }
+  function finish(){
+    pushText(bufs.join(''));
+    if (pending) { lines.push(pending); pending = ''; }
+    render();
+    setStatus('共 ' + fmtSize(size));
+  }
+  apiRead(0, CHUNK, function(d0){
+    if (!d0.ok) {
+      setStatus('读取失败：' + (d0.error === 'missing' ? '文件不存在' : (d0.error || d0)), true);
+      render();
+      return;
+    }
+    bufs[0] = d0.text;
+    size = d0.fileSize;
+    if (!d0.truncated) { finish(); return; }
+    setStatusProgress();
+    var offs = [];
+    for (var o = CHUNK; o < size; o += CHUNK) offs.push(o);
+    var done = 0, idx = 0;
+    function prog(){
+      done++;
+      setStatusProgress();
+      if (failed) { setStatus('读取失败：' + failed, true); render(); return; }
+      if (done === offs.length) finish();
+    }
+    function launch(){
+      while (idx < offs.length && idx - done < 3) {
+        (function(i){
+          apiRead(offs[i], CHUNK, function(d){
+            if (!d.ok && !failed) failed = (d.error === 'missing' ? '文件不存在' : (d.error || '未知错误'));
+            bufs[i + 1] = d.ok ? d.text : '';
+            prog();
+            launch();
+          });
+        })(idx);
+        idx++;
       }
-      buf += d.text;
-      setStatus('读取中… ' + fmtSize(d.nextOffset) + ' / ' + fmtSize(d.fileSize));
-      if (!d.truncated) {
-        pushText(buf);
-        if (pending) { lines.push(pending); pending = ''; }
-        render();
-        setStatus('共 ' + fmtSize(d.fileSize));
-        return;
-      }
-      next(d.nextOffset);
-    });
-  })(0);
+    }
+    launch();
+  });
 } else {
   poll();
 }
