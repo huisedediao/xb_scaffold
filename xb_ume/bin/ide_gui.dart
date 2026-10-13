@@ -2866,7 +2866,10 @@ const String guiHtml = r'''
   #hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
   #wsdot { width:8px; height:8px; border-radius:50%; background:#e5484d; }
   #wsdot.on { background:#46d68c; }
-  main { flex:1; overflow:auto; padding:16px; }
+  main { flex:1; overflow:auto; padding:0 16px 16px; }
+  /* 各页自带顶部间距；Storage 页为 0，让 sticky 工具栏天然位于滚动起点，避免滚动初期的位移与顶部露内容 */
+  .page { padding-top:16px; }
+  #page-storage { padding-top:0; }
   .page { display:none; } .page.active { display:block; }
   table { width:100%; border-collapse:collapse; }
   th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
@@ -2888,9 +2891,14 @@ const String guiHtml = r'''
   .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
   .sbtable th { color:var(--dim); font-weight:600; }
   /* Storage 表格列宽：key 列固定 400px */
+  .sttable { margin-top:0; }
   .sttable th:nth-child(1), .sttable td:nth-child(1) { width:400px; }
   .sttable th:nth-child(2) { width:110px; }
   .sttable th:nth-child(4) { width:64px; }
+  /* Storage 工具栏/信息行/表头固定，不随内容滚动（表头 top 由 JS 实测写入） */
+  #st-toolbar { position:sticky; top:0; z-index:6; background:var(--bg); padding:10px 0 6px; border-bottom:1px solid var(--line); }
+  .sthead { position:sticky; z-index:5; background:var(--bg); padding:3px 0; }
+  .sttable th { position:sticky; z-index:4; background:var(--bg); }
   /* 行悬停高亮：标记鼠标当前所在行（匹配 td，不影响表头行） */
   .sbtable tr { transition: background .12s; }
   .sbtable tr:hover td { background:#182231; }
@@ -2986,14 +2994,14 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">数据来自 app 内 xb_ume 的 Network 模块（需 app 接入 xb_ume 并配置 HttpOverrides/Dio 拦截）。点击行展开/收起详情（可同时展开多条，互不影响）；行内 cURL 复制到剪贴板；「重发」在电脑上直接按原方法/URL/请求头/请求体发起请求（不经过手机），结果附在该条详情下方。</div>
   </section>
   <section class="page" id="page-storage">
-    <div style="display:flex;align-items:center;gap:10px">
+    <div id="st-toolbar" style="display:flex;align-items:center;gap:10px">
       <select id="st-file" onchange="stLoad()" style="max-width:420px"></select>
       <button onclick="stLoad()" title="重新读取选中的 shared_prefs 文件">刷新</button>
       <input id="st-kw" placeholder="关键字过滤" oninput="stRender()" style="width:180px">
       <button onclick="stAddRow()">新增</button>
       <span class="muted">shared_preferences 存储（shared_prefs XML）</span>
     </div>
-    <div id="st-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div id="st-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android；经 VM service 写回手机）。修改/删除/新增后立即写入文件，但 shared_preferences 插件在 app 内有内存缓存——重启 app 后生效。</div>
   </section>
 </main>
@@ -3503,16 +3511,16 @@ function stRender(){
   var rows = stRows.map(function(r, i){ return { r: r, i: i }; }).filter(function(x){
     return !kw || ((x.r.name || '') + ' ' + (x.r.value || '')).toLowerCase().indexOf(kw) >= 0;
   });
-  var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（'
+  var head = '<div class="muted sthead" style="margin:0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（'
     + (stFmt === 'ohos' ? '鸿蒙 preferences 格式' : stFmt === 'ios' ? 'iOS plist 格式' : 'Android shared_prefs 格式') + ' · 修改后点「保存写入」）</div>';
   if (stRows.length === 1 && stRows[0].type === 'raw') { body.innerHTML = head + '<pre style="white-space:pre-wrap;word-break:break-all">' + esc(stXml) + '</pre>'; return; }
   var html = '<table class="sbtable sttable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
   rows.forEach(function(x){
     var r = x.r, i = x.i;
-    // 有关键字时 key/value 以高亮文本展示（input 内无法高亮），清空过滤恢复编辑。
-    var keyCell = kw
-      ? '<span title="清除过滤后可编辑" style="word-break:break-all">' + stHl(r.name, kw) + '</span>'
-      : '<input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%">';
+    // key 不可修改（仅「新增」行可填写），过滤时高亮匹配片段。
+    var keyCell = r.isNew
+      ? '<input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" placeholder="填写 key" style="width:100%">'
+      : '<span style="word-break:break-all">' + (kw ? stHl(r.name, kw) : esc(r.name)) + '</span>';
     var valHtml;
     if (r.type === 'rawios') {
       valHtml = '<span class="muted" title="iOS plist 复杂类型，保留原样">（不支持编辑）</span>';
@@ -3534,6 +3542,16 @@ function stRender(){
   html += '</table>';
   html += '<div style="margin-top:8px"><button onclick="stSave()">保存写入（写回手机）</button></div>';
   body.innerHTML = head + html;
+  // 表头/信息行的 sticky top 依赖工具栏实际高度，渲染后实测写入，避免写死对不齐。
+  requestAnimationFrame(function(){
+    var tb = document.getElementById('st-toolbar');
+    var hd = body.querySelector('.sthead');
+    var ths = body.querySelectorAll('.sttable th');
+    if (!tb || !ths.length) return;
+    var hTop = tb.offsetHeight, tTop = hTop + (hd ? hd.offsetHeight : 0);
+    if (hd) hd.style.top = hTop + 'px';
+    for (var k = 0; k < ths.length; k++) ths[k].style.top = tTop + 'px';
+  });
 }
 function stSet(i, k, v){ if (stRows[i]) stRows[i][k] = v; }
 function stDel(i){ stRows.splice(i, 1); stRender(); }
