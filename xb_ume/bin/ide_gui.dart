@@ -3945,6 +3945,7 @@ function poll(){
       started = true;
       offset = d.fileSize;
       setStatus('监听中…（从末尾开始，当前 ' + fmtSize(d.fileSize) + '）');
+      setTimeout(poll, 500);
     });
     return;
   }
@@ -3961,6 +3962,7 @@ function poll(){
       lines.push('──── 检测到文件被重写，从头开始读取 ────');
       offset = 0;
       render();
+      setTimeout(poll, 100);
       return;
     }
     if (d.nextOffset > offset) {
@@ -3970,6 +3972,7 @@ function poll(){
     }
     if (offset < d.fileSize) { setTimeout(poll, 50); return; }
     setStatus('监听中…（已读 ' + fmtSize(offset) + '）');
+    setTimeout(poll, 2000);
   });
 }
 
