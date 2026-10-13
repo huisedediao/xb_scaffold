@@ -151,6 +151,78 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/api/ideorder' && req.method == 'GET') {
+      // 进入「守护进程」页时调用：扫描已安装 IDE，新装的自动追加到配置
+      // 末尾并写回（只追加，不删已卸载的，daemon 唤起时自会跳过）。
+      try {
+        final installed = await scanInstalledIdes();
+        final merged = readGuiIdeOrderList();
+        final added = <String>[];
+        for (final ide in installed) {
+          if (!merged.contains(ide)) {
+            merged.add(ide);
+            added.add(ide);
+          }
+        }
+        if (added.isNotEmpty) {
+          await writeGuiIdeOrder(merged);
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{
+            'ok': true,
+            'order': merged,
+            'installed': installed,
+            'added': added,
+          }),
+        );
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'message': '$e'}),
+        );
+      }
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ideorder' && req.method == 'POST') {
+      try {
+        // HttpRequest 是 Stream<Uint8List>，与 Utf8Decoder（List<int>）
+        // 泛型不兼容，先收集字节再容错解码。
+        final bodyBytes = await req.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
+        final body = _lenientUtf8.decode(bodyBytes);
+        final decoded = jsonDecode(body);
+        final raw = decoded is Map ? decoded['ideOrder'] : null;
+        final order = (raw is List ? raw : <Object?>[])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+        if (order.isEmpty) throw 'ideOrder 不能为空';
+        // 名单内的名字可直接写；不在名单但原配置已有的（用户手动编辑过
+        // config.json）也保留，避免覆盖丢失。
+        final existing = readGuiIdeOrderList().toSet();
+        final invalid = order
+            .where((e) =>
+                !_guiDefaultIdeOrder.contains(e) && !existing.contains(e))
+            .toList();
+        if (invalid.isNotEmpty) {
+          throw '不支持的 IDE 名称：${invalid.join(', ')}'
+              '（可用：${_guiDefaultIdeOrder.join(', ')}）';
+        }
+        await writeGuiIdeOrder(order);
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'ideOrder': order}),
+        );
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'message': '$e'}),
+        );
+      }
+      await req.response.close();
+      return;
+    }
     if (path == '/api/logs.txt') {
       req.response.headers.contentType = ContentType.text;
       req.response.headers.set(
@@ -1880,6 +1952,58 @@ Map<String, Object?> readGuiIdeOrder() {
   return const <String, Object?>{};
 }
 
+/// 读取 config.json 原始内容（供读-改-写保留其他配置键）。
+Map<String, Object?> _guiReadConfigRaw() {
+  try {
+    final file = File('$_home/.xb_ume_ide/config.json');
+    if (!file.existsSync()) return <String, Object?>{};
+    final decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is Map) {
+      return decoded.map((k, v) => MapEntry(k.toString(), v));
+    }
+  } catch (_) {
+    // 配置损坏时直接重建。
+  }
+  return <String, Object?>{};
+}
+
+/// 把 ideOrder 写入 config.json（保留其他配置键）。
+Future<void> writeGuiIdeOrder(List<String> order) async {
+  final cfg = _guiReadConfigRaw();
+  cfg['ideOrder'] = order;
+  final file = File('$_home/.xb_ume_ide/config.json');
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
+}
+
+/// 扫描本机已安装的 IDE（供「IDE 优先级」页展示与自动追加新装 IDE）。
+Future<List<String>> scanInstalledIdes() async {
+  final installed = <String>[];
+  for (final ide in _guiDefaultIdeOrder) {
+    var ok = false;
+    if (ide == 'androidStudio') {
+      ok = _guiAndroidStudioBinaries().any((bin) => File(bin).existsSync());
+    } else {
+      ok = await _guiHasCommand(ide);
+      if (!ok && Platform.isMacOS) {
+        ok = (_guiMacosVscodeAppClis[ide] ?? const <String>[]).any(
+          (p) => File(p).existsSync(),
+        );
+      }
+    }
+    if (ok) installed.add(ide);
+  }
+  return installed;
+}
+
+/// 当前配置的 ideOrder（无配置/损坏时返回默认名单）。
+List<String> readGuiIdeOrderList() {
+  final order = _guiReadConfigRaw()['ideOrder'];
+  if (order is! List) return List<String>.of(_guiDefaultIdeOrder);
+  final names = order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  return names.isEmpty ? List<String>.of(_guiDefaultIdeOrder) : names;
+}
+
 // ---------------------------------------------------------------------------
 // 设备发现与日志行解析（纯函数，供单测覆盖）
 // ---------------------------------------------------------------------------
@@ -2556,6 +2680,12 @@ const String guiHtml = r'''
   header h1 { font-size:15px; font-weight:600; color:var(--acc); margin-right:12px; }
   .tab { padding:6px 14px; border:1px solid var(--line); border-radius:6px; cursor:pointer; color:var(--dim); }
   .tab.active { color:var(--acc); border-color:var(--acc); }
+  .ide-list { list-style:none; margin:10px 0 0; padding:0; }
+  .ide-list li { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; background:var(--bg2,#161b22); }
+  .ide-list li .handle { color:var(--dim); cursor:grab; user-select:none; }
+  .ide-list li.dragging { opacity:.45; }
+  .ide-list li.dragover { border-color:var(--acc); }
+  .ide-list li .notinstalled { color:var(--dim); font-size:12px; margin-left:auto; }
   #hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
   #wsdot { width:8px; height:8px; border-radius:50%; background:#e5484d; }
   #wsdot.on { background:#46d68c; }
@@ -2618,8 +2748,9 @@ const String guiHtml = r'''
       <div id="daemon-status" class="muted">查询中…</div>
     </div>
     <div class="card">
-      <div class="row"><b>IDE 优先级</b><button onclick="openConfig()">打开配置文件</button></div>
-      <div id="ide-order" class="muted">-</div>
+      <div class="row"><b>IDE 优先级</b><button onclick="resetIdeOrder()">恢复默认</button><button onclick="openConfig()">打开配置文件</button></div>
+      <ul id="ide-order-list" class="ide-list"></ul>
+      <div id="ide-order-tip" class="muted" style="margin-top:4px">拖动 ☰ 调整优先级，松手即保存；进入本页会自动扫描已安装的 IDE，新装的追加到列表末尾；未安装的自动跳过</div>
     </div>
   </section>
   <section class="page" id="page-logs">
@@ -2709,7 +2840,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
     t.classList.add('active');
     document.getElementById('page-' + t.dataset.tab).classList.add('active');
-    if (t.dataset.tab === 'daemon') refreshDaemon();
+    if (t.dataset.tab === 'daemon') { refreshDaemon(); loadIdeOrder(); }
     else if (t.dataset.tab === 'sandbox') sbRefresh();
     else if (t.dataset.tab === 'routes') rtRefresh();
     else if (t.dataset.tab === 'network') nwRefresh();
@@ -2834,7 +2965,9 @@ function refreshDaemon(){
       sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
     var order = d.config && d.config.ideOrder;
-    document.getElementById('ide-order').textContent = (order && order.length) ? order.join(' → ') : '（默认顺序）';
+    if (!order || !order.length) {
+      document.getElementById('ide-order-list').innerHTML = '<li><span class="notinstalled">（读取配置失败，使用默认顺序）</span></li>';
+    }
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
@@ -3367,6 +3500,69 @@ function restartDaemon(){
   fetch('/api/daemon/restart', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){ alert(d.message); refreshDaemon(); });
 }
 function openConfig(){ fetch('/api/openconfig', {method: 'POST'}); }
+var ideOrder = [], ideInstalled = [], ideDragIdx = -1;
+function loadIdeOrder(){
+  fetch('/api/ideorder').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) return;
+    ideOrder = d.order || []; ideInstalled = d.installed || [];
+    renderIdeOrder();
+    if (d.added && d.added.length) {
+      document.getElementById('ide-order-tip').textContent = '检测到新安装的 IDE，已追加到列表末尾：' + d.added.join(', ');
+    }
+  }).catch(function(){});
+}
+function renderIdeOrder(){
+  var ul = document.getElementById('ide-order-list');
+  ul.innerHTML = '';
+  ideOrder.forEach(function(name, idx){
+    var li = document.createElement('li');
+    li.draggable = true;
+    li.dataset.idx = idx;
+    var notInst = ideInstalled.indexOf(name) < 0;
+    li.innerHTML = '<span class="handle">☰</span><span>' + esc(name) + '</span>'
+      + (notInst ? '<span class="notinstalled">未安装</span>' : '');
+    li.addEventListener('dragstart', function(e){
+      ideDragIdx = idx;
+      li.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', String(idx)); } catch(_) {}
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    li.addEventListener('dragover', function(e){ e.preventDefault(); li.classList.add('dragover'); });
+    li.addEventListener('dragleave', function(){ li.classList.remove('dragover'); });
+    li.addEventListener('drop', function(e){
+      e.preventDefault();
+      li.classList.remove('dragover');
+      var from = ideDragIdx, to = idx;
+      if (from < 0 || from === to) return;
+      var item = ideOrder.splice(from, 1)[0];
+      ideOrder.splice(to, 0, item);
+      renderIdeOrder();
+      saveIdeOrderList();
+    });
+    li.addEventListener('dragend', function(){ li.classList.remove('dragging'); ideDragIdx = -1; });
+    ul.appendChild(li);
+  });
+}
+function saveIdeOrderList(){
+  var tip = document.getElementById('ide-order-tip');
+  fetch('/api/ideorder', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ideOrder: ideOrder})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        tip.textContent = '已保存：' + (d.ideOrder || []).join(' → ');
+      } else {
+        tip.textContent = '保存失败：' + (d.message || d);
+        loadIdeOrder(); // 校验失败时用服务端配置恢复显示
+      }
+    })
+    .catch(function(e){ tip.textContent = '保存失败：' + e; });
+}
+function resetIdeOrder(){
+  ideOrder = ['qodercn','qoder-cn','cursor','trae','windsurf','code','androidStudio'];
+  renderIdeOrder();
+  saveIdeOrderList();
+}
+loadIdeOrder();
 </script>
 </body>
 </html>
