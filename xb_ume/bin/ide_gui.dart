@@ -930,6 +930,52 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    if (path == '/api/sandbox/delete' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final target = req.uri.queryParameters['path'] ?? '';
+      if (uri.isEmpty || target.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      // 基本防护：拒绝删除文件系统根与无分隔符的浅路径。
+      if (target == '/' || !target.contains('/')) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'error': '路径不合法，拒绝删除'}),
+        );
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final result = (await rpc.evalString(
+          "(() { final p = '${_escPath(target)}'; "
+          "final t = FileSystemEntity.typeSync(p); "
+          "if (t == FileSystemEntityType.notFound) return 'missing'; "
+          "try { if (t == FileSystemEntityType.directory) "
+          "{ Directory(p).deleteSync(recursive: true); } "
+          "else { File(p).deleteSync(); } return 'ok'; } "
+          "catch (e) { return 'error: ' + e.toString(); } })()",
+        ))
+            .trim();
+        final ok = result == 'ok';
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{
+            'ok': ok,
+            'result': result,
+            'error': ok ? null : (result == 'missing' ? '目标不存在' : result),
+          }),
+        );
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
+      return;
+    }
     if (path == '/api/sandbox/download' || path == '/api/sandbox/downloadDir') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final target = req.uri.queryParameters['path'] ?? '';
@@ -3441,6 +3487,20 @@ function sbError(msg, raw){
 }
 function sbActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'sandbox'; }
 function sbUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function sbDelete(btn){
+  var p = decodeURIComponent(btn.dataset.p);
+  var name = btn.dataset.name;
+  var isDir = btn.dataset.dir === '1';
+  var kind = isDir ? '文件夹（含全部内容，递归删除）' : '文件';
+  if (!confirm('确认删除' + kind + '「' + name + '」？\n\n' + p + '\n\n此操作不可恢复！')) return;
+  fetch('/api/sandbox/delete?uri=' + encodeURIComponent(sbUri()) + '&path=' + encodeURIComponent(p), {method: 'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) { sbRefresh(); }
+      else { alert('删除失败：' + (d.error || d.result || d)); }
+    })
+    .catch(function(e){ alert('删除失败：' + e); });
+}
 function sbRefresh(){
   if (!sbActive()) return;
   var uri = sbUri();
@@ -3501,14 +3561,16 @@ function sbRender(d){
     acc = acc.endsWith(sep) ? acc + s : acc + sep + s;
     crumb += ' / <a href="javascript:void(0)" onclick="sbGoBtn(this)" data-p="' + encodeURIComponent(acc) + '">' + esc(s) + '</a>';
   });
-  var html = '<div class="sbcrumb">' + crumb + '</div>';
+  var html = '<div class="sbcrumb">' + crumb
+    + ' <a href="javascript:void(0)" onclick="sbRefresh()" style="margin-left:10px" title="重新读取当前目录">↻ 刷新</a></div>';
   if (!d.entries || !d.entries.length) { html += '<span class="muted">空目录</span>'; return html; }
   html += '<table class="sbtable"><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr>';
   d.entries.forEach(function(e){
     var q = encodeURIComponent(sbUri()), p = encodeURIComponent(e.path);
-    var act = e.dir
+    var act = (e.dir
       ? '<a href="/api/sandbox/downloadDir?uri=' + q + '&path=' + p + '"><button title="递归打包为 tar（无压缩）下载">下载 .tar</button></a>'
-      : '<a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>';
+      : '<a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
+      + ' <a href="javascript:void(0)" class="bad" onclick="sbDelete(this)" data-p="' + p + '" data-name="' + esc(e.name) + '" data-dir="' + (e.dir ? '1' : '0') + '" style="margin-left:6px" title="删除（不可恢复）">删除</a>';
     var name = e.dir
       ? '<a href="javascript:void(0)" data-p="' + p + '" onclick="sbGoBtn(this)">' + esc(e.name) + '/</a>'
       : esc(e.name) + (e.link ? ' <span class="muted">[链接]</span>' : '');
