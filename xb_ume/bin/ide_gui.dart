@@ -3789,9 +3789,18 @@ const String _fileViewerTemplate = r'''
   #info { color:#8b949e; font-size:12px; }
   #status { color:#8b949e; font-size:12px; margin-left:auto; }
   #status.bad { color:#f85149; }
-  label.chk { color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:4px; }
+  label.chk { color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:4px; white-space:nowrap; cursor:pointer; }
+  input[type=checkbox] { accent-color:#58a6ff; margin:0; vertical-align:middle; }
+  #tailbtns { display:none; align-items:center; gap:8px; }
   #body { flex:1 1 0; min-height:0; overflow:auto; padding:10px 14px; white-space:pre-wrap; word-break:break-all; font:12px/1.6 Menlo,monospace; }
   mark { background:#e3b341; color:#24292f; border-radius:2px; }
+  mark.mf { background:#3fb950; color:#0d1117; }
+  mark.mb { background:#f0883e; color:#24292f; }
+  .lg { color:#8b949e; font-size:12px; display:inline-flex; align-items:center; gap:4px; }
+  .lg i { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  .ds { background:#e3b341; }
+  .df { background:#3fb950; }
+  .db { background:#f0883e; }
 </style>
 </head>
 <body>
@@ -3800,13 +3809,16 @@ const String _fileViewerTemplate = r'''
     <b>__TITLE__</b>
     <input type="text" id="search" placeholder="搜索（高亮，不过滤内容）">
     <input type="text" id="filter" placeholder="过滤（只保留匹配行）">
+    <span class="lg"><i class="ds"></i>搜索</span>
+    <span class="lg"><i class="df"></i>过滤</span>
+    <span class="lg"><i class="db"></i>同时命中</span>
     <span id="info">-</span>
     <span id="tailbtns" style="display:none">
       <button id="pausebtn" onclick="togglePause()">暂停</button>
       <button id="restartbtn" onclick="restart()" style="display:none">重新开始</button>
       <label class="chk"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
     </span>
-    <button onclick="clearBody()">清屏</button>
+    <button id="clearbtn" onclick="clearBody()">清屏</button>
     <span id="status">加载中…</span>
   </div>
   <div id="path"></div>
@@ -3819,7 +3831,7 @@ var qs = new URLSearchParams(location.search);
 var uri = qs.get('uri') || '', fpath = qs.get('path') || '';
 $('path').textContent = fpath;
 document.title = (fpath.split('/').pop() || 'file') + ' · __TITLE__';
-if (MODE === 'tail') $('tailbtns').style.display = '';
+if (MODE === 'tail') $('tailbtns').style.display = 'inline-flex';
 
 var lines = [], pending = '';
 var searchKw = '', filterKw = '';
@@ -3854,27 +3866,29 @@ function pushText(text){
 }
 
 function hlLine(line){
-  // 搜索字与过滤字都高亮；两关键字可能重叠，先收集区间再合并后包裹。
+  // 搜索（黄）与过滤（绿）都高亮，同时命中用橙色；区间可能交叉，
+  // 收集时携带来源（1=搜索 2=过滤 3=两者），合并同段后分别着色。
   var s = searchKw.toLowerCase(), f = filterKw.toLowerCase(), l = line.toLowerCase();
   if (!s && !f) return esc(line);
   var marks = [];
-  function collect(kw){
+  function collect(kw, tag){
     if (!kw) return;
     var j = 0;
-    while (true) { var k = l.indexOf(kw, j); if (k < 0) break; marks.push([k, k + kw.length]); j = k + kw.length; }
+    while (true) { var k = l.indexOf(kw, j); if (k < 0) break; marks.push([k, k + kw.length, tag]); j = k + kw.length; }
   }
-  collect(s); collect(f);
+  collect(s, 1); collect(f, 2);
   if (!marks.length) return esc(line);
   marks.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
   var merged = [];
   for (var i = 0; i < marks.length; i++) {
     var m = merged[merged.length - 1];
-    if (m && marks[i][0] < m[1]) { if (marks[i][1] > m[1]) m[1] = marks[i][1]; }
-    else merged.push([marks[i][0], marks[i][1]]);
+    if (m && marks[i][0] < m[1]) { if (marks[i][1] > m[1]) m[1] = marks[i][1]; m[2] |= marks[i][2]; }
+    else merged.push([marks[i][0], marks[i][1], marks[i][2]]);
   }
   var out = '', i = 0;
   for (var j = 0; j < merged.length; j++) {
-    out += esc(line.substring(i, merged[j][0])) + '<mark>' + esc(line.substring(merged[j][0], merged[j][1])) + '</mark>';
+    var cls = merged[j][2] === 2 ? ' class="mf"' : (merged[j][2] === 3 ? ' class="mb"' : '');
+    out += esc(line.substring(i, merged[j][0])) + '<mark' + cls + '>' + esc(line.substring(merged[j][0], merged[j][1])) + '</mark>';
     i = merged[j][1];
   }
   return out + esc(line.substring(i));
@@ -3960,6 +3974,8 @@ function poll(){
 }
 
 if (MODE === 'view') {
+  // 查看页是静态快照，不需要清屏（监听页保留）。
+  $('clearbtn').style.display = 'none';
   // 分块读整个文件（不限大小）；首块拿到 fileSize 后，剩余块并行预取
   // （并发 3），全部到齐后一次性渲染，避免逐块串行等待。
   var bufs = [], size = 0, failed = null;
