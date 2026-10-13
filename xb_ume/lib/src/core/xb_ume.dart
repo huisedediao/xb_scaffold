@@ -8,6 +8,7 @@ import 'xb_ume_binding.dart';
 import 'xb_ume_controller.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_storage_adapter.dart';
+import 'xb_ume_store_registry.dart';
 
 class XBUme {
   static XBUmeBinding ensureInitialized({
@@ -57,5 +58,11 @@ class XBUme {
     String? stack,
   }) {
     controller.addLog(level: level, tag: tag, message: message, stack: stack);
+  }
+
+  /// 注册一个需要 GUI「实例」Tab 查看的运行时对象（如 Provider 的
+  /// ChangeNotifier、全局 State、单例）。重复 id 覆盖；GUI 按本 id 定位实例。
+  static void registerStore(String id, Object store) {
+    XBUmeStoreRegistry.register(id, store);
   }
 }

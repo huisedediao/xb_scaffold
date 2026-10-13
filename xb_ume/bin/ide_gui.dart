@@ -1054,6 +1054,259 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // ── 实例查看：堆扫描/注册表定位实例，getObject 展开字段树，eval 写回 ──
+    if (path == '/api/instances/stores') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        // 注册表 Map<String, Object>：key 为注册 id，value 为实例引用。
+        final mapRef = await rpc.evalRefOn(
+          'package:xb_ume/src/core/xb_ume_store_registry.dart',
+          'XBUmeStoreRegistry._stores',
+        );
+        final iso = await rpc.isolateId();
+        final map = await rpc.rawRpc('getObject', {
+          'isolateId': iso,
+          'objectId': mapRef['id'],
+        });
+        final items = <Map<String, Object?>>[];
+        for (final assoc in (map['associations'] as List? ?? <Object?>[])) {
+          if (assoc is! Map) continue;
+          final key = assoc['key'] as Map?;
+          final value = assoc['value'] as Map?;
+          final instId = value?['id']?.toString();
+          if (instId == null || instId.isEmpty) continue;
+          items.add(<String, Object?>{
+            'id': key?['valueAsString']?.toString() ?? '',
+            'instId': instId,
+            'cls': (value?['class'] as Map?)?['name']?.toString() ?? '',
+          });
+        }
+        items.sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'items': items,
+        }));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': e.toString().contains('版本过旧')
+              ? e.toString()
+              : '读取注册表失败（${e.toString()}）——若是「未加载 …store_registry…库」，说明 app 端 xb_ume 版本过旧，请更新依赖并重启 app',
+        }));
+      }
+      await rpc.close();
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/instances/find') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final cls = req.uri.queryParameters['class']?.trim() ?? '';
+      final limit =
+          (int.tryParse(req.uri.queryParameters['limit'] ?? '') ?? 20)
+              .clamp(1, 100);
+      if (uri.isEmpty || cls.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        final items = <Map<String, Object?>>[];
+        final seen = <String>{};
+        void add(String id, String source, String clsName) {
+          if (id.isEmpty || !seen.add(id)) return;
+          items.add(<String, Object?>{
+            'id': id,
+            'cls': clsName,
+            'source': source,
+          });
+        }
+
+        // 通道一：Element 树遍历（树上存活的 State 实例）。
+        try {
+          final walkExpr = "(() { final root = WidgetsBinding.instance"
+              ".renderViewElement; if (root == null) return null; "
+              "final out = <Object>[]; void walk(Element e) { "
+              "final s = e is StatefulElement ? e.state : null; "
+              "if (s != null && s.runtimeType.toString() == '$cls') { out.add(s); } "
+              "e.visitChildren(walk); } root.visitChildren(walk); return out; })()";
+          final listRef = await rpc.evalRefOn(
+            'package:flutter/src/widgets/navigator.dart',
+            walkExpr,
+          );
+          if (listRef['valueAsString']?.toString() != 'null') {
+            final list = await rpc.rawRpc('getObject', {
+              'isolateId': iso,
+              'objectId': listRef['id'],
+            });
+            for (final el in (list['elements'] as List? ?? <Object?>[])) {
+              if (el is! Map) continue;
+              add(
+                el['id']?.toString() ?? '',
+                'tree',
+                (el['class'] as Map?)?['name']?.toString() ?? cls,
+              );
+            }
+          }
+        } catch (_) {
+          // 树遍历失败（如 NO_ROOT）不阻塞堆扫描。
+        }
+
+        // 通道二：堆扫描（ getClassList 匹配类名 → getInstances 捞实例），
+        // 不要求挂树，覆盖 Provider notifier / 单例等纯逻辑对象。
+        try {
+          final classList =
+              await rpc.rawRpc('getClassList', {'isolateId': iso});
+          final classIds = <String>[];
+          for (final c in (classList['classes'] as List? ?? <Object?>[])) {
+            if (c is! Map) continue;
+            final name = c['name']?.toString() ?? '';
+            if (name == cls || name.endsWith('.$cls')) {
+              classIds.add(c['id']?.toString() ?? '');
+            }
+          }
+          for (final classId in classIds) {
+            if (classId.isEmpty) continue;
+            final set = await rpc.rawRpc('getInstances', {
+              'isolateId': iso,
+              'objectId': classId,
+              'limit': limit,
+            });
+            for (final inst in (set['instances'] as List? ?? <Object?>[])) {
+              if (inst is! Map) continue;
+              add(
+                inst['id']?.toString() ?? '',
+                'heap',
+                (inst['class'] as Map?)?['name']?.toString() ?? cls,
+              );
+            }
+          }
+        } catch (_) {
+          // 堆扫描失败同样不阻塞另一路结果。
+        }
+
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'items': items.take(limit).toList(),
+        }));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await rpc.close();
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/instances/tree') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final id = req.uri.queryParameters['id'] ?? '';
+      final name = req.uri.queryParameters['name'];
+      final depth = (int.tryParse(req.uri.queryParameters['depth'] ?? '') ?? 2)
+          .clamp(1, 4);
+      if (uri.isEmpty || id.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        final node = await _instNode(rpc, iso, id, name, depth, <String>{});
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': true, 'node': node}));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await rpc.close();
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/instances/set' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final id = req.uri.queryParameters['id'] ?? '';
+      final field = req.uri.queryParameters['field'] ?? '';
+      final value = req.uri.queryParameters['value'] ?? '';
+      final vtype = req.uri.queryParameters['vtype'] ?? 'string';
+      if (uri.isEmpty || id.isEmpty || field.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        String literal;
+        switch (vtype) {
+          case 'int':
+            final v = int.tryParse(value);
+            if (v == null) throw '值不是合法整数：$value';
+            literal = value;
+          case 'double':
+            final v = double.tryParse(value);
+            if (v == null) throw '值不是合法小数：$value';
+            literal = value;
+          case 'bool':
+            if (value != 'true' && value != 'false') {
+              throw '值必须是 true/false';
+            }
+            literal = value;
+          case 'null':
+            literal = 'null';
+          default:
+            literal = "'${_escPath(value)}'";
+        }
+        // 在实例上下文 eval：this 绑定为该实例，直接给字段赋值。
+        final result = await rpc.rawRpc('evaluate', {
+          'isolateId': iso,
+          'targetId': id,
+          'expression': '$field = $literal',
+        });
+        // 编译/求值错误返回 type=@Error（LanguageError），不是 'Error'。
+        final rtype = result['type']?.toString() ?? '';
+        if (rtype == 'Error' || rtype == '@Error') {
+          throw (result['message']?.toString() ?? '写回失败（字段不存在或 final？）')
+              .split('\n').take(3).join(' ');
+        }
+        // ChangeNotifier 类写回后自动 notifyListeners（无该方法时静默跳过）。
+        var notified = false;
+        try {
+          final nl = await rpc.rawRpc('evaluate', {
+            'isolateId': iso,
+            'targetId': id,
+            'expression':
+                "(() { try { (this as dynamic).notifyListeners(); return '1'; } catch (_) { return '0'; } })()",
+          });
+          notified = nl['valueAsString']?.toString() == '1';
+        } catch (_) {
+          // ignored
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'notified': notified,
+        }));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await rpc.close();
+      await req.response.close();
+      return;
+    }
     if (path == '/api/sandbox/download' || path == '/api/sandbox/downloadDir') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final target = req.uri.queryParameters['path'] ?? '';
@@ -1713,6 +1966,115 @@ String _baseName(String p, String os) {
   return idx < 0 ? p : p.substring(idx + 1);
 }
 
+/// 递归展开实例字段树（/api/instances/tree）。
+///
+/// 字符串/数字/bool 直接给值；List/Map 摘录条目（上限 100）；普通对象按
+/// fields 递归。depth 限展开层数，visited 按 objectId 防环。引用在
+/// depth 用尽后降级为 kind=ref 摘要（仅类名/预览值），GUI 可按 id 二次展开。
+Future<Map<String, Object?>> _instNode(
+  _SandboxRpc rpc,
+  String iso,
+  String id,
+  String? name,
+  int depth,
+  Set<String> visited,
+) async {
+  final node = <String, Object?>{'name': name ?? '', 'id': id};
+  if (!visited.add(id)) {
+    node['kind'] = 'circular';
+    return node;
+  }
+  final obj = await rpc.rawRpc('getObject', {
+    'isolateId': iso,
+    'objectId': id,
+  });
+  if (obj['type']?.toString() == 'Sentinel') {
+    node['kind'] = 'expired';
+    return node;
+  }
+  node['cls'] = (obj['class'] as Map?)?['name']?.toString() ?? '';
+
+  // 引用摘要：不做二次 getObject，仅取 ref 自带的类名与预览值。
+  Map<String, Object?> refSummary(String refName, Map ref) =>
+      <String, Object?>{
+        'name': refName,
+        'kind': 'ref',
+        'id': ref['id']?.toString() ?? '',
+        'cls': (ref['class'] as Map?)?['name']?.toString() ?? '',
+        'value': ref['valueAsString']?.toString() ?? '',
+      };
+
+  Future<Map<String, Object?>> expandRef(String refName, Map ref) async {
+    final rid = ref['id']?.toString() ?? '';
+    // 带预览值的引用（null/数字/bool/字符串）是叶子，直接摘要；
+    // 且不能进 visited——Null 等是 VM 单例，全堆共享同一 id，
+    // 一旦记录会让后续所有 null 字段误判为循环引用。
+    if (rid.isEmpty || ref['valueAsString'] != null) {
+      return refSummary(refName, ref);
+    }
+    if (depth <= 1) return refSummary(refName, ref);
+    return _instNode(rpc, iso, rid, refName, depth - 1, visited);
+  }
+
+  final vstr = obj['valueAsString']?.toString();
+  final elements = obj['elements'] as List?;
+  final assocs = obj['associations'] as List?;
+  final fields = obj['fields'] as List?;
+  final children = <Map<String, Object?>>[];
+  if (elements != null) {
+    node['kind'] = 'list';
+    node['length'] = obj['length']?.toString() ?? '?';
+    for (final e in elements.take(100)) {
+      if (e is Map) children.add(await expandRef('', e));
+    }
+  } else if (assocs != null) {
+    node['kind'] = 'map';
+    node['length'] = obj['length']?.toString() ?? '?';
+    for (final a in assocs.take(100)) {
+      if (a is! Map) continue;
+      final k = a['key'];
+      final v = a['value'];
+      final keyPreview = k is Map
+          ? (k['valueAsString']?.toString() ??
+              (k['class'] as Map?)?['name']?.toString() ??
+              '?')
+          : '?';
+      final kref = k is Map ? k : <String, Object?>{};
+      final kid = kref['id']?.toString() ?? '';
+      children.add(
+        depth > 1 && kid.isNotEmpty && kref['valueAsString'] == null
+            ? await _instNode(
+                rpc, iso, kid, 'key: $keyPreview', depth - 1, visited)
+            : refSummary('key: $keyPreview', kref),
+      );
+      children.add(await expandRef('value', v is Map ? v : <String, Object?>{}));
+    }
+  } else if (fields != null) {
+    node['kind'] = 'object';
+    for (final f in fields) {
+      if (f is! Map) continue;
+      final decl = f['decl'] as Map?;
+      final ref = f['value'];
+      children.add(
+        await expandRef(
+          decl?['name']?.toString() ?? '?',
+          ref is Map ? ref : <String, Object?>{},
+        ),
+      );
+    }
+  } else if (vstr != null) {
+    node['kind'] = 'value';
+    node['value'] = vstr;
+    if (obj['valueAsStringIsTruncated'] == true) {
+      node['truncated'] = true;
+    }
+  } else {
+    node['kind'] = 'opaque';
+  }
+  if (children.isNotEmpty) node['children'] = children;
+  return node;
+}
+
 /// 计算 p 相对于 root 的 tar 内路径（同一 os 分隔符体系）。
 String _relativeTo(String p, String root, String os) {
   final sep = os == 'windows' ? r'\' : '/';
@@ -1917,6 +2279,27 @@ class _SandboxRpc {
       offset += part.length;
     }
     return sb.toString();
+  }
+
+  /// 在指定库上下文执行表达式，返回原始 evaluate 响应。表达式返回对象时
+  /// （type 为 Instance/@Instance），id 可用于 getObject 展开字段树。
+  Future<Map<String, Object?>> evalRefOn(String libraryUri, String expression) async {
+    await _ensureConnected();
+    final libId = await _libraryId(libraryUri);
+    final result = await _rpc('evaluate', {
+      'isolateId': _isolateId,
+      'targetId': libId,
+      'expression': expression,
+    });
+    final t = result['type']?.toString();
+    if (t != 'Instance' && t != '@Instance') {
+      final message =
+          result['message']?.toString() ?? result['valueAsString']?.toString();
+      throw message == null || message.isEmpty
+          ? '执行失败：${jsonEncode(result)}'
+          : message;
+    }
+    return result;
   }
 
   /// 关闭连接（请求方在 finally 中调用）。
@@ -2923,6 +3306,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="routes">路由栈</div>
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="storage">Storage</div>
+  <div class="tab" data-tab="instances">实例</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -3004,6 +3388,17 @@ const String guiHtml = r'''
     <div id="st-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android；经 VM service 写回手机）。修改/删除/新增后立即写入文件，但 shared_preferences 插件在 app 内有内存缓存——重启 app 后生效。</div>
   </section>
+  <section class="page" id="page-instances">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="inLoadStores()" title="列出 app 端 XBUme.registerStore 注册的实例">注册表 Store</button>
+      <input id="in-cls" placeholder="类名（如 CounterState / UserNotifier）" style="width:260px" onkeydown="if(event.key==='Enter')inFind()">
+      <button class="primary" onclick="inFind()" title="按类名查找：先遍历 Element 树找 State，再堆扫描捞全部实例">查找实例</button>
+      <span id="in-stat" class="muted">选中会话 app 内的运行时实例（仅 debug 可用）</span>
+    </div>
+    <div id="in-list" style="margin-top:8px"></div>
+    <div id="in-tree" style="margin-top:8px"></div>
+    <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -3035,6 +3430,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'routes') rtRefresh();
     else if (t.dataset.tab === 'network') nwRefresh();
     else if (t.dataset.tab === 'storage') stRefresh();
+    else if (t.dataset.tab === 'instances') inRefresh();
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
@@ -3802,6 +4198,158 @@ function resetIdeOrder(){
   ideOrder = ['qodercn','qoder-cn','cursor','trae','windsurf','code','androidStudio'];
   renderIdeOrder();
   saveIdeOrderList();
+}
+// ── 实例 Tab：注册表/类名查找定位实例，字段树展开与编辑写回 ──
+var inItems = [], inCurId = '', inCurName = '';
+function inUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function inActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'instances'; }
+function inStat(s){ document.getElementById('in-stat').textContent = s; }
+function inRefresh(){
+  if (!inActive()) return;
+  if (!inUri()) {
+    document.getElementById('in-list').innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框）</span>';
+    document.getElementById('in-tree').innerHTML = '';
+  }
+}
+function inApi(path){
+  var uri = inUri();
+  if (!uri) return Promise.reject('请先选择 VM');
+  return fetch(path + (path.indexOf('?') < 0 ? '?' : '&') + 'uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); });
+}
+function inLoadStores(){
+  var list = document.getElementById('in-list');
+  inStat('读取注册表…'); document.getElementById('in-tree').innerHTML = '';
+  inApi('/api/instances/stores').then(function(d){
+    if (!d.ok) { list.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; inStat('读取失败'); return; }
+    inRenderList(d.items.map(function(it){ return { id: it.instId, cls: it.cls, source: 'store', name: it.id }; }), '注册表 ' + d.items.length + ' 项（未注册时请先在 app 内调 XBUme.registerStore）');
+  }).catch(function(e){ list.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; inStat('读取失败'); });
+}
+function inFind(){
+  var cls = document.getElementById('in-cls').value.trim();
+  if (!cls) { inStat('请输入类名'); return; }
+  var list = document.getElementById('in-list');
+  inStat('查找 ' + cls + ' …'); document.getElementById('in-tree').innerHTML = '';
+  inApi('/api/instances/find?class=' + encodeURIComponent(cls)).then(function(d){
+    if (!d.ok) { list.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; inStat('查找失败'); return; }
+    inRenderList(d.items, '类 ' + cls + '：命中 ' + d.items.length + ' 个实例');
+  }).catch(function(e){ list.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; inStat('查找失败'); });
+}
+var inSourceNames = { store: 'Store', tree: 'Element 树', heap: '堆扫描' };
+function inRenderList(items, msg){
+  var list = document.getElementById('in-list');
+  inStat(msg); inItems = items;
+  if (!items.length) { list.innerHTML = '<span class="muted">无结果</span>'; return; }
+  list.innerHTML = items.map(function(it, i){
+    return '<div style="display:flex;align-items:center;gap:10px;padding:3px 0;border-bottom:1px solid var(--line)">'
+      + '<span class="muted" style="font-size:12px;width:78px;flex:none">' + esc(inSourceNames[it.source] || it.source) + '</span>'
+      + '<span style="width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none">' + esc(it.cls) + '</span>'
+      + '<span class="muted" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.name ? it.name + ' · ' : '') + esc(String(it.id).slice(0, 14)) + '…</span>'
+      + '<button style="flex:none" onclick="inShow(' + i + ')">查看字段</button>'
+      + '</div>';
+  }).join('');
+}
+function inShow(i){ var it = inItems[i]; if (it) inShowId(it.id, it.cls); }
+function inShowId(id, name){
+  inCurId = id; inCurName = name;
+  var tree = document.getElementById('in-tree');
+  tree.innerHTML = '<span class="muted">加载字段树…</span>';
+  inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&depth=2').then(function(d){
+    if (!d.ok) { tree.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
+    tree.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><b>' + esc(name) + '</b>'
+      + '<span class="muted" style="font-size:12px">' + esc(String(id).slice(0, 14)) + '…</span>'
+      + '<button onclick="inShowId(inCurId, inCurName)">刷新</button></div>'
+      + '<div style="font-family:monospace;font-size:12.5px;margin-top:4px">' + inNode(d.node, 0, id) + '</div>';
+  }).catch(function(e){ tree.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
+  });
+}
+function inVTypeOf(cls){
+  if (cls === 'int') return 'int';
+  if (cls === 'double' || cls === 'num') return 'double';
+  if (cls === 'bool') return 'bool';
+  if (cls === 'Null') return 'null';
+  return 'string';
+}
+// 渲染字段树节点。ownerId 为本节点字段的宿主对象 id（编辑写回的目标）。
+function inNode(n, level, ownerId){
+  var kind = n.kind || 'object';
+  var pad = 'padding-left:' + (level * 16) + 'px';
+  var nameAttr = 'decodeURIComponent(\'' + encodeURIComponent(n.name || '') + '\')';
+  var ownerAttr = 'decodeURIComponent(\'' + encodeURIComponent(ownerId || '') + '\')';
+  var head;
+  if (kind === 'value') {
+    var vtype = inVTypeOf(n.cls || '');
+    var canEdit = (vtype === 'int' || vtype === 'double' || vtype === 'bool' || vtype === 'string') && n.name && ownerId;
+    head = '<span style="color:#79c0ff">' + esc(n.value) + '</span>'
+      + (n.truncated ? '<span class="muted">（截断）</span>' : '')
+      + (canEdit ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inEdit(this, ' + nameAttr + ', \'' + vtype + '\', ' + ownerAttr + ')">编辑</a>' : '');
+  } else if (kind === 'list' || kind === 'map') {
+    head = '<span style="color:#d2a8ff">' + esc(n.cls || (kind === 'map' ? 'Map' : 'List')) + '</span>（' + esc(n.length || '?') + ' 项）';
+  } else if (kind === 'circular') {
+    head = '<span class="muted">（循环引用）</span>';
+  } else if (kind === 'expired') {
+    head = '<span class="muted">（实例已回收）</span>';
+  } else if (kind === 'ref') {
+    var primitive = n.cls === 'int' || n.cls === 'double' || n.cls === 'bool' || n.cls === 'String' || n.cls === 'Null';
+    head = (primitive && n.value !== '' ? esc(n.value) : esc(n.cls || '?'))
+      + (!primitive && n.value ? ' <span class="muted">' + esc(n.value) + '</span>' : '')
+      + (n.id && !primitive ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\')">展开</a>' : '');
+  } else if (kind === 'opaque') {
+    head = '<span class="muted">' + esc(n.cls || '（无法展示）') + '</span>';
+  } else {
+    head = '<span style="color:#d2a8ff">' + esc(n.cls || '') + '</span>';
+  }
+  var html = '<div style="' + pad + '">'
+    + (n.name && kind !== 'value' && kind !== 'ref' ? '<span class="muted">' + esc(n.name) + '</span> ' : '')
+    + head + '</div>';
+  var kids = n.children || [];
+  for (var i = 0; i < kids.length; i++) html += inNode(kids[i], level + 1, n.id);
+  return html;
+}
+// ref 节点二次展开：把该行替换为请求返回的子树。
+function inExpand(el, id){
+  var holder = el.parentNode;
+  var level = Math.round((parseInt(holder.style.paddingLeft || '0', 10) || 0) / 16);
+  holder.innerHTML = '<span class="muted">展开中…</span>';
+  inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&depth=2').then(function(d){
+    if (!d.ok) { holder.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
+    var tmp = document.createElement('div');
+    tmp.innerHTML = inNode(d.node, level, id);
+    var frag = document.createDocumentFragment();
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    holder.parentNode.replaceChild(frag, holder);
+  }).catch(function(e){ holder.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
+}
+function inEdit(el, name, vtype, ownerId){
+  var row = el.parentNode;
+  var cur = row.querySelector('span') ? row.querySelector('span').textContent : '';
+  var nameAttr = 'decodeURIComponent(\'' + encodeURIComponent(name) + '\')';
+  var ownerAttr = 'decodeURIComponent(\'' + encodeURIComponent(ownerId) + '\')';
+  row.innerHTML = '<input style="width:200px;font-family:monospace"> '
+    + '<span class="muted" style="font-size:12px">' + esc(vtype) + '</span> '
+    + '<button class="primary" onclick="inSave(this, ' + nameAttr + ', \'' + vtype + '\', ' + ownerAttr + ')">保存</button> '
+    + '<a href="javascript:void(0)" style="font-size:12px" onclick="inShowId(inCurId, inCurName)">取消</a>';
+  var input = row.querySelector('input');
+  input.value = cur;
+  input.focus();
+}
+function inSave(el, name, vtype, ownerId){
+  var val = el.parentNode.querySelector('input').value;
+  if (vtype === 'int' || vtype === 'double') {
+    if (isNaN(Number(val))) { inStat('值不是合法数字'); return; }
+  }
+  if (vtype === 'bool' && val !== 'true' && val !== 'false') { inStat('值必须是 true/false'); return; }
+  inStat('写回中…');
+  var uri = inUri();
+  fetch('/api/instances/set?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(ownerId)
+      + '&field=' + encodeURIComponent(name) + '&value=' + encodeURIComponent(val) + '&vtype=' + vtype, { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { inStat('写回失败：' + (d.error || '')); return; }
+      inStat('已写回' + (d.notified ? '，已 notifyListeners' : ''));
+      inShowId(inCurId, inCurName);
+    })
+    .catch(function(e){ inStat('写回失败：' + String(e)); });
 }
 loadIdeOrder();
 </script>

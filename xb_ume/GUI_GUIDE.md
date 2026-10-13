@@ -201,7 +201,22 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 / iOS debug 会话可用。保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>` / iOS plist 经 plutil 转 binary 写回）。iOS 的 plist 复杂类型（dict/date/data）不支持编辑但保存时原样保留。
 
-## 八、常见问题
+## 八、实例（Tab「实例」）
+
+**在 GUI 上直接查看与修改 app 运行时内存里的对象**——比如某个 State 里的 `int age`、Provider 的 ChangeNotifier 里的字段。仅 debug 会话可用。
+
+**定位实例的三条途径**：
+1. **注册表 Store**：app 端调 `XBUme.registerStore(id, obj)` 注册的对象（如 Provider 的 notifier、全局单例），点「注册表 Store」直接列出；需 app 端 xb_ume 支持该 API（旧版本会提示更新依赖并重启 app）；
+2. **Element 树查找**：输入类名点「查找实例」，遍历当前 Widget 树找存活的 State 实例（来源标记「Element 树」）；
+3. **堆扫描**：同时用 `getClassList + getInstances` 捞出堆上该类的全部实例（来源标记「堆扫描」），覆盖不在树上的纯逻辑对象；结果去重合并展示。
+
+**字段树**：点行内「查看字段」展开实例字段树——字符串/数字/bool 直接显示值；List/Map 显示条目（上限 100）；嵌套对象递归展开（默认 2 层）；引用可点「展开」继续下钻；循环引用/已回收实例有明确标注。
+
+**编辑写回**：基础类型字段（int/double/bool/String）行尾有「编辑」，输入新值保存即通过 VM service 写回 app 内存（private 字段也可写）；ChangeNotifier 类型的实例写回后会自动 `notifyListeners`（状态栏提示），界面立即刷新。final 字段/不存在字段会返回明确错误。
+
+**原理**：注册表经 VM service 在 `xb_ume_store_registry.dart` 库上下文 eval 读注册 Map；查找走 Element 树遍历 + 堆扫描双通道；字段树用 `getObject` 递归展开；写回是在实例上下文 eval 字段赋值表达式（eval 作用域为实例所属库，私有可见）。
+
+## 九、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -215,7 +230,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | 页头选中的 VM 会话过一会儿变回「未选择会话」 | 会话 ws 瞬断（热重载/重连）时页面会保持你的选择，连续约 15s 仍缺失才回退；重连后端口变化时按实例指纹自动找回同一会话。若仍频繁掉选，说明该会话连接本身不稳定 |
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 
-## 九、卸载
+## 十、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -223,7 +238,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十、相关文档
+## 十一、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

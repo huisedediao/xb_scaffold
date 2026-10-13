@@ -54,6 +54,18 @@ class MyApp extends StatelessWidget {
 }
 ```
 
+### 实例查看（GUI「实例」Tab）
+
+把需要电脑端 GUI 查看/修改的运行时对象注册进来（如 Provider 的 notifier、全局单例），GUI「实例」Tab 点「注册表 Store」即可展开字段树并编辑写回：
+
+```dart
+final notifier = context.read<UserNotifier>();
+XBUme.registerStore('userNotifier', notifier); // 重复 id 覆盖
+// XBUmeStoreRegistry.unregister('userNotifier'); // 取消注册
+```
+
+不注册也能用：GUI 里输入类名可直接查找实例（Element 树 + 堆扫描双通道）。
+
 ## Widget locator
 
 The locator prefers source locations from the application by default. To
@@ -180,6 +192,7 @@ dart run xb_ume:ide --gui          # 推荐入口
 
 - **设备选择（页头右侧）**：自动发现 adb（Android）/ hdc（鸿蒙）/ Xcode 模拟器 / idevice_id（iOS 真机，需 libimobiledevice）连接的设备，可选定一台；旁为 VM 会话选择器，可选定某个调试会话（默认全部）；
 - **守护进程**：状态（pid / 运行时长 / 已接入调试会话，经互斥端口 status 协议查询）、一键重启（复用单实例接管锁）、IDE 优先级展示与配置文件直达；
-- **日志**：选中设备的全量设备日志（logcat / hilog / iOS log stream / idevicesyslog）+ 全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出的部分，tag 列为会话来源、多应用可区分），实时推送、来源/级别/关键字过滤、暂停、清屏、导出 txt。
+- **日志**：选中设备的全量设备日志（logcat / hilog / iOS log stream / idevicesyslog）+ 全部调试会话的 stdout/stderr（flutter run 控制台中 app 输出的部分，tag 列为会话来源、多应用可区分），实时推送、来源/级别/关键字过滤、暂停、清屏、导出 txt；
+- **实例**：查看/修改 app 运行时内存对象——注册表 Store（`XBUme.registerStore`）、按类名查找（Element 树 + 堆扫描）、字段树展开、基础类型字段编辑写回（ChangeNotifier 自动 notifyListeners）。
 
 详细使用说明见 [GUI_GUIDE.md](GUI_GUIDE.md)。
