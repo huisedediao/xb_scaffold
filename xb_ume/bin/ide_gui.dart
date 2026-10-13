@@ -1995,14 +1995,26 @@ Future<Map<String, Object?>> _instNode(
   node['cls'] = (obj['class'] as Map?)?['name']?.toString() ?? '';
 
   // 引用摘要：不做二次 getObject，仅取 ref 自带的类名与预览值。
-  Map<String, Object?> refSummary(String refName, Map ref) =>
-      <String, Object?>{
+  Map<String, Object?> refSummary(String refName, Map ref) {
+    final v = ref['valueAsString']?.toString() ?? '';
+    // late 字段未初始化时 ref 是 Sentinel，值为 <not initialized>。
+    if (v == '<not initialized>') {
+      return <String, Object?>{
         'name': refName,
-        'kind': 'ref',
-        'id': ref['id']?.toString() ?? '',
-        'cls': (ref['class'] as Map?)?['name']?.toString() ?? '',
-        'value': ref['valueAsString']?.toString() ?? '',
+        'kind': 'value',
+        'id': '',
+        'cls': '',
+        'value': '（late 字段，未初始化）',
       };
+    }
+    return <String, Object?>{
+      'name': refName,
+      'kind': 'ref',
+      'id': ref['id']?.toString() ?? '',
+      'cls': (ref['class'] as Map?)?['name']?.toString() ?? '',
+      'value': v,
+    };
+  }
 
   Future<Map<String, Object?>> expandRef(String refName, Map ref) async {
     final rid = ref['id']?.toString() ?? '';
@@ -2024,8 +2036,10 @@ Future<Map<String, Object?>> _instNode(
   if (elements != null) {
     node['kind'] = 'list';
     node['length'] = obj['length']?.toString() ?? '?';
+    // 列表元素用下标当名字，避免渲染成无名字段。
+    var ei = 0;
     for (final e in elements.take(100)) {
-      if (e is Map) children.add(await expandRef('', e));
+      if (e is Map) children.add(await expandRef('[${ei++}]', e));
     }
   } else if (assocs != null) {
     node['kind'] = 'map';
@@ -4254,7 +4268,7 @@ function inShowId(id, name){
   inCurId = id; inCurName = name;
   var tree = document.getElementById('in-tree');
   tree.innerHTML = '<span class="muted">加载字段树…</span>';
-  inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&depth=2').then(function(d){
+  inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&depth=3').then(function(d){
     if (!d.ok) { tree.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
     tree.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><b>' + esc(name) + '</b>'
       + '<span class="muted" style="font-size:12px">' + esc(String(id).slice(0, 14)) + '…</span>'
@@ -4263,11 +4277,18 @@ function inShowId(id, name){
   }).catch(function(e){ tree.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
   });
 }
-function inVTypeOf(cls){
-  if (cls === 'int') return 'int';
-  if (cls === 'double' || cls === 'num') return 'double';
-  if (cls === 'bool') return 'bool';
+// VM 内部类名 → 友好类型名（int 在 VM 里的类是 _Smi/_Mint 等）。
+function inTypeOf(cls){
+  if (cls === '_Smi' || cls === '_Mint' || cls === 'int' || cls === '_Int64') return 'int';
+  if (cls === '_Double' || cls === 'double' || cls === 'num') return 'double';
+  if (cls === '_Bool' || cls === 'bool') return 'bool';
+  if (cls === '_OneByteString' || cls === '_TwoByteString' || cls === 'String') return 'String';
   if (cls === 'Null') return 'null';
+  return cls || '';
+}
+function inVTypeOf(cls){
+  var t = inTypeOf(cls);
+  if (t === 'int' || t === 'double' || t === 'bool' || t === 'null') return t;
   return 'string';
 }
 // 渲染字段树节点。ownerId 为本节点字段的宿主对象 id（编辑写回的目标）。
@@ -4280,7 +4301,9 @@ function inNode(n, level, ownerId){
   if (kind === 'value') {
     var vtype = inVTypeOf(n.cls || '');
     var canEdit = (vtype === 'int' || vtype === 'double' || vtype === 'bool' || vtype === 'string') && n.name && ownerId;
-    head = '<span style="color:#79c0ff">' + esc(n.value) + '</span>'
+    var vtypeName = inTypeOf(n.cls || '');
+    head = (vtypeName && vtypeName !== 'null' ? '<span class="muted">' + esc(vtypeName) + '</span> ' : '')
+      + '<span class="in-val" style="color:#79c0ff">' + esc(n.value) + '</span>'
       + (n.truncated ? '<span class="muted">（截断）</span>' : '')
       + (canEdit ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inEdit(this, ' + nameAttr + ', \'' + vtype + '\', ' + ownerAttr + ')">编辑</a>' : '');
   } else if (kind === 'list' || kind === 'map') {
@@ -4290,29 +4313,32 @@ function inNode(n, level, ownerId){
   } else if (kind === 'expired') {
     head = '<span class="muted">（实例已回收）</span>';
   } else if (kind === 'ref') {
-    var primitive = n.cls === 'int' || n.cls === 'double' || n.cls === 'bool' || n.cls === 'String' || n.cls === 'Null';
-    head = (primitive && n.value !== '' ? esc(n.value) : esc(n.cls || '?'))
-      + (!primitive && n.value ? ' <span class="muted">' + esc(n.value) + '</span>' : '')
-      + (n.id && !primitive ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\')">展开</a>' : '');
+    var type = inTypeOf(n.cls || '');
+    var primitive = type === 'int' || type === 'double' || type === 'bool' || type === 'String' || type === 'null';
+    head = (type && type !== 'null' ? '<span class="muted">' + esc(type) + '</span> ' : '')
+      + (n.value !== '' ? '<span class="in-val" style="color:#79c0ff">' + esc(n.value) + '</span>' : '<span class="muted">' + esc(n.cls || '?') + '</span>')
+      + (!primitive && n.id ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\', ' + nameAttr + ')">展开</a>' : '');
   } else if (kind === 'opaque') {
     head = '<span class="muted">' + esc(n.cls || '（无法展示）') + '</span>';
   } else {
     head = '<span style="color:#d2a8ff">' + esc(n.cls || '') + '</span>';
   }
+  // 字段名所有节点类型都展示（ref/value 深度用尽时是大多数，隐藏名称会看不出字段）。
   var html = '<div style="' + pad + '">'
-    + (n.name && kind !== 'value' && kind !== 'ref' ? '<span class="muted">' + esc(n.name) + '</span> ' : '')
+    + (n.name ? '<span class="muted">' + esc(n.name) + '</span> ' : '')
     + head + '</div>';
   var kids = n.children || [];
   for (var i = 0; i < kids.length; i++) html += inNode(kids[i], level + 1, n.id);
   return html;
 }
-// ref 节点二次展开：把该行替换为请求返回的子树。
-function inExpand(el, id){
+// ref 节点二次展开：把该行替换为请求返回的子树（保留字段名）。
+function inExpand(el, id, name){
   var holder = el.parentNode;
   var level = Math.round((parseInt(holder.style.paddingLeft || '0', 10) || 0) / 16);
   holder.innerHTML = '<span class="muted">展开中…</span>';
   inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&depth=2').then(function(d){
     if (!d.ok) { holder.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
+    d.node.name = d.node.name || name || '';
     var tmp = document.createElement('div');
     tmp.innerHTML = inNode(d.node, level, id);
     var frag = document.createDocumentFragment();
@@ -4322,7 +4348,7 @@ function inExpand(el, id){
 }
 function inEdit(el, name, vtype, ownerId){
   var row = el.parentNode;
-  var cur = row.querySelector('span') ? row.querySelector('span').textContent : '';
+  var cur = row.querySelector('.in-val') ? row.querySelector('.in-val').textContent : '';
   var nameAttr = 'decodeURIComponent(\'' + encodeURIComponent(name) + '\')';
   var ownerAttr = 'decodeURIComponent(\'' + encodeURIComponent(ownerId) + '\')';
   row.innerHTML = '<input style="width:200px;font-family:monospace"> '
