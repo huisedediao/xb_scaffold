@@ -741,6 +741,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         // path 为空时探测可用起点：app 进程的 HOME 不一定可访问
         // （如鸿蒙真机 HOME=/storage/Users/currentUser 无权限），
         // 逐个尝试候选路径，收集能成功 listSync 的作为入口。
+        // iOS：HOME 即 app 沙盒容器（真机 /var/mobile/Containers/Data/
+        // Application/<UUID>，模拟器 CoreSimulator 对应目录），作为通用
+        // 候选天然可用，无需平台特判；Android HOME='/' 被跳过，改用包名候选。
         var roots = <String>[];
         var listing = '';
         if (dir.isEmpty) {
