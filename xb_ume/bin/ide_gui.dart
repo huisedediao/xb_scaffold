@@ -3778,8 +3778,8 @@ const String _fileViewerTemplate = r'''
 <title>__TITLE__ · xb_ume 工具箱</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin:0; background:#0d1117; color:#e6edf3; font:13px/1.5 -apple-system,'PingFang SC',sans-serif; }
-  header { padding:8px 14px; border-bottom:1px solid #30363d; }
+  body { margin:0; background:#0d1117; color:#e6edf3; font:13px/1.5 -apple-system,'PingFang SC',sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { flex:none; padding:8px 14px; border-bottom:1px solid #30363d; background:#0d1117; }
   header .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
   header b { color:#58a6ff; }
   #path { color:#8b949e; word-break:break-all; font-size:12px; }
@@ -3790,7 +3790,7 @@ const String _fileViewerTemplate = r'''
   #status { color:#8b949e; font-size:12px; margin-left:auto; }
   #status.bad { color:#f85149; }
   label.chk { color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:4px; }
-  #body { position:absolute; top:0; bottom:0; left:0; right:0; overflow:auto; padding:10px 14px; white-space:pre-wrap; word-break:break-all; font:12px/1.6 Menlo,monospace; }
+  #body { flex:1 1 0; min-height:0; overflow:auto; padding:10px 14px; white-space:pre-wrap; word-break:break-all; font:12px/1.6 Menlo,monospace; }
   mark { background:#e3b341; color:#24292f; border-radius:2px; }
 </style>
 </head>
