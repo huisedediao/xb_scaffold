@@ -3191,7 +3191,7 @@ function stRender(){
       valHtml = '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
     }
     html += '<tr><td><input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%"></td>'
-      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)"' + (r.type === 'rawios' ? ' disabled' : '') + '>'
+      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)"' + (r.type === 'rawios' || !r.isNew ? ' disabled title="类型由文件解析决定，不可修改"' : '') + '>'
       + (stFmt === 'ohos' ? ['string','boolean','int','long','float','double'] : stFmt === 'ios' ? ['string','integer','real','boolean','array'] : ['string','boolean','int','long','float','set']).map(function(t){
           return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></td>'
       + '<td>' + valHtml + '</td>'
@@ -3203,7 +3203,7 @@ function stRender(){
 }
 function stSet(i, k, v){ if (stRows[i]) stRows[i][k] = v; }
 function stDel(i){ stRows.splice(i, 1); stRender(); }
-function stAddRow(){ stRows.push({ name: '', type: 'string', value: '' }); stRender(); }
+function stAddRow(){ stRows.push({ name: '', type: 'string', value: '', isNew: true }); stRender(); }
 function stSave(){
   var uri = stUri(); if (!uri || !stFile) return;
   var rows = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); });
