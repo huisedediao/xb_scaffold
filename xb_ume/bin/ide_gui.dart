@@ -109,6 +109,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/view' || path == '/tail') {
+      // 文件查看/监听独立页（新标签页打开，见沙盒 Tab 的「查看」「监听」按钮）。
+      req.response.headers.contentType = ContentType.html;
+      req.response.write(fileViewerPageHtml(path == '/tail' ? 'tail' : 'view'));
+      await req.response.close();
+      return;
+    }
     if (path == '/ws' && WebSocketTransformer.isUpgradeRequest(req)) {
       final ws = await WebSocketTransformer.upgrade(req);
       state.addClient(ws);
@@ -930,6 +937,77 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    if (path == '/api/sandbox/read') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final target = req.uri.queryParameters['path'] ?? '';
+      final offset = int.tryParse(req.uri.queryParameters['offset'] ?? '0') ?? 0;
+      final max = int.tryParse(req.uri.queryParameters['max'] ?? '0') ?? 0;
+      if (uri.isEmpty ||
+          target.isEmpty ||
+          offset < 0 ||
+          max < 0 ||
+          max > (1 << 20)) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+          <String, Object?>{'ok': false, 'error': 'bad request（参数不合法或单次请求超 1MB）'},
+        ));
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final sizeRaw = (await rpc.evalString(
+          "(() { try { return File('${_escPath(target)}')"
+          ".lengthSync().toString(); } catch (_) { return 'missing'; } })()",
+        ))
+            .trim();
+        if (sizeRaw == 'missing' || int.tryParse(sizeRaw) == null) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': 'missing'},
+          ));
+          await req.response.close();
+          return;
+        }
+        final size = int.parse(sizeRaw);
+        var text = '';
+        int next = offset;
+        if (next > size) next = size;
+        if (max > 0 && offset < size) {
+          final n = (size - offset) < max ? (size - offset) : max;
+          final dataRaw = await rpc.evalString(
+            "(() { final fh = File('${_escPath(target)}').openSync(); "
+            "try { fh.setPositionSync($offset); final b = fh.readSync($n); "
+            "return gzip.encode(b).join(','); } finally { fh.closeSync(); } })()",
+          );
+          final gz = dataRaw.split(',').map(int.parse).toList();
+          final bytes = gz.isNotEmpty ? gzip.decode(gz) : <int>[];
+          // 按 UTF-8 序列边界截尾，避免多字节字符被 max 切断产生替换符；
+          // 截掉的部分由调用方以下一次请求的 offset 续读。
+          final cut = _utf8CompleteBoundary(bytes);
+          text = _lenientUtf8.decode(bytes.sublist(0, cut));
+          next = offset + cut;
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{
+            'ok': true,
+            'text': text,
+            'nextOffset': next,
+            'fileSize': size,
+            'truncated': next < size,
+          }),
+        );
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
+        );
+      }
+      await req.response.close();
+      return;
+    }
     if (path == '/api/sandbox/delete' && req.method == 'POST') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final target = req.uri.queryParameters['path'] ?? '';
@@ -1592,6 +1670,31 @@ class _VmSession {
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
 String _escPath(String p) =>
     p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+/// 返回字节列表中最后一个完整 UTF-8 序列之后的偏移；末尾若是不完整
+/// 的多字节序列（被分片大小切断），返回该序列起点，避免解码出替换符。
+int _utf8CompleteBoundary(List<int> b) {
+  final n = b.length;
+  if (n == 0) return 0;
+  var i = n - 1;
+  var cont = 0;
+  while (i >= 0 && (b[i] & 0xC0) == 0x80) {
+    i--;
+    cont++;
+  }
+  if (i < 0) return n; // 全为 continuation 字节的异常流，交给容错解码
+  final lead = b[i];
+  final expected = lead < 0x80
+      ? 1
+      : (lead & 0xE0) == 0xC0
+          ? 2
+          : (lead & 0xF0) == 0xE0
+              ? 3
+              : (lead & 0xF8) == 0xF0
+                  ? 4
+                  : 1;
+  return cont + 1 < expected ? i : n;
+}
 
 /// 任意文本嵌入 evaluate 表达式字符串字面量的转义（XML 写回等）。
 /// 注意 $ 是 Dart 字符串插值符，必须一并转义。
@@ -3487,6 +3590,9 @@ function sbError(msg, raw){
 }
 function sbActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'sandbox'; }
 function sbUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function sbOpenSub(mode, btn){
+  window.open('/' + mode + '?uri=' + encodeURIComponent(sbUri()) + '&path=' + encodeURIComponent(decodeURIComponent(btn.dataset.p)));
+}
 function sbDelete(btn){
   var p = decodeURIComponent(btn.dataset.p);
   var name = btn.dataset.name;
@@ -3569,7 +3675,9 @@ function sbRender(d){
     var q = encodeURIComponent(sbUri()), p = encodeURIComponent(e.path);
     var act = (e.dir
       ? '<a href="/api/sandbox/downloadDir?uri=' + q + '&path=' + p + '"><button title="递归打包为 tar（无压缩）下载">下载 .tar</button></a>'
-      : '<a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
+      : '<a href="javascript:void(0)" onclick="sbOpenSub(\'view\',this)" data-p="' + p + '"><button title="新标签页展示文件内容">查看</button></a>'
+        + ' <a href="javascript:void(0)" onclick="sbOpenSub(\'tail\',this)" data-p="' + p + '"><button title="新标签页实时监听文件新增内容">监听</button></a>'
+        + ' <a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
       + ' <a href="javascript:void(0)" class="bad" onclick="sbDelete(this)" data-p="' + p + '" data-name="' + esc(e.name) + '" data-dir="' + (e.dir ? '1' : '0') + '" style="margin-left:6px" title="删除（不可恢复）">删除</a>';
     var name = e.dir
       ? '<a href="javascript:void(0)" data-p="' + p + '" onclick="sbGoBtn(this)">' + esc(e.name) + '/</a>'
@@ -3658,3 +3766,216 @@ loadIdeOrder();
 </body>
 </html>
 ''';
+
+/// 文件查看（view）/ 监听（tail）独立页面，新标签页打开。
+/// __MODE__ 替换为 view / tail；与主页面同暗色主题，行数组全量保留在
+/// 内存，搜索（高亮不过滤）与过滤（只留匹配行）在渲染时应用。
+const String _fileViewerTemplate = r'''
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>__TITLE__ · xb_ume 工具箱</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0d1117; color:#e6edf3; font:13px/1.5 -apple-system,'PingFang SC',sans-serif; }
+  header { padding:8px 14px; border-bottom:1px solid #30363d; }
+  header .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
+  header b { color:#58a6ff; }
+  #path { color:#8b949e; word-break:break-all; font-size:12px; }
+  input[type=text] { background:#161b22; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:5px 8px; width:210px; }
+  input[type=text]:focus { outline:none; border-color:#58a6ff; }
+  button { background:#21262d; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:5px 12px; cursor:pointer; }
+  #info { color:#8b949e; font-size:12px; }
+  #status { color:#8b949e; font-size:12px; margin-left:auto; }
+  #status.bad { color:#f85149; }
+  label.chk { color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:4px; }
+  #body { position:absolute; top:0; bottom:0; left:0; right:0; overflow:auto; padding:10px 14px; white-space:pre-wrap; word-break:break-all; font:12px/1.6 Menlo,monospace; }
+  mark { background:#e3b341; color:#24292f; border-radius:2px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <b>__TITLE__</b>
+    <input type="text" id="search" placeholder="搜索（高亮，不过滤内容）">
+    <input type="text" id="filter" placeholder="过滤（只保留匹配行）">
+    <span id="info">-</span>
+    <span id="tailbtns" style="display:none">
+      <button id="pausebtn" onclick="togglePause()">暂停</button>
+      <button id="restartbtn" onclick="restart()" style="display:none">重新开始</button>
+      <label class="chk"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
+    </span>
+    <button onclick="clearBody()">清屏</button>
+    <span id="status">加载中…</span>
+  </div>
+  <div id="path"></div>
+</header>
+<div id="body"></div>
+<script>
+function $(id){ return document.getElementById(id); }
+var MODE = '__MODE__';
+var qs = new URLSearchParams(location.search);
+var uri = qs.get('uri') || '', fpath = qs.get('path') || '';
+$('path').textContent = fpath;
+document.title = (fpath.split('/').pop() || 'file') + ' · __TITLE__';
+if (MODE === 'tail') $('tailbtns').style.display = '';
+
+var lines = [], pending = '';
+var searchKw = '', filterKw = '';
+var offset = 0, started = false, stopped = false, paused = false;
+var renderTimer = null;
+var CHUNK = 256 * 1024;
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtSize(n){
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB';
+  return (n/1073741824).toFixed(2) + ' GB';
+}
+function setStatus(s, bad){ var el = $('status'); el.textContent = s; el.className = bad ? 'bad' : ''; }
+function scheduleRender(){ if (renderTimer) return; renderTimer = setTimeout(function(){ renderTimer = null; render(); }, 200); }
+
+function apiRead(off, max, cb){
+  fetch('/api/sandbox/read?uri=' + encodeURIComponent(uri) + '&path=' + encodeURIComponent(fpath) + '&offset=' + off + '&max=' + max)
+    .then(function(r){ return r.json(); }).then(cb)
+    .catch(function(e){ setStatus('请求失败：' + e, true); });
+}
+
+function pushText(text){
+  pending += text;
+  var idx = pending.lastIndexOf('\n');
+  if (idx < 0) return;
+  var complete = pending.substring(0, idx);
+  pending = pending.substring(idx + 1);
+  var arr = complete.split('\n');
+  for (var i = 0; i < arr.length; i++) lines.push(arr[i]);
+}
+
+function hlLine(line){
+  var s = searchKw.toLowerCase(), l = line.toLowerCase();
+  if (!s) return esc(line);
+  var out = '', i = 0;
+  while (true) {
+    var idx = l.indexOf(s, i);
+    if (idx < 0) { out += esc(line.substring(i)); break; }
+    out += esc(line.substring(i, idx)) + '<mark>' + esc(line.substring(idx, idx + s.length)) + '</mark>';
+    i = idx + s.length;
+  }
+  return out;
+}
+
+function render(){
+  var f = filterKw.toLowerCase(), s = searchKw.toLowerCase();
+  var hits = 0, shown = 0, parts = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (f && line.toLowerCase().indexOf(f) < 0) continue;
+    shown++;
+    if (s) {
+      var l = line.toLowerCase(), j = 0;
+      while (true) { var k = l.indexOf(s, j); if (k < 0) break; hits++; j = k + s.length; }
+    }
+    parts.push(hlLine(line));
+  }
+  $('info').textContent = '显示 ' + shown + ' 行 / 共 ' + lines.length + ' 行' + (s ? ' · 搜索命中 ' + hits + ' 处' : '');
+  var el = $('body');
+  var autoEl = $('autoscroll');
+  var stick = (!autoEl || autoEl.checked) && (el.scrollTop + el.clientHeight >= el.scrollHeight - 40);
+  el.innerHTML = parts.length ? parts.join('\n') : '<span style="color:#d29922">' + (lines.length ? '（无匹配行）' : '（暂无内容）') + '</span>';
+  if (stick) el.scrollTop = el.scrollHeight;
+}
+
+$('search').addEventListener('input', function(){ searchKw = this.value; scheduleRender(); });
+$('filter').addEventListener('input', function(){ filterKw = this.value; scheduleRender(); });
+function clearBody(){ lines = []; pending = ''; render(); }
+function togglePause(){
+  if (MODE !== 'tail') return;
+  paused = !paused;
+  $('pausebtn').textContent = paused ? '继续' : '暂停';
+  setStatus(paused ? '已暂停（不再拉取新内容）' : '监听中…');
+  if (!paused) poll();
+}
+function restart(){
+  stopped = false; started = false; offset = 0;
+  $('restartbtn').style.display = 'none';
+  setStatus('重新开始监听…');
+  poll();
+}
+
+function poll(){
+  if (MODE !== 'tail' || stopped || paused) return;
+  if (!started) {
+    apiRead(0, 0, function(d){
+      if (!d.ok) {
+        stopped = true;
+        setStatus('打开失败：' + (d.error === 'missing' ? '文件不存在' : (d.error || d)), true);
+        $('restartbtn').style.display = '';
+        return;
+      }
+      started = true;
+      offset = d.fileSize;
+      setStatus('监听中…（从末尾开始，当前 ' + fmtSize(d.fileSize) + '）');
+    });
+    return;
+  }
+  apiRead(offset, CHUNK, function(d){
+    if (stopped || paused) return;
+    if (!d.ok) {
+      stopped = true;
+      setStatus(d.error === 'missing' ? '文件已不存在（可能被删除或轮转），可等文件重建后点「重新开始」' : '监听中断：' + (d.error || d), true);
+      $('restartbtn').style.display = '';
+      return;
+    }
+    if (d.fileSize < offset) {
+      lines = []; pending = '';
+      lines.push('──── 检测到文件被重写，从头开始读取 ────');
+      offset = 0;
+      render();
+      return;
+    }
+    if (d.nextOffset > offset) {
+      pushText(d.text);
+      offset = d.nextOffset;
+      render();
+    }
+    if (offset < d.fileSize) { setTimeout(poll, 50); return; }
+    setStatus('监听中…（已读 ' + fmtSize(offset) + '）');
+  });
+}
+
+if (MODE === 'view') {
+  // 后端单次响应限 1MB，这里分块循环读，直到读完整个文件（不限大小）。
+  var buf = '';
+  (function next(off){
+    apiRead(off, CHUNK, function(d){
+      if (!d.ok) {
+        setStatus('读取失败：' + (d.error === 'missing' ? '文件不存在' : (d.error || d)), true);
+        render();
+        return;
+      }
+      buf += d.text;
+      setStatus('读取中… ' + fmtSize(d.nextOffset) + ' / ' + fmtSize(d.fileSize));
+      if (!d.truncated) {
+        pushText(buf);
+        if (pending) { lines.push(pending); pending = ''; }
+        render();
+        setStatus('共 ' + fmtSize(d.fileSize));
+        return;
+      }
+      next(d.nextOffset);
+    });
+  })(0);
+} else {
+  poll();
+}
+</script>
+</body>
+</html>
+''';
+
+/// 渲染文件查看/监听页面（占位替换）。
+String fileViewerPageHtml(String mode) => _fileViewerTemplate
+    .replaceAll('__MODE__', mode)
+    .replaceAll('__TITLE__', mode == 'tail' ? '文件监听' : '文件查看');
