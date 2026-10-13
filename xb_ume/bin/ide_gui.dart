@@ -546,25 +546,45 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
 
       final rpc = _SandboxRpc(uri);
       try {
-        // 包名与 shared_prefs 目录探测。
+        // 包名与 preferences 目录探测。
+        // Android：shared_prefs 下 *.xml；鸿蒙：app 沙盒 preferences 目录
+        // （el2/el1 base，文件无扩展名，如 FlutterSharedPreferences）。
         final pkg = (await rpc.evalString(
           "(() { try { return File('/proc/self/cmdline')"
           ".readAsStringSync().split(String.fromCharCode(0))[0].trim(); } "
           "catch (_) { return ''; } })()",
         )).trim();
-        if (pkg.isEmpty) throw '无法获取应用包名（/proc/self/cmdline）';
-        final prefsDir = '/data/data/$pkg/shared_prefs';
+        final os = (await rpc.evalString('Platform.operatingSystem')).trim();
+        if (os != 'ohos' && pkg.isEmpty) {
+          throw '无法获取应用包名（/proc/self/cmdline）';
+        }
+        final prefsDirs = os == 'ohos'
+            ? const <String>[
+                '/data/storage/el2/base/preferences',
+                '/data/storage/el1/base/preferences',
+              ]
+            : <String>['/data/data/$pkg/shared_prefs'];
+        final ext = os == 'ohos' ? '' : '.xml';
+        final dirList =
+            prefsDirs.map((d) => "'${_escPath(d)}'").join(',');
         final listXml = await rpc.evalString(
-          "(() { try { return Directory('$prefsDir').listSync()"
-          ".where((e) => e.path.endsWith('.xml'))"
-          ".map((e) => e.path).join('\\n'); } catch (_) { return ''; } })()",
+          "(() { final out = <String>[]; "
+          "for (final d in const <String>[$dirList]) { "
+          "try { for (final e in Directory(d).listSync()) { "
+          "if (e is File && e.path.endsWith('$ext')) out.add(e.path); } } "
+          "catch (_) {} } return out.join('\\n'); })()",
         );
-        final files = listXml.split('\n').where((l) => l.isNotEmpty).toList();
+        var files = listXml.split('\n').where((l) => l.isNotEmpty).toList();
+        // 鸿蒙 preferences 目录下的 .lock 文件不是数据，排除。
+        if (os == 'ohos') {
+          files = files.where((f) => !f.endsWith('.lock')).toList();
+        }
         if (path == '/api/storage/list') {
           req.response.headers.contentType = ContentType.json;
           req.response.write(jsonEncode(<String, Object?>{
             'pkg': pkg,
-            'prefsDir': prefsDir,
+            'os': os,
+            'prefsDir': prefsDirs.first,
             'files': files,
           }));
           await req.response.close();
@@ -2965,7 +2985,7 @@ function nwClear(){
 }
 
 // -- Storage Tab（shared_prefs XML 直读直写）--------------------------------
-var stFiles = [], stXml = '', stRows = [], stFile = '';
+var stFiles = [], stXml = '', stRows = [], stFile = '', stFmt = 'android';
 function stActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'storage'; }
 function stUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function escXml(s){
@@ -2976,7 +2996,7 @@ function stRefresh(){
   if (!stActive()) return;
   var uri = stUri();
   var body = document.getElementById('st-body');
-  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；仅 Android debug 会话可用）</span>'; return; }
+  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框；Android / 鸿蒙 debug 会话可用）</span>'; return; }
   body.innerHTML = '<span class="muted">加载中…</span>';
   fetch('/api/storage/list?uri=' + encodeURIComponent(uri))
     .then(function(r){ return r.json(); })
@@ -3010,15 +3030,21 @@ function stLoad(){
 }
 function stParse(){
   stRows = [];
+  stFmt = 'android';
   var doc = new DOMParser().parseFromString(stXml, 'text/xml');
   if (doc.querySelector('parsererror')) { stRows = [{ name: '', type: 'raw', value: stXml }]; return; }
   var map = doc.documentElement;
   if (!map) return;
+  // Android：根 <map>，name 属性；鸿蒙：根 <preferences>，key 属性，bool 标签。
+  stFmt = map.tagName === 'preferences' ? 'ohos' : 'android';
+  var attr = stFmt === 'ohos' ? 'key' : 'name';
   Array.prototype.forEach.call(map.children, function(el){
-    var type = el.tagName, name = el.getAttribute('name') || '';
+    var tag = el.tagName;
+    var type = (stFmt === 'ohos' && tag === 'bool') ? 'boolean' : tag;
+    var name = el.getAttribute(attr) || '';
     var value;
-    if (type === 'string') value = el.textContent;
-    else if (type === 'set') value = Array.prototype.map.call(el.getElementsByTagName('string'), function(s){ return s.textContent; }).join(', ');
+    if (tag === 'string') value = el.textContent;
+    else if (tag === 'set' || tag === 'array') value = Array.prototype.map.call(el.getElementsByTagName('string'), function(s){ return s.textContent; }).join(', ');
     else value = el.getAttribute('value') || '';
     stRows.push({ name: name, type: type, value: value });
   });
@@ -3029,7 +3055,8 @@ function stRender(){
   var rows = stRows.map(function(r, i){ return { r: r, i: i }; }).filter(function(x){
     return !kw || ((x.r.name || '') + ' ' + (x.r.value || '')).toLowerCase().indexOf(kw) >= 0;
   });
-  var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（修改后点「保存写入」）</div>';
+  var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（'
+    + (stFmt === 'ohos' ? '鸿蒙 preferences 格式' : 'Android shared_prefs 格式') + ' · 修改后点「保存写入」）</div>';
   if (stRows.length === 1 && stRows[0].type === 'raw') { body.innerHTML = head + '<pre style="white-space:pre-wrap;word-break:break-all">' + esc(stXml) + '</pre>'; return; }
   var html = '<table class="sbtable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
   rows.forEach(function(x){
@@ -3042,7 +3069,7 @@ function stRender(){
       valHtml = '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
     }
     html += '<tr><td><input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%"></td>'
-      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)">' + ['string','boolean','int','long','float','set'].map(function(t){
+      + '<td><select onchange="stSet(' + i + ',\'type\',this.value)">' + (stFmt === 'ohos' ? ['string','boolean','int','long','float','double'] : ['string','boolean','int','long','float','set']).map(function(t){
           return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></td>'
       + '<td>' + valHtml + '</td>'
       + '<td><a href="javascript:void(0)" onclick="stDel(' + i + ')" class="bad">删除</a></td></tr>';
@@ -3056,17 +3083,22 @@ function stDel(i){ stRows.splice(i, 1); stRender(); }
 function stAddRow(){ stRows.push({ name: '', type: 'string', value: '' }); stRender(); }
 function stSave(){
   var uri = stUri(); if (!uri || !stFile) return;
+  var ohos = stFmt === 'ohos';
+  var attr = ohos ? 'key' : 'name';
   var lines = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); }).map(function(r){
     var n = escXml(r.name.trim());
-    if (r.type === 'string') return '    <string name="' + n + '">' + escXml(r.value) + '</string>';
-    if (r.type === 'set') {
+    if (r.type === 'string') return '<string ' + attr + '="' + n + '">' + escXml(r.value) + '</string>';
+    if (r.type === 'set' || r.type === 'array') {
       var members = String(r.value || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
-      return '    <set name="' + n + '">' + members.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('') + '</set>';
+      var inner = members.map(function(m){ return '<string>' + escXml(m) + '</string>'; }).join('');
+      return '<' + (ohos ? 'array' : 'set') + ' ' + attr + '="' + n + '">' + inner + '</' + (ohos ? 'array' : 'set') + '>';
     }
-    if (r.type === 'boolean') return '    <boolean name="' + n + '" value="' + (r.value === 'true' ? 'true' : 'false') + '" />';
-    return '    <' + r.type + ' name="' + n + '" value="' + escXml(r.value) + '" />';
+    if (r.type === 'boolean') return '<' + (ohos ? 'bool' : 'boolean') + ' ' + attr + '="' + n + '" value="' + (r.value === 'true' ? 'true' : 'false') + '" />';
+    return '<' + r.type + ' ' + attr + '="' + n + '" value="' + escXml(r.value) + '" />';
   });
-  var xml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
+  var xml = ohos
+    ? '<?xml version="1.0" encoding="UTF-8"?>\n<preferences version="1.0">' + lines.join('') + '</preferences>'
+    : "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
   fetch('/api/storage/write?uri=' + encodeURIComponent(uri) + '&file=' + encodeURIComponent(stFile), {
     method: 'POST', body: xml
   })
