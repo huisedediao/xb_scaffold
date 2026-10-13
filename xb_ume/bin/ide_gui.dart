@@ -2884,8 +2884,13 @@ const String guiHtml = r'''
   .src { color:#b07de8; }
   label.chk { margin-right:6px; color:var(--dim); cursor:pointer; }
   .sbtable { width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
+  mark { background:#3fb950; color:#0d1117; border-radius:2px; }
   .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
   .sbtable th { color:var(--dim); font-weight:600; }
+  /* Storage 表格列宽：key 列固定 400px */
+  .sttable th:nth-child(1), .sttable td:nth-child(1) { width:400px; }
+  .sttable th:nth-child(2) { width:110px; }
+  .sttable th:nth-child(4) { width:64px; }
   /* 行悬停高亮：标记鼠标当前所在行（匹配 td，不影响表头行） */
   .sbtable tr { transition: background .12s; }
   .sbtable tr:hover td { background:#182231; }
@@ -3479,6 +3484,19 @@ function stParse(){
     stRows.push({ name: name, type: type, value: value });
   });
 }
+function stHl(s, kw){
+  // Storage 过滤命中高亮（单关键字，不区分大小写，包含匹配）。
+  s = String(s);
+  if (!kw) return esc(s);
+  var l = s.toLowerCase(), out = '', i = 0;
+  while (true) {
+    var idx = l.indexOf(kw, i);
+    if (idx < 0) { out += esc(s.substring(i)); break; }
+    out += esc(s.substring(i, idx)) + '<mark>' + esc(s.substring(idx, idx + kw.length)) + '</mark>';
+    i = idx + kw.length;
+  }
+  return out;
+}
 function stRender(){
   var body = document.getElementById('st-body');
   var kw = (document.getElementById('st-kw').value || '').toLowerCase();
@@ -3488,9 +3506,13 @@ function stRender(){
   var head = '<div class="muted" style="margin:2px 0">' + esc(stFile.split('/').pop()) + ' · ' + stRows.length + ' 项（'
     + (stFmt === 'ohos' ? '鸿蒙 preferences 格式' : stFmt === 'ios' ? 'iOS plist 格式' : 'Android shared_prefs 格式') + ' · 修改后点「保存写入」）</div>';
   if (stRows.length === 1 && stRows[0].type === 'raw') { body.innerHTML = head + '<pre style="white-space:pre-wrap;word-break:break-all">' + esc(stXml) + '</pre>'; return; }
-  var html = '<table class="sbtable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
+  var html = '<table class="sbtable sttable"><tr><th>key</th><th>类型</th><th>值（可直接编辑）</th><th>操作</th></tr>';
   rows.forEach(function(x){
     var r = x.r, i = x.i;
+    // 有关键字时 key/value 以高亮文本展示（input 内无法高亮），清空过滤恢复编辑。
+    var keyCell = kw
+      ? '<span title="清除过滤后可编辑" style="word-break:break-all">' + stHl(r.name, kw) + '</span>'
+      : '<input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%">';
     var valHtml;
     if (r.type === 'rawios') {
       valHtml = '<span class="muted" title="iOS plist 复杂类型，保留原样">（不支持编辑）</span>';
@@ -3498,9 +3520,11 @@ function stRender(){
       valHtml = '<select onchange="stSet(' + i + ',\'value\',this.value)"><option value="true"' + (r.value === 'true' ? ' selected' : '') + '>true</option><option value="false"' + (r.value !== 'true' ? ' selected' : '') + '>false</option></select>';
     } else {
       var tip = r.type === 'set' ? 'set 类型，逗号分隔各成员' : '';
-      valHtml = '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
+      valHtml = kw
+        ? '<span title="' + tip + (tip ? '；' : '') + '清除过滤后可编辑" style="word-break:break-all">' + stHl(r.value, kw) + '</span>'
+        : '<input value="' + esc(r.value).replace(/"/g, '&quot;') + '" oninput="stSet(' + i + ',\'value\',this.value)" title="' + tip + '" style="width:100%">';
     }
-    html += '<tr><td><input value="' + esc(r.name) + '" oninput="stSet(' + i + ',\'name\',this.value)" style="width:100%"></td>'
+    html += '<tr><td>' + keyCell + '</td>'
       + '<td><select onchange="stSet(' + i + ',\'type\',this.value)"' + (r.type === 'rawios' || !r.isNew ? ' disabled title="类型由文件解析决定，不可修改"' : '') + '>'
       + (stFmt === 'ohos' ? ['string','boolean','int','long','float','double'] : stFmt === 'ios' ? ['string','integer','real','boolean','array'] : ['string','boolean','int','long','float','set']).map(function(t){
           return '<option' + (t === r.type ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></td>'
