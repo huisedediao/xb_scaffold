@@ -2686,6 +2686,7 @@ const String guiHtml = r'''
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
+var fpBySource = {}, vmFilterFp = '', vmMiss = 0; // 会话指纹映射、所选会话指纹与瞬断容忍计数
 var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
@@ -2792,18 +2793,44 @@ function refreshDaemon(){
       vm.style.display = 'none';
       sel.style.display = '';
       var html = '<option value="">未选择会话（共 ' + ss.length + ' 个）</option>';
+      fpBySource = {};
       ss.forEach(function(s){
-        if (s.app) vmApps[s.source || s.uri] = s.app;
-        vmUriBySource[s.source || s.uri] = s.uri; // 沙盒 Tab 用来源找 uri
-        // 显示应用包名（如有），value 仍为会话来源，保证过滤匹配不变。
         var v = s.source || s.uri;
+        if (s.app) vmApps[v] = s.app;
+        vmUriBySource[v] = s.uri; // 沙盒 Tab 用来源找 uri
+        if (s.fp) fpBySource[v] = s.fp;
+        // 显示应用包名（如有），value 仍为会话来源，保证过滤匹配不变。
         var text = (s.app ? s.app + ' · ' : '') + v;
-        html += '<option value="' + esc(v) + '" ' + (v === vmFilter ? 'selected' : '') + '>' + esc(text) + '</option>';
+        html += '<option value="' + esc(v) + '">' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
+      // 保持用户选择：会话瞬断（如热重载导致 ws 抖动）不立即回退，
+      // 连续 3 个周期（15s）仍缺失才回退到全部；重连后端口可能变化，
+      // 按实例指纹（fp，端口无关）找回同一会话并更新到新来源。
       var prevVmFilter = vmFilter;
-      vmFilter = sel.value; // 选中会话消失时自动回退到全部
-      if (vmFilter !== prevVmFilter) sbRefresh();
+      var stillEntry = null;
+      ss.forEach(function(s){ if ((s.source || s.uri) === vmFilter) stillEntry = s; });
+      if (stillEntry && stillEntry.fp) vmFilterFp = stillEntry.fp;
+      if (!vmFilter) {
+        vmMiss = 0; vmFilterFp = '';
+      } else if (stillEntry) {
+        vmMiss = 0;
+        sel.value = vmFilter;
+      } else {
+        var restored = vmFilterFp ? ss.find(function(s){ return s.fp === vmFilterFp; }) : null;
+        if (restored) {
+          vmFilter = restored.source || restored.uri;
+          if (restored.fp) vmFilterFp = restored.fp;
+          sel.value = vmFilter;
+          vmMiss = 0;
+        } else if (++vmMiss >= 3) {
+          vmFilter = ''; vmFilterFp = '';
+          vmMiss = 0;
+        }
+      }
+      if (vmFilter !== prevVmFilter) {
+        renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh();
+      }
       sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
     var order = d.config && d.config.ideOrder;
@@ -2811,7 +2838,7 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
+function setVmFilter(v){ vmFilter = v; vmFilterFp = fpBySource[v] || ''; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
 
 // -- 路由栈 Tab -------------------------------------------------------------
 function rtActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'routes'; }

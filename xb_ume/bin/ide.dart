@@ -837,7 +837,13 @@ void _onLockConnection(Socket socket) {
         'sessions': <Map<String, Object?>>[
           for (final session in _sessions.values)
             if (session.alive)
-              <String, Object?>{'source': session.source, 'uri': session.wsUrl},
+              <String, Object?>{
+                'source': session.source,
+                'uri': session.wsUrl,
+                // 实例指纹（端口无关）：同一实例重连后端口可能变化，
+                // GUI 前端据此恢复用户选中的会话。
+                if (session.fingerprint != null) 'fp': session.fingerprint,
+              },
         ],
       }));
     }
