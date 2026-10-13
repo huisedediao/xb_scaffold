@@ -159,12 +159,32 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final merged = readGuiIdeOrderList();
         final added = <String>[];
         for (final ide in installed) {
-          if (!merged.contains(ide)) {
-            merged.add(ide);
-            added.add(ide);
+          if (merged.contains(ide)) continue;
+          // 等价别名：规范名（或别名）已在配置中则不追加，避免同一
+          // 应用以两个 CLI 名重复出现。
+          final canonical = _guiEquivalentIdes[ide];
+          final aliasOf = _guiEquivalentIdes.entries
+              .where((e) => e.value == ide)
+              .map((e) => e.key)
+              .toSet();
+          if ((canonical != null && merged.contains(canonical)) ||
+              aliasOf.any(merged.contains)) {
+            continue;
           }
+          merged.add(ide);
+          added.add(ide);
         }
-        if (added.isNotEmpty) {
+        // 清理与规范名共存的别名（同一应用重复出现，如旧配置或早前
+        // 版本扫描写入的）。
+        final removed = merged
+            .where((ide) =>
+                _guiEquivalentIdes[ide] != null &&
+                merged.contains(_guiEquivalentIdes[ide]!))
+            .toList();
+        if (removed.isNotEmpty) {
+          merged.removeWhere((ide) => removed.contains(ide));
+        }
+        if (added.isNotEmpty || removed.isNotEmpty) {
           await writeGuiIdeOrder(merged);
         }
         req.response.headers.contentType = ContentType.json;
@@ -174,6 +194,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             'order': merged,
             'installed': installed,
             'added': added,
+            'removed': removed,
           }),
         );
       } catch (e) {
@@ -2004,6 +2025,13 @@ List<String> readGuiIdeOrderList() {
   return names.isEmpty ? List<String>.of(_guiDefaultIdeOrder) : names;
 }
 
+/// 等价别名：同一 IDE 的不同 CLI 名（如 Qoder CN IDE.app 同时提供
+/// qodercn 与 qoder-cn 两个命令，指向同一个应用，不重复出现在列表中）。
+/// key 为别名，value 为规范名（与 daemon 侧去重逻辑一致）。
+const Map<String, String> _guiEquivalentIdes = <String, String>{
+  'qoder-cn': 'qodercn',
+};
+
 // ---------------------------------------------------------------------------
 // 设备发现与日志行解析（纯函数，供单测覆盖）
 // ---------------------------------------------------------------------------
@@ -3506,9 +3534,10 @@ function loadIdeOrder(){
     if (!d.ok) return;
     ideOrder = d.order || []; ideInstalled = d.installed || [];
     renderIdeOrder();
-    if (d.added && d.added.length) {
-      document.getElementById('ide-order-tip').textContent = '检测到新安装的 IDE，已追加到列表末尾：' + d.added.join(', ');
-    }
+    var tips = [];
+    if (d.added && d.added.length) tips.push('检测到新安装的 IDE，已追加到末尾：' + d.added.join(', '));
+    if (d.removed && d.removed.length) tips.push('已移除重复的等价别名：' + d.removed.join(', '));
+    if (tips.length) document.getElementById('ide-order-tip').textContent = tips.join('；');
   }).catch(function(){});
 }
 function renderIdeOrder(){
