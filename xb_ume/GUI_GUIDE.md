@@ -161,6 +161,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - **类型**（MaterialPageRoute / DialogRoute / BottomSheet 等，弹窗也是路由栈的一层）；
 - **参数**（`settings.arguments` 的摘要，悬停看完整内容；复杂对象只显示 toString/类型）；
 - **文件**（该页面对应的源码文件名：类声明行，如 `device_advanced_config_page.dart:15`，悬停看完整路径与类名；无法解析时显示 `—`）；
+- **Widget / State / Notifier**（页面 Widget 类名 / 其 State 类名 / State 字段里的 ChangeNotifier 子类类名，无则显示 `\`）；**点击名称会跳到「实例」Tab 并自动查找该类的实例**（复用实例 Tab 的 Element 树 + 堆扫描双通道查找）；
 - **定位**（行尾「跳转」链接，见下文）；
 - 栈顶当前路由带 **● 当前** 高亮标记。
 
@@ -169,6 +170,8 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 **跳转到源码**：点击行尾「跳转」会用配置的 IDE 打开「文件」列对应的源码文件（定位到页面 Widget 类声明行，不到具体行列）。实现原理：收集该路由子树内的 widget（浅→深）→ 逐个查其类的定义库 → 跳过 Flutter 框架内置类，取第一个能解析到本机源文件的用户类 → 按 `ideOrder` 优先级唤起 IDE（与守护进程的 IDE 跳转同一份 `~/.xb_ume_ide/config.json` 配置）。项目根从调试会话的库路径自动推导，包依赖经项目的 `.dart_tool/package_config.json` 解析；依赖包源码不在本机或整条路由都是框架组件时会提示失败原因。IDE 一个都没找到时会把路径复制到剪贴板兑底。
 
 **刷新方式**：切换到本 Tab 自动拉取一次；也可点「刷新」手动拉取（导航、开关弹窗后点刷新即可看到最新栈）。
+
+**Widget / State / Notifier 列原理**：纯静态解析、零 VM 调用——复用「跳转」已定位 到的用户 widget 类源文件：State 名取 `createState()` 的返回类型；ChangeNotifier 名 取 State 字段里第一个沿 `extends` 链能到 ChangeNotifier 的类型（仅搜本机项目 `lib/`，框架类型与外部包类型自然跳过）。解析在浏览器加载后自动进行，无需点击。
 
 **原理**：通过 VM service 在 app 进程内（`navigator.dart` 库上下文）读取 NavigatorState 的路由历史，零 app 端改动；仅 debug 模式可用。
 

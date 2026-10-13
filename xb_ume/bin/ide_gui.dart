@@ -281,6 +281,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       try {
         // 单行 IIFE（VM eval 对多行 IIFE 会返回未调用的 Closure）。
         // 在 navigator.dart 库上下文执行：可访问 NavigatorState 的私有 _history。
+        // Widget/State/ChangeNotifier 名由 /api/routeinfo 按路由单独解析。
         final raw = await rpc.evalStringOn(
           'package:flutter/src/widgets/navigator.dart',
           "(() { final root = WidgetsBinding.instance.renderViewElement; "
@@ -335,6 +336,36 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } finally {
         await rpc.close();
       }
+      return;
+    }
+    // -- 路由的 State / ChangeNotifier 解析 ---------------------------------
+    // 纯静态解析（不再连 VM）：routelocate 已定位到路由子树中第一个用户
+    // widget 类的源文件，State 名取该类 createState() 的返回类型；
+    // ChangeNotifier 名取 State 字段里第一个沿 extends 链能到
+    // ChangeNotifier 的类型（仅搜本机项目源码，框架类型自然跳过）。
+    if (path == '/api/routeinfo') {
+      final file = req.uri.queryParameters['file'] ?? '';
+      final cls = req.uri.queryParameters['class']?.trim() ?? '';
+      if (file.isEmpty ||
+          cls.isEmpty ||
+          !File(file).existsSync()) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      String state = '';
+      String cn = '';
+      try {
+        (state, cn) = _routeStateAndNotifier(file, cls);
+      } catch (_) {}
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': true,
+        'widget': cls,
+        'state': state,
+        'cn': cn,
+      }));
+      await req.response.close();
       return;
     }
     // -- 路由跳转定位 -------------------------------------------------------
@@ -2940,6 +2971,133 @@ int _findClassDeclLine(String path, String className) {
   return 1;
 }
 
+// -- 路由 State / ChangeNotifier 的静态源码解析 ------------------------------
+// 前置条件：routelocate 已把路由子树中第一个用户 widget 类定位到本机源
+// 文件。State 名与 ChangeNotifier 名均从源码推导，不再连 VM：
+//   State 名 = widget 类 createState() 的返回类型；
+//   ChangeNotifier 名 = State 字段里第一个沿 extends 链能到
+//   ChangeNotifier 的类型（仅搜本机项目 lib/，框架类型自然跳过）。
+
+/// 从 widget 类源码静态解析（State 类名, ChangeNotifier 类名）。
+(String, String) _routeStateAndNotifier(String widgetFile, String widgetCls) {
+  final src = File(widgetFile).readAsStringSync();
+  final widgetBody = _classBodyOf(src, widgetCls);
+  if (widgetBody == null) return ('', '');
+  // createState() => _HomePageState(); / createState() { return _HomePageState(); }
+  final sm = RegExp(r'createState\s*\(\s*\)\s*(?:=>|=>)\s*([A-Za-z_$][\w$]*)')
+          .firstMatch(widgetBody) ??
+      RegExp(r'createState\s*\(\s*\)\s*\{\s*(?:return\s+)?([A-Za-z_$][\w$]*)')
+          .firstMatch(widgetBody);
+  final stateName = sm?.group(1);
+  if (stateName == null || stateName.isEmpty) return ('', '');
+  // State 类多与 widget 同文件（私有类）；不在时按项目类索引找。
+  var stateBody = _classBodyOf(src, stateName);
+  if (stateBody == null) {
+    final root = _pubspecRootFor(widgetFile);
+    final f = root == null ? null : _clsFileIndexFor(root)[stateName];
+    if (f != null) stateBody = _classBodyOf(File(f).readAsStringSync(), stateName);
+  }
+  if (stateBody == null) return (stateName, '');
+  return (stateName, _notifierFieldOf(stateBody, widgetFile));
+}
+
+/// 源码中类 <clsName> 的类体（大括号配平截取，不含外层花括号）。
+String? _classBodyOf(String src, String clsName) {
+  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+              '${RegExp.escape(clsName)}[\\s<]')
+      .firstMatch(src);
+  if (m == null) return null;
+  final open = src.indexOf('{', m.end);
+  if (open < 0) return null;
+  var depth = 0;
+  for (var i = open; i < src.length; i++) {
+    if (src[i] == '{') depth++;
+    if (src[i] == '}') {
+      depth--;
+      if (depth == 0) return src.substring(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/// 源文件中类 <clsName> 声明子句里的直接父类名（无 extends 返回 null）。
+String? _superClassOf(String src, String clsName) {
+  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+)*class\\s+'
+              '${RegExp.escape(clsName)}[\\s<][^{]*\\{')
+      .firstMatch(src);
+  if (m == null) return null;
+  return RegExp(r'\bextends\s+([A-Za-z_$][\w$]*)').firstMatch(m.group(0)!)?.group(1);
+}
+
+/// State 类体中第一个 ChangeNotifier 子类字段的类型名（没有返回空串）。
+String _notifierFieldOf(String stateBody, String stateFile) {
+  final root = _pubspecRootFor(stateFile);
+  // 字段声明：修饰符 + 类型（可泛型/可空）+ 字段名，以 = 或 ; 结尾。
+  final fieldRe = RegExp(
+      r'^\s*(?:final\s+|late\s+|const\s+|static\s+)*'
+      r'([A-Za-z_$][\w$]*)(?:<[^;=]*?>)?\??\s+_?[a-z][\w$]*\s*(?:=|;)',
+      multiLine: true);
+  final seen = <String>{};
+  for (final m in fieldRe.allMatches(stateBody)) {
+    final t = m.group(1)!;
+    if (!seen.add(t)) continue;
+    if (t == 'ChangeNotifier' || t == 'ValueNotifier') return t;
+    if (root != null && _extendsChangeNotifier(t, root, 0)) return t;
+  }
+  return '';
+}
+
+/// 项目内类型 <type> 是否沿 extends 链最终继承 ChangeNotifier。
+bool _extendsChangeNotifier(String type, String root, int depth) {
+  if (type == 'ChangeNotifier' || type == 'ValueNotifier') return true;
+  if (depth > 4) return false;
+  final f = _clsFileIndexFor(root)[type];
+  if (f == null) return false; // 框架/外部类型，不在本机项目内。
+  try {
+    final sup = _superClassOf(File(f).readAsStringSync(), type);
+    if (sup == null) return false;
+    return _extendsChangeNotifier(sup, root, depth + 1);
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 从文件向上找 pubspec.yaml 所在目录（项目根）；找不到返回 null。
+String? _pubspecRootFor(String file) {
+  var dir = File(file).parent.path;
+  while (true) {
+    if (File('$dir/pubspec.yaml').existsSync()) return dir;
+    final up = Directory(dir).parent.path;
+    if (up == dir) return null;
+    dir = up;
+  }
+}
+
+/// 项目根 →（类名 → 类所在 lib 文件路径）索引，每个根首次构建后缓存。
+final Map<String, Map<String, String>> _clsFileCache = <String, Map<String, String>>{};
+
+Map<String, String> _clsFileIndexFor(String root) {
+  return _clsFileCache.putIfAbsent(root, () {
+    final idx = <String, String>{};
+    final lib = Directory('$root/lib');
+    if (lib.existsSync()) {
+      for (final ent in lib.listSync(recursive: true)) {
+        if (ent is! File || !ent.path.endsWith('.dart')) continue;
+        String src;
+        try {
+          src = ent.readAsStringSync();
+        } catch (_) {
+          continue;
+        }
+        for (final m in RegExp(r'\bclass\s+([A-Za-z_$][\w$]*)').allMatches(src)) {
+          idx.putIfAbsent(m.group(1)!, () => ent.path);
+        }
+      }
+    }
+    return idx;
+  });
+}
+
 /// 发现本机连接的设备：Android（adb）/ 鸿蒙（hdc）/ iOS（仅 macOS）。
 Future<List<Map<String, String>>> discoverDevices() async {
   final devices = <Map<String, String>>[];
@@ -3604,7 +3762,7 @@ function rtRender(d){
     var routes = nav.routes || [];
     html += '<div style="margin:8px 0 2px"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span></div>';
     if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
-    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th></tr>';
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>Widget / State / Notifier</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th></tr>';
     routes.forEach(function(r, i){
       var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
       var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
@@ -3613,12 +3771,28 @@ function rtRender(d){
       var args = r.argsType
         ? '<span title="' + esc(r.argsType + (r.args ? ' ' + r.args : '')) + '">' + esc((r.args || '').length > 60 ? r.args.substring(0, 60) + '…' : (r.args || '空')) + ' <span class="muted">(' + esc(r.argsType) + ')</span></span>'
         : '<span class="muted">—</span>';
+      // Widget/State/Notifier 三列：名称由 rtResolve→rtInfo 静态解析后填充，
+      // 空显示 \；点击名称跳到实例 Tab 自动查找。
+      var instCell = '<td id="rti-' + nav.index + '-' + i + '" style="white-space:nowrap"><span class="muted">…</span></td>';
       var jump = '<a href="javascript:void(0)" onclick="rtJump(' + nav.index + ',' + i + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
-      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
+      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + instCell + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
     });
     html += '</table>';
   });
   return html;
+}
+// Widget/State/Notifier 名称单元格：无则显示 \\，有则可点击跳实例 Tab。
+function rtInstLink(name, tip){
+  if (!name) return '<span class="muted" title="未找到">\\</span>';
+  return '<a href="javascript:void(0)" style="font-family:monospace" title="' + esc(tip) + '：点击跳到「实例」Tab 自动查找 ' + esc(name) + '" onclick="rtToInstances(\'' + esc(name).replace(/'/g, "\\'") + '\')">' + esc(name) + '</a>';
+}
+// 跳到实例 Tab 并自动查找指定类名。
+function rtToInstances(name){
+  if (!name) return;
+  var tab = document.querySelector('.tab[data-tab="instances"]');
+  if (tab) tab.click();
+  document.getElementById('in-cls').value = name;
+  inFind();
 }
 function rtResolve(nav, i){
   var uri = rtUri();
@@ -3628,12 +3802,29 @@ function rtResolve(nav, i){
     .then(function(d){
       var cell = document.getElementById('rtf-' + nav + '-' + i);
       if (!cell) return;
-      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(d.error || '未定位到文件') + '">—</span>'; return; }
+      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(d.error || '未定位到文件') + '">—</span>'; var re = document.getElementById('rti-' + nav + '-' + i); if (re) re.innerHTML = '<span class="muted">\\</span>'; return; }
       var fileName = d.file.split('/').pop();
       var pos = fileName + (d.line ? ':' + d.line : '');
       cell.innerHTML = '<span title="' + esc(d.file + (d.className ? '（' + d.className + '）' : '')) + '">' + esc(pos) + '</span>';
+      // 已定位到用户 widget 类的源文件：静态解析 State / ChangeNotifier 名。
+      if (d.className && d.file) rtInfo(nav, i, d.className, d.file);
+      else { var rc = document.getElementById('rti-' + nav + '-' + i); if (rc) rc.innerHTML = '<span class="muted" title="未定位到用户代码 Widget">\\</span>'; }
     })
-    .catch(function(){ var cell = document.getElementById('rtf-' + nav + '-' + i); if (cell) cell.innerHTML = '<span class="muted">—</span>'; });
+    .catch(function(){ var cell = document.getElementById('rtf-' + nav + '-' + i); if (cell) cell.innerHTML = '<span class="muted">—</span>'; var rc = document.getElementById('rti-' + nav + '-' + i); if (rc) rc.innerHTML = '<span class="muted">\\</span>'; });
+}
+// 用 routelocate 已定位到的 widget 类与源文件静态解析 State / ChangeNotifier 名。
+function rtInfo(nav, i, widgetCls, file){
+  fetch('/api/routeinfo?class=' + encodeURIComponent(widgetCls) + '&file=' + encodeURIComponent(file))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var cell = document.getElementById('rti-' + nav + '-' + i);
+      if (!cell) return;
+      if (!d || !d.ok) { cell.innerHTML = '<span class="muted">\\</span>'; return; }
+      cell.innerHTML = rtInstLink(d.widget, 'Widget 实例（堆扫描）') + ' <span class="muted">/</span> '
+        + rtInstLink(d.state, 'State 实例（Element 树 + 堆扫描）') + ' <span class="muted">/</span> '
+        + rtInstLink(d.cn, 'ChangeNotifier 实例（堆扫描）');
+    })
+    .catch(function(){ var c = document.getElementById('rti-' + nav + '-' + i); if (c) c.innerHTML = '<span class="muted">\\</span>'; });
 }
 function rtJump(nav, idx, a){
   var uri = rtUri();
