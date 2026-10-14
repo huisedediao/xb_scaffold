@@ -355,6 +355,82 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    // -- 路由操作 -------------------------------------------------------------
+    // 经 VM service evaluate 在 app 进程内执行 Navigator 操作（debug 可用）：
+    // pop 仅限栈顶（走转场）；remove 任意非唯一路由（无转场直接出栈）；
+    // push 先经私有 _routeNamed 校验路由名再 push 生成的 Route 对象——
+    // 同步完成，名字解析不出立刻返回 UNKNOWN，不会产生悬挂 Future。
+    if (path == '/api/routeop' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final op = req.uri.queryParameters['op'] ?? '';
+      final nav = int.tryParse(req.uri.queryParameters['nav'] ?? '0') ?? 0;
+      final idx = int.tryParse(req.uri.queryParameters['idx'] ?? '-1') ?? -1;
+      final name = req.uri.queryParameters['name'] ?? '';
+      if (uri.isEmpty ||
+          (op != 'pop' && op != 'remove' && op != 'push') ||
+          (op == 'push' && name.isEmpty)) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        // Navigator 收集逻辑与 /api/routestack 一致（单行 IIFE，
+        // navigator.dart 库上下文可访问私有 _history）。
+        const walk = "final root = WidgetsBinding.instance.renderViewElement; "
+            "if (root == null) return 'NO_ROOT'; "
+            "final navigators = <NavigatorState>[]; "
+            "void walk(Element e) { final w = e.widget; "
+            "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) { navigators.add(e.state as NavigatorState); } "
+            "e.visitChildren(walk); } "
+            "root.visitChildren(walk); ";
+        String expr;
+        switch (op) {
+          case 'pop':
+            expr = "(() { $walk"
+                "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                "final h = navigators[$nav]._history; "
+                "if ($idx < 0 || $idx >= h.length) return 'BAD_IDX'; "
+                "if ($idx != h.length - 1) return 'NOT_TOP'; "
+                "navigators[$nav].pop(); return 'OK'; })()";
+          case 'remove':
+            expr = "(() { $walk"
+                "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                "final h = navigators[$nav]._history; "
+                "if ($idx < 0 || $idx >= h.length) return 'BAD_IDX'; "
+                // 栈里只剩一条（初始路由）时不允许移除，避免整窗白屏。
+                "if (h.length <= 1) return 'LAST_ROUTE'; "
+                "navigators[$nav].removeRoute(h[$idx].route); return 'OK'; })()";
+          default: // push（入口已校验 name 非空）
+            final escName = _escEvalString(name);
+            expr = "(() { $walk"
+                "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                // 未配置路由表的 Navigator（如纯面板容器）不支持命名路由。
+                "if (navigators[$nav].widget.onGenerateRoute == null) return 'NO_ROUTE_TABLE'; "
+                "try { final r = navigators[$nav]._routeNamed('$escName', arguments: null); "
+                "if (r == null) return 'UNKNOWN'; "
+                "navigators[$nav].push(r); return 'OK'; "
+                "} catch (e) { return 'ERR:' + e.runtimeType.toString(); } })()";
+        }
+        final reply = await rpc.evalStringOn(
+          'package:flutter/src/widgets/navigator.dart',
+          expr,
+        );
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'result': reply}),
+        );
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
     // -- 路由的 State / ChangeNotifier 解析 ---------------------------------
     // 纯静态解析（不再连 VM）：routelocate 已定位到路由子树中第一个用户
     // widget 类的源文件，State 名取该类 createState() 的返回类型；
@@ -4054,7 +4130,7 @@ const String guiHtml = r'''
       <span class="muted">选中会话 app 的 Navigator 路由栈（栈底 → 栈顶，当前路由高亮）</span>
     </div>
     <div id="rt-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。</div>
+    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。行尾「操作」列可对路由执行 pop（仅栈顶，走转场）/ remove（直接出栈）；每个 Navigator 分组头部的输入框可 pushNamed 指定名字的路由（需 app 配置了 routes/onGenerateRoute，名字解析不出会明确报 UNKNOWN）。</div>
   </section>
   <section class="page" id="page-network">
     <div style="display:flex;align-items:center;gap:10px">
@@ -4463,9 +4539,12 @@ function rtRender(d){
   var html = '';
   navs.forEach(function(nav){
     var routes = nav.routes || [];
-    html += '<div style="margin:8px 0 2px"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span></div>';
+    html += '<div style="margin:8px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span>'
+      + '<input id="rt-name-' + nav.index + '" placeholder="pushNamed 路由名，如 /" style="width:200px;margin-left:10px" onkeydown="if(event.key===\'Enter\')rtPush(' + nav.index + ')">'
+      + '<button onclick="rtPush(' + nav.index + ')" title="在 app 内经 Navigator.pushNamed 压入指定名字的路由">pushNamed</button>'
+      + '<span id="rt-pushmsg-' + nav.index + '" class="muted"></span></div>';
     if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
-    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>Widget / State / Notifier</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th></tr>';
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>Widget / State / Notifier</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th><th>操作</th></tr>';
     routes.forEach(function(r, i){
       var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
       var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
@@ -4478,7 +4557,15 @@ function rtRender(d){
       // 空显示 \；点击名称跳到实例 Tab 自动查找。
       var instCell = '<td id="rti-' + nav.index + '-' + i + '" style="white-space:nowrap"><span class="muted">…</span></td>';
       var jump = '<a href="javascript:void(0)" onclick="rtJump(' + nav.index + ',' + i + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
-      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + instCell + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td></tr>';
+      // 操作列：pop 仅栈顶且非唯一路由（走转场）；remove 任意非唯一路由（直接出栈）。
+      var ops = '';
+      if (i === routes.length - 1 && routes.length > 1) {
+        ops += '<a href="javascript:void(0)" onclick="rtOp(' + nav.index + ',' + i + ',\'pop\',this)" title="pop 该路由（仅栈顶可用，走转场动画）">pop</a>';
+      }
+      if (routes.length > 1) {
+        ops += (ops ? ' <span class="muted">·</span> ' : '') + '<a href="javascript:void(0)" onclick="rtOp(' + nav.index + ',' + i + ',\'remove\',this)" title="直接从栈中移除该路由（无转场）">remove</a>';
+      }
+      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + instCell + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td><td style="white-space:nowrap">' + (ops || '<span class="muted">—</span>') + '</td></tr>';
     });
     html += '</table>';
   });
@@ -4548,6 +4635,55 @@ function rtJump(nav, idx, a){
       setTimeout(function(){ td.innerHTML = orig; }, 2000);
     })
     .catch(function(e){ td.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; });
+}
+// 路由操作结果码 → 友好提示。
+function rtOpMsg(m){
+  if (m === 'NO_ROOT') return 'app 尚未完成首帧';
+  if (m === 'BAD_NAV' || m === 'BAD_IDX') return '路由栈已变化，请刷新后重试';
+  if (m === 'NOT_TOP') return '仅栈顶路由可 pop（非栈顶请用 remove）';
+  if (m === 'LAST_ROUTE') return '栈里只剩一条路由，不能移除';
+  if (m === 'UNKNOWN') return '该 Navigator 无法生成此名字的路由（名字未注册或未配置 routes/onGenerateRoute）';
+  if (m === 'NO_ROUTE_TABLE') return '该 Navigator 未配置 routes/onGenerateRoute，pushNamed 不可用';
+  if (m.indexOf('ERR:') === 0) return 'app 内执行报错（' + m.substring(4) + '）：常见原因是路由名未注册，框架路由插件对未知名字会抛错而非返回 null';
+  return m;
+}
+// 路由栈行尾操作：pop / remove（成功后延迟刷新，留出转场时间）。
+function rtOp(nav, idx, op, a){
+  var uri = rtUri();
+  if (!uri) return;
+  a.textContent = '…';
+  fetch('/api/routeop?uri=' + encodeURIComponent(uri) + '&op=' + op + '&nav=' + nav + '&idx=' + idx, {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { a.textContent = '✗'; a.title = rtOpMsg(d.error); return; }
+      var m = d.result || '';
+      // 双次延迟刷新：remove/pop 的出栈在 app 端可能要等一帧才真正
+      // purge（转场调度），单次 400ms 刷新实测会拉到旧栈（竞态）。
+      if (m === 'OK') { setTimeout(rtRefresh, 600); setTimeout(rtRefresh, 1500); return; }
+      a.textContent = '✗';
+      a.title = rtOpMsg(m);
+    })
+    .catch(function(e){ a.textContent = '✗ ' + esc(String(e)); });
+}
+// 分组头部的 pushNamed：在 app 内压入指定名字的路由。
+function rtPush(nav){
+  var uri = rtUri();
+  if (!uri) return;
+  var input = document.getElementById('rt-name-' + nav);
+  var msg = document.getElementById('rt-pushmsg-' + nav);
+  if (!input || !msg) return;
+  var name = (input.value || '').trim();
+  if (!name) { msg.textContent = '请输入路由名'; return; }
+  msg.textContent = 'push 中…';
+  fetch('/api/routeop?uri=' + encodeURIComponent(uri) + '&op=push&nav=' + nav + '&name=' + encodeURIComponent(name), {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { msg.textContent = '失败：' + d.error; return; }
+      var m = d.result || '';
+      if (m === 'OK') { input.value = ''; msg.textContent = '✓ 已 push'; setTimeout(rtRefresh, 600); setTimeout(rtRefresh, 1500); return; }
+      msg.textContent = '✗ ' + rtOpMsg(m);
+    })
+    .catch(function(e){ msg.textContent = '失败：' + String(e); });
 }
 
 // -- Network Tab ------------------------------------------------------------

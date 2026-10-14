@@ -164,6 +164,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - **文件**（该页面对应的源码文件名：类声明行，如 `device_advanced_config_page.dart:15`，悬停看完整路径与类名；无法解析时显示 `—`）；
 - **Widget / State / Notifier**（页面 Widget 类名 / 其 State 类名 / ChangeNotifier 类名，无则显示 `\`；**State 有多个 CN 字段时全部列出，页面用 Provider `Consumer2/3/4<...>` 监听的多个 CN 也会被识别**——泛型参数逐个验证是否 CN 子类）；**点击名称会跳到「实例」Tab 并自动查找该类的实例**（复用实例 Tab 的 Element 树 + 堆扫描双通道查找）；
 - **定位**（行尾「跳转」链接，见下文）；
+- **操作**（行尾「pop」/「remove」链接，见下文「路由操作」）；
 - 栈顶当前路由带 **● 当前** 高亮标记。
 
 嵌套 Navigator（如底部导航每个 Tab 内的 Navigator）分组展示为 Navigator #1、#2… 。
@@ -175,6 +176,19 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 **Widget / State / Notifier 列原理**：纯静态解析、零 VM 调用——复用「跳转」已定位 到的用户 widget 类源文件：State 名取 `createState()` 的返回类型；ChangeNotifier 名 取 State 字段里沿 `extends` 链能到 ChangeNotifier 的类型，加上同文件内 `ConsumerN<...>` 泛型参数（均仅搜本机项目 `lib/`，框架类型与外部包类型自然跳过）。解析在浏览器加载后自动进行，无需点击。
 
 **原理**：通过 VM service 在 app 进程内（`navigator.dart` 库上下文）读取 NavigatorState 的路由历史，零 app 端改动；仅 debug 模式可用。
+
+### 路由操作（pop / remove / pushNamed）
+
+每个 Navigator 分组头部有 **pushNamed 输入框**：输入路由名回车或点按钮，会在 app 内经 `Navigator.pushNamed` 压入该名字的路由。实现上先经 `_routeNamed` 校验：名字解析不出立即报 `UNKNOWN`（名字未注册或该 Navigator 未配置 routes/onGenerateRoute）；部分路由框架（如 Get）对未知名字是抛错而非返回 null，此时提示 `app 内执行报错（FlutterError）`。
+
+行尾「操作」列：
+
+- **pop**：仅栈顶且非唯一路由时可用，走转场动画（与用户手势返回一致）；
+- **remove**：任意非唯一路由可用，无转场直接出栈（`Navigator.removeRoute`），适合清理中间残留路由（如反复 push 后忘记退出的测试页）。
+
+操作成功后表格自动刷新（双次延迟，避免拉到出栈前的旧栈）；失败时链接变 ✗，悬停看原因（如「仅栈顶路由可 pop」「栈里只剩一条路由，不能移除」——唯一路由受保护，避免整窗白屏）。
+
+**macOS 桌面会话注意**：app 窗口切到后台（最小化/被遮挡到 hidden）后 Flutter 会暂停帧调度，未完成的转场会冻结在过渡态，此时 pop/remove 虽返回成功但出栈要等窗口回前台、转场完成后才真正生效，路由栈也会显示卡在过渡态的路由。把 app 窗口带回前台即可恢复；真机/模拟器会话无此问题。
 
 ## 六、Network（Tab「Network」）
 
