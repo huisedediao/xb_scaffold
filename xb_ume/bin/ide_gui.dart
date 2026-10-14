@@ -2100,12 +2100,13 @@ Future<Map<String, Object?>> _instNode(
       if (f is! Map) continue;
       final decl = f['decl'] as Map?;
       final ref = f['value'];
-      children.add(
-        await expandRef(
-          decl?['name']?.toString() ?? '?',
-          ref is Map ? ref : <String, Object?>{},
-        ),
+      final child = await expandRef(
+        decl?['name']?.toString() ?? '?',
+        ref is Map ? ref : <String, Object?>{},
       );
+      // 「仅用户字段」过滤依据：字段声明所属类是否 SDK。
+      child['sdk'] = _fieldIsSdk(decl);
+      children.add(child);
     }
   } else if (vstr != null) {
     node['kind'] = 'value';
@@ -2118,6 +2119,17 @@ Future<Map<String, Object?>> _instNode(
   }
   if (children.isNotEmpty) node['children'] = children;
   return node;
+}
+
+/// 字段声明所属类是否 Flutter/dart SDK（实例 Tab「仅用户字段」过滤用）。
+/// VM 返回的 @Field decl.owner（@Class ref）内嵌 library uri，零额外 RPC；
+/// owner/library 缺失时视为用户字段（保守显示）。
+bool _fieldIsSdk(Map? decl) {
+  final owner = decl?['owner'];
+  final libUri = owner is Map
+      ? ((owner['library'] as Map?)?['uri'] ?? '').toString()
+      : '';
+  return libUri.startsWith('dart:') || libUri.startsWith('package:flutter/');
 }
 
 /// 计算 p 相对于 root 的 tar 内路径（同一 os 分隔符体系）。
@@ -4406,6 +4418,7 @@ function resetIdeOrder(){
 }
 // ── 实例 Tab：注册表/类名查找定位实例，字段树展开与编辑写回 ──
 var inItems = [], inCurId = '', inCurName = '';
+var inCurNode = null; // 当前字段树数据缓存（勾选切换时本地重渲染用）
 function inUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function inActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'instances'; }
 function inStat(s){ document.getElementById('in-stat').textContent = s; }
@@ -4477,15 +4490,26 @@ function inShowId(id, name){
   tree.innerHTML = '<span class="muted">加载字段树…</span>';
   inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&depth=3').then(function(d){
     if (!d.ok) { tree.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
+    inCurNode = d.node;
+    // 标题栏会随 innerHTML 重建，勾选框状态先从旧 DOM 读出来带回。
+    var prevBox = document.getElementById('in-user-only');
+    var userOnly = prevBox ? prevBox.checked : true;
     tree.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><b>' + esc(name) + '</b>'
       + '<span class="muted" style="font-size:12px">' + esc(String(id).slice(0, 14)) + '…</span>'
+      + '<label style="font-size:12px;display:flex;align-items:center;gap:3px" title="勾选时隐藏 Flutter/dart SDK 类声明的字段（如 ChangeNotifier 内部的 _count/_listeners），只看业务字段">'
+      + '<input type="checkbox" id="in-user-only"' + (userOnly ? ' checked' : '') + ' onchange="inToggleUserOnly()"> 仅用户字段</label>'
       + '<button onclick="inShowId(inCurId, inCurName)" title="重新拉取；值有变化的字段会整行高亮并标注旧值">刷新</button></div>'
-      + '<div style="font-family:monospace;font-size:12.5px;margin-top:4px">' + inNode(d.node, 0, id, '') + '</div>';
+      + '<div id="in-tree-body" style="font-family:monospace;font-size:12.5px;margin-top:4px">' + inNode(inCurNode, 0, id, '') + '</div>';
     // 本次渲染结果合并进基线（保留已展开子树的深层字段，供下次刷新对比）。
     var fresh = inFlatten(d.node, '');
     for (var k in fresh) inSnap[k] = fresh[k];
   }).catch(function(e){ tree.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
   });
+}
+// 勾选「仅用户字段」：用缓存的树数据本地重渲染（不重新请求、不重建标题栏）。
+function inToggleUserOnly(){
+  var body = document.getElementById('in-tree-body');
+  if (body && inCurNode) body.innerHTML = inNode(inCurNode, 0, inCurId, '');
 }
 // VM 内部类名 → 友好类型名（int 在 VM 里的类是 _Smi/_Mint 等）。
 function inTypeOf(cls){
@@ -4501,9 +4525,16 @@ function inVTypeOf(cls){
   if (t === 'int' || t === 'double' || t === 'bool' || t === 'null') return t;
   return 'string';
 }
+// 「仅用户字段」勾选状态；勾选框不存在时不过滤。
+function inUserOnly(){
+  var c = document.getElementById('in-user-only');
+  return c ? c.checked : false;
+}
 // 渲染字段树节点。ownerId 为本节点字段的宿主对象 id（编辑写回的目标）。
 function inNode(n, level, ownerId, path){
   var kind = n.kind || 'object';
+  // 「仅用户字段」：SDK 类声明的字段（含其整个子树）不渲染。
+  if (n.sdk && inUserOnly()) return '';
   var pad = 'padding-left:' + (level * 16) + 'px';
   var pathAttr = 'decodeURIComponent(\'' + encodeURIComponent(path || '') + '\')';
   // 与 inFlatten 一致的展示值；与上次快照不同则整行标注变更与旧值。
