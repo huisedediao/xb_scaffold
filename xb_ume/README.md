@@ -61,8 +61,12 @@ class MyApp extends StatelessWidget {
 ```dart
 final notifier = context.read<UserNotifier>();
 XBUme.registerStore('userNotifier', notifier); // 重复 id 覆盖
-// XBUmeStoreRegistry.unregister('userNotifier'); // 取消注册
+// XBUmeStoreRegistry.unregister('userNotifier'); // 可选：让 GUI 列表立即移除该条目
 ```
+
+注册表内部用 `WeakReference` 弱持有：**注册不会延长对象生命周期**，页面级
+controller 忘记 unregister 也会随页面销毁被正常 GC，不会内存泄露（GUI 列表自动
+不再显示已回收的条目）。
 
 不注册也能用：GUI 里输入类名可直接查找实例（Element 树 + 堆扫描双通道）。
 

@@ -281,7 +281,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       try {
         // 单行 IIFE（VM eval 对多行 IIFE 会返回未调用的 Closure）。
         // 在 navigator.dart 库上下文执行：可访问 NavigatorState 的私有 _history。
-        // Widget/State/ChangeNotifier 名由 /api/routeinfo 按路由单独解析。
+        // Widget/State/ChangeNotifier 名由 /api/routeinfo 静态解析
+        // （State 字段 + 同文件 ConsumerN 泛型参数，全部收集）。
         final raw = await rpc.evalStringOn(
           'package:flutter/src/widgets/navigator.dart',
           "(() { final root = WidgetsBinding.instance.renderViewElement; "
@@ -354,16 +355,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         return;
       }
       String state = '';
-      String cn = '';
+      List<String> cnList = const <String>[];
       try {
-        (state, cn) = _routeStateAndNotifier(file, cls);
+        (state, cnList) = _routeStateAndNotifier(file, cls);
       } catch (_) {}
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'ok': true,
         'widget': cls,
         'state': state,
-        'cn': cn,
+        'cn': cnList,
       }));
       await req.response.close();
       return;
@@ -1095,11 +1096,21 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       final rpc = _SandboxRpc(uri);
       try {
-        // 注册表 Map<String, Object>：key 为注册 id，value 为实例引用。
-        final mapRef = await rpc.evalRefOn(
-          'package:xb_ume/src/core/xb_ume_store_registry.dart',
-          'XBUmeStoreRegistry._stores',
-        );
+        // 注册表：_stores 值是 WeakReference，经 resolvedStores getter 解包
+        // 为存活实例的临时强引用副本（eval 期间存活，不影响 GC 语义）；
+        // 旧版 app 端无该 getter 时回退直读 _stores（强引用版注册表）。
+        Map<String, Object?> mapRef;
+        try {
+          mapRef = await rpc.evalRefOn(
+            'package:xb_ume/src/core/xb_ume_store_registry.dart',
+            'XBUmeStoreRegistry.resolvedStores',
+          );
+        } catch (_) {
+          mapRef = await rpc.evalRefOn(
+            'package:xb_ume/src/core/xb_ume_store_registry.dart',
+            'XBUmeStoreRegistry._stores',
+          );
+        }
         final iso = await rpc.isolateId();
         final map = await rpc.rawRpc('getObject', {
           'isolateId': iso,
@@ -2990,18 +3001,19 @@ int _findClassDeclLine(String path, String className) {
 //   ChangeNotifier 名 = State 字段里第一个沿 extends 链能到
 //   ChangeNotifier 的类型（仅搜本机项目 lib/，框架类型自然跳过）。
 
-/// 从 widget 类源码静态解析（State 类名, ChangeNotifier 类名）。
-(String, String) _routeStateAndNotifier(String widgetFile, String widgetCls) {
+/// 从 widget 类源码静态解析（State 类名, ChangeNotifier 类名列表）。
+/// State 可能持有多个 CN 字段（controller2/3/4…），全部收集。
+(String, List<String>) _routeStateAndNotifier(String widgetFile, String widgetCls) {
   final src = File(widgetFile).readAsStringSync();
   final widgetBody = _classBodyOf(src, widgetCls);
-  if (widgetBody == null) return ('', '');
+  if (widgetBody == null) return ('', const <String>[]);
   // createState() => _HomePageState(); / createState() { return _HomePageState(); }
   final sm = RegExp(r'createState\s*\(\s*\)\s*(?:=>|=>)\s*([A-Za-z_$][\w$]*)')
           .firstMatch(widgetBody) ??
       RegExp(r'createState\s*\(\s*\)\s*\{\s*(?:return\s+)?([A-Za-z_$][\w$]*)')
           .firstMatch(widgetBody);
   final stateName = sm?.group(1);
-  if (stateName == null || stateName.isEmpty) return ('', '');
+  if (stateName == null || stateName.isEmpty) return ('', const <String>[]);
   // State 类多与 widget 同文件（私有类）；不在时按项目类索引找。
   var stateBody = _classBodyOf(src, stateName);
   if (stateBody == null) {
@@ -3009,8 +3021,8 @@ int _findClassDeclLine(String path, String className) {
     final f = root == null ? null : _clsFileIndexFor(root)[stateName];
     if (f != null) stateBody = _classBodyOf(File(f).readAsStringSync(), stateName);
   }
-  if (stateBody == null) return (stateName, '');
-  return (stateName, _notifierFieldOf(stateBody, widgetFile));
+  if (stateBody == null) return (stateName, const <String>[]);
+  return (stateName, _notifierFieldsOf(stateBody, src, widgetFile));
 }
 
 /// 源码中类 <clsName> 的类体（大括号配平截取，不含外层花括号）。
@@ -3041,8 +3053,10 @@ String? _superClassOf(String src, String clsName) {
   return RegExp(r'\bextends\s+([A-Za-z_$][\w$]*)').firstMatch(m.group(0)!)?.group(1);
 }
 
-/// State 类体中第一个 ChangeNotifier 子类字段的类型名（没有返回空串）。
-String _notifierFieldOf(String stateBody, String stateFile) {
+/// State 类体中所有 ChangeNotifier 子类字段 + 同文件内 Provider
+/// ConsumerN<A, B, …> 泛型参数（页面用 Consumer2/3/4 监听多个 CN，
+/// 这些 CN 经 Provider 注入、不是 State 字段），去重保序。
+List<String> _notifierFieldsOf(String stateBody, String fileSrc, String stateFile) {
   final root = _pubspecRootFor(stateFile);
   // 字段声明：修饰符 + 类型（可泛型/可空）+ 字段名，以 = 或 ; 结尾。
   final fieldRe = RegExp(
@@ -3050,13 +3064,29 @@ String _notifierFieldOf(String stateBody, String stateFile) {
       r'([A-Za-z_$][\w$]*)(?:<[^;=]*?>)?\??\s+_?[a-z][\w$]*\s*(?:=|;)',
       multiLine: true);
   final seen = <String>{};
-  for (final m in fieldRe.allMatches(stateBody)) {
-    final t = m.group(1)!;
-    if (!seen.add(t)) continue;
-    if (t == 'ChangeNotifier' || t == 'ValueNotifier') return t;
-    if (root != null && _extendsChangeNotifier(t, root, 0)) return t;
+  final out = <String>[];
+  void probe(String t) {
+    if (!seen.add(t)) return;
+    if (t == 'ChangeNotifier' || t == 'ValueNotifier') {
+      out.add(t);
+    } else if (root != null && _extendsChangeNotifier(t, root, 0)) {
+      out.add(t);
+    }
   }
-  return '';
+
+  for (final m in fieldRe.allMatches(stateBody)) {
+    probe(m.group(1)!);
+  }
+  // ConsumerN<...>：泛型参数即被监听的类型，逐个验证是否 CN 子类
+  // （如 Consumer2<HomeController, AppTheme>；非 CN 参数自然被过滤）。
+  final consumerRe = RegExp(r'\bConsumer[2-9]<([^>]*)>');
+  for (final m in consumerRe.allMatches(fileSrc)) {
+    for (final raw in m.group(1)!.split(',')) {
+      final idm = RegExp(r'^[A-Za-z_$][\w$]*').firstMatch(raw.trim());
+      if (idm != null) probe(idm.group(0)!);
+    }
+  }
+  return out;
 }
 
 /// 项目内类型 <type> 是否沿 extends 链最终继承 ChangeNotifier。
@@ -3832,9 +3862,10 @@ function rtInfo(nav, i, widgetCls, file){
       var cell = document.getElementById('rti-' + nav + '-' + i);
       if (!cell) return;
       if (!d || !d.ok) { cell.innerHTML = '<span class="muted">\\</span>'; return; }
-      cell.innerHTML = rtInstLink(d.widget, 'Widget 实例（堆扫描）') + ' <span class="muted">/</span> '
-        + rtInstLink(d.state, 'State 实例（Element 树 + 堆扫描）') + ' <span class="muted">/</span> '
-        + rtInstLink(d.cn, 'ChangeNotifier 实例（堆扫描）');
+      // Widget/State/多个 ChangeNotifier（controller2/3/4…）全部可点击。
+      var parts = [rtInstLink(d.widget, 'Widget 实例（堆扫描）'), rtInstLink(d.state, 'State 实例（Element 树 + 堆扫描）')];
+      (d.cn || []).forEach(function(c){ parts.push(rtInstLink(c, 'ChangeNotifier 实例（堆扫描）')); });
+      cell.innerHTML = parts.join(' <span class="muted">/</span> ');
     })
     .catch(function(){ var c = document.getElementById('rti-' + nav + '-' + i); if (c) c.innerHTML = '<span class="muted">\\</span>'; });
 }
