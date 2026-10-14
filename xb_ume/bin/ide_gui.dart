@@ -82,6 +82,22 @@ Future<void> _mainImpl(List<String> args) async {
   await openBrowser(port);
   final state = GuiState();
   state.start();
+  // 优雅退出：kill（SIGTERM）/Ctrl-C（SIGINT）时先关闭全部 VM 会话连接
+  // 再退出。实测：持有流订阅（Stdout/Extension）的连接被硬切断后，
+  // DDS 会永久死锁（该会话此后对所有客户端无响应），必须主动 close
+  // 让 DDS 清理订阅状态；dispose 加超时兑底，避免 close 握手卡死退出。
+  ProcessSignal.sigterm.watch().first.then((_) async {
+    try {
+      await state.dispose().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    exit(0);
+  });
+  ProcessSignal.sigint.watch().first.then((_) async {
+    try {
+      await state.dispose().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    exit(0);
+  });
   try {
     await for (final req in server) {
       unawaited(handleRequest(state, req));
@@ -1153,6 +1169,40 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异常块 ──
+    if (path == '/api/exceptions') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+        jsonEncode(<String, Object?>{'items': state.exceptions}),
+      );
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/exceptions/clear' && req.method == 'POST') {
+      state.clearExceptions();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    // ── IDE 跳转：异常栈帧 / 相关 widget 的「跳转」用（异常 Tab）──
+    if (path == '/api/openide') {
+      final file = req.uri.queryParameters['file'] ?? '';
+      final line = int.tryParse(req.uri.queryParameters['line'] ?? '') ?? 1;
+      if (file.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final message = await _guiLaunchIde(file, line);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': message == null,
+        if (message != null) 'message': message,
+      }));
+      await req.response.close();
+      return;
+    }
     if (path == '/api/instances/stores') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
@@ -1567,6 +1617,13 @@ class GuiState {
   Timer? _pollTimer;
   Timer? _flushTimer;
 
+  /// 异常缓冲（全部会话汇总，最新在末尾；供异常 Tab 与 /api/exceptions）。
+  final List<Map<String, Object?>> _exceptions = <Map<String, Object?>>[];
+  int _excSeq = 0;
+
+  /// 输出流未捕获异常块的逐行解析器（key: uri|stream → tracker）。
+  final Map<String, _UncaughtTracker> _uncaught = <String, _UncaughtTracker>{};
+
   /// 每台设备一个日志流进程（所有设备并行采集，选择器只做前端过滤）。
   final Map<String, Process> _deviceLogProcesses = <String, Process>{};
   final Set<String> _deviceLogStartFailed = <String>{};
@@ -1575,6 +1632,15 @@ class GuiState {
 
   /// 日志环形缓冲（供 HTTP 导出接口读取）。
   List<Map<String, Object?>> get buffer => _buffer;
+
+  /// 异常缓冲只读视图（供 /api/exceptions）。
+  List<Map<String, Object?>> get exceptions =>
+      List<Map<String, Object?>>.unmodifiable(_exceptions);
+
+  void clearExceptions() {
+    _exceptions.clear();
+    broadcast(<String, Object?>{'type': 'exceptionsCleared'});
+  }
 
   void start() {
     unawaited(poll());
@@ -1752,7 +1818,7 @@ class GuiState {
       }
     }
     for (final uri in uris) {
-      for (final stream in const <String>['Stdout', 'Stderr']) {
+      for (final stream in const <String>['Stdout', 'Stderr', 'Extension']) {
         final key = '$uri|$stream';
         if (_vmSessions.containsKey(key)) {
           continue;
@@ -1762,18 +1828,36 @@ class GuiState {
             ? labels[uri]!
             : uri;
         late final _VmSession session;
-        session = _VmSession(
-          uri,
-          stream,
-          stream == 'Stderr',
-          (line, isStderr) => _addFlutterLine(label, line, isStderr, session),
-        )..connect();
+        if (stream == 'Extension') {
+          // 异常通道：Flutter 结构化错误（Flutter.Error）经 developer.postEvent
+          // 走 Extension 流，探针 v5 实测定论；不走 Isolate 流（协议无异常事件）。
+          session = _VmSession(
+            uri,
+            stream,
+            false,
+            (line, isStderr) {},
+            onEvent: (event) => _onVmExtensionEvent(label, session, event),
+          )..connect();
+        } else {
+          session = _VmSession(
+            uri,
+            stream,
+            stream == 'Stderr',
+            (line, isStderr) => _addFlutterLine(label, line, isStderr, session),
+          )..connect();
+        }
         _vmSessions[key] = session;
       }
     }
     for (final key in _vmSessions.keys.toList()) {
       if (!uris.contains(key.split('|').first)) {
         _vmSessions.remove(key)!.close();
+        // 会话断开：把未捕获块解析器的残留半成品立即结算，避免丢尾。
+        final tracker = _uncaught.remove(key);
+        final rec = tracker?.parser.takePending();
+        if (rec != null) {
+          _addException(rec, tracker!.label, tracker.session, 'uncaught');
+        }
       }
     }
   }
@@ -1814,6 +1898,78 @@ class GuiState {
       entry['level'] = 'E';
     }
     addEntry(entry);
+    // 未捕获异常块识别（两种格式）：引擎默认 "Unhandled Exception: " 与
+    // xb_scaffold XBErrorHandler 的 "XBErrorHandler catch error: "（均经
+    // debugPrint 走输出流）。块内后续 #N 帧行由解析器归集，结束后结算入库。
+    final tracker =
+        _uncaught.putIfAbsent('${session.uri}|${session.streamId}', () {
+      return _UncaughtTracker(app, session);
+    });
+    tracker.session = session;
+    tracker.label = app;
+    final rec = tracker.parser.feed(line);
+    if (rec != null) {
+      _addException(rec, tracker.label, session, 'uncaught');
+    }
+  }
+
+  /// Extension 流事件：只关心 Flutter.Error 结构化异常（探针 v5 实测）。
+  void _onVmExtensionEvent(
+    String label,
+    _VmSession session,
+    Map<String, Object?> event,
+  ) {
+    if (event['kind']?.toString() != 'Extension') return;
+    if (event['extensionKind']?.toString() != 'Flutter.Error') return;
+    final data = event['extensionData'];
+    if (data is! Map) return;
+    final rec = parseFlutterError(data);
+    if (rec != null) {
+      _addException(rec, label, session, 'framework');
+    }
+  }
+
+  /// 异常入库：连续同摘要同首帧的异常合并计数（避免回放/重复上报刷屏）。
+  void _addException(
+    Map<String, Object?> rec,
+    String label,
+    _VmSession session,
+    String channel,
+  ) {
+    final now = DateTime.now();
+    final frames = (rec['stack'] as List? ?? <Object?>[]);
+    final firstFrame = frames.isNotEmpty && frames.first is Map
+        ? (frames.first as Map)['raw']?.toString() ?? ''
+        : '';
+    final hash = '${rec['summary'] ?? ''}|$firstFrame';
+    rec['id'] = ++_excSeq;
+    rec['hash'] = hash;
+    rec['channel'] = channel;
+    rec['source'] = label;
+    rec['time'] = _clock();
+    rec['ts'] = now.millisecondsSinceEpoch;
+    final os = session.os;
+    if (os != null && os.isNotEmpty) rec['os'] = os;
+    final app = session.appName;
+    if (app != null && app.isNotEmpty) rec['app'] = app;
+    if (_exceptions.isNotEmpty) {
+      final last = _exceptions.last;
+      final lastTs = (last['ts'] as int?) ?? 0;
+      if (last['hash'] == hash &&
+          now.millisecondsSinceEpoch - lastTs < 10000) {
+        last['count'] = ((last['count'] as int?) ?? 1) + 1;
+        last['time'] = rec['time'];
+        last['ts'] = rec['ts'];
+        broadcast(<String, Object?>{'type': 'exception', 'item': last});
+        return;
+      }
+    }
+    rec['count'] = 1;
+    _exceptions.add(rec);
+    if (_exceptions.length > 200) {
+      _exceptions.removeAt(0);
+    }
+    broadcast(<String, Object?>{'type': 'exception', 'item': rec});
   }
 
   /// 设备日志条目：额外携带设备 id，供按设备过滤。
@@ -1837,6 +1993,13 @@ class GuiState {
   }
 
   void _flush() {
+    // 未捕获异常块：帧尾后无新行超过 800ms 则结算（栈末常无后续输出）。
+    for (final tracker in _uncaught.values.toList()) {
+      final rec = tracker.parser.flushStale();
+      if (rec != null) {
+        _addException(rec, tracker.label, tracker.session, 'uncaught');
+      }
+    }
     if (_pending.isEmpty) {
       return;
     }
@@ -1844,17 +2007,17 @@ class GuiState {
     _pending.clear();
     broadcast(<String, Object?>{'type': 'logs', 'items': items});
   }
-
   // -- 客户端与广播 ----------------------------------------------------------
 
   void addClient(WebSocket ws) {
     _clients.add(ws);
-    // 新客户端立即全量同步（设备 + 已缓冲日志 + 当前选中）。
+    // 新客户端立即全量同步（设备 + 已缓冲日志 + 异常 + 当前选中）。
     ws.add(jsonEncode(<String, Object?>{
       'type': 'snapshot',
       'devices': devices,
       'selected': selectedId,
       'items': _buffer,
+      'exceptions': _exceptions,
     }));
     ws.listen((dynamic message) {
       if (message is! String) {
@@ -1893,15 +2056,20 @@ class GuiState {
 }
 
 class _VmSession {
-  _VmSession(this.uri, this.streamId, this.isStderr, this.onLine);
+  _VmSession(this.uri, this.streamId, this.isStderr, this.onLine,
+      {this.onEvent});
 
   final String uri;
 
   /// 订阅的流：Stdout / Stderr（WriteEvent 无 source 字段，
-  /// 只能靠分别订阅两条流区分 stdout 与 stderr）。
+  /// 只能靠分别订阅两条流区分 stdout 与 stderr）；Extension（异常等
+  /// developer.postEvent 事件，走 onEvent 回调）。
   final String streamId;
   final bool isStderr;
   final void Function(String line, bool isStderr) onLine;
+
+  /// Extension 流的原始事件回调（仅 streamId=Extension 时使用）。
+  final void Function(Map<String, Object?> event)? onEvent;
   WebSocket? _socket;
   String _remainder = '';
 
@@ -1929,6 +2097,10 @@ class _VmSession {
         'method': 'streamListen',
         'params': <String, String>{'streamId': streamId},
       }));
+      // 订阅响应（id=sl 的成功/失败回复）在 _onData 里统一检查：
+      // 不能在这里 await socket.first——socket.listen 已监听该流，
+      // 再取 first 会抛「Stream has already been listened to」令整个
+      // 订阅失败（实测三条通道全部因此报错重试死循环）。
       // 查询所属平台。
       socket.add(jsonEncode(<String, Object?>{
         'jsonrpc': '2.0',
@@ -1952,6 +2124,15 @@ class _VmSession {
       return;
     }
     if (parsed is! Map) {
+      return;
+    }
+    // streamListen 响应：失败必须显式暴露，静默吞掉会导致该通道永久无数据。
+    if (parsed['id'] == 'sl') {
+      if (parsed['error'] != null) {
+        stderr.writeln('[xbume-gui] streamListen($streamId) 被拒: $uri ${
+          jsonEncode(parsed['error'])
+        }');
+      }
       return;
     }
     // getVM 响应：记录所属平台，并查询 root isolate 拿应用包名。
@@ -1986,6 +2167,18 @@ class _VmSession {
             break;
           }
         }
+        // 预热包路径表：异常栈 package: → 本机文件解析依赖此缓存
+        //（与 routelocate 共用 _pkgRootsFor）。
+        final fileUris = libraries
+            .whereType<Map>()
+            .map((l) => l['uri']?.toString() ?? '')
+            .where((u) => u.startsWith('file:///'))
+            .toList()
+            .cast<String>();
+        final projectRoot = _projectRootFor(fileUris);
+        if (projectRoot != null) {
+          _pkgRootsFor(projectRoot);
+        }
       }
       return;
     }
@@ -1995,6 +2188,13 @@ class _VmSession {
     }
     final event = params['event'];
     if (event is! Map) {
+      return;
+    }
+    // Extension 流：整体交给 onEvent（异常解析在 GuiState 侧）。
+    if (streamId == 'Extension') {
+      if (onEvent != null) {
+        onEvent!(Map<String, Object?>.from(event));
+      }
       return;
     }
     final kind = event['kind']?.toString();
@@ -2026,6 +2226,197 @@ class _VmSession {
     }
     _socket = null;
   }
+}
+
+/// 未捕获异常解析器的会话级跟踪（key: uri|stream，含来源标签供结算入库）。
+class _UncaughtTracker {
+  _UncaughtTracker(this.label, this.session);
+
+  String label;
+  _VmSession session;
+  final _UncaughtParser parser = _UncaughtParser();
+}
+
+/// 从 flutter 输出行流识别未捕获异常块的状态机。
+///
+/// 支持两种格式（探针实测定论）：
+///   1. 引擎默认：`Unhandled Exception: <err>` + `#N ... (package:...:L:C)` 帧；
+///   2. xb_scaffold XBErrorHandler：`XBErrorHandler catch error: <err>` + 帧。
+/// debugPrint 每行输出自带空行分隔（WriteEvent 实测为 "行\n\n\n"），
+/// 空行不作为块结束信号；非空非帧行、达到上限或长时间无新行时结算。
+class _UncaughtParser {
+  static final RegExp _headRe =
+      RegExp(r'^(?:flutter: )?(?:Unhandled Exception: |XBErrorHandler catch error: )(.*)$');
+  static final RegExp _frameRe =
+      RegExp(r'^#\s*(\d+)\s+(.*?)\s+\((.+?):(\d+):(\d+)\)$');
+  // 无位置的帧行（如 eval 生成的 "#0  Eval...<...>()"、异步栈尾帧）：
+  // 仍属栈内容，保留原文，不能当块结束处理（否则整块被丢弃）。
+  static final RegExp _frameNoPosRe = RegExp(r'^#\s*\d+');
+
+  static const int _maxFrames = 120;
+
+  Map<String, Object?>? _pending;
+  final List<Map<String, Object?>> _frames = <Map<String, Object?>>[];
+  DateTime _lastTouch = DateTime.now();
+
+  /// 喂一行原始输出；块结束时返回记录，否则返回 null（仍在块内）。
+  Map<String, Object?>? feed(String raw) {
+    _lastTouch = DateTime.now();
+    var line = raw;
+    // debugPrint 经 WriteEvent 每行带 "flutter: " 前缀（探针实测）。
+    if (line.startsWith('flutter: ')) {
+      line = line.substring('flutter: '.length);
+    }
+    line = line.trimRight();
+    if (_pending == null) {
+      final m = _headRe.firstMatch(line);
+      if (m == null) return null;
+      _pending = <String, Object?>{'summary': m.group(1)!};
+      _frames.clear();
+      return null;
+    }
+    if (line.isEmpty) {
+      // 帧行之间的空行是 debugPrint 分隔噪声，不算块结束。
+      return null;
+    }
+    final m = _frameRe.firstMatch(line);
+    if (m != null) {
+      final uri = m.group(3)!;
+      _frames.add(<String, Object?>{
+        'i': int.parse(m.group(1)!),
+        'method': m.group(2),
+        'uri': uri,
+        'line': int.parse(m.group(4)!),
+        'col': int.parse(m.group(5)!),
+        // flutter/dart 帧不入跳转候选，用户包帧才解析本机文件。
+        'file': (uri.startsWith('dart:') || uri.startsWith('package:flutter/'))
+            ? null
+            : _resolveLibraryFile(uri),
+        'raw': line,
+      });
+      if (_frames.length >= _maxFrames) {
+        return takePending();
+      }
+      return null;
+    }
+    if (line.startsWith('...')) {
+      _frames.add(<String, Object?>{'raw': line});
+      return null;
+    }
+    // 无位置的帧（如 "#0  Eval.<anonymous closure> ()"）：保留原文入栈。
+    if (_frameNoPosRe.hasMatch(line)) {
+      _frames.add(<String, Object?>{'raw': line});
+      if (_frames.length >= _maxFrames) {
+        return takePending();
+      }
+      return null;
+    }
+    // 非空非帧非省略：块结束（后文是普通输出）。
+    return takePending();
+  }
+
+  /// 超时无新行则结算（帧尾后无后续输出时收尾），由 _flush 周期调用。
+  Map<String, Object?>? flushStale() {
+    if (_pending == null || _frames.isEmpty) return null;
+    if (DateTime.now().difference(_lastTouch).inMilliseconds < 800) {
+      return null;
+    }
+    return takePending();
+  }
+
+  /// 强制结算（会话断开 / 超时）；无内容返回 null。
+  Map<String, Object?>? takePending() {
+    final pending = _pending;
+    _pending = null;
+    if (pending == null) return null;
+    if (_frames.isEmpty) return null;
+    pending['stack'] = List<Map<String, Object?>>.of(_frames);
+    _frames.clear();
+    return pending;
+  }
+}
+
+/// Dart 栈帧行正则（结构化事件与输出流两种通道共用）。
+final RegExp _excFrameRe =
+    RegExp(r'^#\s*(\d+)\s+(.*?)\s+\((.+?):(\d+):(\d+)\)$');
+
+/// 解析单个栈帧行 → 帧记录（带可跳转的本机文件；无位置信息的省略行只留 raw）。
+Map<String, Object?> _excParseFrame(String raw) {
+  final m = _excFrameRe.firstMatch(raw);
+  if (m == null) {
+    return <String, Object?>{'raw': raw};
+  }
+  final uri = m.group(3)!;
+  return <String, Object?>{
+    'i': int.parse(m.group(1)!),
+    'method': m.group(2),
+    'uri': uri,
+    'line': int.parse(m.group(4)!),
+    'col': int.parse(m.group(5)!),
+    // flutter/dart 帧不入跳转候选，用户包帧才解析本机文件。
+    'file': (uri.startsWith('dart:') || uri.startsWith('package:flutter/'))
+        ? null
+        : _resolveLibraryFile(uri),
+    'raw': raw,
+  };
+}
+
+/// 解析 Flutter.Error 结构化事件（widget_inspector._reportStructuredError 经
+/// developer.postEvent 发出；探针 v5 实测字段）。失败返回 null。
+Map<String, Object?>? parseFlutterError(Map data) {
+  final properties =
+      (data['properties'] as List? ?? <Object?>[]).whereType<Map>();
+  String? summary;
+  String? desc;
+  String? widget;
+  final frames = <Map<String, Object?>>[];
+  for (final p in properties) {
+    final type = p['type']?.toString() ?? '';
+    final d = p['description']?.toString() ?? '';
+    if (type == 'ErrorSummary') {
+      summary ??= d;
+    } else if (type == 'ErrorDescription' && d.isNotEmpty) {
+      desc ??= d;
+    } else if (type == 'DiagnosticsBlock') {
+      for (final child
+          in (p['children'] as List? ?? <Object?>[]).whereType<Map>()) {
+        final cd = child['description']?.toString() ?? '';
+        if (cd.isNotEmpty && widget == null) widget = cd;
+      }
+    } else if (type == 'DiagnosticsStackTrace') {
+      for (final f
+          in (p['properties'] as List? ?? <Object?>[]).whereType<Map>()) {
+        final raw = f['description']?.toString() ?? '';
+        if (raw.isNotEmpty) frames.add(_excParseFrame(raw));
+      }
+    }
+  }
+  final summaryText = summary ?? data['description']?.toString();
+  if (summaryText == null || summaryText.isEmpty) {
+    return null;
+  }
+  final rec = <String, Object?>{
+    'summary': summaryText,
+    if (desc != null && desc.isNotEmpty) 'desc': desc,
+    if (widget != null) 'widget': widget,
+    if (frames.isNotEmpty) 'stack': frames,
+    'errorsSinceReload': data['errorsSinceReload'],
+    if (data['renderedErrorText'] != null)
+      'rendered': data['renderedErrorText'],
+  };
+  // 相关 widget 行内嵌 file:/// 位置（如 KeyedSubtree:file:///...dart:109:13），
+  // 提取出来供「跳转」。
+  if (widget != null) {
+    final m = RegExp(r'file://(/.+?):(\d+):(\d+)\s*$').firstMatch(widget);
+    if (m != null) {
+      final f = File(m.group(1)!);
+      if (f.existsSync()) {
+        rec['widgetFile'] = m.group(1);
+        rec['widgetLine'] = int.parse(m.group(2)!);
+      }
+    }
+  }
+  return rec;
 }
 
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
@@ -3575,6 +3966,11 @@ const String guiHtml = r'''
   .vlv { display:flex; align-items:center; gap:2px; }
   .vlv.dim { opacity:.45; }
   .vlv.dim label { pointer-events:none; }
+  #exc-overlay { position:fixed; top:56px; right:16px; z-index:99; max-width:420px; background:#5c1a1a; color:#ffb4b4; border:1px solid #c0392b; border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.5); display:none; word-break:break-all; }
+  .exccard { border:1px solid #5c2a2a; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:#140e0e; }
+  .exccard .exchead { color:#ff9d9d; font-weight:600; word-break:break-all; }
+  .excframe { font-family:monospace; font-size:12px; padding:1px 0; word-break:break-all; }
+  .excframe .muted { color:#666; }
 </style>
 </head>
 <body>
@@ -3582,6 +3978,7 @@ const String guiHtml = r'''
   <h1>xb_ume 工具箱</h1>
   <div class="tab active" data-tab="daemon">守护进程</div>
   <div class="tab" data-tab="logs">日志</div>
+  <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
   <div class="tab" data-tab="sandbox">应用沙盒</div>
   <div class="tab" data-tab="routes">路由栈</div>
   <div class="tab" data-tab="network">Network</div>
@@ -3596,6 +3993,7 @@ const String guiHtml = r'''
     <div id="wsdot" title="页面连接状态"></div>
   </div>
 </header>
+<div id="exc-overlay" onclick="excGoTab()"></div>
 <main>
   <section class="page active" id="page-daemon">
     <div class="card">
@@ -3635,6 +4033,16 @@ const String guiHtml = r'''
     </div>
     <div id="logview"><span class="muted">暂无日志</span></div>
     <div class="muted" style="margin-top:6px">打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
+  </section>
+  <section class="page" id="page-exc">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button onclick="excRefresh()" title="重新拉取已捕获的异常列表">刷新</button>
+      <button onclick="excClear()" title="清空异常列表">清空</button>
+      <input id="exc-kw" placeholder="关键字过滤（摘要/帧/源）" oninput="excRender()" style="width:220px">
+      <span class="muted" id="exc-stat">全部调试会话的实时异常</span>
+    </div>
+    <div id="exc-body" style="margin-top:8px"><span class="muted">暂无异常（app 抛异常时会实时出现在这里）</span></div>
+    <div class="muted" style="margin-top:6px">数据来源：① VM service Extension 流的 Flutter.Error 结构化事件（debug 模式框架自动发出，App 无需任何接入）；② 会话输出流中的未捕获异常块（引擎 Unhandled Exception / xb_scaffold XBErrorHandler 格式）。连续相同异常自动合并计数；栈中用户代码帧（package:）可点「跳转」用 IDE 打开对应源码（IDE 优先级同守护进程）；新异常到达时右上角出现红色浮层，点击跳到本页。</div>
   </section>
   <section class="page" id="page-sandbox">
     <div id="sb-body"><span class="muted">请先选择 VM</span></div>
@@ -3708,10 +4116,12 @@ function connect() {
   ws.onclose = function(){ document.getElementById('wsdot').classList.remove('on'); setTimeout(connect, 1500); };
   ws.onmessage = function(e){
     var msg = JSON.parse(e.data);
-    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; renderHdrDev(); renderLogs(); refreshDaemon(); }
+    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); }
     else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
     else if (msg.type === 'logs') { logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) renderLogs(); }
     else if (msg.type === 'cleared') { logs = []; renderLogs(); }
+    else if (msg.type === 'exception') { excOnItem(msg.item); }
+    else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); }
   };
 }
 connect();
@@ -3728,9 +4138,128 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'storage') stRefresh();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
+    else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+// -- 异常 Tab -------------------------------------------------------------
+var excItems = [];      // 异常记录（后端 schema：id/summary/desc/widget/stack/…）
+var excById = {};       // id → 记录（栈帧行「跳转」回调按 id+idx 反查，免转义）
+var excOvTimer = null;  // 红浮层自动隐藏定时器
+function excBadge(){
+  var b = document.getElementById('exc-badge');
+  var t = document.querySelector('.tab.active');
+  if (excItems.length && (!t || t.dataset.tab !== 'exc')) {
+    b.style.display = ''; b.textContent = excItems.length;
+  } else { b.style.display = 'none'; }
+}
+function excGoTab(){
+  var t = document.querySelector('.tab[data-tab="exc"]');
+  if (t) t.click(); // 复用 tab 点击链：切页 + 隐藏浮层 + excRefresh
+}
+function excOnItem(item){
+  if (!item) return;
+  var i = excItems.length - 1;
+  for (; i >= 0; i--) { if (excItems[i].id === item.id) break; }
+  if (i >= 0) excItems[i] = item; else excItems.push(item);
+  var t = document.querySelector('.tab.active');
+  if (t && t.dataset.tab === 'exc') { excRender(); return; }
+  excBadge();
+  var ov = document.getElementById('exc-overlay');
+  // 必须写显式 display 值：CSS 里 #exc-overlay 默认 display:none，
+  // 置空字符串会回落到 none，浮层永远不显示（浏览器实测确认）。
+  ov.style.display = 'block';
+  ov.textContent = '\u26a0 异常' + (item.count > 1 ? ' ×' + item.count : '') +
+    ' [' + (item.channel === 'framework' ? '框架' : '未捕获') + '] ' + (item.summary || '');
+  if (excOvTimer) clearTimeout(excOvTimer);
+  excOvTimer = setTimeout(function(){ ov.style.display = 'none'; excOvTimer = null; }, 12000);
+}
+function excRefresh(){
+  fetch('/api/exceptions').then(function(r){ return r.json(); }).then(function(d){
+    excItems = d.items || [];
+    excRender();
+  }).catch(function(e){ document.getElementById('exc-stat').textContent = '拉取失败：' + e; });
+}
+function excClear(){
+  fetch('/api/exceptions/clear', { method: 'POST' })
+    .then(function(){ excItems = []; excRender(); })
+    .catch(function(e){ alert('清空失败：' + e); });
+}
+function excRender(){
+  var body = document.getElementById('exc-body');
+  var stat = document.getElementById('exc-stat');
+  var kw = (document.getElementById('exc-kw').value || '').toLowerCase();
+  var list = excItems.filter(function(it){
+    if (!kw) return true;
+    var hay = (it.summary || '') + ' ' + (it.desc || '') + ' ' + (it.source || '') +
+      ' ' + (it.channel || '') + ' ' + (it.app || '') + ' ' + (it.widget || '');
+    (it.stack || []).forEach(function(f){
+      hay += ' ' + (f.raw || '') + ' ' + (f.method || '') + ' ' + (f.uri || '');
+    });
+    return hay.toLowerCase().indexOf(kw) >= 0;
+  });
+  stat.textContent = excItems.length
+    ? ('共 ' + excItems.length + ' 条异常' + (list.length < excItems.length ? '，过滤后 ' + list.length + ' 条' : ''))
+    : '全部调试会话的实时异常';
+  if (!list.length) {
+    body.innerHTML = '<span class="muted">' +
+      (excItems.length ? '无匹配项' : '暂无异常（app 抛异常时会实时出现在这里）') + '</span>';
+    excBadge();
+    return;
+  }
+  var html = '';
+  for (var i = list.length - 1; i >= 0; i--) html += excCardHtml(list[i]); // 新的在前
+  body.innerHTML = html;
+  excBadge();
+}
+function excCardHtml(it){
+  excById[it.id] = it;
+  var h = '<div class="exccard">';
+  h += '<div class="exchead">' + esc(it.time || '') +
+    ' <b style="color:' + (it.channel === 'framework' ? '#e74c3c' : '#e67e22') + '">' +
+    (it.channel === 'framework' ? '框架' : '未捕获') + '</b> ' + esc(it.source || '');
+  if (it.app) h += ' · ' + esc(it.app);
+  if (it.os) h += ' · ' + esc(it.os);
+  if (it.count > 1) h += ' <span style="color:#e67e22">×' + it.count + '</span>';
+  h += '</div>';
+  h += '<div style="margin-top:4px">' + esc(it.summary || '') + '</div>';
+  if (it.desc) h += '<div class="muted" style="margin-top:4px;white-space:pre-wrap">' + esc(it.desc) + '</div>';
+  if (it.widget) {
+    h += '<div style="margin-top:4px">Widget：' + esc(it.widget);
+    if (it.widgetFile) h += ' <a href="javascript:void(0)" onclick="excJump(' + it.id + ',' + (it.widgetLine || 1) + ',this)">跳转</a>';
+    h += '</div>';
+  }
+  if (it.stack && it.stack.length) {
+    h += '<div style="margin-top:6px;font-size:12px">';
+    it.stack.forEach(function(f, idx){
+      var raw = f.raw || ((f.method || '') + ' (' + (f.uri || '') + ':' + (f.line || 0) + ')');
+      h += '<div class="excframe">' + esc(raw);
+      if (f.file) h += ' <a href="javascript:void(0)" onclick="excFrameJump(' + it.id + ',' + idx + ',this)">跳转</a>';
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+function excJump(id, line, el){ // 相关 widget 的 IDE 跳转
+  var it = excById[id];
+  if (!it || !it.widgetFile) return;
+  excOpenIde(it.widgetFile, line, el);
+}
+function excFrameJump(id, idx, el){ // 栈帧行的 IDE 跳转（仅用户代码帧有 file）
+  var it = excById[id];
+  var f = it && it.stack && it.stack[idx];
+  if (!f || !f.file) return;
+  excOpenIde(f.file, f.line, el);
+}
+function excOpenIde(file, line, el){
+  el.textContent = '打开中…';
+  fetch('/api/openide?file=' + encodeURIComponent(file) + '&line=' + (line || 1))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ el.textContent = d.ok ? '已打开 ✓' : '失败：' + (d.message || '未知错误'); })
+    .catch(function(e){ el.textContent = '失败：' + e; });
+}
 // -- 截图 Tab ------------------------------------------------------------
 var shTimer = null;
 // -- 运行时操作（reassemble / GC） ---------------------------------------

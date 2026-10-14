@@ -46,6 +46,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | 页头右侧 | VM 会话选择器 | 下拉列出已接入的调试会话（默认项 `未选择会话（共 N 个）`，选择后才打印对应会话的日志；每个会话**显示应用包名**如 `example · port:56782`，取自 `package:<包名>/main.dart`），选中某个会话后「日志」页的 Flutter 输出只显示该应用，日志行的 tag 列也显示应用包名；守护进程未运行时显示红色 `VM 未连接`；悬停看会话详情 |
 | Tab 守护进程 | daemon 管理 | 查看守护进程状态、一键重启、IDE 优先级 |
 | Tab 日志 | 日志查看 | 实时展示选中手机的日志 + Flutter 控制台输出 |
+| Tab 异常 | 实时异常捕获 | 实时捕获调试会话的框架异常与未捕获异常（App 零接入），栈帧可跳 IDE，新异常右上角红浮层提醒，详见下文「异常」 |
 | Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载/删除选中调试会话（app）沙盒内的目录与文件（删除需确认）；文件可新标签页「查看」（含搜索/过滤）或「监听」（实时 tail），详见下文「应用沙盒」 |
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
@@ -221,7 +222,23 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：注册表经 VM service 在 `xb_ume_store_registry.dart` 库上下文 eval 读注册 Map；查找走 Element 树遍历 + 堆扫描双通道；字段树用 `getObject` 递归展开；写回是在实例上下文 eval 字段赋值表达式（eval 作用域为实例所属库，私有可见）。
 
-## 九、常见问题
+## 九、异常（Tab「异常」）
+
+**实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
+
+**使用**：
+
+1. 切到本 Tab 自动拉取历史异常，之后新异常实时推送（无需手动刷新）；
+2. 每条异常卡片展示：时间 / 通道标签（红「框架」/ 橙「未捕获」）/ 来源会话与应用包名 / 合并计数（×N）/ 摘要 / 描述 / 相关 Widget / 栈帧列表；
+3. **跳转 IDE**：栈帧中用户代码帧（`package:` 的非 Flutter/dart 帧）行尾有「跳转」，点击按 IDE 优先级（与守护进程同一份 `ideOrder` 配置）打开对应源码行；相关 Widget 的源码位置同样可跳；Flutter/dart 框架帧与无位置帧（如 eval 生成代码）不可跳；
+4. 顶部工具栏：「刷新」重拉全部、「清空」清空列表、「关键字过滤」对摘要/描述/Widget/栈帧/来源实时过滤；
+5. **红浮层**：新异常到达时页面右上角弹出红色浮层（含摘要与计数），点击跳到本 Tab，停留 12 秒自动消失；「异常」Tab 标题上的红色徽标显示当前异常总数（进入本 Tab 自动隐藏）。
+
+**原理**：GUI 经 daemon 发现各调试会话后，对每个会话同时订阅 Stdout/Stderr/Extension 三条流——Extension 流的 `Flutter.Error` 事件解析出摘要/描述/Widget 位置/栈帧（完整渲染文本也一并保留）；输出流按行喂给状态机，识别异常头行与栈帧行（最多 120 帧，800ms 无新行结算）。栈帧的 `package:` uri 经项目 `.dart_tool/package_config.json` 解析为本机文件路径。仅 debug 模式可用；多会话异常混排但各自标注来源。
+
+**注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
+
+## 十、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -234,8 +251,9 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Windows 下启动器窗口一闪而过 | 先用命令 `dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart` 前台启动看报错（常见原因：dart 不在 PATH） |
 | 页头选中的 VM 会话过一会儿变回「未选择会话」 | 会话 ws 瞬断（热重载/重连）时页面会保持你的选择，连续约 15s 仍缺失才回退；重连后端口变化时按实例指纹自动找回同一会话。若仍频繁掉选，说明该会话连接本身不稳定 |
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
+| 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十、卸载
+## 十一、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -243,7 +261,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十一、相关文档
+## 十二、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)
