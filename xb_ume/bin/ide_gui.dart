@@ -4736,6 +4736,9 @@ document.title = (fpath.split('/').pop() || 'file') + ' · __TITLE__';
 if (MODE === 'tail') $('tailbtns').style.display = 'inline-flex';
 
 var lines = [], pending = '';
+// tail 模式行数上限：长时间监听高吞吐文件时丢弃最早行，防内存无限增长
+// （完整内容看「查看」页或「下载」）；查看页不受限（一次性静态快照）。
+var MAX_LINES = 50000, droppedLines = 0;
 var searchKw = '', filterKw = '';
 var offset = 0, started = false, stopped = false, paused = false;
 var renderTimer = null;
@@ -4765,6 +4768,15 @@ function pushText(text){
   pending = pending.substring(idx + 1);
   var arr = complete.split('\n');
   for (var i = 0; i < arr.length; i++) lines.push(arr[i]);
+  // 仅 tail 模式裁剪：超限丢弃最早行，丢弃量由 poll 的状态文本展示。
+  if (MODE === 'tail' && lines.length > MAX_LINES) {
+    droppedLines += lines.length - MAX_LINES;
+    lines = lines.slice(lines.length - MAX_LINES);
+  }
+}
+// tail 状态文本：附丢弃提示（有丢弃时用户能看到内存保护生效）。
+function tailStatus(base){
+  return base + (droppedLines ? '；已丢弃最早 ' + droppedLines.toLocaleString() + ' 行' : '');
 }
 
 function hlLine(line){
@@ -4846,7 +4858,7 @@ function poll(){
       }
       started = true;
       offset = d.fileSize;
-      setStatus('监听中…（从末尾开始，当前 ' + fmtSize(d.fileSize) + '）');
+      setStatus(tailStatus('监听中…（从末尾开始，当前 ' + fmtSize(d.fileSize) + '）'));
       setTimeout(poll, 500);
     });
     return;
@@ -4860,7 +4872,7 @@ function poll(){
       return;
     }
     if (d.fileSize < offset) {
-      lines = []; pending = '';
+      lines = []; pending = ''; droppedLines = 0;
       lines.push('──── 检测到文件被重写，从头开始读取 ────');
       offset = 0;
       render();
@@ -4873,7 +4885,7 @@ function poll(){
       render();
     }
     if (offset < d.fileSize) { setTimeout(poll, 50); return; }
-    setStatus('监听中…（已读 ' + fmtSize(offset) + '）');
+    setStatus(tailStatus('监听中…（已读 ' + fmtSize(offset) + '）'));
     setTimeout(poll, 2000);
   });
 }
