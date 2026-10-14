@@ -4455,16 +4455,35 @@ function inRenderList(items, msg){
   }).join('');
 }
 function inShow(i){ var it = inItems[i]; if (it) inShowId(it.id, it.cls); }
+// 字段树刷新对比：inSnap 保存上次渲染的叶子展示值（字段路径 → 值），
+// 重新拉取时值变化的节点整行高亮并标注旧值；展开的子树也并入快照。
+var inSnap = {}, inSnapId = '';
+function inChildPath(path, name){ return path + '/' + (name || '?'); }
+function inFlatten(n, path, out){
+  out = out || {};
+  var kind = n.kind || 'object';
+  if (kind === 'value') out[path] = String(n.value);
+  else if (kind === 'ref') out[path] = (n.value !== '' && n.value != null ? String(n.value) : '(' + (n.cls || '?') + ')');
+  else if (kind === 'list' || kind === 'map') out[path] = '(' + kind + ' ' + (n.length || 0) + ' 项)';
+  var kids = n.children || [];
+  for (var i = 0; i < kids.length; i++) inFlatten(kids[i], inChildPath(path, kids[i].name), out);
+  return out;
+}
 function inShowId(id, name){
   inCurId = id; inCurName = name;
+  // 换实例时清空对比基线；同一实例的「刷新」保留基线，用于标注变化字段。
+  if (inSnapId !== id) { inSnap = {}; inSnapId = id; }
   var tree = document.getElementById('in-tree');
   tree.innerHTML = '<span class="muted">加载字段树…</span>';
   inApi('/api/instances/tree?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&depth=3').then(function(d){
     if (!d.ok) { tree.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
     tree.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><b>' + esc(name) + '</b>'
       + '<span class="muted" style="font-size:12px">' + esc(String(id).slice(0, 14)) + '…</span>'
-      + '<button onclick="inShowId(inCurId, inCurName)">刷新</button></div>'
-      + '<div style="font-family:monospace;font-size:12.5px;margin-top:4px">' + inNode(d.node, 0, id) + '</div>';
+      + '<button onclick="inShowId(inCurId, inCurName)" title="重新拉取；值有变化的字段会整行高亮并标注旧值">刷新</button></div>'
+      + '<div style="font-family:monospace;font-size:12.5px;margin-top:4px">' + inNode(d.node, 0, id, '') + '</div>';
+    // 本次渲染结果合并进基线（保留已展开子树的深层字段，供下次刷新对比）。
+    var fresh = inFlatten(d.node, '');
+    for (var k in fresh) inSnap[k] = fresh[k];
   }).catch(function(e){ tree.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>';
   });
 }
@@ -4483,9 +4502,17 @@ function inVTypeOf(cls){
   return 'string';
 }
 // 渲染字段树节点。ownerId 为本节点字段的宿主对象 id（编辑写回的目标）。
-function inNode(n, level, ownerId){
+function inNode(n, level, ownerId, path){
   var kind = n.kind || 'object';
   var pad = 'padding-left:' + (level * 16) + 'px';
+  var pathAttr = 'decodeURIComponent(\'' + encodeURIComponent(path || '') + '\')';
+  // 与 inFlatten 一致的展示值；与上次快照不同则整行标注变更与旧值。
+  var shownV = null;
+  if (kind === 'value') shownV = String(n.value);
+  else if (kind === 'ref') shownV = (n.value !== '' && n.value != null ? String(n.value) : '(' + (n.cls || '?') + ')');
+  else if (kind === 'list' || kind === 'map') shownV = '(' + kind + ' ' + (n.length || 0) + ' 项)';
+  var oldV = shownV == null ? undefined : inSnap[path];
+  var changed = shownV != null && oldV !== undefined && oldV !== shownV;
   var nameAttr = 'decodeURIComponent(\'' + encodeURIComponent(n.name || '') + '\')';
   var ownerAttr = 'decodeURIComponent(\'' + encodeURIComponent(ownerId || '') + '\')';
   var head;
@@ -4508,22 +4535,25 @@ function inNode(n, level, ownerId){
     var primitive = type === 'int' || type === 'double' || type === 'bool' || type === 'String' || type === 'null';
     head = (type && type !== 'null' ? '<span class="muted">' + esc(type) + '</span> ' : '')
       + (n.value !== '' ? '<span class="in-val" style="color:#79c0ff">' + esc(n.value) + '</span>' : '<span class="muted">' + esc(n.cls || '?') + '</span>')
-      + (!primitive && n.id ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\', ' + nameAttr + ')">展开</a>' : '');
+      + (!primitive && n.id ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\', ' + nameAttr + ', ' + pathAttr + ')">展开</a>' : '');
   } else if (kind === 'opaque') {
     head = '<span class="muted">' + esc(n.cls || '（无法展示）') + '</span>';
   } else {
     head = '<span style="color:#d2a8ff">' + esc(n.cls || '') + '</span>';
   }
   // 字段名所有节点类型都展示（ref/value 深度用尽时是大多数，隐藏名称会看不出字段）。
-  var html = '<div style="' + pad + '">'
+  var html = '<div style="' + pad + (changed ? ';background:rgba(255,159,10,.14)' : '') + '">'
+    + (changed ? '<span style="color:#ff9f0a">● </span>' : '')
     + (n.name ? '<span class="muted">' + esc(n.name) + '</span> ' : '')
-    + head + '</div>';
+    + head
+    + (changed ? ' <span class="muted" style="text-decoration:line-through">旧: ' + esc(oldV) + '</span>' : '')
+    + '</div>';
   var kids = n.children || [];
-  for (var i = 0; i < kids.length; i++) html += inNode(kids[i], level + 1, n.id);
+  for (var i = 0; i < kids.length; i++) html += inNode(kids[i], level + 1, n.id, inChildPath(path, kids[i].name));
   return html;
 }
 // ref 节点二次展开：把该行替换为请求返回的子树（保留字段名）。
-function inExpand(el, id, name){
+function inExpand(el, id, name, path){
   var holder = el.parentNode;
   var level = Math.round((parseInt(holder.style.paddingLeft || '0', 10) || 0) / 16);
   holder.innerHTML = '<span class="muted">展开中…</span>';
@@ -4531,7 +4561,10 @@ function inExpand(el, id, name){
     if (!d.ok) { holder.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; return; }
     d.node.name = d.node.name || name || '';
     var tmp = document.createElement('div');
-    tmp.innerHTML = inNode(d.node, level, id);
+    tmp.innerHTML = inNode(d.node, level, id, path || '');
+    // 展开的子树并入基线（渲染对比已用旧值完成，这里更新为最新拉取值）。
+    var sub = inFlatten(d.node, path || '');
+    for (var k in sub) inSnap[k] = sub[k];
     var frag = document.createDocumentFragment();
     while (tmp.firstChild) frag.appendChild(tmp.firstChild);
     holder.parentNode.replaceChild(frag, holder);
