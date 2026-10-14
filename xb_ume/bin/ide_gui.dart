@@ -1087,6 +1087,72 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     // ── 实例查看：堆扫描/注册表定位实例，getObject 展开字段树，eval 写回 ──
+    // ── 运行时操作：reassemble（UI 重建）/ GC（_collectAllGarbage）──
+    if (path == '/api/runtime/op' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final op = req.uri.queryParameters['op'] ?? '';
+      if (uri.isEmpty || op.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      try {
+        final rpc = _SandboxRpc(uri);
+        if (op == 'reassemble') {
+          // service extension 线上协议：扩展名直接作 method（callServiceExtension
+          // 不是 JSON-RPC 方法名，实测 Unknown method）。
+          final iso = await rpc.isolateId();
+          await rpc.rawRpc('ext.flutter.reassemble', <String, Object?>{
+            'isolateId': iso,
+          });
+        } else if (op == 'gc') {
+          // 真正可用的 GC：私有方法（ext.flutter.triggerGC 未注册，实测不存在）。
+          final iso = await rpc.isolateId();
+          await rpc.rawRpc('_collectAllGarbage', <String, Object?>{
+            'isolateId': iso,
+          });
+        } else {
+          throw '未知操作：$op';
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
+        );
+        await req.response.close();
+      }
+      return;
+    }
+    // ── 实时截图：_flutter.screenshot 返回 base64 PNG（DDS 转发，debug 可用）──
+    if (path == '/api/screenshot') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      try {
+        final rpc = _SandboxRpc(uri);
+        final r = await rpc.rawRpc('_flutter.screenshot');
+        final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+        if (b64.isEmpty) throw '截图响应为空（app 需 debug 模式且前台运行）';
+        req.response.headers.contentType = ContentType('image', 'png');
+        req.response.add(base64Decode(b64));
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
+        );
+        await req.response.close();
+      }
+      return;
+    }
     if (path == '/api/instances/stores') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
@@ -3521,6 +3587,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="storage">Storage</div>
   <div class="tab" data-tab="instances">实例</div>
+  <div class="tab" data-tab="shot">截图</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -3532,7 +3599,7 @@ const String guiHtml = r'''
 <main>
   <section class="page active" id="page-daemon">
     <div class="card">
-      <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button></div>
+      <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button><button onclick="rtOp('reassemble')" title="ext.flutter.reassemble：重建全部 Widget（实例 Tab 字段写回后立即生效）；完整热重载需 IDE 编译 kernel，此处不做">UI 重建</button><button onclick="rtOp('gc')" title="_collectAllGarbage：触发全量 GC（泄漏检测前用）">触发 GC</button><span id="rt-op-stat" class="muted"></span></div>
       <div id="daemon-status" class="muted">查询中…</div>
     </div>
     <div class="card">
@@ -3613,6 +3680,21 @@ const String guiHtml = r'''
     <div id="in-tree" style="margin-top:8px"></div>
     <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。</div>
   </section>
+  <section class="page" id="page-shot">
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="primary" onclick="shRefresh()">刷新截图</button>
+      <select id="sh-auto" onchange="shAuto(this.value)">
+        <option value="">自动刷新：关</option>
+        <option value="1">每 1 秒</option>
+        <option value="2">每 2 秒</option>
+        <option value="5">每 5 秒</option>
+      </select>
+      <button onclick="shSave()">下载 PNG</button>
+    </div>
+    <div class="muted" id="sh-tip" style="display:none;margin-top:8px"></div>
+    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444" alt="app 截图"></div>
+    <div class="muted" style="margin-top:6px">实时截图（_flutter.screenshot，debug 模式可用）；自动刷新选低频档，避免截图流量过大。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -3645,9 +3727,59 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'network') nwRefresh();
     else if (t.dataset.tab === 'storage') stRefresh();
     else if (t.dataset.tab === 'instances') inRefresh();
+    else if (t.dataset.tab === 'shot') shRefresh();
   };
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+// -- 截图 Tab ------------------------------------------------------------
+var shTimer = null;
+// -- 运行时操作（reassemble / GC） ---------------------------------------
+function rtOp(op){
+  var uri = vmFilter ? (vmUriBySource[vmFilter] || '') : '';
+  var stat = document.getElementById('rt-op-stat');
+  if (!uri) { stat.textContent = '请先选择 VM 会话'; return; }
+  stat.textContent = op === 'reassemble' ? '重建中…' : 'GC 中…';
+  fetch('/api/runtime/op?uri=' + encodeURIComponent(uri) + '&op=' + op, { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      stat.textContent = d.ok
+        ? (op === 'reassemble' ? 'UI 已重建 ✓' : 'GC 已触发 ✓')
+        : '失败：' + (d.error || '未知错误');
+    })
+    .catch(function(e){ stat.textContent = '失败：' + e; });
+}
+function shUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function shRefresh(){
+  var uri = shUri();
+  var img = document.getElementById('sh-img');
+  var tip = document.getElementById('sh-tip');
+  if (!uri) {
+    img.style.display = 'none'; tip.style.display = '';
+    tip.textContent = '请先在页头选择 VM 会话（仅 debug 模式可用）';
+    return;
+  }
+  img.onerror = function(){
+    img.style.display = 'none'; tip.style.display = '';
+    tip.textContent = '截图失败（app 需 debug 模式且在前台运行；会话可能已断开）';
+  };
+  img.onload = function(){ img.style.display = ''; tip.style.display = 'none'; };
+  img.style.display = 'none';
+  img.src = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
+}
+function shAuto(v){
+  if (shTimer) { clearInterval(shTimer); shTimer = null; }
+  if (v) shTimer = setInterval(function(){
+    var t = document.querySelector('.tab.active');
+    if (t && t.dataset.tab === 'shot') shRefresh();
+  }, (+v) * 1000);
+}
+function shSave(){
+  var uri = shUri(); if (!uri) return;
+  var a = document.createElement('a');
+  a.href = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
+  a.download = 'xbume-shot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
+  a.click();
+}
 function renderHdrDev() {
   var html = '<option value="">未选择设备</option>';
   devices.forEach(function(d){
