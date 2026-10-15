@@ -4771,7 +4771,8 @@ const String guiHtml = r'''
   <div class="tab" data-tab="status">状态</div>
   <div class="tab" data-tab="instances">实例</div>
   <div class="tab" data-tab="shot">截图</div>
-  <div class="tab" data-tab="wtree">Widget树</div>
+  <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
+  <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
