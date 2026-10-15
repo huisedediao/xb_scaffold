@@ -120,6 +120,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/') {
+      // 页面禁缓存：GUI 迭代频繁，避免浏览器磁盘缓存拿到旧版 HTML/JS
+      req.response.headers.set('Cache-Control', 'no-store');
       req.response.headers.contentType = ContentType.html;
       req.response.write(guiHtml);
       await req.response.close();
@@ -1765,6 +1767,84 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // ── P9b：点截图反查业务组件（locator 同款 SDK 判定 + 四向间距）──
+    if (path == '/api/wtree/pick' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final x = req.uri.queryParameters['x'] ?? '';
+      final y = req.uri.queryParameters['y'] ?? '';
+      if (uri.isEmpty || double.tryParse(x) == null || double.tryParse(y) == null) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final expr = _wpickExprHead + x + _wpickExprMid + y + _wpickExprBody;
+        final s = (await rpc.evalStringOn(
+          'package:xb_ume/src/core/xb_ume_widget_spacing_calculator.dart',
+          expr,
+        ))
+            .trim();
+        req.response.headers.contentType = ContentType.json;
+        if (s == 'NO_ROOT' || s == 'MISS' || s == 'NOBIZ') {
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': false,
+            'error': s == 'NO_ROOT'
+                ? 'app 无渲染树'
+                : s == 'MISS'
+                    ? '该位置无组件'
+                    : '该位置没有非 Flutter SDK 组件',
+          }));
+          await req.response.close();
+          return;
+        }
+        final parts = s.split('\u0003');
+        if (parts.isEmpty || parts.first != 'PICK') {
+          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '响应格式异常'}));
+          await req.response.close();
+          return;
+        }
+        String type = '', file = '', bounds = '';
+        var line = 0, col = 0;
+        if (parts.length > 1) {
+          final f = parts[1].split('\u0001');
+          if (f.length >= 5) {
+            type = f[0];
+            file = f[1];
+            line = int.tryParse(f[2]) ?? 0;
+            col = int.tryParse(f[3]) ?? 0;
+            bounds = f[4];
+          }
+        }
+        final spacing = <Map<String, Object?>>[];
+        for (var i = 2; i < parts.length; i++) {
+          if (parts[i].isEmpty) continue;
+          final f = parts[i].split('\u0001');
+          if (f.length < 5) continue;
+          spacing.add(<String, Object?>{
+            'dir': f[0],
+            'dist': double.tryParse(f[1]) ?? 0,
+            'type': f[2],
+            'kind': f[3],
+            'rect': f[4],
+          });
+        }
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'type': type,
+          'file': file,
+          'line': line,
+          'col': col,
+          'bounds': bounds,
+          'spacing': spacing,
+        }));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
+      return;
+    }
     // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异常块 ──
     if (path == '/api/exceptions') {
       req.response.headers.contentType = ContentType.json;
@@ -3041,6 +3121,84 @@ const String _wtreeExpr = "(() { final v = WidgetsBinding.instance.platformDispa
     "out.write(row); out.write(v.devicePixelRatio.toString()); out.write(sep); "
     "out.write(v.physicalSize.width.round().toString()); out.write(sep); "
     "out.write(v.physicalSize.height.round().toString()); return out.toString(); })()";
+
+/// P9b：点截图反查表达式（calculator.dart 上下文：locator 间距计算器本库可见、
+/// widgets.dart 导出 inspector 的 DiagnosticsNode/InspectorSerializationDelegate）。
+/// 逻辑：命中点收集 → 面积升序 → 逐 hit 向上找 creationLocation 非 Flutter SDK
+/// 的最近业务组件（locator 同款判定，优先非 pub-cache）→ 调
+/// XBUmeWidgetSpacingCalculator 算四向间距（searchRoot 限定 xb_ume_app_root 内）。
+/// 输出：PICK\u0003 type\u0001file\u0001line\u0001col\u0001bounds \u0003 每向 dir\u0001dist\u0001srcType\u0001srcKind\u0001srcRect；
+/// 无命中 MISS；命中但全为 SDK 组件 NOBIZ。坐标 PX,PY 由 GUI 拼入。
+const String _wpickExprHead =
+    "(() { final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return 'NO_ROOT'; "
+    "final pt = Offset(";
+const String _wpickExprMid = ", ";
+const String _wpickExprBody =
+    "); final hits = <Element>[]; final se = <Element>[root]; "
+    "while (se.isNotEmpty) { final e = se.removeLast(); final r = e.renderObject; "
+    "if (r is RenderBox && r.attached && r.hasSize) { "
+    "final tl = r.localToGlobal(Offset.zero); final rect = tl & r.size; "
+    "if (rect.width > 0 && rect.height > 0 && rect.contains(pt)) { hits.add(e); } } "
+    "final kids = <Element>[]; e.visitChildren(kids.add); "
+    "for (var i = kids.length - 1; i >= 0; i--) { se.add(kids[i]); } } "
+    "if (hits.isEmpty) return 'MISS'; "
+    "hits.sort((a, b) { final ra = a.renderObject as RenderBox; "
+    "final rb = b.renderObject as RenderBox; "
+    "return (ra.size.width * ra.size.height).compareTo(rb.size.width * rb.size.height); }); "
+    "bool isSdk(String f) { final l = f.toLowerCase(); return l.startsWith('dart:') "
+    "|| l.startsWith('package:flutter/') || l.contains('/packages/flutter/'); } "
+    "bool isPub(String f) { final l = f.toLowerCase(); return l.contains('pub-cache') "
+    "|| l.contains('pub/cache') || l.contains('/hosted/pub.'); } "
+    "String? locFile(Element e) { try { final jm = e.toDiagnosticsNode() "
+    ".toJsonMap(InspectorSerializationDelegate(service: WidgetInspectorService.instance, "
+    "includeProperties: false, subtreeDepth: 1)); final loc = jm['creationLocation']; "
+    "if (loc is Map) { return (loc['file'] ?? '').toString(); } } catch (_) {} return null; } "
+    "Element? pick = null; String pfile = ''; Element? anyNonSdk = null; String afile = ''; "
+    "var steps = 0; "
+    "void tryOne(Element e) { if (pick != null || steps >= 150) return; steps++; final f = locFile(e); "
+    "if (f != null && f.isNotEmpty) { if (anyNonSdk == null && !isSdk(f)) { anyNonSdk = e; afile = f; } "
+    "if (!isSdk(f) && !isPub(f)) { pick = e; pfile = f; } } } "
+    "for (final h in hits) { tryOne(h); "
+    "h.visitAncestorElements((Element anc) { tryOne(anc); return pick == null; }); "
+    "if (pick != null) break; } "
+    "if (pick == null) { pick = anyNonSdk; pfile = afile; } "
+    "if (pick == null) return 'NOBIZ'; "
+    "final pr = pick!.renderObject; String pb = ''; "
+    "if (pr is RenderBox && pr.hasSize) { final tl = pr.localToGlobal(Offset.zero); "
+    "pb = tl.dx.round().toString() + ',' + tl.dy.round().toString() + ',' "
+    "+ pr.size.width.round().toString() + ',' + pr.size.height.round().toString(); } "
+    "final jm2 = pick!.toDiagnosticsNode().toJsonMap(InspectorSerializationDelegate(" 
+    "service: WidgetInspectorService.instance, includeProperties: false, subtreeDepth: 1)); "
+    "final loc0 = jm2['creationLocation']; int pl = 0; int pc = 0; "
+    "if (loc0 is Map) { final f2 = (loc0['file'] ?? '').toString(); "
+    "if (f2.isNotEmpty) { pfile = f2; } pl = (loc0['line'] as num?)?.toInt() ?? 0; "
+    "pc = (loc0['column'] as num?)?.toInt() ?? 0; } "
+    "final ptype = pick!.widget.runtimeType.toString(); "
+    "Element? appRoot = null; final se2 = <Element>[root]; "
+    "while (se2.isNotEmpty) { final e2 = se2.removeLast(); final k2 = e2.widget.key; "
+    "if (k2 != null && k2.toString().contains('xb_ume_app_root')) { appRoot = e2; break; } "
+    "final kids2 = <Element>[]; e2.visitChildren(kids2.add); "
+    "for (var i2 = kids2.length - 1; i2 >= 0; i2--) { se2.add(kids2[i2]); } } "
+    "final sp = XBUmeWidgetSpacingCalculator().calculate(pick!, searchRoot: appRoot); "
+    "final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
+    "final out = StringBuffer(); out.write('PICK'); out.write(row); "
+    "out.write(ptype); out.write(sep); out.write(pfile); out.write(sep); "
+    "out.write(pl.toString()); out.write(sep); out.write(pc.toString()); out.write(sep); "
+    "out.write(pb); out.write(row); "
+    "if (sp != null) { for (final it in sp.items) { String dir; "
+    "switch (it.direction) { case XBUmeSpacingDirection.up: dir = 'up'; break; "
+    "case XBUmeSpacingDirection.down: dir = 'down'; break; "
+    "case XBUmeSpacingDirection.left: dir = 'left'; break; "
+    "case XBUmeSpacingDirection.right: dir = 'right'; break; } "
+    "String srect = ''; final sr = it.sourceRect; "
+    "if (sr != null) { srect = sr.left.round().toString() + ',' + sr.top.round().toString() "
+    "+ ',' + sr.width.round().toString() + ',' + sr.height.round().toString(); } "
+    "out.write(dir); out.write(sep); out.write(it.distance.toStringAsFixed(1)); out.write(sep); "
+    "out.write(it.sourceWidgetType ?? 'parent'); out.write(sep); "
+    "out.write(it.source == XBUmeSpacingSource.parentEdge ? 'parent' : 'widget'); out.write(sep); "
+    "out.write(srect); out.write(row); } } "
+    "return out.toString(); })()";
 
 /// 返回字节列表中最后一个完整 UTF-8 序列之后的偏移；末尾若是不完整
 /// 的多字节序列（被分片大小切断），返回该序列起点，避免解码出替换符。
@@ -4563,7 +4721,11 @@ const String guiHtml = r'''
   .wtrow { cursor:pointer; white-space:nowrap; }
   .wtrow:hover { background:#21262d; }
   .wtsel { background:rgba(31,111,235,.25); }
+  .wtrow.wtsel { opacity:1; }
+  .wtsdk { opacity:.5; }
   .wttgl { display:inline-block; width:16px; color:var(--dim); text-align:center; text-decoration:none; }
+  .wtref { position:absolute; border:1px dashed #e8c268; pointer-events:none; }
+  .wtreflbl { position:absolute; transform:translate(-50%,-50%); background:rgba(20,20,20,.88); color:#e8c268; font-size:11px; padding:1px 5px; border-radius:3px; pointer-events:none; white-space:nowrap; }
   mark { background:#3fb950; color:#0d1117; border-radius:2px; }
   .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
   .sbtable th { color:var(--dim); font-weight:600; }
@@ -4750,12 +4912,14 @@ const String guiHtml = r'''
       <input id="wt-cls" placeholder="按类型/key 过滤" style="width:170px" oninput="wtDoFilter(this.value)">
       <span id="wt-info" class="muted"></span>
     </div>
+    <div class="muted" style="margin-top:4px;font-size:12px">点截图选中业务组件（非 Flutter SDK，locator 同款判定），并显示宽高与四向间距；SDK 包装节点在树中淡化。</div>
     <div style="display:flex;gap:10px;margin-top:8px;align-items:flex-start">
       <div id="wt-body" style="flex:0 0 44%;max-height:72vh;overflow:auto;border:1px solid var(--line);padding:4px;font-size:12px;line-height:1.8"></div>
       <div style="flex:1;max-height:72vh;overflow:auto">
         <div id="wt-inner" style="position:relative;display:inline-block">
           <img id="wt-img" style="display:none;max-width:100%;border:1px solid #444;cursor:crosshair" onclick="wtImgClick(event)" alt="app 截图">
           <div id="wt-box" style="display:none;position:absolute;border:2px solid #f85149;background:rgba(248,81,73,.12);pointer-events:none"></div>
+          <div id="wt-refs" style="position:absolute;left:0;top:0;pointer-events:none"></div>
         </div>
         <span id="wt-tip" class="muted">请先选择 VM，再点「刷新树 + 截图」</span>
       </div>
@@ -6009,6 +6173,20 @@ function restartDaemon(){
 }
 // ── P9 Widget 树浏览 + 截图高亮 ──
 var wtNodes = [], wtDpr = 1, wtPhysW = 0, wtPhysH = 0, wtSel = -1, wtExpand = {}, wtFilter = '', wtParents = [];
+var wtPickRect = null; // P9b 点截图反查到的业务组件逻辑 rect（pick 精确值，优先于树节点 bounds）
+// P9b SDK 组件名单：仅用于树中淡化展示（opacity .5），不影响点截图反查判定
+var wtSdkTypes = {};
+(function(){
+  var names = 'Padding,SizedBox,ConstrainedBox,Align,Center,FittedBox,AspectRatio,FractionallySizedBox,LimitedBox,IntrinsicWidth,IntrinsicHeight,Opacity,Transform,ClipRect,ClipRRect,ClipOval,ClipPath,Column,Row,Stack,Flex,Wrap,IndexedStack,Expanded,Flexible,Spacer,Positioned,Semantics,IndexedSemantics,Listener,GestureDetector,RawGestureDetector,MouseRegion,Builder,LayoutBuilder,KeyedSubtree,RepaintBoundary,Offstage,Visibility,AbsorbPointer,IgnorePointer,Container,DecoratedBox,ColoredBox,Material,Scaffold,AppBar,Text,RichText,EditableText,DefaultTextStyle,Icon,Image,RawImage,Placeholder,CustomPaint,PhysicalModel,PhysicalShape,MediaQuery,Directionality,Focus,FocusScope,FocusTraversalGroup,Title,Navigator,Router,TickerMode,AutomaticKeepAlive,KeepAlive,Scrollbar,ScrollView,ListView,GridView,SliverPadding,SliverList,SliverGrid,SliverToBoxAdapter,BottomNavigationBar,TabBar,TabBarView,PageView,TextField,ButtonBar,ElevatedButton,TextButton,IconButton,InkWell,InkResponse,Tooltip,Divider,ListTile,CircleAvatar,Chip,Card,Dialog,AlertDialog,SnackBar,AnnotatedRegion,DefaultTabController,AnimatedSwitcher,AnimatedBuilder,FadeTransition,SlideTransition,ScaleTransition,RotationTransition,AnimatedOpacity,AnimatedContainer,AnimatedPositioned,Hero,WillPopScope,SafeArea,SingleChildScrollView,NestedScrollView,RefreshIndicator,RawView,View'.split(',');
+  for (var i = 0; i < names.length; i++) wtSdkTypes[names[i]] = 1;
+})();
+function wtIsSdk(t){
+  if (t.charAt(0) === '_') return 1;
+  if (wtSdkTypes[t]) return 1;
+  var g = t.indexOf('<');
+  if (g > 0 && wtSdkTypes[t.substring(0, g)]) return 1;
+  return 0;
+}
 function wtUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function wtLoad(){
   var u = wtUri();
@@ -6066,8 +6244,17 @@ function wtRender(){
     }
     var hasKids = i + 1 < wtNodes.length && wtNodes[i+1].d === n.d + 1;
     var open = hasKids && (wtExpand[i] !== undefined ? wtExpand[i] : n.d < 6);
-    html += '<div class="wtrow' + (i === wtSel ? ' wtsel' : '') + '" id="wtn-' + i + '" style="padding-left:' + (n.d * 14 + 4) + 'px" onclick="wtSelect(' + i + ')">'
+    // 缩进封顶：超深层级不真实缩进（否则文字横向出视口，看似空白），改显父链尾
+    var pad = Math.min(n.d, 24) * 14 + 4;
+    var anc = '';
+    if (n.d > 24 && wtParents.length) {
+      var p1 = wtParents[i] >= 0 ? wtParents[i] : -1;
+      var p2 = p1 >= 0 ? wtParents[p1] : -1;
+      anc = (p2 >= 0 ? wtNodes[p2].t + '/' : '') + (p1 >= 0 ? wtNodes[p1].t + '/' : '');
+    }
+    html += '<div class="wtrow' + (i === wtSel ? ' wtsel' : '') + (wtIsSdk(n.t) ? ' wtsdk' : '') + '" id="wtn-' + i + '" style="padding-left:' + pad + 'px" onclick="wtSelect(' + i + ')">'
       + (hasKids ? '<a href="javascript:void(0)" class="wttgl" onclick="event.stopPropagation();wtToggle(' + i + ')">' + (open ? '▾' : '▸') + '</a>' : '<span class="wttgl">·</span>')
+      + (anc ? '<span class="muted">' + esc(anc) + '</span>' : '')
       + '<b>' + esc(n.t) + '</b>' + (n.k ? ' <span class="muted">' + esc(n.k) + '</span>' : '')
       + '</div>';
     if (hasKids && !open) skipD = n.d;
@@ -6083,6 +6270,9 @@ function wtExpandAll(){ for (var i = 0; i < wtNodes.length; i++) wtExpand[i] = t
 function wtCollapseAll(){ for (var i = 0; i < wtNodes.length; i++) wtExpand[i] = false; wtRender(); }
 function wtDoFilter(v){ wtFilter = v.trim(); wtRender(); }
 function wtSelect(i, scroll){
+  wtPickRect = null;
+  var rf = document.getElementById('wt-refs');
+  if (rf) rf.innerHTML = '';
   var old = document.getElementById('wtn-' + wtSel);
   if (old) old.classList.remove('wtsel');
   wtSel = i;
@@ -6093,7 +6283,7 @@ function wtSelect(i, scroll){
     wtRender();
   }
   var row = document.getElementById('wtn-' + i);
-  if (row) { row.classList.add('wtsel'); if (scroll) row.scrollIntoView({block: 'nearest'}); }
+  if (row) { row.classList.add('wtsel'); if (scroll) row.scrollIntoView({block: 'center'}); }
   var n = wtNodes[i];
   var info = '深度 ' + n.d + ' · ' + n.t + (n.k ? ' · ' + n.k : '');
   if (n.b) info += ' · bounds (' + n.b[0] + ',' + n.b[1] + ') ' + n.b[2] + '×' + n.b[3];
@@ -6103,8 +6293,9 @@ function wtSelect(i, scroll){
 function wtDrawBox(){
   var box = document.getElementById('wt-box');
   var img = document.getElementById('wt-img');
-  if (wtSel < 0 || !wtNodes[wtSel] || !wtNodes[wtSel].b || !img.naturalWidth || !wtPhysW) { box.style.display = 'none'; return; }
-  var b = wtNodes[wtSel].b;
+  var b = wtPickRect;
+  if (!b && wtSel >= 0 && wtNodes[wtSel]) b = wtNodes[wtSel].b;
+  if (!b || !img.naturalWidth || !wtPhysW) { box.style.display = 'none'; return; }
   var scale = img.clientWidth / wtPhysW; // 显示像素 / 物理像素
   var d = wtDpr;                          // 物理像素 / 逻辑像素
   box.style.display = '';
@@ -6114,21 +6305,89 @@ function wtDrawBox(){
   box.style.height = (b[3] * d * scale) + 'px';
 }
 function wtImgClick(ev){
-  if (!wtNodes.length || !wtPhysW) return;
+  if (!wtPhysW) return;
   var rect = ev.target.getBoundingClientRect();
   var lx = (ev.clientX - rect.left) * (wtPhysW / rect.width) / wtDpr;
   var ly = (ev.clientY - rect.top) * (wtPhysH / rect.height) / wtDpr;
-  var best = -1, bestA = Infinity;
-  for (var i = 0; i < wtNodes.length; i++) {
-    var b = wtNodes[i].b;
-    if (!b || b[2] <= 0 || b[3] <= 0) continue;
-    if (lx >= b[0] && lx <= b[0] + b[2] && ly >= b[1] && ly <= b[1] + b[3]) {
-      var a = b[2] * b[3];
-      if (a < bestA) { bestA = a; best = i; }
-    }
+  var u = wtUri();
+  if (!u) return;
+  document.getElementById('wt-info').textContent = '反查中…';
+  fetch('/api/wtree/pick?uri=' + encodeURIComponent(u) + '&x=' + lx.toFixed(1) + '&y=' + ly.toFixed(1), {method: 'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { document.getElementById('wt-info').textContent = '反查失败：' + (d.error || d); return; }
+      var bs = (d.bounds || '').split(',').map(Number);
+      wtPickRect = bs.length === 4 ? bs : null;
+      var fb = (d.file || '').split('/').pop();
+      var info = d.type + (wtPickRect ? ' · ' + wtPickRect[2] + '×' + wtPickRect[3] : '') + (fb ? ' · ' + fb + ':' + d.line + ':' + d.col : '');
+      var sp = d.spacing || [];
+      if (sp.length) info += ' · ' + sp.map(function(s){
+        var a = s.dir === 'up' ? '↑' : s.dir === 'down' ? '↓' : s.dir === 'left' ? '←' : '→';
+        return a + s.dist + '(' + s.type + ')';
+      }).join(' ');
+      document.getElementById('wt-info').textContent = info;
+      wtDrawBox();
+      // 树定位：type + bounds 匹配（同快照时精确命中）
+      var hit = -1;
+      if (wtPickRect) {
+        for (var i = 0; i < wtNodes.length; i++) {
+          var n = wtNodes[i];
+          if (n.t !== d.type || !n.b) continue;
+          if (n.b[0] === wtPickRect[0] && n.b[1] === wtPickRect[1] && n.b[2] === wtPickRect[2] && n.b[3] === wtPickRect[3]) { hit = i; break; }
+        }
+      }
+      if (hit >= 0) {
+        var old = document.getElementById('wtn-' + wtSel);
+        if (old) old.classList.remove('wtsel');
+        wtSel = hit;
+        if (!document.getElementById('wtn-' + hit)) {
+          var p = wtParents[hit];
+          while (p >= 0) { wtExpand[p] = true; p = wtParents[p]; }
+          wtRender();
+        }
+        var row = document.getElementById('wtn-' + hit);
+        if (row) { row.classList.add('wtsel'); row.scrollIntoView({block: 'center'}); }
+        wtDrawBox();
+      }
+      wtRefsRender(sp);
+    })
+    .catch(function(e){ document.getElementById('wt-info').textContent = '反查失败：' + e; });
+}
+function wtRefsRender(sp){
+  var el = document.getElementById('wt-refs');
+  var img = document.getElementById('wt-img');
+  el.innerHTML = '';
+  if (!sp.length || !wtPhysW || !img.naturalWidth) return;
+  var scale = img.clientWidth / wtPhysW, d = wtDpr;
+  var html = '';
+  for (var i = 0; i < sp.length; i++) {
+    var s = sp[i];
+    if (!s.rect) continue;
+    var r = s.rect.split(',').map(Number);
+    if (r.length !== 4 || r[2] <= 0 || r[3] <= 0) continue;
+    var arrow = s.dir === 'up' ? '↑' : s.dir === 'down' ? '↓' : s.dir === 'left' ? '←' : '→';
+    html += '<div class="wtref" style="left:' + (r[0]*d*scale) + 'px;top:' + (r[1]*d*scale) + 'px;width:' + (r[2]*d*scale) + 'px;height:' + (r[3]*d*scale) + 'px"></div>';
+    var mx, my;
+    if (wtPickRect) {
+      var pcx = wtPickRect[0] + wtPickRect[2]/2;
+      var pcy = wtPickRect[1] + wtPickRect[3]/2;
+      if (s.kind === 'parent') {
+        // parent 参照：父容器包含目标，标注画在目标对应边与父容器对应边之间
+        if (s.dir === 'up') { mx = pcx; my = (wtPickRect[1] + r[1]) / 2; }
+        else if (s.dir === 'down') { mx = pcx; my = (wtPickRect[1] + wtPickRect[3] + r[1] + r[3]) / 2; }
+        else if (s.dir === 'left') { mx = (wtPickRect[0] + r[0]) / 2; my = pcy; }
+        else { mx = (wtPickRect[0] + wtPickRect[2] + r[0] + r[2]) / 2; my = pcy; }
+      } else {
+        // widget 参照：目标与参照不重叠，标注画在两面对应边之间
+        if (s.dir === 'up') { mx = pcx; my = (wtPickRect[1] + r[1] + r[3]) / 2; }
+        else if (s.dir === 'down') { mx = pcx; my = (wtPickRect[1] + wtPickRect[3] + r[1]) / 2; }
+        else if (s.dir === 'left') { mx = (wtPickRect[0] + r[0] + r[2]) / 2; my = pcy; }
+        else { mx = (wtPickRect[0] + wtPickRect[2] + r[0]) / 2; my = pcy; }
+      }
+    } else { mx = r[0]; my = r[1]; }
+    html += '<div class="wtreflbl" style="left:' + (mx*d*scale) + 'px;top:' + (my*d*scale) + 'px">' + arrow + s.dist + ' ' + esc(s.type) + '</div>';
   }
-  if (best >= 0) wtSelect(best, true);
-  else document.getElementById('wt-info').textContent = '(' + lx.toFixed(0) + ',' + ly.toFixed(0) + ') 无节点';
+  el.innerHTML = html;
 }
 window.addEventListener('resize', function(){ wtDrawBox(); });
 function openConfig(){ fetch('/api/openconfig', {method: 'POST'}); }
