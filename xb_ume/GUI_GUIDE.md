@@ -51,6 +51,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
+| Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图 + 截图录制点击，详见下文「自动化路径」 |
 
 ## 三、功能详细使用说明
 
@@ -286,7 +287,37 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：bounds 由 app 内 `localToGlobal(paintBounds)` 实时计算（逻辑像素），按 devicePixelRatio 对齐截图物理像素；每个 Element 都输出其 renderObject 子树的 bounds（组件节点高亮=其实际渲染范围）。超过 24 层的深层节点不真实缩进（避免行宽过 大导致内容横向滚出视口），行首以灰色「祖先/父级/」前缀标识层级位置。SDK/系统包装类节点在树中以淡化样式展示（仅视觉，不影响点选），方便快速找到业务组件。刷新树与截图是两次独立抓取，app 界面若在两次抓取间变化，高亮位置可能轻微偏移，再点一次刷新即可。
 
-## 十一、异常（Tab「异常」）
+## 十一、自动化路径（Tab「自动化」）
+
+**前提**：页头选中 VM 会话；仅 debug 模式可用。场景存电脑端 `~/.xb_ume_ide/scenarios/*.json`（与 app 零侵入，全部通过 VM service eval 驱动）。
+
+**用途**：把「点这里→输入这个→断言那个」的回归验证步骤存成 JSON 场景一键重放，逐步给 status/耗时/期望 vs 实际/失败截图。
+
+**步骤类型**（JSON 数组，每步一个对象）：
+
+| type | 参数 | 说明 |
+|---|---|---|
+| tap | x, y, phys? | 注入 PointerDown/Up；`phys:true` 为截图物理像素坐标（录制坐标），否则逻辑像素 |
+| input | text | 向当前焦点输入框注入文本（需先 tap 输入框建立 TextInputConnection，否则报「无焦点输入框」） |
+| swipe | x1,y1,x2,y2, ms?, phys? | 8 段插值 move 模拟拖动/滚动 |
+| wait | ms | 等待 |
+| back | — | pop 栈顶路由（已是最后一个路由则报错） |
+| navigate | name | pushNamed（app 未配命名路由表会报 NO_ROUTE_TABLE/UNKNOWN） |
+| assertVisible | widget | 树中存在该类型（支持泛型前缀）且 RenderBox 有尺寸 |
+| assertRoute | name | 栈顶路由名包含 name |
+| assertInstance | class | 堆/树上存在该类实例（GC 后计数） |
+| eval | expr, expect? | 任意 eval 表达式（binding.dart 上下文），结果含 expect 则过 |
+
+**使用**：
+
+1. 场景下拉选已有场景（或直接在 textarea 写步骤 JSON）→ 填「场景名」→「保存」；「格式化」美化 JSON，「删除」删场景；
+2. 「▶ 运行」在选中会话上串行执行；默认失败即停（失败步骤截图落盘），勾「失败继续」跑完所有步骤；执行中「■ 停止」在当前步骤结束后跳过余下；
+3. 报告表实时刷新：步骤号/类型/状态（绿 pass / 红 fail / 灰 skip）/耗时/期望/实际/失败截图链接；
+4. 录制：到「截图」Tab 勾选「录制点击」，点截图任意位置即追加 `{type:tap, x, y, phys:true}` 到录制缓冲（计数显示在「导入录制(N)」按钮上），回「自动化」Tab 点「导入录制」生成步骤 JSON。
+
+**说明**：所有注入都走 `GestureBinding.handlePointerEvent` / `TextInput._instance` eval（零 app 侵入）；macOS 桌面 app 长时间后台后帧调度会冻结（push 动画不完成、新页面元素不上树），跑场景前把 app 置前台；步间默认等 700ms（步骤可加 `waitAfter` 覆盖）让 UI 渲染稳定。
+
+## 十二、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -302,7 +333,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十二、常见问题
+## 十三、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -317,7 +348,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十三、卸载
+## 十四、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -325,7 +356,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十四、相关文档
+## 十五、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

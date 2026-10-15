@@ -1845,7 +1845,159 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
-    // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异常块 ──
+    // ── P10 自动化路径：场景存取/执行/状态/截图 ──
+    if (path == '/api/auto/list') {
+      final dir = Directory(_autoScenariosDir);
+      final items = <Map<String, Object?>>[];
+      if (dir.existsSync()) {
+        for (final f in dir.listSync()) {
+          if (f is! File || !f.path.endsWith('.json')) continue;
+          try {
+            final j = jsonDecode(f.readAsStringSync());
+            // save 落盘的是纯步骤数组（不带外层 Map），兼容两种格式。
+            final steps = j is List
+                ? j.length
+                : (j is Map ? (j['steps'] as List? ?? <Object?>[]).length : 0);
+            items.add(<String, Object?>{
+              'name': f.uri.pathSegments.last.replaceAll(RegExp(r'\.json$'), ''),
+              'steps': steps,
+              'mtime': f.statSync().modified.toIso8601String(),
+            });
+          } catch (_) {}
+        }
+      }
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true, 'items': items}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/get' || path == '/api/auto/delete') {
+      final name = (req.uri.queryParameters['name'] ?? '').trim();
+      final file = _autoScenarioFile(name);
+      if (file == null) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      req.response.headers.contentType = ContentType.json;
+      if (path == '/api/auto/get') {
+        if (!file.existsSync()) {
+          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
+        } else {
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': true,
+            'name': name,
+            'steps': jsonDecode(file.readAsStringSync()),
+          }));
+        }
+      } else {
+        if (file.existsSync()) file.deleteSync();
+        req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      }
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/save' && req.method == 'POST') {
+      final body = await utf8.decoder.bind(req).join();
+      try {
+        final j = jsonDecode(body) as Map<String, dynamic>;
+        final file = _autoScenarioFile((j['name'] ?? '').toString());
+        if (file == null) {
+          req.response.statusCode = HttpStatus.badRequest;
+          await req.response.close();
+          return;
+        }
+        file.parent.createSync(recursive: true);
+        file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(j['steps'] ?? []));
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/run' && req.method == 'POST') {
+      if (_auto.running) {
+        req.response.statusCode = HttpStatus.conflict;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '已有场景在执行'}));
+        await req.response.close();
+        return;
+      }
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      String name = req.uri.queryParameters['name'] ?? '';
+      List steps;
+      final body = await utf8.decoder.bind(req).join();
+      try {
+        if (body.isNotEmpty) {
+          final j = jsonDecode(body);
+          steps = j is List ? j : (j is Map ? (j['steps'] as List? ?? <Object?>[]) : <Object?>[]);
+          if (j is Map && name.isEmpty) name = (j['name'] ?? '').toString();
+        } else if (name.isNotEmpty) {
+          final file = _autoScenarioFile(name);
+          if (file == null || !file.existsSync()) {
+            req.response.headers.contentType = ContentType.json;
+            req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
+            await req.response.close();
+            return;
+          }
+          steps = jsonDecode(file.readAsStringSync()) as List;
+        } else {
+          steps = <Object?>[];
+        }
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '步骤解析失败: $e'}));
+        await req.response.close();
+        return;
+      }
+      if (uri.isEmpty || steps.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final cont = (req.uri.queryParameters['continue'] ?? '') == '1';
+      unawaited(_autoRunSteps(uri, name, steps, continueOnFail: cont));
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true, 'total': steps.length}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/status') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}..addAll(_auto.statusJson())));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/stop' && req.method == 'POST') {
+      _auto.stopReq = true;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/auto/artifact') {
+      final f = req.uri.queryParameters['f'] ?? '';
+      // 文件名防穿越：只允许 run-*-stepN.png
+      if (f.isEmpty || f.contains('/') || f.contains('\\') || !RegExp(r'^run-\d+-step\d+\.png$').hasMatch(f)) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final file = File('$_autoArtifactsDir/$f');
+      if (!file.existsSync()) {
+        req.response.statusCode = HttpStatus.notFound;
+        await req.response.close();
+        return;
+      }
+      req.response.headers.contentType = ContentType('image', 'png');
+      req.response.headers.set('Cache-Control', 'no-store');
+      await file.openRead().pipe(req.response);
+      return;
+    }
+    // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异 常块 ──
     if (path == '/api/exceptions') {
       req.response.headers.contentType = ContentType.json;
       req.response.write(
@@ -3234,6 +3386,362 @@ String _escEvalString(String s) => s
     .replaceAll('\n', r'\n')
     .replaceAll('\r', r'\r')
     .replaceAll('\t', r'\t');
+
+// ── P10 自动化路径：场景执行引擎 ──
+
+/// tap：GestureBinding.handlePointerEvent down+up 同点（binding.dart 上下文，
+/// 实测可驱动真实 UI 导航/点击）。phys=true 时坐标为截图物理像素（除 dpr）。
+String _autoTapExpr(String x, String y, {bool phys = false}) =>
+    phys
+        ? "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+            "final p = Offset($x, $y) / d; "
+            "GestureBinding.instance.handlePointerEvent(PointerDownEvent(position: p)); "
+            "GestureBinding.instance.handlePointerEvent(PointerUpEvent(position: p)); return 'OK'; })()"
+        : "(() { GestureBinding.instance.handlePointerEvent("
+            "PointerDownEvent(position: Offset($x, $y))); "
+            "GestureBinding.instance.handlePointerEvent("
+            "PointerUpEvent(position: Offset($x, $y))); return 'OK'; })()";
+
+/// input：直接调当前焦点 client 的 updateEditingValue（该 Flutter 版本
+/// TextInput 是实例单例：TextInput._instance._currentConnection?._client）。
+/// 需先 tap 输入框建立 TextInputConnection，否则返回 NO_CONN。
+String _autoInputExpr(String text) =>
+    "(() { final c = TextInput._instance._currentConnection; "
+    "if (c == null) return 'NO_CONN'; "
+    "final s = '${_escEvalString(text)}'; "
+    "(c._client as dynamic).updateEditingValue(TextEditingValue("
+    "text: s, selection: TextSelection.collapsed(offset: s.length))); "
+    "return 'OK'; })()";
+
+/// assertVisible：树中存在类型匹配（支持泛型前缀）且 renderObject
+/// 是有尺寸的 RenderBox。
+String _autoAssertVisibleExpr(String type) {
+  final t = _escEvalString(type);
+  return "(() { final root = WidgetsBinding.instance.renderViewElement; "
+      "if (root == null) return 'NO_ROOT'; "
+      "final se = <Element>[root!]; "
+      "while (se.isNotEmpty) { final e = se.removeLast(); "
+      "final t = e.widget.runtimeType.toString(); var ok = t == '$t'; "
+      "if (!ok) { final g = t.indexOf('<'); if (g > 0 && t.substring(0, g) == '$t') ok = true; } "
+      "if (ok) { final r = e.renderObject; if (r is RenderBox && r.attached "
+      "&& r.hasSize && r.size.width > 0 && r.size.height > 0) return 'FOUND'; } "
+      "final kids = <Element>[]; e.visitChildren(kids.add); "
+      "for (var i = kids.length - 1; i >= 0; i--) se.add(kids[i]); } "
+      "return 'NOT_FOUND'; })()";
+}
+
+/// 路由栈快照（navigator.dart 上下文）：每个 Navigator 的历史路由名用逗号拼接。
+const String _autoRoutesExpr =
+    "(() { final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return 'NO_ROOT'; "
+    "final navs = <NavigatorState>[]; "
+    "void walk(Element e) { final w = e.widget; "
+    "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) "
+    "{ navs.add(e.state as NavigatorState); } e.visitChildren(walk); } "
+    "root.visitChildren(walk); "
+    "if (navs.isEmpty) return 'NO_NAV'; "
+    "final out = StringBuffer(); "
+    "for (final h in navs[0]._history) { out.write(h.route.settings.name); "
+    "out.write(String.fromCharCode(44)); } return out.toString(); })()";
+
+/// 单步执行结果。
+class _AutoStepResult {
+  _AutoStepResult(this.index, this.type, this.expect);
+  final int index;
+  final String type;
+  final String expect;
+  String status = 'running'; // running | pass | fail | skip
+  var ms = 0;
+  String actual = '';
+  String error = '';
+  String? shot; // 步骤截图文件名（artifacts 目录下）
+  Map<String, Object?> toJson() => <String, Object?>{
+        'index': index,
+        'type': type,
+        'status': status,
+        'ms': ms,
+        'expect': expect,
+        'actual': actual,
+        'error': error,
+        'shot': shot,
+      };
+}
+
+/// 一次场景运行的状态（GUI 同一时间只跑一个场景）。
+class _AutoRunState {
+  bool running = false;
+  bool stopReq = false;
+  String uri = '';
+  String name = '';
+  var cur = 0;
+  List<_AutoStepResult> results = [];
+  String runId = '';
+  DateTime startedAt = DateTime.now();
+  Map<String, Object?> statusJson() => <String, Object?>{
+        'running': running,
+        'name': name,
+        'cur': cur,
+        'total': results.length,
+        'startedAt': startedAt.toIso8601String(),
+        'results': results.map((r) => r.toJson()).toList(),
+      };
+}
+
+final _auto = _AutoRunState();
+
+String get _autoScenariosDir => '$_home/.xb_ume_ide/scenarios';
+String get _autoArtifactsDir => '$_home/.xb_ume_ide/scenarios/artifacts';
+
+/// 场景名 → json 文件；名字只允许字母数字下划线中横线中文，防穿越。
+File? _autoScenarioFile(String name) {
+  final n = name.trim();
+  if (n.isEmpty || n.length > 64) return null;
+  if (!RegExp(r'^[\w\u4e00-\u9fff-]+$').hasMatch(n)) return null;
+  return File('$_autoScenariosDir/$n.json');
+}
+
+/// 步骤截图（失败/报告用）：返回文件名，截图失败返回 null。
+Future<String?> _autoShot(String uri, String runId, int index) async {
+  final rpc = _SandboxRpc(uri);
+  try {
+    final r = await rpc.rawRpc('_flutter.screenshot');
+    final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+    if (b64.isEmpty) return null;
+    final dir = Directory(_autoArtifactsDir);
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final f = '$runId-step$index.png';
+    File('$_autoArtifactsDir/$f').writeAsBytesSync(base64Decode(b64));
+    return f;
+  } catch (_) {
+    return null;
+  } finally {
+    await rpc.close();
+  }
+}
+
+/// 单步执行：返回 (actual, error)；error 非空即失败。
+Future<(String, String)> _autoExecStep(
+    String uri, Map<String, dynamic> st) async {
+  final type = (st['type'] ?? '').toString().trim();
+  final rpc = _SandboxRpc(uri);
+  try {
+    switch (type) {
+      case 'tap':
+        final x = (st['x'] as num?)?.toDouble();
+        final y = (st['y'] as num?)?.toDouble();
+        if (x == null || y == null) return ('', 'tap 需要 x/y 数值坐标');
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/binding.dart',
+            _autoTapExpr(x.toString(), y.toString(),
+                phys: (st['phys'] ?? false) == true));
+        return (s, s == 'OK' ? '' : 'tap 注入异常: $s');
+      case 'swipe':
+        final x1 = (st['x1'] as num?)?.toDouble();
+        final y1 = (st['y1'] as num?)?.toDouble();
+        final x2 = (st['x2'] as num?)?.toDouble();
+        final y2 = (st['y2'] as num?)?.toDouble();
+        if (x1 == null || y1 == null || x2 == null || y2 == null) {
+          return ('', 'swipe 需要 x1/y1/x2/y2');
+        }
+        final ms = (st['ms'] as num?)?.toInt() ?? 300;
+        const seg = 8;
+        final moveMs = (ms / seg).round().clamp(16, 200);
+        final phys = (st['phys'] ?? false) == true;
+        // 物理模式：坐标在表达式内先除 dpr 转逻辑像素，再走同一逻辑坐标路径。
+        String px(double v) => phys ? '($v / d)' : v.toString();
+        const ctx = 'package:flutter/src/widgets/binding.dart';
+        await rpc.evalStringOn(ctx,
+            "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+            "GestureBinding.instance.handlePointerEvent("
+            "PointerDownEvent(position: Offset(${px(x1)}, ${px(y1)}))); return 'OK'; })()");
+        for (var i = 1; i <= seg; i++) {
+          final t = i / seg;
+          final mx = x1 + (x2 - x1) * t;
+          final my = y1 + (y2 - y1) * t;
+          await rpc.evalStringOn(ctx,
+              "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+              "GestureBinding.instance.handlePointerEvent("
+              "PointerMoveEvent(position: Offset(${px(mx)}, ${px(my)}))); return 'OK'; })()");
+          await Future.delayed(Duration(milliseconds: moveMs));
+        }
+        await rpc.evalStringOn(ctx,
+            "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+            "GestureBinding.instance.handlePointerEvent("
+            "PointerUpEvent(position: Offset(${px(x2)}, ${px(y2)}))); return 'OK'; })()");
+        return ('swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})', '');
+      case 'input':
+        final text = (st['text'] ?? '').toString();
+        // _instance/_currentConnection 是 text_input.dart 库内私有，
+        // 必须在该库上下文 eval（binding.dart 上下文会 Member not found）。
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/services/text_input.dart', _autoInputExpr(text));
+        return (s, s == 'OK' ? '' : s == 'NO_CONN' ? '无焦点输入框（先 tap 输入框）' : '注入异常: $s');
+      case 'wait':
+        final ms = (st['ms'] as num?)?.toInt() ?? 500;
+        await Future.delayed(Duration(milliseconds: ms.clamp(0, 60000)));
+        return ('waited $ms ms', '');
+      case 'back':
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/navigator.dart', _autoRoutesExpr);
+        if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈');
+        final names = s.split(',').where((e) => e.isNotEmpty).toList();
+        if (names.length <= 1) return ('${names.length} route', '已是最后一个路由，无法返回');
+        final op = await _autoRouteOp(uri, 'pop', idx: names.length - 1);
+        return (op, op == 'OK' ? '' : 'pop 失败: $op');
+      case 'navigate':
+        final name = (st['name'] ?? '').toString();
+        if (name.isEmpty) return ('', 'navigate 需要 name');
+        final op = await _autoRouteOp(uri, 'push', name: name);
+        return (op, op == 'OK' ? '' : 'push 失败: $op');
+      case 'assertVisible':
+        // 目标类型用独立 widget 字段（type 被步骤类型占用，不能重复键）。
+        final t = (st['widget'] ?? '').toString().trim();
+        if (t.isEmpty) return ('', 'assertVisible 需要 widget（页面/组件类名）');
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/binding.dart', _autoAssertVisibleExpr(t));
+        return (s, s == 'FOUND' ? '' : s == 'NOT_FOUND' ? '树中不存在可见的 $t' : '查找异常: $s');
+      case 'assertRoute':
+        final name = (st['name'] ?? '').toString();
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/navigator.dart', _autoRoutesExpr);
+        if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈');
+        final names = s.split(',').where((e) => e.isNotEmpty).toList();
+        final top = names.isEmpty ? '' : names.last;
+        return (top,
+            name.isEmpty || top.contains(name) ? '' : '栈顶路由 $top 不匹配 $name');
+      case 'assertInstance':
+        final cls = (st['class'] ?? '').toString().trim();
+        if (cls.isEmpty) return ('', 'assertInstance 需要 class');
+        final n = await _autoInstanceCount(uri, cls);
+        return ('$n 个', n > 0 ? '' : '堆/树上不存在 $cls 实例');
+      case 'eval':
+        final expr = (st['expr'] ?? '').toString();
+        if (expr.isEmpty) return ('', 'eval 需要 expr');
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/binding.dart', expr);
+        final expect = (st['expect'] ?? '').toString();
+        return (s,
+            expect.isEmpty || s.contains(expect) ? '' : '期望包含「$expect」实际「$s」');
+      default:
+        return ('', '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/assertVisible/assertRoute/assertInstance/eval）');
+    }
+  } catch (e) {
+    return ('', e.toString());
+  } finally {
+    await rpc.close();
+  }
+}
+
+/// 路由操作复用（与 /api/routeop 同一套 eval，navigator.dart 上下文）。
+Future<String> _autoRouteOp(String uri, String op,
+    {int idx = -1, String name = ''}) async {
+  final rpc = _SandboxRpc(uri);
+  try {
+    const walk = "final root = WidgetsBinding.instance.renderViewElement; "
+        "if (root == null) return 'NO_ROOT'; "
+        "final navigators = <NavigatorState>[]; "
+        "void walk(Element e) { final w = e.widget; "
+        "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) "
+        "{ navigators.add(e.state as NavigatorState); } e.visitChildren(walk); } "
+        "root.visitChildren(walk); ";
+    final expr = op == 'pop'
+        ? "(() { $walk"
+            "if (navigators.isEmpty) return 'NO_NAV'; "
+            "final h = navigators[0]._history; if (h.length <= 1) return 'LAST_ROUTE'; "
+            "navigators[0].pop(); return 'OK'; })()"
+        : "(() { $walk"
+            "if (navigators.isEmpty) return 'NO_NAV'; "
+            "if (navigators[0].widget.onGenerateRoute == null) return 'NO_ROUTE_TABLE'; "
+            "try { final r = navigators[0]._routeNamed('${_escEvalString(name)}', arguments: null); "
+            "if (r == null) return 'UNKNOWN'; navigators[0].push(r); return 'OK'; "
+            "} catch (e) { return 'ERR:' + e.runtimeType.toString(); } })()";
+    return await rpc.evalStringOn('package:flutter/src/widgets/navigator.dart', expr);
+  } finally {
+    await rpc.close();
+  }
+}
+
+/// 堆/树上实例计数（assertInstance 用，复用实例 Tab 的堆扫描）。
+Future<int> _autoInstanceCount(String uri, String cls) async {
+  final rpc = _SandboxRpc(uri);
+  try {
+    final iso = await rpc.isolateId();
+    final classList = await rpc.rawRpc('getClassList', {'isolateId': iso});
+    var count = 0;
+    for (final c in (classList['classes'] as List? ?? <Object?>[])) {
+      if (c is! Map) continue;
+      final name = c['name']?.toString() ?? '';
+      if (name != cls && !name.endsWith('.$cls')) continue;
+      try {
+        final set = await rpc.rawRpc('getInstances', {
+          'isolateId': iso,
+          'objectId': c['id']?.toString() ?? '',
+          'limit': 100,
+        });
+        count += (set['instances'] as List? ?? <Object?>[]).length;
+      } catch (_) {}
+    }
+    return count;
+  } finally {
+    await rpc.close();
+  }
+}
+
+/// 场景执行主循环：逐步执行 + 每步截图 + 步间稳定延迟；
+/// stopReq 置位后剩余步骤标 skip。失败是否继续由 continueOnFail 控制。
+Future<void> _autoRunSteps(String uri, String name, List steps,
+    {bool continueOnFail = false}) async {
+  _auto
+    ..running = true
+    ..stopReq = false
+    ..uri = uri
+    ..name = name
+    ..cur = 0
+    ..runId = 'run-${DateTime.now().millisecondsSinceEpoch}'
+    ..startedAt = DateTime.now()
+    ..results = <_AutoStepResult>[];
+  for (final raw in steps) {
+    final st = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+    final type = (st['type'] ?? '?').toString();
+    final r = _AutoStepResult(
+        _auto.results.length,
+        type,
+        (st['expect'] ??
+                (st['type'] == 'assertVisible'
+                    ? '可见 ${st['widget'] ?? ''}'
+                    : ''))
+            .toString());
+    _auto.results.add(r);
+    _auto.cur = r.index;
+    if (_auto.stopReq) {
+      r
+        ..status = 'skip'
+        ..error = '用户停止';
+      continue;
+    }
+    final sw = Stopwatch()..start();
+    final (actual, err) = await _autoExecStep(uri, st);
+    r.ms = sw.elapsedMilliseconds;
+    r.actual = actual;
+    if (err.isNotEmpty) {
+      r
+        ..status = 'fail'
+        ..error = err;
+      r.shot = await _autoShot(uri, _auto.runId, r.index);
+      if (!continueOnFail) {
+        _auto.stopReq = true;
+        continue;
+      }
+    } else {
+      r.status = 'pass';
+    }
+    // 步间稳定延迟（tap/swipe 后 UI 需要渲染时间），可被步骤里的 wait 之外的
+    // waitAfter 覆盖。
+    final waitAfter = (st['waitAfter'] as num?)?.toInt() ?? 700;
+    if (waitAfter > 0) await Future.delayed(Duration(milliseconds: waitAfter));
+  }
+  _auto.running = false;
+}
 
 /// 取路径最后一段（os 为 app 端 Platform.operatingSystem）。
 String _baseName(String p, String os) {
@@ -4773,6 +5281,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="shot">截图</div>
   <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
   <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
+  <div class="tab" data-tab="auto">自动化</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -4900,9 +5409,10 @@ const String guiHtml = r'''
         <option value="5">每 5 秒</option>
       </select>
       <button onclick="shSave()">下载 PNG</button>
+      <label style="font-size:12px"><input type="checkbox" id="sh-rec" onchange="shRecToggle(this)"> 录制点击</label>
     </div>
     <div class="muted" id="sh-tip" style="display:none;margin-top:8px"></div>
-    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444" alt="app 截图"></div>
+    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444;cursor:crosshair" onclick="shImgClick(event)" alt="app 截图"></div>
     <div class="muted" style="margin-top:6px">实时截图（_flutter.screenshot，debug 模式可用）；自动刷新选低频档，避免截图流量过大。</div>
   </section>
   <section class="page" id="page-wtree">
@@ -4926,6 +5436,24 @@ const String guiHtml = r'''
       </div>
     </div>
     <div class="muted" style="margin-top:6px">点击树节点在截图上高亮其位置；点击截图自动选中该位置上最小的节点（含全部包装层，从深到浅可层层剥开）。过滤即时生效（显示匹配节点及其祖先）。bounds 由 app 内 localToGlobal 实时计算，按 dpr 对齐截图物理像素。</div>
+  </section>
+  <section class="page" id="page-auto">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <select id="au-sel" onchange="auPick(this.value)"><option value="">— 选择场景 —</option></select>
+      <button onclick="auLoad()">刷新</button>
+      <input id="au-name" placeholder="场景名" style="width:120px">
+      <button class="primary" onclick="auSave()">保存</button>
+      <button onclick="auDelete()">删除</button>
+      <button onclick="auFmt()">格式化</button>
+      <button class="primary" onclick="auRun()">▶ 运行</button>
+      <button onclick="auStop()">■ 停止</button>
+      <label style="font-size:12px"><input type="checkbox" id="au-cont"> 失败继续</label>
+      <button onclick="auImportRec()">导入录制(<span id="au-rec-n">0</span>)</button>
+    </div>
+    <div class="muted" style="margin-top:4px;font-size:12px">步骤 JSON：[{"type":"tap","x":400,"y":280,"phys":true},{"type":"input","text":"hi"},{"type":"swipe","x1":400,"y1":400,"x2":400,"y2":150,"ms":400,"phys":true},{"type":"wait","ms":1000},{"type":"back"},{"type":"navigate","name":"xxx"},{"type":"assertVisible","widget":"页面类名"},{"type":"assertRoute","name":"路由名"},{"type":"assertInstance","class":"类名"},{"type":"eval","expr":"1+1","expect":"2"}]。tap/swipe 坐标：phys=true 为截图物理像素（录制坐标），否则逻辑像素。</div>
+    <textarea id="au-steps" style="width:100%;height:180px;margin-top:6px;font-family:monospace;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg)" placeholder='[{"type":"tap","x":400,"y":280,"phys":true}]'></textarea>
+    <div style="margin-top:6px"><span id="au-prog" class="muted"></span></div>
+    <div id="au-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
   </section>
 </main>
 <script>
@@ -4963,6 +5491,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
+    else if (t.dataset.tab === 'auto') auLoad();
     else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
@@ -5117,7 +5646,7 @@ function shRefresh(){
     img.style.display = 'none'; tip.style.display = '';
     tip.textContent = '截图失败（app 需 debug 模式且在前台运行；会话可能已断开）';
   };
-  img.onload = function(){ img.style.display = ''; tip.style.display = 'none'; };
+  img.onload = function(){ img.style.display = ''; if (!document.getElementById('sh-rec').checked) tip.style.display = 'none'; };
   img.style.display = 'none';
   img.src = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
 }
@@ -5134,6 +5663,134 @@ function shSave(){
   a.href = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
   a.download = 'xbume-shot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
   a.click();
+}
+// ── P10 自动化路径：截图录制点击 + 场景列表/编辑/运行/报告 ──
+var auRecBuf = [];   // 录制点击缓冲（sh-rec 开启时点击截图追加 tap 步骤，物理像素坐标）
+var auTimer = null;  // 运行状态轮询定时器
+var auTotal = 0;     // 本次运行总步数（POST /api/auto/run 响应）
+function shRecToggle(cb){
+  auRecBuf = [];
+  document.getElementById('au-rec-n').textContent = '0';
+  var tip = document.getElementById('sh-tip');
+  if (cb.checked) { tip.style.display = ''; tip.textContent = '录制点击已开启：点击截图会追加 tap 步骤（物理像素坐标），到「自动化」Tab 导入'; }
+  else { tip.style.display = 'none'; }
+}
+function shImgClick(ev){
+  if (!document.getElementById('sh-rec').checked) return;
+  var img = document.getElementById('sh-img');
+  if (!img.src || img.style.display === 'none') return;
+  // 截图 PNG 为物理像素；img 被缩放显示，按显示比例换算回原图坐标
+  var px = Math.round(ev.offsetX / img.clientWidth * img.naturalWidth);
+  var py = Math.round(ev.offsetY / img.clientHeight * img.naturalHeight);
+  auRecBuf.push({ type: 'tap', x: px, y: py, phys: true });
+  document.getElementById('au-rec-n').textContent = String(auRecBuf.length);
+}
+function auLoad(){
+  fetch('/api/auto/list').then(function(r){ return r.json(); }).then(function(j){
+    var sel = document.getElementById('au-sel');
+    var cur = sel.value;
+    var html = '<option value="">— 选择场景 —</option>';
+    (j.items || []).forEach(function(it){
+      html += '<option value="' + esc(it.name) + '"' + (it.name === cur ? ' selected' : '') + '>'
+        + esc(it.name) + '（' + it.steps + ' 步）</option>';
+    });
+    sel.innerHTML = html;
+  });
+}
+function auPick(name){
+  if (!name) return;
+  fetch('/api/auto/get?name=' + encodeURIComponent(name)).then(function(r){ return r.json(); }).then(function(j){
+    if (!j.ok) { alert(j.error || '读取失败'); return; }
+    document.getElementById('au-name').value = j.name;
+    document.getElementById('au-steps').value = JSON.stringify(j.steps, null, 2);
+  });
+}
+function auSteps(){
+  try { return JSON.parse(document.getElementById('au-steps').value || '[]'); }
+  catch (e) { alert('步骤 JSON 解析失败：' + e); return null; }
+}
+function auSave(){
+  var name = document.getElementById('au-name').value.trim();
+  var steps = auSteps(); if (!steps) return;
+  if (!name) { alert('请填写场景名'); return; }
+  fetch('/api/auto/save', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name: name, steps: steps }) })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if (j.ok) auLoad(); else alert(j.error || '保存失败'); });
+}
+function auDelete(){
+  var name = document.getElementById('au-name').value.trim();
+  if (!name || !confirm('删除场景 ' + name + '？')) return;
+  fetch('/api/auto/delete?name=' + encodeURIComponent(name), { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if (j.ok) { document.getElementById('au-steps').value = ''; auLoad(); } });
+}
+function auFmt(){
+  var steps = auSteps(); if (!steps) return;
+  document.getElementById('au-steps').value = JSON.stringify(steps, null, 2);
+}
+function auImportRec(){
+  if (!auRecBuf.length) { alert('录制缓冲为空：到「截图」Tab 勾选「录制点击」后点击截图'); return; }
+  document.getElementById('au-steps').value = JSON.stringify(auRecBuf, null, 2);
+}
+function auRun(){
+  var uri = shUri(); if (!uri) { alert('请先在页头选择 VM 会话'); return; }
+  var steps = auSteps(); if (!steps || !steps.length) { alert('步骤为空'); return; }
+  var cont = document.getElementById('au-cont').checked ? '1' : '0';
+  var nm = document.getElementById('au-name').value.trim();
+  document.getElementById('au-report').innerHTML = '';
+  fetch('/api/auto/run?uri=' + encodeURIComponent(uri) + '&continue=' + cont + (nm ? '&name=' + encodeURIComponent(nm) : ''),
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(steps) })
+    .then(function(r){ return r.json().then(function(j){ j._code = r.status; return j; }); })
+    .then(function(j){
+      if (!j.ok) { alert(j.error || '启动失败（' + j._code + '）'); return; }
+      auTotal = j.total || steps.length;
+      if (auTimer) clearInterval(auTimer);
+      auTimer = setInterval(auPoll, 500);
+      auPoll();
+    });
+}
+function auStop(){
+  fetch('/api/auto/stop', { method: 'POST' });
+}
+function auPoll(){
+  fetch('/api/auto/status').then(function(r){ return r.json(); }).then(function(j){
+    var prog = document.getElementById('au-prog');
+    var done = !j.running && j.results.length > 0;
+    var fails = j.results.filter(function(r){ return r.status === 'fail'; }).length;
+    prog.textContent = j.running
+      ? ('执行中：' + j.name + ' · 步骤 ' + (j.cur + 1) + '/' + auTotal + '（已完成 ' + j.results.length + '）')
+      : (done ? ('结束：' + j.name + ' · 共 ' + j.results.length + ' 步，失败 ' + fails) : '');
+    if (!j.running && auTimer) { clearInterval(auTimer); auTimer = null; }
+    auRenderReport(j.results);
+  });
+}
+function auRenderReport(results){
+  var el = document.getElementById('au-report');
+  var bd = 'padding:3px 6px;border-bottom:1px solid var(--line)';
+  var html = '<table style="border-collapse:collapse;width:100%;font-size:12px">'
+    + '<tr style="text-align:left"><th style="' + bd + '">#</th>'
+    + '<th style="' + bd + '">类型</th>'
+    + '<th style="' + bd + '">状态</th>'
+    + '<th style="' + bd + '">耗时</th>'
+    + '<th style="' + bd + '">期望</th>'
+    + '<th style="' + bd + '">实际</th>'
+    + '<th style="' + bd + '">截图</th></tr>';
+  (results || []).forEach(function(r){
+    var c = r.status === 'pass' ? '#4caf50' : (r.status === 'fail' ? '#ef5350' : '#8aa0b4');
+    var act = r.actual + (r.error ? ' | ' + r.error : '');
+    html += '<tr>'
+      + '<td style="' + bd + '">' + (r.index + 1) + '</td>'
+      + '<td style="' + bd + '">' + esc(r.type) + '</td>'
+      + '<td style="' + bd + ';color:' + c + '">' + esc(r.status) + '</td>'
+      + '<td style="' + bd + '">' + r.ms + 'ms</td>'
+      + '<td style="' + bd + '">' + esc(r.expect) + '</td>'
+      + '<td style="' + bd + ';max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(act) + '">' + esc(act) + '</td>'
+      + '<td style="' + bd + '">'
+      + (r.shot ? '<a href="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" target="_blank">图</a>' : '-')
+      + '</td></tr>';
+  });
+  el.innerHTML = html + '</table>';
 }
 function renderHdrDev() {
   var html = '<option value="">未选择设备</option>';

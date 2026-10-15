@@ -48,9 +48,10 @@
 - `ext.flutter.inspector.getRootWidgetSummaryTree`（groupName）→ 树 Tab；
 - 树节点 ↔ 截图 bounds 高亮；点截图 hitTest 反查节点
 
-## P10 自动化路径 `[ ]`
+## P10 自动化路径 `[x]`
 - 场景存电脑端 `~/.xb_ume_ide/scenarios/*.json`；schema：
   `{name, steps:[{type: tap|input|swipe|wait|back|navigate|assertVisible|assertRoute|assertInstance|eval, ...}]}`
+  （assertVisible 目标类型用独立 `widget` 字段，type 被步骤类型占用；tap/swipe 坐标 `phys:true` 为截图物理像素，默认逻辑像素）
 - 执行引擎：GUI 串行队列；tap=eval GestureBinding.handlePointerEvent(down/move/up)；input=TextInput 注入；断言=eval/路由快照/堆扫描字段取值
 - 录制：截图 Tab「录制」开关，点截图插 tap 步骤
 - 报告：逐步 status/耗时/期望 vs 实际/每步截图；失败详细报告；导出 JSON/HTML
@@ -69,3 +70,5 @@
 - 2026-10-15 P9 完成（自研 eval 方案替代 inspector 树：实测 getRootWidgetSummaryTree(438 节点)与 renderViewElement 起 Element 树(1169)不同构不同源，DFS 对齐不可行；/api/wtree 一次 eval（binding.dart 上下文）显式栈拉全 Element 树，每节点输出 d/t/key/bounds（r is RenderBox 后 localToGlobal(paintBounds)——RenderObject 无 localToGlobal 需 cast）+ dpr/物理尺寸；前端左树右图：点击树节点红框高亮、点截图选最小面积包含节点反查并滚动定位（纯前端零额外调用）、过滤显祖先链、折叠懒渲染；验证：1169 节点 1162 有 bounds、Scaffold 全屏高亮、中心反查命中 KeyedSubtree、过滤/折叠全过）
 - 2026-10-15 P9 修复（f_jlink 真机树深度 369 暴露：缩进=深度×14px 使深层行宽 3294px，点截图选中深层节点后树滚到全深层区域，文字全在横向视口外，视觉上树区「空白」。修复：缩进封顶 min(d,24)×14+4、d>24 行首显父链尾灰色前缀（如 Container/Padding/Align）、scrollIntoView block 改 center。f_jlink 4684 节点/dpr3.25 环境回归通过：行宽 572px、选中行居视口中部、可见行 padding 全部 ≤340px）
 - 2026-10-15 P9 增强（点截图选业务组件 + 宽高/间距标注：用户反馈点截图选中的是最内层 SDK 节点（弹框文字选到 Image），要 locator 式只选非 SDK 组件并显示宽高与周围组件距离。新增 /api/wtree/pick：一次 eval（库上下文=xb_ume_widget_spacing_calculator.dart，直接复用 app 内已编译的 XBUmeWidgetSpacingCalculator，零复刻）——命中点收集→面积升序→逐 hit 向上（visitAncestorElements，该 Flutter 版本 Element 无 public parent getter）找 creationLocation 非 Flutter SDK 的最近组件（locator 同款判定 dart:/package:flutter//packages/flutter/，优先非 pub-cache）→调计算器得四向间距（searchRoot=xb_ume_app_root key 排除 ume 覆盖层）；信息条显类型/宽高/源文件:行:列/↑↓←→距离，截图叠加黄色参照框+距离标注；树中 SDK/系统包装类淡化（启发式名单，仅视觉）。GUI 页面响应加 Cache-Control: no-store 治浏览器旧缓存。example 验证：pick 命中 xb_button.dart:121 业务组件+间距正确、边界（MISS/400/会话断开）全过、浏览器 UI 全过（1169 行中 1004 淡化、参照框/标注/点树清参照正常））
+- 2026-10-15 P9 收尾（用户反馈 bug 后续再调 → Widget树 Tab display:none 隐藏，代码保留；提交 0c2b7c7/b90cdd5）
+- 2026-10-15 P10 完成（自动化路径：执行引擎 _autoExecStep 十类步骤全 eval 零侵入——tap=GestureBinding.handlePointerEvent down/up（phys 坐标除 dpr）、input=TextInput._instance._currentConnection._client.updateEditingValue（库上下文必须 services/text_input.dart，_instance 是库内私有；widgets/text_input.dart 路径不存在）、swipe=down+8 段 move+up、back=路由快照+popUntil 语义、navigate=_routeNamed、assertVisible=全树 BFS 类型匹配+RenderBox 有尺寸、assertRoute=栈顶名、assertInstance=GC 后 getClassList+getInstances 计数、eval=任意表达式 expect contains；/api/auto list/get/delete/save/run(409 冲突保护+inline steps)/status/stop/artifact（文件名正则防穿越）8 个端点；失败步截图落盘 ~/.xb_ume_ide/scenarios/artifacts/，默认失败即停、continue=1 跑全量、stop 请求当前步结束后 skip 余下；前端自动化 Tab（场景下拉/保存/删除/格式化/运行/停止/失败继续/报告表 pass 绿 fail 红 skip 灰+截图链接）+ 截图 Tab「录制点击」checkbox（点截图按显示比例换算物理像素追加 tap，导入录制生成步骤 JSON）。验证：example 场景全生命周期（save→list→get→run→status→报告→artifact→stop→delete）+ 冒烟 7 步全 pass（tap 驱动真实导航进 XBDialogInputDemo+back+assertInstance）+ input 端到端（tap 输入框→input 注入→eval 读 EditableTextState controller.text="hello p10"）+ assertRoute/swipe + 409/防穿越/浏览器 UI 全过；踩坑记录：场景 JSON 禁重复键（assertVisible 曾写 type 导致键覆盖变未知步骤）、save 落盘纯数组 list 计数需兼容、VM eval valueAsString 会静默截断长串、macOS app 后台帧冻结会致 push 动画中断+新页面元素不上树+absorbPointer 残留吞后续 tap（跑场景前把 app 置前台，真机不受影响））
