@@ -271,7 +271,22 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意**：监听者数/字段摘要取该类**首个实例**（同类多实例状态可能不同，全量与实时查看点类名跳「实例」Tab）；聚合是快照不是订阅，需手动重扫刷新。
 
-## 十、异常（Tab「异常」）
+## 十、Widget 树浏览（Tab「Widget树」）
+
+**前提**：页头选中 VM 会话；仅 debug 模式可用。
+
+**布局**：左树右图——左侧 Element 树，右侧 app 实时截图叠加高亮框。
+
+**使用**：
+
+1. 点「刷新树 + 截图」：一次 eval 拉全 Element 树（含每个节点的屏幕 bounds）并抓取当前截图；树默认展开到第 6 层，更深层级点 ▸ 展开；
+2. 点击树节点：右侧截图上红框高亮该节点的屏幕位置，工具栏信息条显示深度/类型/key/bounds；选中被折叠的节点会自动展开其祖先链并滚动定位；
+3. 点击截图任意位置：自动选中该位置上**面积最小**的节点（即最内层真实组件；外层是各级包装，想看外层可在树上点父节点层层剥开），树同步滚动定位；
+4. 过滤输入框按类型/key 即时筛选，显示匹配节点及其祖先链（根到匹配节点的完整路径）；「展开全部/收起全部」一键操作。
+
+**说明**：bounds 由 app 内 `localToGlobal(paintBounds)` 实时计算（逻辑像素），按 devicePixelRatio 对齐截图物理像素；每个 Element 都输出其 renderObject 子树的 bounds（组件节点高亮=其实际渲染范围）。刷新树与截图是两次独立抓取，app 界面若在两次抓取间变化，高亮位置可能轻微偏移，再点一次刷新即可。
+
+## 十一、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -287,7 +302,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十一、常见问题
+## 十二、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -302,7 +317,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十二、卸载
+## 十三、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -310,7 +325,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十三、相关文档
+## 十四、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

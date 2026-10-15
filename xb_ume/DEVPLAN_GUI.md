@@ -44,7 +44,7 @@
 ## P8 沙盒文件上传 `[x]`
 - `/api/sandbox/upload`（base64+path）→ 复用 Storage 写通道；文件树「上传到此处」
 
-## P9 Widget 树浏览 + 截图高亮 `[ ]`
+## P9 Widget 树浏览 + 截图高亮 `[x]`
 - `ext.flutter.inspector.getRootWidgetSummaryTree`（groupName）→ 树 Tab；
 - 树节点 ↔ 截图 bounds 高亮；点截图 hitTest 反查节点
 
@@ -66,3 +66,4 @@
 - 2026-10-14 P6 完成（状态面板：/api/status/cn 自动候选=树上 CN State + 泛型实参提取（如 XBWidgetState<ChoosePageVM>）+ getObject super 链校验（≤12 跳，拦截 GetX 非 CN 实参）；监听者数读 _listeners 非 Null 槽/老版 _count；字段摘要滤 CN 内部机制字段；类名点链接跳「实例」Tab；浏览器 UI 五步验证全过；排障沉淀：VM service 无 getClass 方法，查类对象用 getObject）
 - 2026-10-14 P7 完成（编辑重放：/api/network/replay 支持 POST JSON 覆盖 url/headers/body，GUI 端 HttpClient 直发 + 显式 content-length（防 chunked）；前端编辑表单（预填原值、重放后保留编辑内容）+ 重放响应自动与原响应 JSON 逐字段 diff（●改/+增/−删 + 计数）；Network 记录 Map/List 改用 eval 内手写 JSON 序列化（xb_ume core 库上下文无 dart:convert、XBUme 符号只在 core 可见，手写 q/js 最小序列化）；验证环境：example DebugProfile.entitlements 补 network.client + 本地 echo 服务替代不可达外网；浏览器 UI 全过）
 - 2026-10-15 P8 完成（/api/sandbox/upload：POST JSON {name,b64}，base64 解码后 512KB/块 eval 写入（首块 FileMode.write 覆盖、后续 append，防 eval 表达式过大）；eval 库上下文用 xb_ume persistence io 实现库——唯一同时 import dart:io 与 dart:convert 的现成库；文件名防护禁分隔符与 ..、深层目录自动创建、上限 12MB；前端文件树每行「上传」（目录行→该目录、文件行→所在目录）+ 隐藏 file input + FileReader.readAsDataURL；验证：小文本/1.2MB 二进制 3 块上传 MD5 一致、覆盖截断、目录自动建、穿越拦截、浏览器 UI 8 步全过）
+- 2026-10-15 P9 完成（自研 eval 方案替代 inspector 树：实测 getRootWidgetSummaryTree(438 节点)与 renderViewElement 起 Element 树(1169)不同构不同源，DFS 对齐不可行；/api/wtree 一次 eval（binding.dart 上下文）显式栈拉全 Element 树，每节点输出 d/t/key/bounds（r is RenderBox 后 localToGlobal(paintBounds)——RenderObject 无 localToGlobal 需 cast）+ dpr/物理尺寸；前端左树右图：点击树节点红框高亮、点截图选最小面积包含节点反查并滚动定位（纯前端零额外调用）、过滤显祖先链、折叠懒渲染；验证：1169 节点 1162 有 bounds、Scaffold 全屏高亮、中心反查命中 KeyedSubtree、过滤/折叠全过）

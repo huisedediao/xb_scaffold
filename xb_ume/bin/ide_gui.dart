@@ -1701,6 +1701,70 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    // ── P9：Widget 树浏览。一次 eval 拉全 Element 树（含每节点 bounds），
+    // 树节点 ↔ 截图 bounds 对应、点截图反查均由前端用同一份数据完成。
+    if (path == '/api/wtree') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final s = (await rpc.evalStringOn(
+          'package:flutter/src/widgets/binding.dart',
+          _wtreeExpr,
+        ))
+            .trim();
+        if (s == 'NO_ROOT') {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': 'app 无渲染树（尚未运行首帧）'}),
+          );
+          await req.response.close();
+          return;
+        }
+        final parts = s.split('\u0003');
+        // 末两段为空行分隔与尾部元数据（dpr\u0001物理宽\u0001物理高）
+        final meta = parts.length >= 2 ? parts[parts.length - 1].split('\u0001') : <String>[];
+        final rows = parts.sublist(0, parts.length - 2);
+        final nodes = <Map<String, Object?>>[];
+        for (final r in rows) {
+          final f = r.split('\u0001');
+          if (f.length < 4) continue;
+          final depth = int.tryParse(f[0]);
+          if (depth == null) continue;
+          final bs = f[3].split(',');
+          nodes.add(<String, Object?>{
+            'd': depth,
+            't': f[1],
+            'k': f[2],
+            'b': f[3].isEmpty
+                ? null
+                : <int>[
+                    int.tryParse(bs[0]) ?? 0,
+                    int.tryParse(bs[1]) ?? 0,
+                    int.tryParse(bs[2]) ?? 0,
+                    int.tryParse(bs[3]) ?? 0,
+                  ],
+          });
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'nodes': nodes,
+          'dpr': double.tryParse(meta.isNotEmpty ? meta[0] : '1') ?? 1,
+          'physW': int.tryParse(meta.length > 1 ? meta[1] : '0') ?? 0,
+          'physH': int.tryParse(meta.length > 2 ? meta[2] : '0') ?? 0,
+        }));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
+      return;
+    }
     // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异常块 ──
     if (path == '/api/exceptions') {
       req.response.headers.contentType = ContentType.json;
@@ -2954,6 +3018,29 @@ Map<String, Object?>? parseFlutterError(Map data) {
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
 String _escPath(String p) =>
     p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+/// P9：Element 树全量拉取表达式（binding.dart 上下文可见 WidgetsBinding/Element）。
+/// 输出格式：每行 深度\u0001 类型 \u0001 key\u0001 bounds(x,y,w,h 逻辑像素，无则为空)\u0003；
+/// 末尾额外跟一个空行 + dpr\u0001物理宽\u0001物理高。不用 Dart 模板字符串（避开多层转义）。
+const String _wtreeExpr = "(() { final v = WidgetsBinding.instance.platformDispatcher.views.first; "
+    "final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return 'NO_ROOT'; "
+    "final out = StringBuffer(); final sep = String.fromCharCode(1); "
+    "final row = String.fromCharCode(3); final se = <Element>[root]; final sd = <int>[0]; "
+    "while (se.isNotEmpty) { final e = se.removeLast(); final d = sd.removeLast(); "
+    "var b = ''; final r = e.renderObject; "
+    "if (r is RenderBox && r.attached) { final p = r.localToGlobal(r.paintBounds.topLeft); "
+    "b = p.dx.round().toString() + ',' + p.dy.round().toString() + ',' "
+    "+ r.paintBounds.width.round().toString() + ',' + r.paintBounds.height.round().toString(); } "
+    "var k = ''; final key = e.widget.key; if (key != null) { k = key.toString(); "
+    "if (k.length > 60) { k = k.substring(0, 60); } } "
+    "out.write(d.toString()); out.write(sep); out.write(e.widget.runtimeType.toString()); "
+    "out.write(sep); out.write(k); out.write(sep); out.write(b); out.write(row); "
+    "final kids = <Element>[]; e.visitChildren(kids.add); "
+    "for (var i = kids.length - 1; i >= 0; i--) { se.add(kids[i]); sd.add(d + 1); } } "
+    "out.write(row); out.write(v.devicePixelRatio.toString()); out.write(sep); "
+    "out.write(v.physicalSize.width.round().toString()); out.write(sep); "
+    "out.write(v.physicalSize.height.round().toString()); return out.toString(); })()";
 
 /// 返回字节列表中最后一个完整 UTF-8 序列之后的偏移；末尾若是不完整
 /// 的多字节序列（被分片大小切断），返回该序列起点，避免解码出替换符。
@@ -4473,6 +4560,10 @@ const String guiHtml = r'''
   .src { color:#b07de8; }
   label.chk { margin-right:6px; color:var(--dim); cursor:pointer; }
   .sbtable { width:100%; border-collapse:collapse; font-size:13px; margin-top:4px; }
+  .wtrow { cursor:pointer; white-space:nowrap; }
+  .wtrow:hover { background:#21262d; }
+  .wtsel { background:rgba(31,111,235,.25); }
+  .wttgl { display:inline-block; width:16px; color:var(--dim); text-align:center; text-decoration:none; }
   mark { background:#3fb950; color:#0d1117; border-radius:2px; }
   .sbtable th, .sbtable td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
   .sbtable th { color:var(--dim); font-weight:600; }
@@ -4518,6 +4609,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="status">状态</div>
   <div class="tab" data-tab="instances">实例</div>
   <div class="tab" data-tab="shot">截图</div>
+  <div class="tab" data-tab="wtree">Widget树</div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -4650,6 +4742,26 @@ const String guiHtml = r'''
     <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444" alt="app 截图"></div>
     <div class="muted" style="margin-top:6px">实时截图（_flutter.screenshot，debug 模式可用）；自动刷新选低频档，避免截图流量过大。</div>
   </section>
+  <section class="page" id="page-wtree">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <button class="primary" onclick="wtLoad()">刷新树 + 截图</button>
+      <button onclick="wtExpandAll()">展开全部</button>
+      <button onclick="wtCollapseAll()">收起全部</button>
+      <input id="wt-cls" placeholder="按类型/key 过滤" style="width:170px" oninput="wtDoFilter(this.value)">
+      <span id="wt-info" class="muted"></span>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:8px;align-items:flex-start">
+      <div id="wt-body" style="flex:0 0 44%;max-height:72vh;overflow:auto;border:1px solid var(--line);padding:4px;font-size:12px;line-height:1.8"></div>
+      <div style="flex:1;max-height:72vh;overflow:auto">
+        <div id="wt-inner" style="position:relative;display:inline-block">
+          <img id="wt-img" style="display:none;max-width:100%;border:1px solid #444;cursor:crosshair" onclick="wtImgClick(event)" alt="app 截图">
+          <div id="wt-box" style="display:none;position:absolute;border:2px solid #f85149;background:rgba(248,81,73,.12);pointer-events:none"></div>
+        </div>
+        <span id="wt-tip" class="muted">请先选择 VM，再点「刷新树 + 截图」</span>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:6px">点击树节点在截图上高亮其位置；点击截图自动选中该位置上最小的节点（含全部包装层，从深到浅可层层剥开）。过滤即时生效（显示匹配节点及其祖先）。bounds 由 app 内 localToGlobal 实时计算，按 dpr 对齐截图物理像素。</div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -4686,6 +4798,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
+    else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
 });
@@ -5894,6 +6007,130 @@ function restartDaemon(){
   if (!confirm('重启守护进程？正在进行的调试会话会自动重连。')) return;
   fetch('/api/daemon/restart', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){ alert(d.message); refreshDaemon(); });
 }
+// ── P9 Widget 树浏览 + 截图高亮 ──
+var wtNodes = [], wtDpr = 1, wtPhysW = 0, wtPhysH = 0, wtSel = -1, wtExpand = {}, wtFilter = '', wtParents = [];
+function wtUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function wtLoad(){
+  var u = wtUri();
+  if (!u) { alert('请先在页头选择 VM 会话'); return; }
+  document.getElementById('wt-tip').textContent = '加载中…';
+  fetch('/api/wtree?uri=' + encodeURIComponent(u))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { document.getElementById('wt-tip').textContent = '失败：' + (d.error || d); return; }
+      wtNodes = d.nodes || []; wtDpr = d.dpr || 1; wtPhysW = d.physW || 0; wtPhysH = d.physH || 0;
+      wtSel = -1; wtExpand = {}; wtParents = [];
+      // 构建父指针：栈内保存每层最近节点 idx
+      var st = [];
+      for (var i = 0; i < wtNodes.length; i++) {
+        var dd = wtNodes[i].d;
+        while (st.length && wtNodes[st[st.length-1]].d >= dd) st.pop();
+        wtParents.push(st.length ? st[st.length-1] : -1);
+        st.push(i);
+      }
+      wtRender();
+      var img = document.getElementById('wt-img');
+      img.style.display = '';
+      img.src = '/api/screenshot?uri=' + encodeURIComponent(u) + '&t=' + Date.now();
+      img.onload = function(){ document.getElementById('wt-tip').textContent = ''; wtDrawBox(); };
+      if (img.complete && img.naturalWidth) wtDrawBox();
+    })
+    .catch(function(e){ document.getElementById('wt-tip').textContent = '失败：' + e; });
+}
+function wtVisibleSet(){
+  if (!wtFilter) return null;
+  var vis = {}, st = [];
+  for (var i = 0; i < wtNodes.length; i++) {
+    var n = wtNodes[i];
+    while (st.length && wtNodes[st[st.length-1]].d >= n.d) st.pop();
+    var kw = wtFilter.toLowerCase();
+    if (n.t.toLowerCase().indexOf(kw) >= 0 || (n.k && n.k.toLowerCase().indexOf(kw) >= 0)) {
+      vis[i] = 1;
+      for (var j = 0; j < st.length; j++) vis[st[j]] = 1;
+    }
+    st.push(i);
+  }
+  return vis;
+}
+function wtRender(){
+  var el = document.getElementById('wt-body');
+  if (!wtNodes.length) { el.innerHTML = '<span class="muted">请先选择 VM 并点击「刷新树 + 截图」</span>'; return; }
+  var vis = wtVisibleSet();
+  var html = '', skipD = -1;
+  for (var i = 0; i < wtNodes.length; i++) {
+    var n = wtNodes[i];
+    if (vis) { if (!vis[i]) continue; }
+    else {
+      if (n.d <= skipD) skipD = -1;
+      if (skipD >= 0 && n.d > skipD) continue;
+    }
+    var hasKids = i + 1 < wtNodes.length && wtNodes[i+1].d === n.d + 1;
+    var open = hasKids && (wtExpand[i] !== undefined ? wtExpand[i] : n.d < 6);
+    html += '<div class="wtrow' + (i === wtSel ? ' wtsel' : '') + '" id="wtn-' + i + '" style="padding-left:' + (n.d * 14 + 4) + 'px" onclick="wtSelect(' + i + ')">'
+      + (hasKids ? '<a href="javascript:void(0)" class="wttgl" onclick="event.stopPropagation();wtToggle(' + i + ')">' + (open ? '▾' : '▸') + '</a>' : '<span class="wttgl">·</span>')
+      + '<b>' + esc(n.t) + '</b>' + (n.k ? ' <span class="muted">' + esc(n.k) + '</span>' : '')
+      + '</div>';
+    if (hasKids && !open) skipD = n.d;
+  }
+  el.innerHTML = html || '<span class="muted">无匹配节点</span>';
+}
+function wtToggle(i){
+  var open = wtExpand[i] !== undefined ? wtExpand[i] : wtNodes[i].d < 6;
+  wtExpand[i] = !open;
+  wtRender();
+}
+function wtExpandAll(){ for (var i = 0; i < wtNodes.length; i++) wtExpand[i] = true; wtRender(); }
+function wtCollapseAll(){ for (var i = 0; i < wtNodes.length; i++) wtExpand[i] = false; wtRender(); }
+function wtDoFilter(v){ wtFilter = v.trim(); wtRender(); }
+function wtSelect(i, scroll){
+  var old = document.getElementById('wtn-' + wtSel);
+  if (old) old.classList.remove('wtsel');
+  wtSel = i;
+  // 若目标行被折叠隐藏，展开其祖先链后重渲染
+  if (!document.getElementById('wtn-' + i)) {
+    var p = wtParents[i];
+    while (p >= 0) { wtExpand[p] = true; p = wtParents[p]; }
+    wtRender();
+  }
+  var row = document.getElementById('wtn-' + i);
+  if (row) { row.classList.add('wtsel'); if (scroll) row.scrollIntoView({block: 'nearest'}); }
+  var n = wtNodes[i];
+  var info = '深度 ' + n.d + ' · ' + n.t + (n.k ? ' · ' + n.k : '');
+  if (n.b) info += ' · bounds (' + n.b[0] + ',' + n.b[1] + ') ' + n.b[2] + '×' + n.b[3];
+  document.getElementById('wt-info').textContent = info;
+  wtDrawBox();
+}
+function wtDrawBox(){
+  var box = document.getElementById('wt-box');
+  var img = document.getElementById('wt-img');
+  if (wtSel < 0 || !wtNodes[wtSel] || !wtNodes[wtSel].b || !img.naturalWidth || !wtPhysW) { box.style.display = 'none'; return; }
+  var b = wtNodes[wtSel].b;
+  var scale = img.clientWidth / wtPhysW; // 显示像素 / 物理像素
+  var d = wtDpr;                          // 物理像素 / 逻辑像素
+  box.style.display = '';
+  box.style.left = (b[0] * d * scale) + 'px';
+  box.style.top = (b[1] * d * scale) + 'px';
+  box.style.width = (b[2] * d * scale) + 'px';
+  box.style.height = (b[3] * d * scale) + 'px';
+}
+function wtImgClick(ev){
+  if (!wtNodes.length || !wtPhysW) return;
+  var rect = ev.target.getBoundingClientRect();
+  var lx = (ev.clientX - rect.left) * (wtPhysW / rect.width) / wtDpr;
+  var ly = (ev.clientY - rect.top) * (wtPhysH / rect.height) / wtDpr;
+  var best = -1, bestA = Infinity;
+  for (var i = 0; i < wtNodes.length; i++) {
+    var b = wtNodes[i].b;
+    if (!b || b[2] <= 0 || b[3] <= 0) continue;
+    if (lx >= b[0] && lx <= b[0] + b[2] && ly >= b[1] && ly <= b[1] + b[3]) {
+      var a = b[2] * b[3];
+      if (a < bestA) { bestA = a; best = i; }
+    }
+  }
+  if (best >= 0) wtSelect(best, true);
+  else document.getElementById('wt-info').textContent = '(' + lx.toFixed(0) + ',' + ly.toFixed(0) + ') 无节点';
+}
+window.addEventListener('resize', function(){ wtDrawBox(); });
 function openConfig(){ fetch('/api/openconfig', {method: 'POST'}); }
 var ideOrder = [], ideInstalled = [], ideDragIdx = -1;
 function loadIdeOrder(){
