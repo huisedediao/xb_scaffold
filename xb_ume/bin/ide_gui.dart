@@ -1533,6 +1533,107 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // ── 沙盒上传：base64+path → app 内写文件，分块 append。
+    // eval 库上下文用 xb_ume 持久化 io 实现库（条件导出在桌面/移动端必被
+    // 编译进 app），它是唯一同时 import dart:io 与 dart:convert 的现成库。
+    if (path == '/api/sandbox/upload' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final dir = req.uri.queryParameters['path'] ?? '';
+      if (uri.isEmpty || dir.isEmpty || !dir.contains('/')) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': 'bad request（uri/path 必填）'}),
+        );
+        await req.response.close();
+        return;
+      }
+      Map<String, Object?> body;
+      try {
+        final raw = await utf8.decoder.bind(req).join();
+        body = (raw.isEmpty
+            ? <String, Object?>{}
+            : jsonDecode(raw) as Map<String, Object?>);
+      } catch (_) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}),
+        );
+        await req.response.close();
+        return;
+      }
+      final name = (body['name'] as String? ?? '').trim();
+      final b64 = (body['b64'] as String? ?? '');
+      // 文件名防护：禁止路径分隔符与目录穿越。
+      if (name.isEmpty ||
+          name.contains('/') ||
+          name.contains('\\') ||
+          name.contains('..')) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': '文件名不合法'}),
+        );
+        await req.response.close();
+        return;
+      }
+      if (b64.length > (16 << 20)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': '文件过大（上限 12MB）'}),
+        );
+        await req.response.close();
+        return;
+      }
+      List<int> bytes;
+      try {
+        bytes = base64.decode(b64);
+      } catch (_) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': 'b64 字段不是合法 base64'}),
+        );
+        await req.response.close();
+        return;
+      }
+      final target = dir.endsWith('/') ? '$dir$name' : '$dir/$name';
+      final rpc = _SandboxRpc(uri);
+      try {
+        const libCtx =
+            'package:xb_ume/src/persistence/xb_ume_persistence_io.dart';
+        const chunk = 1 << 19; // 512KB/块，b64 后约 700KB，控制 eval 表达式体积
+        for (var off = 0;
+            off < bytes.length || off == 0;
+            off += chunk) {
+          final end =
+              (off + chunk) < bytes.length ? (off + chunk) : bytes.length;
+          final part = base64.encode(bytes.sublist(off, end));
+          final mode = off == 0 ? 'FileMode.write' : 'FileMode.append';
+          final expr = "(() { final p = '${_escPath(target)}'; "
+              'final f = File(p); '
+              'if (!f.parent.existsSync()) '
+              '{ f.parent.createSync(recursive: true); } '
+              "f.writeAsBytesSync(base64.decode('$part'), mode: $mode); "
+              "return 'ok:' + f.lengthSync().toString(); })()";
+          final r = (await rpc.evalStringOn(libCtx, expr)).trim();
+          if (!r.startsWith('ok:')) {
+            throw StateError('eval 写入失败：$r');
+          }
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{
+            'ok': true,
+            'path': target,
+            'size': bytes.length,
+          }),
+        );
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
+      return;
+    }
     // ── 实例查看：堆扫描/注册表定位实例，getObject 展开字段树，eval 写回 ──
     // ── 运行时操作：reassemble（UI 重建）/ GC（_collectAllGarbage）──
     if (path == '/api/runtime/op' && req.method == 'POST') {
@@ -4477,8 +4578,10 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">数据来源：① VM service Extension 流的 Flutter.Error 结构化事件（debug 模式框架自动发出，App 无需任何接入）；② 会话输出流中的未捕获异常块（引擎 Unhandled Exception / xb_scaffold XBErrorHandler 格式）。连续相同异常自动合并计数；栈中用户代码帧（package:）可点「跳转」用 IDE 打开对应源码（IDE 优先级同守护进程）；新异常到达时右上角出现红色浮层，点击跳到本页。</div>
   </section>
   <section class="page" id="page-sandbox">
+    <input type="file" id="sb-up-file" style="display:none" onchange="sbUploadPick(this)">
+    <div id="sb-up-tip" class="muted" style="display:none;margin-bottom:4px"></div>
     <div id="sb-body"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。</div>
+    <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。每行提供「上传」，把本地文件写入该目录（文件行则写入其所在目录），单个文件上限 12MB。</div>
   </section>
   <section class="page" id="page-routes">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -5648,6 +5751,44 @@ function sbUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function sbOpenSub(mode, btn){
   window.open('/' + mode + '?uri=' + encodeURIComponent(sbUri()) + '&path=' + encodeURIComponent(decodeURIComponent(btn.dataset.p)));
 }
+var sbUpTarget = '';
+function sbUpload(btn){
+  var p = decodeURIComponent(btn.dataset.p);
+  sbUpTarget = btn.dataset.dir === '1' ? p : p.replace(/[/\\][^/\\]*$/, '') || '/';
+  var inp = document.getElementById('sb-up-file');
+  inp.value = '';
+  inp.click();
+}
+function sbUploadPick(inp){
+  var f = inp.files && inp.files[0];
+  if (!f) return;
+  var tip = document.getElementById('sb-up-tip');
+  tip.style.display = '';
+  tip.textContent = '上传中：' + f.name + '（' + fmtSize(f.size) + '）→ ' + sbUpTarget;
+  var rd = new FileReader();
+  rd.onload = function(){
+    var b64 = String(rd.result).split(',')[1] || '';
+    if (b64.length > (16 << 20)) {
+      tip.textContent = '上传失败：文件过大（上限 12MB）';
+      return;
+    }
+    fetch('/api/sandbox/upload?uri=' + encodeURIComponent(sbUri()) + '&path=' + encodeURIComponent(sbUpTarget), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: f.name, b64: b64})
+    }).then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          tip.textContent = '已上传：' + d.path + '（' + fmtSize(d.size) + '）';
+          setTimeout(function(){ tip.style.display = 'none'; }, 4000);
+          sbRefresh();
+        } else { tip.textContent = '上传失败：' + (d.error || d); }
+      })
+      .catch(function(e){ tip.textContent = '上传失败：' + e; });
+  };
+  rd.onerror = function(){ tip.textContent = '读取本地文件失败'; };
+  rd.readAsDataURL(f);
+}
 function sbDelete(btn){
   var p = decodeURIComponent(btn.dataset.p);
   var name = btn.dataset.name;
@@ -5733,6 +5874,7 @@ function sbRender(d){
       : '<a href="javascript:void(0)" onclick="sbOpenSub(\'view\',this)" data-p="' + p + '"><button title="新标签页展示文件内容">查看</button></a>'
         + ' <a href="javascript:void(0)" onclick="sbOpenSub(\'tail\',this)" data-p="' + p + '"><button title="新标签页实时监听文件新增内容">监听</button></a>'
         + ' <a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
+      + ' <a href="javascript:void(0)" onclick="sbUpload(this)" data-p="' + p + '" data-dir="' + (e.dir ? '1' : '0') + '" title="上传本地文件到此' + (e.dir ? '目录' : '文件所在目录') + '">上传</a>'
       + ' <a href="javascript:void(0)" class="bad" onclick="sbDelete(this)" data-p="' + p + '" data-name="' + esc(e.name) + '" data-dir="' + (e.dir ? '1' : '0') + '" style="margin-left:6px" title="删除（不可恢复）">删除</a>';
     var name = e.dir
       ? '<a href="javascript:void(0)" data-p="' + p + '" onclick="sbGoBtn(this)">' + esc(e.name) + '/</a>'
