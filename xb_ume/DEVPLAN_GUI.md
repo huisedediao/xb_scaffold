@@ -29,13 +29,16 @@
 - [x] macOS 会话验证：pushNamed('/') OK；未知名报错路径；pop 栈顶 OK / 非栈顶 NOT_TOP；remove ×12 全部生效（残留 7 层测试 CrashPage 全部清理）；LAST_ROUTE 保护；浏览器 UI 验证（列表/操作列/pushNamed/pop/remove/错误提示全通过）
 - [x] 重要发现：macOS app 切后台（hidden）后帧调度冻结，未完成转场卡在 pushing，pop/remove 返回成功但不出栈——app 回前台即恢复；已写入 GUI_GUIDE 注意事项
 
-## P5 内存泄漏检测 `[ ]`
-- 路由栈「泄漏检测」：退出页 State 类 → triggerGC → 堆扫描命中即疑似泄漏
+## P5 内存泄漏检测 `[x]`
+- [x] 后端 /api/leakcheck（POST，classes 逗号分隔）：先 _collectAllGarbage 再逐类双计数 —— 树上（Element 树遍历，树上=存活正常形态）+ 堆上（getClassList + getInstances totalCount，limit=1 只取计数）；带泛型 State 名（如 _FooState<T>）自动剥泛型再匹配 VM 类名（实测 getClassList 类名无泛型实参）
+- [x] 前端：路由栈工具栏「泄漏检测」按钮 + 手动补类名输入框 + 结果表（四类结论：栈中存活/树上存活/疑似泄漏红色/已释放）；类名自动累积（rtInfo 回调记录当前栈 + rtRefresh 清理已退出行入历史集合，纯内存态）；判据 inStack→tree>0→heap>0 三层递减，Overlay 覆盖卸载（树上 0 但 State 由 Route 正常持有）不误报
+- [x] macOS 验证：命令行阴/阳性对照（栈中 tree=1 heap=1；push→remove 已释放 heap=0；FocusManager 监听器闭包持有人为泄漏 remove 后 heap=1 判疑似泄漏）+ 浏览器 UI 两轮（A：绿栈中存活/已释放；B：红疑似泄漏/绿栈中存活全对）
+- [x] 排障沉淀：后台 nohup flutter run 读 stdin 触发 SIGTTIN 使整个进程组 stopped（VM service 假死、树只剩骨架）—— 用 tail -f /dev/null 管道作 stdin 根治；探针 walk 一律用显式栈（递归闭包在 VM eval 中参数类型推断不可靠）
 
-## P6 状态面板 `[ ]`
+## P6 状态面板 `[x]`
 - 新「状态」Tab：CN 类聚合（类名/实例数/监听者数/字段摘要/跳实例）
 
-## P7 网络改参重放 + 响应 diff `[ ]`
+## P7 网络改参重放 + 响应 diff `[x]`
 - Network 详情「编辑后重放」+ 与原响应逐字段 diff（复用前端快照对比思路）
 
 ## P8 沙盒文件上传 `[ ]`
@@ -59,3 +62,6 @@
 - 2026-10-14 P3 完成（双通道：Extension 流 Flutter.Error + 输出流未捕获块解析；修 widget 正则与无位置帧两 bug；新增 GUI 优雅退出防 DDS 死锁；真机双通道+跳转 验证通过）
 - 2026-10-14 P3 补验（macOS 桌面会话）：修订阅响应检查引入的 socket.first 重复监听 bug（令三通道全部失败重试死循环）；浏览器 UI 验证通过（列表/徽标/红浮层真实推送链路）；streamListen 响应改在 _onData 检查（被拒显式报 stderr）；mac 会话双通道实时捕获 + f_jlink 会话真实异常持续入库自证
 - 2026-10-14 P4 完成（路由操作：/api/routeop pop/remove/pushNamed；前端操作列 + pushNamed 输入框；macOS 会话真实验证 + 浏览器 UI 验证；发现并记录 macOS 后台帧冻结致出栈延迟现象）
+- 2026-10-14 P5 完成（泄漏检测：/api/leakcheck GC 后树上/堆上双计数；前端四类结论含红色疑似泄漏；泛型类名剥离修复；macOS 命令行阴/阳对照 + 浏览器 UI 两轮全过；排障中发现后台 flutter run SIGTTIN 停进程组问题并用管道 stdin 根治）
+- 2026-10-14 P6 完成（状态面板：/api/status/cn 自动候选=树上 CN State + 泛型实参提取（如 XBWidgetState<ChoosePageVM>）+ getObject super 链校验（≤12 跳，拦截 GetX 非 CN 实参）；监听者数读 _listeners 非 Null 槽/老版 _count；字段摘要滤 CN 内部机制字段；类名点链接跳「实例」Tab；浏览器 UI 五步验证全过；排障沉淀：VM service 无 getClass 方法，查类对象用 getObject）
+- 2026-10-14 P7 完成（编辑重放：/api/network/replay 支持 POST JSON 覆盖 url/headers/body，GUI 端 HttpClient 直发 + 显式 content-length（防 chunked）；前端编辑表单（预填原值、重放后保留编辑内容）+ 重放响应自动与原响应 JSON 逐字段 diff（●改/+增/−删 + 计数）；Network 记录 Map/List 改用 eval 内手写 JSON 序列化（xb_ume core 库上下文无 dart:convert、XBUme 符号只在 core 可见，手写 q/js 最小序列化）；验证环境：example DebugProfile.entitlements 补 network.client + 本地 echo 服务替代不可达外网；浏览器 UI 全过）

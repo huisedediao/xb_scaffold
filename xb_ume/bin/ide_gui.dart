@@ -431,6 +431,314 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    // ── 内存泄漏检测：退出页 State → GC → 树上/堆上双计数 ──
+    // 判定在 app 进程外做：不在路由栈中但堆上仍有实例的 State 即疑似泄漏
+    //（静态变量/监听器/动画/全局 key 等持有）。树上计数与堆计数分开，
+    // 供前端区分「栈中正常存活」与「疑似泄漏」。
+    if (path == '/api/leakcheck' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final classes = (req.uri.queryParameters['classes'] ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toSet();
+      if (uri.isEmpty || classes.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        // 先 GC：清掉退出页面短暂残留的待回收实例，避免误报。
+        try {
+          await rpc.rawRpc('_collectAllGarbage', {'isolateId': iso});
+        } catch (_) {}
+        // 树上计数：树上存活的 State（在栈中页面的正常存活形态）。
+        // 返回数字字符串；NO_ROOT 表示 app 尚未首帧。
+        Future<int> treeCount(String cls) async {
+          final walkExpr = "(() { final root = WidgetsBinding.instance"
+              ".renderViewElement; if (root == null) return 'NO_ROOT'; "
+              "var n = 0; void walk(Element e) { "
+              "final s = e is StatefulElement ? e.state : null; "
+              "if (s != null && s.runtimeType.toString() == '$cls') { n++; } "
+              "e.visitChildren(walk); } root.visitChildren(walk); "
+              "return n.toString(); })()";
+          final r = await rpc.evalStringOn(
+              'package:flutter/src/widgets/navigator.dart', walkExpr);
+          if (r == 'NO_ROOT') return 0;
+          return int.tryParse(r) ?? 0;
+        }
+        // 一次 getClassList：类名 → classId 列表（与实例 Tab 堆扫描同款匹配，
+        // 含 '.类名' 后缀的同类变体）。注意 getClassList 返回的类名不带泛型
+        // 实参（泛型类是 _FooState 而实例 runtimeType 是 _FooState<T>），
+        // 而前端传来的类名来自静态解析，可能带泛型后缀 → 剥掉再匹配。
+        String stripGenerics(String cls) {
+          final lt = cls.indexOf('<');
+          return lt > 0 ? cls.substring(0, lt) : cls;
+        }
+        final classList = await rpc.rawRpc('getClassList', {'isolateId': iso});
+        final idsByCls = <String, List<String>>{};
+        for (final c in (classList['classes'] as List? ?? <Object?>[])) {
+          if (c is! Map) continue;
+          final name = c['name']?.toString() ?? '';
+          for (final cls in classes) {
+            final bare = stripGenerics(cls);
+            if (name == bare || name.endsWith('.$bare')) {
+              (idsByCls[cls] ??= <String>[]).add(c['id']?.toString() ?? '');
+            }
+          }
+        }
+        final items = <Map<String, Object?>>[];
+        for (final cls in classes) {
+          var tree = 0;
+          try {
+            tree = await treeCount(cls);
+          } catch (_) {}
+          var heap = 0;
+          for (final classId in (idsByCls[cls] ?? const <String>[])) {
+            if (classId.isEmpty) continue;
+            try {
+              // 只计数量不摊实例：limit=1 + totalCount（total 是堆上全部存活数）。
+              final set = await rpc.rawRpc('getInstances', {
+                'isolateId': iso,
+                'objectId': classId,
+                'limit': 1,
+              });
+              final tc = set['totalCount'];
+              heap += tc is int
+                  ? tc
+                  : (set['instances'] as List? ?? const <Object?>[]).length;
+            } catch (_) {}
+          }
+          items.add(<String, Object?>{'cls': cls, 'tree': tree, 'heap': heap});
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'items': items}),
+        );
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
+    // ── 状态面板：ChangeNotifier 类聚合（实例数/监听者数/字段摘要/跳实例）──
+    // 候选类来源：① Element 树上挂着的 CN（State 本身是 ChangeNotifier 的）
+    // ② 手动输入类名。对每个类：堆扫描计实例数（totalCount），取第一个实例
+    // getObject 解析 _listeners（实际监听者 = 非 Null 元素数，老实现用 _count）
+    // 与字段摘要。
+    if (path == '/api/status/cn') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final manual = (req.uri.queryParameters['classes'] ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toSet();
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        final candidates = <String>{...manual};
+        // ① 树上候选（显式栈，递归闭包在 VM eval 中不可靠）：
+        //    - State 本身是 ChangeNotifier（直接入选）；
+        //    - runtimeType 带泛型实参的（如 XBWidgetState<ChoosePageVM>，
+        //      CN 藏在泛型实参里是常见持有形态）→ 提取实参名，后面统一校验。
+        final toVerify = <String>{};
+        try {
+          const cnExpr = "(() { final root = WidgetsBinding.instance"
+              ".renderViewElement; if (root == null) return 'NO_ROOT'; "
+              "final stack = <Element>[root]; final names = <String>[]; "
+              "while (stack.isNotEmpty && names.length < 80) { final e = stack.removeLast(); "
+              "final s = e is StatefulElement ? e.state : null; "
+              "if (s != null && (s is ChangeNotifier || "
+              "s.runtimeType.toString().contains('<'))) { "
+              "names.add(s.runtimeType.toString()); } "
+              "e.visitChildren(stack.add); } "
+              "return names.join('|'); })()";
+          final r = await rpc.evalStringOn(
+              'package:flutter/src/widgets/navigator.dart', cnExpr);
+          if (r != 'NO_ROOT') {
+            for (final n in r.split('|')) {
+              if (n.isEmpty) continue;
+              if (n.contains('<')) {
+                final inner = n.substring(n.indexOf('<') + 1, n.lastIndexOf('>'));
+                for (final part in inner.split(',')) {
+                  final p = part.trim();
+                  if (p.isNotEmpty &&
+                      !p.contains('<') &&
+                      RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$').hasMatch(p)) {
+                    toVerify.add(p);
+                  }
+                }
+              } else {
+                candidates.add(n);
+              }
+            }
+          }
+        } catch (_) {}
+        String stripGenerics(String cls) {
+          final lt = cls.indexOf('<');
+          return lt > 0 ? cls.substring(0, lt) : cls;
+        }
+        final items = <Map<String, Object?>>[];
+        if (candidates.isNotEmpty || toVerify.isNotEmpty) {
+          final classList =
+              await rpc.rawRpc('getClassList', {'isolateId': iso});
+          // ChangeNotifier 基类 id：泛型实参候选沿 super 链校验是否真为 CN
+          //（GetBuilderState<GetMaterialController> 之类的非 CN 实参要拦掉）。
+          String? cnBaseId;
+          final idByCls = <String, String>{};
+          for (final c in (classList['classes'] as List? ?? <Object?>[])) {
+            if (c is! Map) continue;
+            final name = c['name']?.toString() ?? '';
+            idByCls[name] = c['id']?.toString() ?? '';
+            if (name == 'ChangeNotifier') cnBaseId = c['id']?.toString();
+          }
+          if (cnBaseId != null && cnBaseId.isNotEmpty) {
+            for (final cls in toVerify) {
+              var id = idByCls[stripGenerics(cls)];
+              var hops = 0;
+              while (id != null && id.isNotEmpty && hops < 12) {
+                if (id == cnBaseId) {
+                  candidates.add(cls);
+                  break;
+                }
+                try {
+                  final c = await rpc.rawRpc('getObject', {
+                    'isolateId': iso,
+                    'objectId': id,
+                  });
+                  final sup = c['super'] as Map?;
+                  id = sup?['id']?.toString();
+                } catch (_) {
+                  break;
+                }
+                hops++;
+              }
+            }
+          }
+          final idsByCls = <String, List<String>>{};
+          for (final c in (classList['classes'] as List? ?? <Object?>[])) {
+            if (c is! Map) continue;
+            final name = c['name']?.toString() ?? '';
+            for (final cls in candidates) {
+              final bare = stripGenerics(cls);
+              if (name == bare || name.endsWith('.$bare')) {
+                (idsByCls[cls] ??= <String>[]).add(c['id']?.toString() ?? '');
+              }
+            }
+          }
+          for (final cls in candidates) {
+            var count = 0;
+            var instId = '';
+            for (final classId in (idsByCls[cls] ?? const <String>[])) {
+              if (classId.isEmpty) continue;
+              try {
+                final set = await rpc.rawRpc('getInstances', {
+                  'isolateId': iso,
+                  'objectId': classId,
+                  'limit': 1,
+                });
+                final tc = set['totalCount'];
+                count += tc is int
+                    ? tc
+                    : (set['instances'] as List? ?? const <Object?>[]).length;
+                if (instId.isEmpty &&
+                    (set['instances'] as List? ?? const <Object?>[]).isNotEmpty) {
+                  instId =
+                      ((set['instances'] as List).first as Map)['id']?.toString() ?? '';
+                }
+              } catch (_) {}
+            }
+            // 代表性实例（第一个）：监听者数 + 字段摘要。同类的多实例状态可能
+            // 不同，此处取首个供快速诊断，展开看全量请跳「实例」Tab。
+            var listeners = -1;
+            final fieldsPreview = <String>[];
+            if (instId.isNotEmpty) {
+              try {
+                final obj = await rpc.rawRpc('getObject', {
+                  'isolateId': iso,
+                  'objectId': instId,
+                });
+                for (final f in (obj['fields'] as List? ?? <Object?>[])) {
+                  if (f is! Map) continue;
+                  final fname =
+                      ((f['decl'] as Map?)?['name'] ?? '').toString();
+                  final v = f['value'];
+                  if (v is! Map) continue;
+                  if (fname == '_listeners') {
+                    // 实际监听者 = 非 Null 元素数（老实现 _listeners 定长槽填充 null）。
+                    try {
+                      final l = await rpc.rawRpc('getObject', {
+                        'isolateId': iso,
+                        'objectId': v['id']?.toString() ?? '',
+                      });
+                      listeners = (l['elements'] as List? ?? <Object?>[])
+                          .where((e) =>
+                              e is Map &&
+                              (e['class'] as Map?)?['name']?.toString() != 'Null')
+                          .length;
+                    } catch (_) {
+                      listeners = -1;
+                    }
+                  } else if (fname == '_count') {
+                    final n = int.tryParse(v['valueAsString']?.toString() ?? '');
+                    if (n != null && listeners < 0) listeners = n;
+                  }
+                  if (fieldsPreview.length < 8 &&
+                      fname != '_listeners' &&
+                      fname != '_count' &&
+                      // ChangeNotifier 内部机制字段对诊断无信息量，不入摘要。
+                      !const {
+                        '_notificationCallStackDepth',
+                        '_reentrantlyRemovedListeners',
+                        '_debugDisposed',
+                        '_creationDispatched',
+                        '_debugCreator',
+                      }.contains(fname)) {
+                    var preview = v['valueAsString']?.toString() ??
+                        (v['class'] as Map?)?['name']?.toString() ?? '?';
+                    if (preview.length > 48) preview = preview.substring(0, 48);
+                    fieldsPreview.add('$fname=$preview');
+                  }
+                }
+              } catch (_) {}
+            }
+            items.add(<String, Object?>{
+              'cls': cls,
+              'count': count,
+              'listeners': listeners,
+              'fields': fieldsPreview,
+              'instId': instId,
+              'src': manual.contains(cls) ? '手动' : '树上',
+            });
+          }
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'items': items}),
+        );
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
     // -- 路由的 State / ChangeNotifier 解析 ---------------------------------
     // 纯静态解析（不再连 VM）：routelocate 已定位到路由子树中第一个用户
     // widget 类的源文件，State 名取该类 createState() 的返回类型；
@@ -657,16 +965,41 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           return;
         }
         // detail / replay 共用：结构化拉取单条请求的全部字段。
+        // 库上下文必须是 core/xb_ume.dart（XBUme 可见）。Map/List 不能用
+        // Dart Map.toString()（键无引号非 JSON，前端 diff/预览解析不了），
+        // 又不能 jsonEncode（该库没 import dart:convert，而 XBUme 只在此库
+        // 可见）→ 表达式内手写最小 JSON 序列化（q/js，用 fromCharCode 避免
+        // 三层转义地狱）。
         Future<Map<String, Object?>?> fetchItem() async {
+          const jsHelpers = "String q(String s) { final dq = "
+              "String.fromCharCode(34); final bs = String.fromCharCode(92); "
+              "final out = StringBuffer(dq); "
+              "for (final c in s.codeUnits) { "
+              "if (c == 34) { out.write(bs + dq); } "
+              "else if (c == 92) { out.write(bs + bs); } "
+              "else if (c == 10) { out.write(bs + 'n'); } "
+              "else if (c == 13) { out.write(bs + 'r'); } "
+              "else if (c == 9) { out.write(bs + 't'); } "
+              "else if (c < 32) { out.write(bs + 'u00' + c.toRadixString(16).padLeft(2, '0')); } "
+              "else { out.writeCharCode(c); } } "
+              "out.write(dq); return out.toString(); } "
+              "String js(Object? v) { if (v == null) return 'null'; "
+              "if (v is num || v is bool) return v.toString(); "
+              "if (v is String) return q(v); "
+              "if (v is Map) { return '{' + v.entries.map((en) => q(en.key.toString()) + ':' + js(en.value)).join(',') + '}'; } "
+              "if (v is Iterable) { return '[' + v.map(js).join(',') + ']'; } "
+              "return q(v.toString()); } "
+              "String toS(Object? v) => v == null ? '' : "
+              "(v is Map || v is List ? js(v) : v.toString()); ";
           final raw = await evalNet(
+            "$jsHelpers"
             "XBUmeNetworkItem? e; "
             "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
             "if (e == null) return 'NOT_FOUND'; "
             "String kv(Map<String, dynamic>? m) => m == null ? '' : "
-            "m.entries.map((en) => en.key + '\\u0003' + en.value.toString()).join('\\u0004'); "
-            "String toS(Object? v) => v == null ? '' : v.toString(); "
+            "m.entries.map((en) => en.key + '\u0003' + en.value.toString()).join('\u0004'); "
             "return [kv(e.queryParameters), kv(e.requestHeaders), toS(e.requestBody), "
-            "kv(e.responseHeaders), toS(e.responseBody), e.stack ?? ''].join('\\u0001'); ",
+            "kv(e.responseHeaders), toS(e.responseBody), e.stack ?? ''].join('\u0001'); ",
           );
           if (raw == 'NOT_FOUND') return null;
           final p = raw.split('\u0001');
@@ -701,30 +1034,51 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }
         // replay：GUI 端直接按原 method/url/headers/body 发起 HTTP 请求。
         // 先拿 method 与 url（列表里没带，单独 eval）。
+        // POST JSON body 可覆盖 url/headers/body（详情页「编辑重放」）；
+        // GET query（原「重发」）不含 body，保持原样。
+        Map<String, Object?>? edit;
+        if (req.method == 'POST') {
+          final raw = await utf8.decoder.bind(req).join();
+          if (raw.isNotEmpty) edit = jsonDecode(raw) as Map<String, Object?>;
+        }
         final mu = await evalNet(
           "XBUmeNetworkItem? e; "
           "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
           "if (e == null) return 'NOT_FOUND'; "
-          "return e.method + '\\u0001' + e.url; ",
+          "return e.method + '\u0001' + e.url; ",
         );
         if (mu == 'NOT_FOUND') throw '请求不存在（可能已被清除）';
         final sep = mu.indexOf('\u0001');
         final method = sep < 0 ? 'GET' : mu.substring(0, sep);
-        final url = sep < 0 ? mu : mu.substring(sep + 1);
+        var url = sep < 0 ? mu : mu.substring(sep + 1);
         final item = await fetchItem();
-        final headers = <String, String>{
+        var headers = <String, String>{
           for (final h in (item?['requestHeaders'] as List? ?? <Map<String, String>>[]))
             if ((h['k'] ?? '').toString().isNotEmpty)
               h['k']!.toString(): h['v']?.toString() ?? '',
         };
-        final body = (item?['requestBody'] as String? ?? '');
+        var body = (item?['requestBody'] as String? ?? '');
+        if (edit != null) {
+          final eu = edit['url']?.toString() ?? '';
+          if (eu.isNotEmpty) url = eu;
+          final eh = edit['headers'];
+          if (eh is Map) {
+            headers = {
+              for (final e in eh.entries) e.key.toString(): e.value?.toString() ?? '',
+            };
+          }
+          final eb = edit['body'];
+          if (eb != null) body = eb.toString();
+        }
         final client = HttpClient();
         try {
           final rq = await client.openUrl(method, Uri.parse(url));
           headers.forEach(rq.headers.set);
-          if (body.isNotEmpty &&
-              method != 'GET' &&
-              method != 'HEAD') {
+          if (body.isNotEmpty && method != 'GET' && method != 'HEAD') {
+            // 显式设 content-length：否则 dart:io 走 chunked，部分简易服务端
+            //（及与原始请求行为不一致）会解析不到 body。
+            rq.headers.set(
+                'content-length', utf8.encode(body).length.toString());
             rq.add(utf8.encode(body));
           }
           final rs = await rq.close();
@@ -735,6 +1089,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           req.response.headers.contentType = ContentType.json;
           req.response.write(jsonEncode(<String, Object?>{
             'statusCode': rs.statusCode,
+            'url': url,
             'headers': respHeaders,
             'body': respBody.length > 200 * 1024
                 ? respBody.substring(0, 200 * 1024)
@@ -4059,6 +4414,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="routes">路由栈</div>
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="storage">Storage</div>
+  <div class="tab" data-tab="status">状态</div>
   <div class="tab" data-tab="instances">实例</div>
   <div class="tab" data-tab="shot">截图</div>
   <div id="hdr-right">
@@ -4125,12 +4481,15 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。</div>
   </section>
   <section class="page" id="page-routes">
-    <div style="display:flex;align-items:center;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <button onclick="rtRefresh()" title="重新拉取当前会话的路由栈">刷新</button>
+      <button onclick="leakCheck()" title="GC 后对本会话浏览过的页面 State 类做树上/堆上双计数：不在路由栈中但堆上仍有实例即疑似泄漏">泄漏检测</button>
+      <input id="rt-leak-cls" placeholder="手动补充 State 类名（可选，逗号分隔）" style="width:230px" onkeydown="if(event.key==='Enter')leakCheck()">
       <span class="muted">选中会话 app 的 Navigator 路由栈（栈底 → 栈顶，当前路由高亮）</span>
     </div>
     <div id="rt-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。行尾「操作」列可对路由执行 pop（仅栈顶，走转场）/ remove（直接出栈）；每个 Navigator 分组头部的输入框可 pushNamed 指定名字的路由（需 app 配置了 routes/onGenerateRoute，名字解析不出会明确报 UNKNOWN）。</div>
+    <div id="rt-leak" style="margin-top:10px"></div>
+    <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。行尾「操作」列可对路由执行 pop（仅栈顶，走转场）/ remove（直接出栈）；每个 Navigator 分组头部的输入框可 pushNamed 指定名字的路由（需 app 配置了 routes/onGenerateRoute，名字解析不出会明确报 UNKNOWN）。「泄漏检测」对本会话浏览过的页面 State 类做 GC 后堆扫描，不在栈中但堆上仍有实例的即疑似泄漏。</div>
   </section>
   <section class="page" id="page-network">
     <div style="display:flex;align-items:center;gap:10px">
@@ -4152,6 +4511,15 @@ const String guiHtml = r'''
     </div>
     <div id="st-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android；经 VM service 写回手机）。修改/删除/新增后立即写入文件，但 shared_preferences 插件在 app 内有内存缓存——重启 app 后生效。</div>
+  </section>
+  <section class="page" id="page-status">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button onclick="cnScan()" title="收集树上挂着的 ChangeNotifier 类 + 手动输入类，聚合实例数/监听者数/字段摘要">扫描</button>
+      <input id="cn-cls" placeholder="补充 CN 类名（可选，逗号分隔）" style="width:250px" onkeydown="if(event.key==='Enter')cnScan()">
+      <span class="muted">选中会话 app 的 ChangeNotifier 状态聚合（仅 debug 模式可用）</span>
+    </div>
+    <div id="cn-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div class="muted" style="margin-top:6px">候选类 = Element 树上挂着的 ChangeNotifier（State 本身是 CN 的，如框架控制器）+ 手动输入；实例数 = GC 后堆扫描（getClassList + getInstances totalCount）；监听者数读 _listeners 的非 Null 槽（老版 SDK 读 _count 字段），读不到显示 ?；字段摘要取第一个实例。同类的多个实例状态可能不同，展开全量与实时查看点类名跳「实例」Tab。</div>
   </section>
   <section class="page" id="page-instances">
     <div style="display:flex;align-items:center;gap:10px">
@@ -4212,6 +4580,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'routes') rtRefresh();
     else if (t.dataset.tab === 'network') nwRefresh();
     else if (t.dataset.tab === 'storage') stRefresh();
+    else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
@@ -4527,6 +4896,18 @@ function rtRefresh(){
     .then(function(d){
       if (d.error) { body.innerHTML = '<span class="bad">加载失败：' + esc(d.error) + '</span>'; return; }
       body.innerHTML = rtRender(d);
+      // 清理不在新栈中的行：其 State 类记入已退出集合（泄漏检测候选），
+      // 在 rtResolve 异步回填之前做，此时 rtInfoData 仍对应旧栈。
+      var newKeys = {};
+      (d.navigators || []).forEach(function(nav){
+        (nav.routes || []).forEach(function(r, i){ newKeys[nav.index + '-' + i] = 1; });
+      });
+      for (var k in rtInfoData) {
+        if (!newKeys[k]) {
+          if (rtInfoData[k].state) rtSeenStates[rtInfoData[k].state] = rtInfoData[k].widget || '';
+          delete rtInfoData[k];
+        }
+      }
       (d.navigators || []).forEach(function(nav){
         (nav.routes || []).forEach(function(r, i){ rtResolve(nav.index, i); });
       });
@@ -4614,6 +4995,9 @@ function rtInfo(nav, i, widgetCls, file){
       var parts = [rtInstLink(d.widget, 'Widget 实例（堆扫描）'), rtInstLink(d.state, 'State 实例（Element 树 + 堆扫描）')];
       (d.cn || []).forEach(function(c){ parts.push(rtInstLink(c, 'ChangeNotifier 实例（堆扫描）')); });
       cell.innerHTML = parts.join(' <span class="muted">/</span> ');
+      // 记录本行解析结果：泄漏检测的类名来源（当前栈 + 历史已退出集合）。
+      rtInfoData[nav + '-' + i] = { widget: d.widget || '', state: d.state || '', cn: d.cn || [] };
+      if (d.state) rtSeenStates[d.state] = d.widget || '';
     })
     .catch(function(){ var c = document.getElementById('rti-' + nav + '-' + i); if (c) c.innerHTML = '<span class="muted">\\</span>'; });
 }
@@ -4686,8 +5070,81 @@ function rtPush(nav){
     .catch(function(e){ msg.textContent = '失败：' + String(e); });
 }
 
+// -- 泄漏检测：退出页 State → GC → 树上/堆上双计数 --------------------------
+// rtInfoData：'nav-idx' -> 本行 rtInfo 解析结果（当前栈的类名来源）；
+// rtSeenStates：历史见过的 State 类名 -> 页面 Widget 名（含已退出的），
+// 由 rtRefresh 清理行时与 rtInfo 回调共同累积，仅内存态（刷新页面重置）。
+var rtInfoData = {}, rtSeenStates = {};
+function leakCheck(){
+  var uri = rtUri();
+  var out = document.getElementById('rt-leak');
+  if (!out) return;
+  if (!uri) { out.innerHTML = '<span class="muted">请先选择 VM</span>'; return; }
+  // 类名集合：手动输入 + 当前栈解析结果 + 历史见过；inStack 用于区分「栈中存活」与「已退出」。
+  var inStack = {}, classes = {};
+  (document.getElementById('rt-leak-cls').value || '').split(',').forEach(function(s){
+    s = s.trim(); if (s) classes[s] = classes[s] || '';
+  });
+  for (var k in rtInfoData) {
+    var v = rtInfoData[k];
+    if (v.state) { classes[v.state] = v.widget; inStack[v.state] = 1; }
+  }
+  for (var s in rtSeenStates) { if (!classes[s]) classes[s] = rtSeenStates[s]; }
+  var list = Object.keys(classes);
+  if (!list.length) { out.innerHTML = '<span class="muted">暂无可检测的 State 类：先浏览路由栈让 Widget/State 解析完成（会自动累积已退出页面的记录），或在输入框手动填类名</span>'; return; }
+  out.innerHTML = '<span class="muted">检测中（GC + ' + list.length + ' 个类堆扫描，约数秒）…</span>';
+  fetch('/api/leakcheck?uri=' + encodeURIComponent(uri) + '&classes=' + encodeURIComponent(list.join(',')), {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { out.innerHTML = '<span class="bad">检测失败：' + esc(d.error) + '</span>'; return; }
+      var rows = '';
+      (d.items || []).forEach(function(it){
+        var concl;
+        if (inStack[it.cls]) {
+          concl = '<span style="color:#7ee787">✓ 栈中存活（树上 ' + it.tree + '）</span>';
+        } else if (it.tree > 0) {
+          concl = '<span style="color:#7ee787">✓ 树上存活（' + it.tree + '，同名类被活跃页面使用）</span>';
+        } else if (it.heap > 0) {
+          concl = '<span class="bad">⚠ 疑似泄漏：不在路由栈中，堆上仍有 ' + it.heap + ' 个实例</span>';
+        } else {
+          concl = '<span class="muted">✓ 已释放（堆上 0）</span>';
+        }
+        rows += '<tr><td style="font-family:monospace">' + esc(it.cls) + '</td><td>' + esc(classes[it.cls] || '') + '</td><td>' + it.tree + '</td><td>' + it.heap + '</td><td>' + concl + '</td></tr>';
+      });
+      out.innerHTML = '<table class="sbtable"><tr><th>State 类</th><th>页面 Widget</th><th>树上</th><th>堆上</th><th>结论</th></tr>' + rows + '</table>'
+        + '<div class="muted" style="margin-top:4px">已先触发 GC 再扫描；已退出但堆上仍有实例的 State 为疑似泄漏（静态变量/监听器/动画/全局 key 等持有），可配合「实例」Tab 定位引用链。注意：页面被上层不透明页面覆盖时其元素会从树上临时卸载（State 仍由 Route 正常持有），树上计 0 属正常；对已确认退出的页面，堆上仍有实例才是泄漏。同名类可能被其它页面共用，误报时手动定点排查。</div>';
+    })
+    .catch(function(e){ out.innerHTML = '<span class="bad">检测失败：' + esc(String(e)) + '</span>'; });
+}
+
+// -- 状态 Tab：ChangeNotifier 类聚合 ----------------------------------------
+function cnScan(){
+  var uri = rtUri();
+  var body = document.getElementById('cn-body');
+  if (!body) return;
+  if (!uri) { body.innerHTML = '<span class="muted">请先选择 VM</span>'; return; }
+  body.innerHTML = '<span class="muted">扫描中（树上 CN 收集 + 逐类堆扫描，约数秒）…</span>';
+  var manual = (document.getElementById('cn-cls').value || '').trim();
+  fetch('/api/status/cn?uri=' + encodeURIComponent(uri) + (manual ? '&classes=' + encodeURIComponent(manual) : ''))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { body.innerHTML = '<span class="bad">扫描失败：' + esc(d.error) + '</span>'; return; }
+      var items = d.items || [];
+      if (!items.length) { body.innerHTML = '<span class="muted">未发现 ChangeNotifier 实例（可在输入框手动填类名补充扫描）</span>'; return; }
+      var rows = '';
+      items.forEach(function(it){
+        var listeners = it.listeners < 0 ? '<span class="muted">?</span>' : it.listeners;
+        rows += '<tr><td>' + rtInstLink(it.cls, 'CN 实例（堆扫描首个）')
+          + '</td><td class="muted">' + esc(it.src || '') + '</td><td>' + it.count + '</td><td>' + listeners
+          + '</td><td style="font-size:12px" class="muted">' + esc((it.fields || []).join('  ')) + '</td></tr>';
+      });
+      body.innerHTML = '<table class="sbtable"><tr><th>CN 类</th><th>来源</th><th>实例数</th><th>监听者</th><th>字段摘要（首个实例）</th></tr>' + rows + '</table>';
+    })
+    .catch(function(e){ body.innerHTML = '<span class="bad">扫描失败：' + esc(String(e)) + '</span>'; });
+}
+
 // -- Network Tab ------------------------------------------------------------
-var nwItems = [], nwDetails = {}, nwOpen = {}, nwReplays = {}, nwFetching = {};
+var nwItems = [], nwDetails = {}, nwOpen = {}, nwReplays = {}, nwFetching = {}, nwEditOpen = {}, nwEditVals = {};
 function nwActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'network'; }
 function nwUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function nwRefresh(){
@@ -4768,7 +5225,8 @@ function nwDetailRowHtml(id){
   var d = nwDetails[id];
   var head = '<div style="margin:2px 0 6px"><b>' + esc(it.method + ' ' + (it.url || '')) + '</b> '
     + '<a href="javascript:void(0)" onclick="nwCurl(\'' + esc(id) + '\',this)">复制 cURL</a> '
-    + '<a href="javascript:void(0)" onclick="nwReplay(\'' + esc(id) + '\',this)">重发</a></div>';
+    + '<a href="javascript:void(0)" onclick="nwReplay(\'' + esc(id) + '\',this)">重发</a> '
+    + '<a href="javascript:void(0)" onclick="nwEditReplay(\'' + esc(id) + '\',this)" title="可改 URL/请求头/请求体后重放，结果自动与原响应逐字段 diff">编辑重放</a></div>';
   if (d && d.error) return head + '<span class="bad">' + esc(d.error) + '</span>';
   if (!d) { nwFetchDetail(id); return head + '<span class="muted">加载详情…</span>'; }
   var rep = nwReplays[id];
@@ -4784,10 +5242,81 @@ function nwDetailRowHtml(id){
         + '<div class="card"><div><b>状态码：</b><span style="color:' + nwStatusColor('success', rep.statusCode) + '">' + rep.statusCode + '</span></div>'
         + '<div style="margin:6px 0 2px"><b>响应头</b></div><table class="sbtable">'
         + Object.keys(rep.headers || {}).map(function(k){ return '<tr><td>' + esc(k) + '</td><td>' + esc((rep.headers[k] || []).join(', ')) + '</td></tr>'; }).join('')
-        + '</table><div style="margin:6px 0 2px"><b>响应体</b></div>' + bodyHtml + '</div>';
+        + '</table><div style="margin:6px 0 2px"><b>响应体</b></div>' + bodyHtml
+        + '<div style="margin:8px 0 2px"><b>与原响应 diff</b></div>' + nwDiffHtml(d.responseBody || '', rep.body || '') + '</div>';
     }
   }
-  return head + nwDetailHtml(id, d) + repHtml;
+  var editHtml = nwEditOpen[id] ? nwEditFormHtml(id) : '';
+  return head + editHtml + nwDetailHtml(id, d) + repHtml;
+}
+function nwEditFormHtml(id){
+  var it = nwItems.filter(function(x){ return x.id === id; })[0] || {};
+  var d = nwDetails[id] || {};
+  // 重放后重渲染会重建表单，编辑过的内容从缓存恢复，避免丢失。
+  var ev = nwEditVals[id] || {};
+  var urlVal = ev.url !== undefined ? ev.url : (it.url || '');
+  var hdrVal = ev.hdr !== undefined ? ev.hdr : (d.requestHeaders || []).filter(function(h){ return h.k; }).map(function(h){ return h.k + ': ' + (h.v || ''); }).join('\n');
+  var bodyVal = ev.body !== undefined ? ev.body : (d.requestBody || '');
+  return '<div class="card" style="margin:6px 0">'
+    + '<div style="margin:4px 0"><b>编辑后重放</b><span class="muted">（电脑直发，不经 app；method 固定为 ' + esc(it.method || 'GET') + '）</span></div>'
+    + '<div style="margin:4px 0">URL：<input id="nwe-url-' + esc(id) + '" style="width:78%;font-family:monospace" value="' + esc(urlVal) + '"></div>'
+    + '<div style="margin:4px 0">请求头（每行 k: v）：<br><textarea id="nwe-hdr-' + esc(id) + '" rows="4" style="width:95%;font-family:monospace">' + esc(hdrVal) + '</textarea></div>'
+    + '<div style="margin:4px 0">请求体：<br><textarea id="nwe-body-' + esc(id) + '" rows="8" style="width:95%;font-family:monospace">' + esc(bodyVal) + '</textarea></div>'
+    + '<button class="primary" onclick="nwDoReplay(\'' + esc(id) + '\',this)">执行重放</button> '
+    + '<a href="javascript:void(0)" onclick="nwEditReplay(\'' + esc(id) + '\',this)">收起</a>'
+    + '</div>';
+}
+// JSON 逐字段递归 diff：返回 [{path, type: chg|add|del, oldV, newV}]。
+function nwDiffRows(a, b){
+  var rows = [];
+  function isObj(x){ return x !== null && typeof x === 'object'; }
+  function short(x){ return JSON.stringify(x); }
+  function walk(p, x, y){
+    if (isObj(x) && isObj(y) && Array.isArray(x) === Array.isArray(y)) {
+      var i, k, keys = {};
+      if (Array.isArray(x)) {
+        var n = Math.max(x.length, y.length);
+        for (i = 0; i < n; i++) {
+          var ip = p + '[' + i + ']';
+          if (i >= x.length) rows.push({ path: ip, type: 'add', newV: short(y[i]) });
+          else if (i >= y.length) rows.push({ path: ip, type: 'del', oldV: short(x[i]) });
+          else walk(ip, x[i], y[i]);
+        }
+      } else {
+        for (k in x) keys[k] = 1;
+        for (k in y) keys[k] = 1;
+        Object.keys(keys).sort().forEach(function(k){
+          var kp = p ? p + '.' + k : k;
+          if (!(k in x)) rows.push({ path: kp, type: 'add', newV: short(y[k]) });
+          else if (!(k in y)) rows.push({ path: kp, type: 'del', oldV: short(x[k]) });
+          else walk(kp, x[k], y[k]);
+        });
+      }
+    } else {
+      var xs = short(x), ys = short(y);
+      if (xs !== ys) rows.push({ path: p || '$', type: 'chg', oldV: xs, newV: ys });
+    }
+  }
+  walk('', a, b);
+  return rows;
+}
+function nwDiffHtml(oldBody, newBody){
+  var a, b, rows;
+  try { a = JSON.parse(oldBody); b = JSON.parse(newBody); } catch (_) {
+    return '<span class="muted">原/新响应非 JSON，无法逐字段 diff（可人工比对上方两段响应体）</span>';
+  }
+  rows = nwDiffRows(a, b);
+  if (!rows.length) return '<span style="color:#7ee787">✓ 与原响应完全一致</span>';
+  var cnt = { chg: 0, add: 0, del: 0 };
+  rows.forEach(function(r){ cnt[r.type]++; });
+  var trs = rows.map(function(r){
+    var mark = r.type === 'add' ? '<span style="color:#7ee787">+ 增</span>' : (r.type === 'del' ? '<span style="color:#f85149">− 删</span>' : '<span style="color:#d29922">● 改</span>');
+    return '<tr><td style="font-family:monospace">' + esc(r.path) + '</td><td>' + mark + '</td>'
+      + '<td style="word-break:break-all">' + (r.oldV !== undefined ? '<span style="text-decoration:line-through" class="muted">' + esc(r.oldV) + '</span>' : '<span class="muted">—</span>') + '</td>'
+      + '<td style="word-break:break-all">' + (r.newV !== undefined ? esc(r.newV) : '<span class="muted">—</span>') + '</td></tr>';
+  }).join('');
+  return '<div class="muted" style="margin:2px 0">差异 ' + rows.length + ' 处（改 ' + cnt.chg + ' / 增 ' + cnt.add + ' / 删 ' + cnt.del + '）</div>'
+    + '<table class="sbtable"><tr><th>字段路径</th><th>类型</th><th>原值</th><th>新值</th></tr>' + trs + '</table>';
 }
 function nwToggle(id){
   nwOpen[id] = !nwOpen[id];
@@ -4841,6 +5370,49 @@ function nwReplay(id, a){
       if (cell) { cell.innerHTML = nwDetailRowHtml(id); return; }
       nwOpen[id] = true;
       nwRender();
+    })
+    .catch(function(e){ a.textContent = old; alert(String(e)); });
+}
+function nwEditReplay(id, a){
+  nwEditOpen[id] = !nwEditOpen[id];
+  var cell = document.getElementById('nwd-' + id);
+  if (cell && nwOpen[id]) { cell.innerHTML = nwDetailRowHtml(id); return; }
+  nwOpen[id] = true;
+  nwRender();
+}
+function nwDoReplay(id, a){
+  var uri = nwUri(); if (!uri) return;
+  var old = a.textContent; a.textContent = '重放中…';
+  var headers = {};
+  var hdrText = document.getElementById('nwe-hdr-' + id).value || '';
+  hdrText.split('\n').forEach(function(line){
+    var i = line.indexOf(':');
+    if (i > 0) {
+      var k = line.substring(0, i).trim();
+      if (k) headers[k] = line.substring(i + 1).trim();
+    }
+  });
+  // 缓存编辑内容：重放后重渲染时回填。
+  nwEditVals[id] = {
+    url: document.getElementById('nwe-url-' + id).value.trim(),
+    hdr: hdrText,
+    body: document.getElementById('nwe-body-' + id).value
+  };
+  fetch('/api/network/replay?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: nwEditVals[id].url,
+      headers: headers,
+      body: nwEditVals[id].body
+    })
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      a.textContent = old;
+      nwReplays[id] = d.error ? { error: d.error } : d;
+      var cell = document.getElementById('nwd-' + id);
+      if (cell) cell.innerHTML = nwDetailRowHtml(id);
     })
     .catch(function(e){ a.textContent = old; alert(String(e)); });
 }

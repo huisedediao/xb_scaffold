@@ -190,7 +190,21 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **macOS 桌面会话注意**：app 窗口切到后台（最小化/被遮挡到 hidden）后 Flutter 会暂停帧调度，未完成的转场会冻结在过渡态，此时 pop/remove 虽返回成功但出栈要等窗口回前台、转场完成后才真正生效，路由栈也会显示卡在过渡态的路由。把 app 窗口带回前台即可恢复；真机/模拟器会话无此问题。
 
+### 泄漏检测
+
+工具栏的**「泄漏检测」按钮**：对本会话浏览过的页面 State 类（Widget/State 列解析成功过的类会自动累积，路由栈刷新时已退出的页面类也会记入；另可在输入框手动补类名，逗号分隔）做一次**GC 后堆扫描**：先经 VM service 触发 `_collectAllGarbage`，再对每个类分别统计「树上实例数」（Element 树遍历）与「堆上实例数」（getClassList + getInstances），结果分四类：
+
+- ✓ **栈中存活**：GUI 记录的当前栈里有该类（正常）；
+- ✓ **树上存活**：树上有实例（同名类被其它活跃页面使用时不误报）；
+- ⚠ **疑似泄漏**（红色）：页面已退出路由栈、GC 后堆上仍有实例 —— 通常是静态变量 / 监听器 / 动画 / 全局 key 等持有，可配合「实例」Tab 展开字段树定位引用链；
+- ✓ **已释放**：堆上已无实例。
+
+判定要点：页面被上层不透明页面覆盖时其元素会从树上临时卸载（State 仍由 Route 正常持有），此时树上计 0 属正常，不会误报；类名来自静态解析，带泛型的 State（如 `_FooState<T>`）会自动剥掉泛型再去堆里匹配。记录仅存于浏览器内存（刷新页面重置），多扫几轮路由栈可让候选类更全。仅 debug 模式可用。
+
 ## 六、Network（Tab「Network」）
+
+**编辑重放与响应 diff**：每条请求详情头部除「复制 cURL」「重发」外，还有「**编辑重放**」——展开编辑表单（URL / 请求头每行 `k: v` / 请求体，均预填原值），改完点「执行重放」由**电脑直接发起**（不经 app，method 固定为原请求方法），响应展示在「重发响应」卡内，并自动与原响应做**逐字段 diff**：JSON 递归对比（对象按字段、数组按下标），●改 / +增 / −删 三种标注 + 差异计数，完全一致时显示绿色「✓ 与原响应完全一致」；原/新响应任一非 JSON 时降级为提示（人工比对两段响应体）。重放后编辑内容保留在表单中，可连续微调多次重放对比。典型用途：改请求参数验证服务端行为、对比接口版本差异、复现边界参数。
+
 
 展示**选中调试会话 app 内 xb_ume Network 模块捕获的请求**（与手机端 ume 面板同源数据，不是 GUI 自己抓包），需 app 接入 xb_ume 并配置了网络拦截（`XBUmeHttpClient` / `XBUmeDioInterceptor`）。
 
@@ -236,7 +250,27 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：注册表经 VM service 在 `xb_ume_store_registry.dart` 库上下文 eval 读注册 Map；查找走 Element 树遍历 + 堆扫描双通道；字段树用 `getObject` 递归展开；写回是在实例上下文 eval 字段赋值表达式（eval 作用域为实例所属库，私有可见）。
 
-## 九、异常（Tab「异常」）
+## 九、状态面板（Tab「状态」）
+
+**ChangeNotifier 状态聚合视图**——一屏看清 app 内活跃的 ChangeNotifier（控制器/状态对象）：实例数、监听者数、字段摘要。仅 debug 会话可用。
+
+**使用**：切到「状态」Tab 自动扫描，或在输入框手动补充类名（逗号分隔）后回车。表格列：
+
+| 列 | 含义 |
+|---|---|
+| CN 类 | 类名，点击跳「实例」Tab 自动查找该类实例 |
+| 来源 | 树上（自动发现）/ 手动（输入框补充） |
+| 实例数 | GC 后堆扫描的该类全部实例数（getInstances totalCount） |
+| 监听者 | 该类首个实例的 ChangeNotifier 监听者数（读 `_listeners` 非 Null 槽计数，老版 SDK 读 `_count` 字段）；无实例或读不到显示 ? |
+| 字段摘要 | 首个实例的字段预览（已过滤 `_listeners`/`_count`/`_notificationCallStackDepth` 等 CN 内部机制字段） |
+
+**候选类自动发现**（无需手动输入）：
+1. Element 树上 State 本身是 ChangeNotifier 的（如框架内控制器）；
+2. Element 树上 runtimeType 带泛型实参的 State（如 `XBWidgetState<ChoosePageVM>`）——提取泛型实参类名，再沿 super 链校验（getObject 逐级查 super，上限 12 跳）确认其确实继承 ChangeNotifier 才入候选（GetX 的 `GetBuilderState<GetMaterialController>` 之类非 CN 实参会被拦掉）。
+
+**注意**：监听者数/字段摘要取该类**首个实例**（同类多实例状态可能不同，全量与实时查看点类名跳「实例」Tab）；聚合是快照不是订阅，需手动重扫刷新。
+
+## 十、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -252,7 +286,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十、常见问题
+## 十一、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -267,7 +301,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十一、卸载
+## 十二、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -275,7 +309,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十二、相关文档
+## 十三、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)
