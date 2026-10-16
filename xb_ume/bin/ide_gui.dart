@@ -3523,16 +3523,26 @@ String _escEvalString(String s) => s
 
 /// tap：GestureBinding.handlePointerEvent down+up 同点（binding.dart 上下文，
 /// 实测可驱动真实 UI 导航/点击）。phys=true 时坐标为截图物理像素（除 dpr）。
-String _autoTapExpr(String x, String y, {bool phys = false}) =>
-    phys
-        ? "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
-            "final p = Offset($x, $y) / d; "
-            "GestureBinding.instance.handlePointerEvent(PointerDownEvent(position: p)); "
-            "GestureBinding.instance.handlePointerEvent(PointerUpEvent(position: p)); return 'OK'; })()"
-        : "(() { GestureBinding.instance.handlePointerEvent("
-            "PointerDownEvent(position: Offset($x, $y))); "
-            "GestureBinding.instance.handlePointerEvent("
-            "PointerUpEvent(position: Offset($x, $y))); return 'OK'; })()";
+/// 每次注入唯一 pointer id：PointerDownEvent 默认 pointer=0，若 down 派发中
+/// 业务抛异常导致 up 未发，_hitTests 残留 pointer 0 会让后续所有 tap 撞
+/// '!_hitTests.containsKey(event.pointer)' 断言永久卡死（f_jlink 实测）。
+int _nextPointer() => DateTime.now().microsecondsSinceEpoch & 0x3fffffff;
+
+String _autoTapExpr(String x, String y, {bool phys = false, int pointer = 0}) {
+  final pos = phys
+      ? "final pos = Offset($x, $y) / WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+      : "final pos = Offset($x, $y); ";
+  // down 派发中业务异常时仍补发 up（释放指针）并返回错误摘要；不 rethrow——
+  // 异常经 FlutterError 上报时 inspector 序列化 eval 栈帧会二次炸
+  // stack_frame.dart 断言，污染错误信息。
+  return "(() { $pos"
+      "final pe = PointerDownEvent(pointer: $pointer, position: pos); "
+      "try { GestureBinding.instance.handlePointerEvent(pe); } catch (e) { "
+      "GestureBinding.instance.handlePointerEvent(PointerUpEvent(pointer: $pointer, position: pos)); "
+      "return 'ERR:' + e.toString(); } "
+      "GestureBinding.instance.handlePointerEvent(PointerUpEvent(pointer: $pointer, position: pos)); "
+      "return 'OK'; })()";
+}
 
 /// input：直接调当前焦点 client 的 updateEditingValue（该 Flutter 版本
 /// TextInput 是实例单例：TextInput._instance._currentConnection?._client）。
@@ -3665,8 +3675,8 @@ Future<(String, String)> _autoExecStep(
         final s = await rpc.evalStringOn(
             'package:flutter/src/widgets/binding.dart',
             _autoTapExpr(x.toString(), y.toString(),
-                phys: (st['phys'] ?? false) == true));
-        return (s, s == 'OK' ? '' : 'tap 注入异常: $s');
+                phys: (st['phys'] ?? false) == true, pointer: _nextPointer()));
+        return (s, s == 'OK' ? '' : (s.startsWith('ERR:') ? 'tap 派发异常: ${s.substring(4)}' : 'tap 注入异常: $s'));
       case 'swipe':
         final x1 = (st['x1'] as num?)?.toDouble();
         final y1 = (st['y1'] as num?)?.toDouble();
@@ -3681,11 +3691,24 @@ Future<(String, String)> _autoExecStep(
         final phys = (st['phys'] ?? false) == true;
         // 物理模式：坐标在表达式内先除 dpr 转逻辑像素，再走同一逻辑坐标路径。
         String px(double v) => phys ? '($v / d)' : v.toString();
+        // 全程同一唯一 pointer id（down 异常时仍发 up 释放，见 _autoTapExpr）。
+        final pid = _nextPointer();
         const ctx = 'package:flutter/src/widgets/binding.dart';
-        await rpc.evalStringOn(ctx,
-            "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
-            "GestureBinding.instance.handlePointerEvent("
-            "PointerDownEvent(position: Offset(${px(x1)}, ${px(y1)}))); return 'OK'; })()");
+        String downReply;
+        try {
+          downReply = await rpc.evalStringOn(ctx,
+              "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+              "try { GestureBinding.instance.handlePointerEvent("
+              "PointerDownEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}))); } catch (e) { "
+              "GestureBinding.instance.handlePointerEvent("
+              "PointerUpEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}))); "
+              "return 'ERR:' + e.toString(); } return 'OK'; })()");
+        } catch (e) {
+          return ('', 'swipe down 注入失败: $e');
+        }
+        if (downReply != 'OK') {
+          return ('', 'swipe down 异常: ${downReply.startsWith('ERR:') ? downReply.substring(4) : downReply}');
+        }
         for (var i = 1; i <= seg; i++) {
           final t = i / seg;
           final mx = x1 + (x2 - x1) * t;
@@ -3693,13 +3716,13 @@ Future<(String, String)> _autoExecStep(
           await rpc.evalStringOn(ctx,
               "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
               "GestureBinding.instance.handlePointerEvent("
-              "PointerMoveEvent(position: Offset(${px(mx)}, ${px(my)}))); return 'OK'; })()");
+              "PointerMoveEvent(pointer: $pid, position: Offset(${px(mx)}, ${px(my)}))); return 'OK'; })()");
           await Future.delayed(Duration(milliseconds: moveMs));
         }
         await rpc.evalStringOn(ctx,
             "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
             "GestureBinding.instance.handlePointerEvent("
-            "PointerUpEvent(position: Offset(${px(x2)}, ${px(y2)}))); return 'OK'; })()");
+            "PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}))); return 'OK'; })()");
         return ('swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})', '');
       case 'input':
         final text = (st['text'] ?? '').toString();
@@ -3960,7 +3983,7 @@ const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员�
 规则：
 1. 只输出一个 JSON 对象：{"done":false,"think":"简短分析","steps":[...]}，不要输出任何其他文本。
 2. 每次最多 5 步，做一小批就等结果；点击若引起页面跳转，后续加 {"type":"wait","ms":900}。
-3. 从截图中识别按钮/输入框/列表位置，坐标对准元素中心。
+3. 从截图中识别按钮/输入框/列表位置，坐标对准元素中心；坐标基于给定的截图分辨率，(0,0) 在左上角、右下角约 (宽,高)；底部导航栏贴在截图底边（y 接近图像高度），不在屏幕中部。
 4. 连续两轮界面无变化时必须换策略（换坐标/滑动/返回）。
 5. 目标已达成时返回 {"done":true,"think":"...","steps":[]}。
 6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。''';
@@ -4090,7 +4113,15 @@ Future<void> _aiLoop(String uri, String goal) async {
       }
       Directory(_autoArtifactsDir).createSync(recursive: true);
       r.shot = '${_ai.runId}-r${r.round}.png';
-      File('$_autoArtifactsDir/${r.shot}').writeAsBytesSync(base64Decode(b64));
+      final pngBytes = base64Decode(b64);
+      File('$_autoArtifactsDir/${r.shot}').writeAsBytesSync(pngBytes);
+      // 解析 PNG IHDR 拿真实分辨率：AI 不知道图幅会坐标系幻觉（f_jlink 实测
+      // 轮 18 误以为 924×2000，点出屏外），必须显式告知。
+      var iw = 0, ih = 0;
+      if (pngBytes.length > 24 && pngBytes[0] == 0x89 && pngBytes[1] == 0x50) {
+        iw = (pngBytes[16] << 24) | (pngBytes[17] << 16) | (pngBytes[18] << 8) | pngBytes[19];
+        ih = (pngBytes[20] << 24) | (pngBytes[21] << 16) | (pngBytes[22] << 8) | pngBytes[23];
+      }
       // 2) 组消息：system + 目标 + 历史摘要 + 截图
       final hist = StringBuffer();
       for (final p in _ai.rounds) {
@@ -4100,9 +4131,13 @@ Future<void> _aiLoop(String uri, String goal) async {
           hist.write('${sr.type}=${sr.status == 'pass' ? 'OK' : '失败:${sr.error.isEmpty ? sr.actual : sr.error}'}; ');
         }
       }
-      final userText = StringBuffer()
-        ..write('目标：$goal\n执行历史：')
-        ..write(hist.isEmpty ? '无（这是第一步）' : hist.toString());
+      final userText = StringBuffer();
+      userText.write('目标：$goal\n');
+      if (iw > 0) {
+        userText.write('截图分辨率：$iw×$ih（坐标以此像素坐标系为准，左上角为原点）\n');
+      }
+      userText.write('执行历史：');
+      userText.write(hist.isEmpty ? '无（这是第一步）' : hist.toString());
       if (failB64 != null) {
         userText.write('\n注意：第二张截图是上一轮失败时的画面，请分析失败原因并修正。');
       }
