@@ -299,7 +299,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 |---|---|---|
 | tap | x, y, phys? | 注入 PointerDown/Up；`phys:true` 为截图物理像素坐标（录制坐标），否则逻辑像素 |
 | input | text | 向当前焦点输入框注入文本（需先 tap 输入框建立 TextInputConnection，否则报「无焦点输入框」） |
-| swipe | x1,y1,x2,y2, ms?, phys? | 8 段插值 move 模拟拖动/滚动 |
+| swipe | x1,y1,x2,y2, ms?, phys? | 8 段插值 move 模拟拖动/滚动（move 事件带递增 timeStamp 与显式 delta，真实触摸语义，慢拖/fling 均可触发滚动） |
 | wait | ms | 等待 |
 | back | — | pop 栈顶路由（已是最后一个路由则报错） |
 | navigate | name | pushNamed（app 未配命名路由表会报 NO_ROUTE_TABLE/UNKNOWN） |

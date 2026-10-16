@@ -3742,13 +3742,21 @@ Future<(String, String)> _autoExecStep(
         String px(double v) => phys ? '($v / d)' : v.toString();
         // 全程同一唯一 pointer id（down 异常时仍发 up 释放，见 _autoTapExpr）。
         final pid = _nextPointer();
+        // 真实触摸事件的 timeStamp 递增（VelocityTracker 算 fling 速度依赖它），
+        // move 事件必须显式传 delta：DragGestureRecognizer 用 event.delta 累计
+        // 位移判 touchSlop（monodrag.dart _pendingDragOffset += event.delta），
+        // 合成 PointerMoveEvent 默认 delta=Offset.zero → 永远超不过 slop →
+        // drag 永不启动（实测 f_jlink 真机与 macOS example 上 swipe 均无法
+        // 滚动列表，而 tap 不依赖这两者所以有效）。delta 取相邻逻辑像素差。
+        final tsBase = DateTime.now().microsecondsSinceEpoch;
+        final downUs = '$tsBase';
         const ctx = 'package:flutter/src/widgets/binding.dart';
         String downReply;
         try {
           downReply = await rpc.evalStringOn(ctx,
               "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
               "try { GestureBinding.instance.handlePointerEvent("
-              "PointerDownEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}))); } catch (e) { "
+              "PointerDownEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}), timeStamp: Duration(microseconds: $downUs))); } catch (e) { "
               "GestureBinding.instance.handlePointerEvent("
               "PointerUpEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}))); "
               "return 'ERR:' + e.toString(); } return 'OK'; })()");
@@ -3758,20 +3766,27 @@ Future<(String, String)> _autoExecStep(
         if (downReply != 'OK') {
           return ('', 'swipe down 异常: ${downReply.startsWith('ERR:') ? downReply.substring(4) : downReply}');
         }
+        var pmx = x1;
+        var pmy = y1;
         for (var i = 1; i <= seg; i++) {
           final t = i / seg;
           final mx = x1 + (x2 - x1) * t;
           final my = y1 + (y2 - y1) * t;
+          final tsUs = tsBase + (ms * 1000 * t).round();
           await rpc.evalStringOn(ctx,
               "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
               "GestureBinding.instance.handlePointerEvent("
-              "PointerMoveEvent(pointer: $pid, position: Offset(${px(mx)}, ${px(my)}))); return 'OK'; })()");
+              "PointerMoveEvent(pointer: $pid, position: Offset(${px(mx)}, ${px(my)}), "
+              "delta: Offset(${px(mx)} - ${px(pmx)}, ${px(my)} - ${px(pmy)}), "
+              "timeStamp: Duration(microseconds: $tsUs))); return 'OK'; })()");
+          pmx = mx;
+          pmy = my;
           await Future.delayed(Duration(milliseconds: moveMs));
         }
         await rpc.evalStringOn(ctx,
             "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
             "GestureBinding.instance.handlePointerEvent("
-            "PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}))); return 'OK'; })()");
+            "PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}), timeStamp: Duration(microseconds: ${tsBase + ms * 1000}))); return 'OK'; })()");
         return ('swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})', '');
       case 'input':
         final text = (st['text'] ?? '').toString();
