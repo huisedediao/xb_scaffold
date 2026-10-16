@@ -2095,6 +2095,22 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         return;
       }
       unawaited(_aiLoop(uri, goal));
+      _aiGoalsAdd(goal);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/goals' && req.method == 'GET') {
+      req.response.headers.contentType = ContentType.json;
+      req.response
+          .write(jsonEncode(<String, Object?>{'ok': true, 'items': _aiGoalsLoad()}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/goals/clear' && req.method == 'POST') {
+      final f = File('$_home/.xb_ume_ide/ai_goals.json');
+      if (f.existsSync()) f.deleteSync();
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
@@ -4031,6 +4047,29 @@ Future<void> _autoRunSteps(String uri, String name, List steps,
 // ── P11 AI 驱动：自然语言目标 → 截图→AI→步骤→执行 循环 ─────────────────
 
 String get _aiConfigPath => '$_home/.xb_ume_ide/ai_config.json';
+
+/// AI 目标历史（下拉选择复用）：去重、最新在前、上限 20 条。
+List<String> _aiGoalsLoad() {
+  try {
+    final j = jsonDecode(File('$_home/.xb_ume_ide/ai_goals.json').readAsStringSync());
+    return j is List ? j.map((e) => e.toString()).toList() : <String>[];
+  } catch (_) {
+    return <String>[];
+  }
+}
+
+void _aiGoalsAdd(String goal) {
+  final g = goal.trim();
+  if (g.isEmpty) return;
+  final items = _aiGoalsLoad()..remove(g);
+  items.insert(0, g);
+  if (items.length > 20) items.removeRange(20, items.length);
+  try {
+    final f = File('$_home/.xb_ume_ide/ai_goals.json');
+    f.parent.createSync(recursive: true);
+    f.writeAsStringSync(jsonEncode(items));
+  } catch (_) {}
+}
 
 Map<String, String> _aiConfig() {
   try {
@@ -6276,6 +6315,7 @@ const String guiHtml = r'''
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--line);padding-top:8px">
       <b style="font-size:13px">AI 驱动</b>
       <input id="ai-goal" placeholder="描述要做什么，如：打开 XBDialogInputDemo 页面再返回首页" style="flex:1;min-width:240px">
+      <select id="ai-goal-hist" onchange="aiGoalPick()" style="max-width:160px"><option value="">历史▼</option></select>
       <button class="primary" onclick="aiStart()">▶ AI 执行</button>
       <button onclick="aiStop()">■ 停止</button>
       <button onclick="aiCfgShow()">AI 设置</button>
@@ -6337,7 +6377,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
-    else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
+    else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
     else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
@@ -6685,10 +6725,34 @@ function aiStart(){
     .then(function(r){ return r.json().then(function(j){ j._code = r.status; return j; }); })
     .then(function(j){
       if (!j.ok) { alert(j.error || '启动失败（' + j._code + '）'); return; }
+      aiGoalsLoad();
       if (aiTimer) clearInterval(aiTimer);
       aiTimer = setInterval(aiPoll, 800);
       aiPoll();
     });
+}
+function aiGoalsLoad(){
+  fetch('/api/ai/goals').then(function(r){ return r.json(); }).then(function(j){
+    var sel = document.getElementById('ai-goal-hist');
+    var html = '<option value="">历史▼</option>';
+    (j.items || []).forEach(function(g){
+      html += '<option value="' + esc(g) + '">' + esc(g.length > 40 ? g.substring(0, 40) + '…' : g) + '</option>';
+    });
+    html += '<option value="__clear__">✕ 清空历史</option>';
+    sel.innerHTML = html;
+  });
+}
+function aiGoalPick(){
+  var sel = document.getElementById('ai-goal-hist');
+  var v = sel.value;
+  sel.value = '';
+  if (!v) return;
+  if (v === '__clear__') {
+    if (!confirm('清空全部历史目标？')) return;
+    fetch('/api/ai/goals/clear', { method: 'POST' }).then(function(){ aiGoalsLoad(); });
+    return;
+  }
+  document.getElementById('ai-goal').value = v;
 }
 function aiStop(){ fetch('/api/ai/stop', { method: 'POST' }); }
 function aiPoll(){
