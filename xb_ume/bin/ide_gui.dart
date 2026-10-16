@@ -1980,8 +1980,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/auto/artifact') {
       final f = req.uri.queryParameters['f'] ?? '';
-      // 文件名防穿越：只允许 run-*-stepN.png
-      if (f.isEmpty || f.contains('/') || f.contains('\\') || !RegExp(r'^run-\d+-step\d+\.png$').hasMatch(f)) {
+      // 文件名防穿越：只允许 run-<ts>-stepN.png / ai-<ts>-rN.png / ai-<ts>-stepN.png
+      if (f.isEmpty ||
+          f.contains('/') ||
+          f.contains('\\') ||
+          !RegExp(r'^(?:run|ai)-\d+-(?:step\d+|r\d+)\.png$').hasMatch(f)) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -1995,6 +1998,135 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.headers.contentType = ContentType('image', 'png');
       req.response.headers.set('Cache-Control', 'no-store');
       await file.openRead().pipe(req.response);
+      return;
+    }
+    // ── P11 AI 驱动：自然语言目标 → 截图发给 AI → AI 返回步骤 → 执行循环 ──
+    if (path == '/api/ai/config') {
+      if (req.method == 'POST') {
+        try {
+          final body = await utf8.decoder.bind(req).join();
+          final j = jsonDecode(body) as Map<String, dynamic>;
+          final old = _aiConfig();
+          final key = (j['apiKey'] ?? '').toString().trim();
+          // apiKey 传空或仍是打码值（未修改）时保留原值
+          final newKey = (key.isEmpty || key == _aiMaskKey(old['apiKey'] ?? ''))
+              ? (old['apiKey'] ?? '')
+              : key;
+          final f = File(_aiConfigPath);
+          f.parent.createSync(recursive: true);
+          f.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(
+              <String, Object?>{
+                'baseUrl': (j['baseUrl'] ?? '').toString().trim(),
+                'apiKey': newKey,
+                'model': (j['model'] ?? '').toString().trim(),
+              }));
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+        } catch (e) {
+          req.response.headers.contentType = ContentType.json;
+          req.response
+              .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        }
+        await req.response.close();
+        return;
+      }
+      final c = _aiConfig();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': true,
+        'baseUrl': c['baseUrl'],
+        'model': c['model'],
+        'apiKey': _aiMaskKey(c['apiKey'] ?? ''),
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/run' && req.method == 'POST') {
+      if (_ai.running || _auto.running) {
+        req.response.statusCode = HttpStatus.conflict;
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': '已有任务在执行'}));
+        await req.response.close();
+        return;
+      }
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      final goal = (req.uri.queryParameters['goal'] ?? '').trim();
+      if (uri.isEmpty || goal.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final cfg = _aiConfig();
+      if ((cfg['baseUrl'] ?? '').isEmpty ||
+          (cfg['apiKey'] ?? '').isEmpty ||
+          (cfg['model'] ?? '').isEmpty) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '请先在「AI 设置」中配置接口地址、密钥与模型',
+        }));
+        await req.response.close();
+        return;
+      }
+      unawaited(_aiLoop(uri, goal));
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/status') {
+      req.response.headers.contentType = ContentType.json;
+      req.response
+          .write(jsonEncode(<String, Object?>{'ok': true}..addAll(_ai.statusJson())));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/stop' && req.method == 'POST') {
+      _ai.stopReq = true;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/save' && req.method == 'POST') {
+      try {
+        final body = await utf8.decoder.bind(req).join();
+        final j = jsonDecode(body) as Map<String, dynamic>;
+        final file = _autoScenarioFile((j['name'] ?? '').toString());
+        if (file == null) {
+          req.response.statusCode = HttpStatus.badRequest;
+          await req.response.close();
+          return;
+        }
+        // 拍平各轮 AI 步骤（过滤掉本轮未执行完的尾部 skip 结果对应的步骤）
+        final steps = <Object?>[];
+        for (final r in _ai.rounds) {
+          for (var i = 0; i < r.results.length && i < r.steps.length; i++) {
+            if (r.results[i].status == 'pass' || r.results[i].status == 'fail') {
+              steps.add(r.steps[i]);
+            }
+          }
+        }
+        if (steps.isEmpty) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': '本次 AI 执行没有可保存的步骤'}));
+          await req.response.close();
+          return;
+        }
+        file.parent.createSync(recursive: true);
+        file.writeAsStringSync(
+            const JsonEncoder.withIndent('  ').convert(steps));
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': true, 'steps': steps.length}));
+      } catch (e) {
+        req.response.headers.contentType = ContentType.json;
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      }
+      await req.response.close();
       return;
     }
     // ── 异常列表：Extension 流 Flutter.Error 结构化事件 + 输出流未捕获异 常块 ──
@@ -3743,6 +3875,325 @@ Future<void> _autoRunSteps(String uri, String name, List steps,
   _auto.running = false;
 }
 
+// ── P11 AI 驱动：自然语言目标 → 截图→AI→步骤→执行 循环 ─────────────────
+
+String get _aiConfigPath => '$_home/.xb_ume_ide/ai_config.json';
+
+Map<String, String> _aiConfig() {
+  try {
+    final j = jsonDecode(File(_aiConfigPath).readAsStringSync());
+    if (j is Map) {
+      return <String, String>{
+        'baseUrl': (j['baseUrl'] ?? '').toString(),
+        'apiKey': (j['apiKey'] ?? '').toString(),
+        'model': (j['model'] ?? '').toString(),
+      };
+    }
+  } catch (_) {}
+  return <String, String>{'baseUrl': '', 'apiKey': '', 'model': ''};
+}
+
+/// apiKey 打码展示（保留末 4 位）；同值回传视为未修改。
+String _aiMaskKey(String k) =>
+    k.isEmpty ? '' : '****${k.length > 4 ? k.substring(k.length - 4) : ''}';
+
+/// AI 一轮的完整记录（决策 + 执行结果）。
+class _AiRound {
+  _AiRound(this.round);
+  final int round;
+  String think = '';
+  String raw = ''; // AI 原始回复（截断留档，排障用）
+  List<Map<String, dynamic>> steps = [];
+  List<_AutoStepResult> results = [];
+  String? shot; // 轮前截图文件名
+  String error = ''; // 非空 = 本轮异常（截图/AI 调用/解析失败），循环终止
+  Map<String, Object?> toJson() => <String, Object?>{
+        'round': round,
+        'think': think,
+        'error': error,
+        'shot': shot,
+        'steps': steps.length,
+        'results': results.map((e) => e.toJson()).toList(),
+      };
+}
+
+/// 一次 AI 驱动运行的状态（GUI 同一时间只跑一个）。
+class _AiRunState {
+  bool running = false;
+  bool stopReq = false;
+  bool done = false; // AI 判定目标完成
+  String uri = '';
+  String goal = '';
+  String runId = '';
+  var cur = 0;
+  List<_AiRound> rounds = [];
+  DateTime startedAt = DateTime.now();
+  Map<String, Object?> statusJson() => <String, Object?>{
+        'running': running,
+        'done': done,
+        'goal': goal,
+        'cur': cur,
+        'rounds': rounds.map((r) => r.toJson()).toList(),
+        'startedAt': startedAt.toIso8601String(),
+      };
+}
+
+final _ai = _AiRunState();
+
+const int _aiMaxRounds = 20;
+const int _aiMaxStepsPerRound = 5;
+const Set<String> _aiAllowedStepTypes = {
+  'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance', 'eval'
+};
+
+const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员。你会看到 app 当前截图和操作目标，
+需要返回 JSON 指令驱动 UI 完成目标。
+可用步骤类型（坐标均为截图的物理像素，与截图分辨率一致）：
+- {"type":"tap","x":整数,"y":整数} 点击
+- {"type":"swipe","x1":..,"y1":..,"x2":..,"y2":..,"ms":400} 滑动
+- {"type":"input","text":"内容"} 向当前焦点输入框输入文本（须先 tap 输入框获得焦点）
+- {"type":"back"} 返回上一页
+- {"type":"wait","ms":800} 等待
+- {"type":"assertVisible","widget":"Widget类名"} 断言某 Widget 类当前可见
+- {"type":"assertInstance","class":"类名"} 断言某类实例存在
+- {"type":"eval","expr":"Dart表达式","expect":"期望子串"} 执行任意 Dart 表达式（慎用，仅必要时）
+规则：
+1. 只输出一个 JSON 对象：{"done":false,"think":"简短分析","steps":[...]}，不要输出任何其他文本。
+2. 每次最多 5 步，做一小批就等结果；点击若引起页面跳转，后续加 {"type":"wait","ms":900}。
+3. 从截图中识别按钮/输入框/列表位置，坐标对准元素中心。
+4. 连续两轮界面无变化时必须换策略（换坐标/滑动/返回）。
+5. 目标已达成时返回 {"done":true,"think":"...","steps":[]}。
+6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。''';
+
+/// 从 AI 回复提取首个平衡的 JSON 对象（容忍 ``` 围栏与前后杂文本）。
+Map<String, dynamic>? _aiParseReply(String s) {
+  final start = s.indexOf('{');
+  if (start < 0) return null;
+  var depth = 0;
+  var inStr = false;
+  var esc = false;
+  for (var i = start; i < s.length; i++) {
+    final ch = s[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+      } else if (ch == r'\') {
+        esc = true;
+      } else if (ch == '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      inStr = true;
+    } else if (ch == '{') {
+      depth++;
+    } else if (ch == '}') {
+      depth--;
+      if (depth == 0) {
+        try {
+          final v = jsonDecode(s.substring(start, i + 1));
+          return v is Map<String, dynamic> ? v : null;
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/// 调 OpenAI 兼容 chat/completions（baseUrl 填到 /v1 或完整端点均可），
+/// 返回首条回复文本。支持 image_url 消息（vision）。
+Future<String> _aiCall(List<Map<String, Object?>> messages) async {
+  final cfg = _aiConfig();
+  if (cfg['baseUrl']!.isEmpty || cfg['apiKey']!.isEmpty) {
+    throw 'AI 未配置：请先设置接口地址与密钥';
+  }
+  var base = cfg['baseUrl']!.trim().replaceAll(RegExp(r'/+\$'), '');
+  if (base.endsWith('/chat/completions')) {
+    // 已是完整端点
+  } else if (base.endsWith('/v1')) {
+    base = '$base/chat/completions';
+  } else {
+    base = '$base/v1/chat/completions';
+  }
+  final hc = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+  try {
+    final rq = await hc.openUrl('POST', Uri.parse(base));
+    rq.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${cfg['apiKey']}');
+    rq.headers.contentType = ContentType.json;
+    // 显式 Content-Length（部分本地服务不支持 chunked）
+    final payload = utf8.encode(jsonEncode(<String, Object?>{
+      'model': cfg['model'] ?? '',
+      'temperature': 0.2,
+      'messages': messages,
+    }));
+    rq.headers.contentLength = payload.length;
+    rq.add(payload);
+    final rs = await rq.close().timeout(const Duration(seconds: 120));
+    final body = await utf8.decoder.bind(rs).join();
+    if (rs.statusCode != 200) {
+      throw 'HTTP ${rs.statusCode}: ${body.length > 300 ? body.substring(0, 300) : body}';
+    }
+    final j = jsonDecode(body);
+    final choices = (j as Map)['choices'] as List?;
+    if (choices == null || choices.isEmpty) throw 'AI 回复缺少 choices';
+    final msg = (choices.first as Map?)?['message'];
+    final s = (msg is Map ? msg['content'] : null)?.toString() ?? '';
+    if (s.isEmpty) throw 'AI 回复为空';
+    return s;
+  } finally {
+    hc.close(force: true);
+  }
+}
+
+/// AI 驱动主循环：截图 → AI 决策 → 执行 → 反馈，直至 done/轮数上限/停止。
+Future<void> _aiLoop(String uri, String goal) async {
+  _ai
+    ..running = true
+    ..stopReq = false
+    ..done = false
+    ..uri = uri
+    ..goal = goal
+    ..runId = 'ai-${DateTime.now().millisecondsSinceEpoch}'
+    ..cur = 0
+    ..startedAt = DateTime.now()
+    ..rounds = <_AiRound>[];
+  String? failB64; // 上一轮失败步骤截图（反馈给 AI 自适应，用后清空）
+  try {
+    while (!_ai.stopReq) {
+      if (_ai.rounds.length >= _aiMaxRounds) {
+        final r = _AiRound(_ai.rounds.length)
+          ..error = '达到轮数上限（$_aiMaxRounds），已停止';
+        _ai.rounds.add(r);
+        break;
+      }
+      final r = _AiRound(_ai.rounds.length);
+      _ai.rounds.add(r);
+      _ai.cur = r.round;
+      // 1) 截图：直接作为 AI 输入 + 落盘留档
+      String b64;
+      final rpc = _SandboxRpc(uri);
+      try {
+        final resp = await rpc.rawRpc('_flutter.screenshot');
+        b64 = (resp['data'] ?? resp['screenshot'])?.toString() ?? '';
+      } catch (e) {
+        r.error = '截图失败（app 已断开？）: $e';
+        break;
+      } finally {
+        await rpc.close();
+      }
+      if (b64.isEmpty) {
+        r.error = '截图为空';
+        break;
+      }
+      Directory(_autoArtifactsDir).createSync(recursive: true);
+      r.shot = '${_ai.runId}-r${r.round}.png';
+      File('$_autoArtifactsDir/${r.shot}').writeAsBytesSync(base64Decode(b64));
+      // 2) 组消息：system + 目标 + 历史摘要 + 截图
+      final hist = StringBuffer();
+      for (final p in _ai.rounds) {
+        if (p.round == r.round) continue;
+        hist.write('轮${p.round}: ${p.error.isNotEmpty ? '异常=${p.error}' : 'think=${p.think}'}; ');
+        for (final sr in p.results) {
+          hist.write('${sr.type}=${sr.status == 'pass' ? 'OK' : '失败:${sr.error.isEmpty ? sr.actual : sr.error}'}; ');
+        }
+      }
+      final userText = StringBuffer()
+        ..write('目标：$goal\n执行历史：')
+        ..write(hist.isEmpty ? '无（这是第一步）' : hist.toString());
+      if (failB64 != null) {
+        userText.write('\n注意：第二张截图是上一轮失败时的画面，请分析失败原因并修正。');
+      }
+      final content = <Object?>[
+        <String, Object?>{'type': 'text', 'text': userText.toString()},
+        <String, Object?>{
+          'type': 'image_url',
+          'image_url': <String, Object?>{'url': 'data:image/png;base64,$b64'},
+        },
+      ];
+      if (failB64 != null) {
+        content.add(<String, Object?>{
+          'type': 'image_url',
+          'image_url': <String, Object?>{'url': 'data:image/png;base64,$failB64'},
+        });
+      }
+      failB64 = null;
+      final messages = <Map<String, Object?>>[
+        <String, Object?>{'role': 'system', 'content': _aiSystemPrompt},
+        <String, Object?>{'role': 'user', 'content': content},
+      ];
+      // 3) 调 AI + 解析
+      String reply;
+      try {
+        reply = await _aiCall(messages);
+      } catch (e) {
+        r.error = 'AI 调用失败: $e';
+        break;
+      }
+      r.raw = reply.length > 2000 ? reply.substring(0, 2000) : reply;
+      final obj = _aiParseReply(reply);
+      if (obj == null) {
+        r.error = 'AI 回复无法解析为 JSON';
+        break;
+      }
+      r.think = (obj['think'] ?? '').toString();
+      if (obj['done'] == true) {
+        _ai.done = true;
+        break;
+      }
+      // 4) 过滤步骤（白名单 + 每轮上限），AI 坐标即截图像素 → phys:true
+      final rawSteps = obj['steps'] is List ? obj['steps'] as List : <Object?>[];
+      final steps = <Map<String, dynamic>>[];
+      for (final s in rawSteps) {
+        if (steps.length >= _aiMaxStepsPerRound) break;
+        if (s is Map) {
+          final m = s.map((k, v) => MapEntry(k.toString(), v));
+          final t = (m['type'] ?? '').toString();
+          if (!_aiAllowedStepTypes.contains(t)) continue;
+          if (t == 'tap' || t == 'swipe') m['phys'] = true;
+          steps.add(m);
+        }
+      }
+      r.steps = steps;
+      if (steps.isEmpty) {
+        r.error = 'AI 未给出有效步骤（raw: ${r.raw.length > 200 ? r.raw.substring(0, 200) : r.raw}）';
+        break;
+      }
+      // 5) 执行：失败即停本轮，失败截图反馈给 AI 重新决策
+      for (final st in steps) {
+        if (_ai.stopReq) break;
+        final res = _AutoStepResult(
+            r.results.length, (st['type'] ?? '?').toString(),
+            (st['expect'] ?? '').toString());
+        r.results.add(res);
+        final sw = Stopwatch()..start();
+        final (actual, err) = await _autoExecStep(uri, st);
+        res.ms = sw.elapsedMilliseconds;
+        res.actual = actual;
+        if (err.isNotEmpty) {
+          res
+            ..status = 'fail'
+            ..error = err;
+          res.shot = await _autoShot(uri, _ai.runId, res.index);
+          if (res.shot != null) {
+            failB64 =
+                base64Encode(File('$_autoArtifactsDir/${res.shot}').readAsBytesSync());
+          }
+          break;
+        }
+        res.status = 'pass';
+        final waitAfter = (st['waitAfter'] as num?)?.toInt() ?? 700;
+        if (waitAfter > 0) await Future.delayed(Duration(milliseconds: waitAfter));
+      }
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+  } finally {
+    _ai.running = false;
+  }
+}
+
 /// 取路径最后一段（os 为 app 端 Platform.operatingSystem）。
 String _baseName(String p, String os) {
   final sep = os == 'windows' ? r'\' : '/';
@@ -5454,6 +5905,25 @@ const String guiHtml = r'''
     <textarea id="au-steps" style="width:100%;height:180px;margin-top:6px;font-family:monospace;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg)" placeholder='[{"type":"tap","x":400,"y":280,"phys":true}]'></textarea>
     <div style="margin-top:6px"><span id="au-prog" class="muted"></span></div>
     <div id="au-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--line);padding-top:8px">
+      <b style="font-size:13px">AI 驱动</b>
+      <input id="ai-goal" placeholder="描述要做什么，如：打开 XBDialogInputDemo 页面再返回首页" style="flex:1;min-width:240px">
+      <button class="primary" onclick="aiStart()">▶ AI 执行</button>
+      <button onclick="aiStop()">■ 停止</button>
+      <button onclick="aiCfgShow()">AI 设置</button>
+      <button id="ai-save-btn" style="display:none" onclick="aiSaveScenario()">存为场景</button>
+    </div>
+    <div id="ai-cfg" style="display:none;margin-top:6px;padding:8px;border:1px solid var(--line);font-size:12px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span>接口地址</span><input id="ai-base" style="width:280px" placeholder="https://api.openai.com/v1">
+        <span>密钥</span><input id="ai-key" type="password" style="width:180px">
+        <span>模型</span><input id="ai-model" style="width:170px" placeholder="gpt-4o / qwen-vl-max …">
+        <button onclick="aiCfgSave()">保存配置</button>
+        <span class="muted">OpenAI 兼容 /chat/completions，需支持图片输入</span>
+      </div>
+    </div>
+    <div style="margin-top:6px"><span id="ai-prog" class="muted"></span></div>
+    <div id="ai-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
   </section>
 </main>
 <script>
@@ -5491,7 +5961,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') shRefresh();
-    else if (t.dataset.tab === 'auto') auLoad();
+    else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
     else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
@@ -5791,6 +6261,101 @@ function auRenderReport(results){
       + '</td></tr>';
   });
   el.innerHTML = html + '</table>';
+}
+// -- P11 AI 驱动：自然语言目标 → 截图→AI→步骤→执行 循环 --------------------
+var aiTimer = null;
+function aiCfgShow(){
+  var el = document.getElementById('ai-cfg');
+  var show = el.style.display === 'none';
+  el.style.display = show ? '' : 'none';
+  if (!show) return;
+  fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(j){
+    document.getElementById('ai-base').value = j.baseUrl || '';
+    document.getElementById('ai-model').value = j.model || '';
+    var k = document.getElementById('ai-key');
+    k.value = j.apiKey || '';
+    k.dataset.masked = j.apiKey || '';
+  });
+}
+function aiCfgSave(){
+  var k = document.getElementById('ai-key');
+  var key = k.value.trim();
+  if (key === (k.dataset.masked || '')) key = ''; // 未修改 → 不覆盖旧密钥
+  fetch('/api/ai/config', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ baseUrl: document.getElementById('ai-base').value.trim(),
+      apiKey: key, model: document.getElementById('ai-model').value.trim() }) })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ alert(j.ok ? 'AI 配置已保存' : (j.error || '保存失败')); });
+}
+function aiStart(){
+  var uri = shUri(); if (!uri) { alert('请先在页头选择 VM 会话'); return; }
+  var goal = document.getElementById('ai-goal').value.trim();
+  if (!goal) { alert('请先描述目标'); return; }
+  document.getElementById('ai-report').innerHTML = '';
+  document.getElementById('ai-save-btn').style.display = 'none';
+  fetch('/api/ai/run?uri=' + encodeURIComponent(uri) + '&goal=' + encodeURIComponent(goal), { method: 'POST' })
+    .then(function(r){ return r.json().then(function(j){ j._code = r.status; return j; }); })
+    .then(function(j){
+      if (!j.ok) { alert(j.error || '启动失败（' + j._code + '）'); return; }
+      if (aiTimer) clearInterval(aiTimer);
+      aiTimer = setInterval(aiPoll, 800);
+      aiPoll();
+    });
+}
+function aiStop(){ fetch('/api/ai/stop', { method: 'POST' }); }
+function aiPoll(){
+  fetch('/api/ai/status').then(function(r){ return r.json(); }).then(function(j){
+    var rounds = j.rounds || [];
+    var prog = document.getElementById('ai-prog');
+    var lastErr = '';
+    for (var i = rounds.length - 1; i >= 0; i--) { if (rounds[i].error) { lastErr = rounds[i].error; break; } }
+    prog.textContent = j.running
+      ? ('AI 执行中：第 ' + (j.cur + 1) + ' 轮 · ' + (rounds[j.cur] && rounds[j.cur].think ? String(rounds[j.cur].think).substring(0, 60) : '思考中…'))
+      : (rounds.length ? ('结束：' + rounds.length + ' 轮' + (j.done ? ' · AI 判定目标完成' : (lastErr ? ' · ' + lastErr : ''))) : '');
+    if (!j.running && aiTimer) {
+      clearInterval(aiTimer); aiTimer = null;
+      if (rounds.length) document.getElementById('ai-save-btn').style.display = '';
+    }
+    aiRenderReport(rounds);
+  });
+}
+function aiRenderReport(rounds){
+  var el = document.getElementById('ai-report');
+  var bd = 'padding:3px 6px;border-bottom:1px solid var(--line)';
+  var html = '';
+  (rounds || []).forEach(function(r){
+    html += '<div style="border:1px solid var(--line);margin-bottom:6px;padding:6px">'
+      + '<div style="display:flex;gap:8px;align-items:flex-start">'
+      + '<b style="font-size:12px">轮 ' + (r.round + 1) + '</b>'
+      + (r.shot ? '<a href="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" target="_blank">'
+        + '<img src="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" style="height:64px;border:1px solid #444"></a>' : '')
+      + '<div style="flex:1;font-size:12px">'
+      + (r.error ? '<span style="color:#ef5350">' + esc(r.error) + '</span><br>' : '')
+      + (r.think ? 'AI：' + esc(r.think) : '')
+      + '</div></div>';
+    if ((r.results || []).length) {
+      html += '<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:4px">'
+        + '<tr style="text-align:left"><th style="' + bd + '">#</th><th style="' + bd + '">类型</th><th style="' + bd + '">状态</th><th style="' + bd + '">耗时</th><th style="' + bd + '">实际</th></tr>';
+      r.results.forEach(function(s){
+        var c = s.status === 'pass' ? '#4caf50' : (s.status === 'fail' ? '#ef5350' : '#8aa0b4');
+        html += '<tr><td style="' + bd + '">' + (s.index + 1) + '</td>'
+          + '<td style="' + bd + '">' + esc(s.type) + '</td>'
+          + '<td style="' + bd + ';color:' + c + '">' + esc(s.status) + '</td>'
+          + '<td style="' + bd + '">' + s.ms + 'ms</td>'
+          + '<td style="' + bd + '">' + esc(s.actual + (s.error ? ' | ' + s.error : '')) + '</td></tr>';
+      });
+      html += '</table>';
+    }
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+function aiSaveScenario(){
+  var name = prompt('场景名（保存后可在上方场景回放）');
+  if (!name) return;
+  fetch('/api/ai/save', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name }) })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if (j.ok) { alert('已保存 ' + j.steps + ' 步，可回放'); auLoad(); } else alert(j.error || '保存失败'); });
 }
 function renderHdrDev() {
   var html = '<option value="">未选择设备</option>';

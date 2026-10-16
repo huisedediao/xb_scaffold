@@ -57,6 +57,13 @@
 - 报告：逐步 status/耗时/期望 vs 实际/每步截图；失败详细报告；导出 JSON/HTML
 - UI：新「自动化」Tab（场景列表/步骤编辑/执行停止/进度/报告）
 
+## P11 AI 驱动自动化 `[x]`
+- 自然语言目标 → 循环「截图→AI 决策→执行→反馈」；AI 返回 `{done, think, steps}`，steps 限白名单类型复用 P10 `_autoExecStep`
+- OpenAI 兼容 `/chat/completions`（vision）；配置 `~/.xb_ume_ide/ai_config.json`（baseUrl/apiKey/model，密钥打码）
+- 防失控：最多 20 轮、每轮 ≤5 步；失败截图反馈 AI 自适应；请求/解析失败即停
+- 结束后「存为场景」拍平各轮已执行步骤 → P10 场景回放（无 AI 依赖）
+- UI：自动化 Tab 底部「AI 驱动」区块（目标输入/执行/停止/设置/轮卡片报告）
+
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）
 - 2026-10-14 P2 完成（reassemble/_collectAllGarbage 探针定论 → /api/runtime/op + 守护 Tab 按钮，真机双 op 通过；热重启不可行已文档说明）
@@ -72,3 +79,4 @@
 - 2026-10-15 P9 增强（点截图选业务组件 + 宽高/间距标注：用户反馈点截图选中的是最内层 SDK 节点（弹框文字选到 Image），要 locator 式只选非 SDK 组件并显示宽高与周围组件距离。新增 /api/wtree/pick：一次 eval（库上下文=xb_ume_widget_spacing_calculator.dart，直接复用 app 内已编译的 XBUmeWidgetSpacingCalculator，零复刻）——命中点收集→面积升序→逐 hit 向上（visitAncestorElements，该 Flutter 版本 Element 无 public parent getter）找 creationLocation 非 Flutter SDK 的最近组件（locator 同款判定 dart:/package:flutter//packages/flutter/，优先非 pub-cache）→调计算器得四向间距（searchRoot=xb_ume_app_root key 排除 ume 覆盖层）；信息条显类型/宽高/源文件:行:列/↑↓←→距离，截图叠加黄色参照框+距离标注；树中 SDK/系统包装类淡化（启发式名单，仅视觉）。GUI 页面响应加 Cache-Control: no-store 治浏览器旧缓存。example 验证：pick 命中 xb_button.dart:121 业务组件+间距正确、边界（MISS/400/会话断开）全过、浏览器 UI 全过（1169 行中 1004 淡化、参照框/标注/点树清参照正常））
 - 2026-10-15 P9 收尾（用户反馈 bug 后续再调 → Widget树 Tab display:none 隐藏，代码保留；提交 0c2b7c7/b90cdd5）
 - 2026-10-15 P10 完成（自动化路径：执行引擎 _autoExecStep 十类步骤全 eval 零侵入——tap=GestureBinding.handlePointerEvent down/up（phys 坐标除 dpr）、input=TextInput._instance._currentConnection._client.updateEditingValue（库上下文必须 services/text_input.dart，_instance 是库内私有；widgets/text_input.dart 路径不存在）、swipe=down+8 段 move+up、back=路由快照+popUntil 语义、navigate=_routeNamed、assertVisible=全树 BFS 类型匹配+RenderBox 有尺寸、assertRoute=栈顶名、assertInstance=GC 后 getClassList+getInstances 计数、eval=任意表达式 expect contains；/api/auto list/get/delete/save/run(409 冲突保护+inline steps)/status/stop/artifact（文件名正则防穿越）8 个端点；失败步截图落盘 ~/.xb_ume_ide/scenarios/artifacts/，默认失败即停、continue=1 跑全量、stop 请求当前步结束后 skip 余下；前端自动化 Tab（场景下拉/保存/删除/格式化/运行/停止/失败继续/报告表 pass 绿 fail 红 skip 灰+截图链接）+ 截图 Tab「录制点击」checkbox（点截图按显示比例换算物理像素追加 tap，导入录制生成步骤 JSON）。验证：example 场景全生命周期（save→list→get→run→status→报告→artifact→stop→delete）+ 冒烟 7 步全 pass（tap 驱动真实导航进 XBDialogInputDemo+back+assertInstance）+ input 端到端（tap 输入框→input 注入→eval 读 EditableTextState controller.text="hello p10"）+ assertRoute/swipe + 409/防穿越/浏览器 UI 全过；踩坑记录：场景 JSON 禁重复键（assertVisible 曾写 type 导致键覆盖变未知步骤）、save 落盘纯数组 list 计数需兼容、VM eval valueAsString 会静默截断长串、macOS app 后台帧冻结会致 push 动画中断+新页面元素不上树+absorbPointer 残留吞后续 tap（跑场景前把 app 置前台，真机不受影响））
+- 2026-10-16 P11 完成（AI 驱动：_aiLoop 截图→AI→执行→反馈循环，_aiCall 显式 Content-Length（dart HttpClient 默认 chunked，python http.server 等本地服务读不到 body）；_aiParseReply 平衡大括号容错解析；AI 坐标自动 phys:true；失败步骤截图转 b64 附下一轮消息自适应；artifact 正则扩展 ai-<ts>-rN/stepN；/api/ai config/run/status/stop/save 5 端点 + 409/未配置/防穿越；前端 AI 区块（目标输入/执行/停止/设置/存为场景）+ 轮卡片报告（截图缩略图/AI 思考/步骤表）+ 切 Tab 自动恢复报告。验证：本地 mock OpenAI 服务端到端（轮0 tap+wait+assertVisible 全 pass 真实导航、轮1 done）、存为场景 3 步拍平落盘 + 普通回放全 pass 等价、错误路径（未配置/空步骤/防穿越）、浏览器 UI 全过 console 0 错误）

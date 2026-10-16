@@ -51,7 +51,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
-| Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图 + 截图录制点击，详见下文「自动化路径」 |
+| Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图 + 截图录制点击；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
 
 ## 三、功能详细使用说明
 
@@ -316,6 +316,16 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 4. 录制：到「截图」Tab 勾选「录制点击」，点截图任意位置即追加 `{type:tap, x, y, phys:true}` 到录制缓冲（计数显示在「导入录制(N)」按钮上），回「自动化」Tab 点「导入录制」生成步骤 JSON。
 
 **说明**：所有注入都走 `GestureBinding.handlePointerEvent` / `TextInput._instance` eval（零 app 侵入）；macOS 桌面 app 长时间后台后帧调度会冻结（push 动画不完成、新页面元素不上树），跑场景前把 app 置前台；步间默认等 700ms（步骤可加 `waitAfter` 覆盖）让 UI 渲染稳定。
+
+### AI 驱动（自动化页底部区块）
+
+**用途**：不想手写 JSON 时，直接用一句自然语言描述目标（如「打开 XBDialogInputDemo 页面再返回首页」），GUI 自动循环：截图 → 把截图 + 目标 + 历史发给 AI → AI 返回操作指令 → 执行 → 再截图看结果 → 直到 AI 判定完成。适合让 AI 探路；跑通后可一键存为场景 JSON，之后不依赖 AI 直接回放。
+
+**配置（「AI 设置」）**：任意 OpenAI 兼容接口（`/chat/completions`，需支持图片输入）——接口地址（填到 `/v1`，如 `https://api.openai.com/v1`）、密钥、支持视觉的模型名（如 `gpt-4o`、`qwen-vl-max`）。配置存 `~/.xb_ume_ide/ai_config.json`，密钥界面打码显示、保存时不覆盖未修改的打码值。
+
+**使用**：页头选中会话 → 输入目标 →「▶ AI 执行」。每轮显示卡片：轮前截图缩略图（点击看大图）/ AI 分析文本 / 步骤执行表（同场景回放样式）。AI 坐标按截图像素自动换算；某步失败时失败截图会反馈给 AI 下一轮修正；执行中「■ 停止」在当前步骤结束后生效；最多 20 轮、每轮最多 5 步，防失控。结束后「存为场景」把本次实际执行的步骤拍平保存，可回上方场景回放。
+
+**说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/eval，eval 提示慎用）；请求失败/超时/回复无法解析时立即停止并显示原因；AI 接口的可达性取决于你本机网络（内网网关或公网 API 均可）。
 
 ## 十二、异常（Tab「异常」）
 
