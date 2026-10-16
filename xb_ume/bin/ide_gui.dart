@@ -47,6 +47,10 @@ const Utf8Codec _lenientUtf8 = Utf8Codec(allowMalformed: true);
 /// 日志环形缓冲上限（内存保护）。
 const int kMaxBufferLines = 5000;
 
+/// GUI 日志缓冲的存活引用（main 启动时注入）。GuiState 实例是 main 内局部
+/// 变量，而自动化断言（assertLog）与 AI 上下文收集是顶层函数，够不到它。
+List<Map<String, Object?>> _guiLogBuffer = const [];
+
 final String _home =
     Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
 
@@ -82,6 +86,8 @@ Future<void> _mainImpl(List<String> args) async {
   await openBrowser(port);
   final state = GuiState();
   state.start();
+  // 顶层自动化函数（assertLog / AI 增量日志上下文）共享同一份日志缓冲
+  _guiLogBuffer = state.buffer;
   // 优雅退出：kill（SIGTERM）/Ctrl-C（SIGINT）时先关闭全部 VM 会话连接
   // 再退出。实测：持有流订阅（Stdout/Extension）的连接被硬切断后，
   // DDS 会永久死锁（该会话此后对所有客户端无响应），必须主动 close
@@ -2014,11 +2020,25 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               : key;
           final f = File(_aiConfigPath);
           f.parent.createSync(recursive: true);
+          // ctx 上下文开关：请求未携带时保留旧值
+          final cIn = j['ctx'];
+          final oldCtx = _aiCtx();
+          bool cv(Object? v, bool old) => v is bool ? v : old;
           f.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(
               <String, Object?>{
                 'baseUrl': (j['baseUrl'] ?? '').toString().trim(),
                 'apiKey': newKey,
                 'model': (j['model'] ?? '').toString().trim(),
+                'ctx': <String, Object?>{
+                  'routes': cv(
+                      cIn is Map ? cIn['routes'] : null, oldCtx['routes'] ?? true),
+                  'text': cv(
+                      cIn is Map ? cIn['text'] : null, oldCtx['text'] ?? true),
+                  'net': cv(
+                      cIn is Map ? cIn['net'] : null, oldCtx['net'] ?? true),
+                  'log': cv(
+                      cIn is Map ? cIn['log'] : null, oldCtx['log'] ?? true),
+                },
               }));
           req.response.headers.contentType = ContentType.json;
           req.response.write(jsonEncode(<String, Object?>{'ok': true}));
@@ -2037,6 +2057,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'baseUrl': c['baseUrl'],
         'model': c['model'],
         'apiKey': _aiMaskKey(c['apiKey'] ?? ''),
+        'ctx': _aiCtx(),
       }));
       await req.response.close();
       return;
@@ -2945,6 +2966,8 @@ class GuiState {
 
   void addEntry(Map<String, Object?> entry) {
     entry['rcv'] = _clock();
+    // 毫秒时间戳：日志增量过滤/assertLog 时间窗需要可比较的数值时刻
+    entry['rcvMs'] = DateTime.now().millisecondsSinceEpoch;
     _buffer.add(entry);
     if (_buffer.length > kMaxBufferLines) {
       _buffer.removeRange(0, _buffer.length - kMaxBufferLines);
@@ -3777,8 +3800,105 @@ Future<(String, String)> _autoExecStep(
         final expect = (st['expect'] ?? '').toString();
         return (s,
             expect.isEmpty || s.contains(expect) ? '' : '期望包含「$expect」实际「$s」');
+      case 'assertText':
+        final contains = (st['contains'] ?? '').toString();
+        final notContains = (st['notContains'] ?? '').toString();
+        if (contains.isEmpty && notContains.isEmpty) {
+          return ('', 'assertText 需要 contains 或 notContains');
+        }
+        if (_aiCtx()['text'] != true) {
+          return ('', 'SKIPPED: 页面文本上下文开关已关闭（AI 设置）');
+        }
+        final s = await rpc.evalStringOn(
+            'package:flutter/src/widgets/binding.dart',
+            _aiPageTextExpr(limit: 200));
+        final texts = s.split('\u0002').where((e) => e.isNotEmpty).toList();
+        if (contains.isNotEmpty) {
+          final hit = texts.where((e) => e.contains(contains)).toList();
+          return (hit.isEmpty ? '未命中' : '命中: ${hit.take(3).join(' / ')}',
+              hit.isEmpty ? '页面文本中未找到「$contains」' : '');
+        }
+        final bad = texts.where((e) => e.contains(notContains)).toList();
+        return (bad.isEmpty ? '未出现「$notContains」' : '仍存在: ${bad.take(3).join(' / ')}',
+            bad.isEmpty ? '' : '页面文本中不应出现「$notContains」');
+      case 'assertRequest':
+        final url = (st['urlContains'] ?? '').toString().trim();
+        if (url.isEmpty) return ('', 'assertRequest 需要 urlContains');
+        if (_aiCtx()['net'] != true) {
+          return ('', 'SKIPPED: 网络上下文开关已关闭（AI 设置）');
+        }
+        final method = (st['method'] ?? '').toString().trim().toUpperCase();
+        final neg = (st['not'] ?? false) == true;
+        final within = (st['withinLastMs'] as num?)?.toInt();
+        // 时间窗：显式 withinLastMs > AI 运行起点（回放场景兑底近 5 分钟）
+        final since = within != null
+            ? DateTime.now().subtract(Duration(milliseconds: within))
+            : (_ai.running
+                ? _ai.startedAt
+                : DateTime.now().subtract(const Duration(minutes: 5)));
+        final recs = await _aiNetRecords(uri, since: since, limit: 100);
+        final matched = recs.where((e) =>
+            e['url'].toString().contains(url) &&
+            (method.isEmpty ||
+                e['method'].toString().toUpperCase() == method)).toList();
+        final desc = matched
+            .map((e) => '${e['method']} ${e['url']} ${e['statusCode']}')
+            .join(' · ');
+        if (neg) {
+          return (matched.isEmpty ? '无匹配（符合预期）' : desc,
+              matched.isEmpty ? '' : '不应出现的请求出现了：$desc');
+        }
+        return (matched.isEmpty
+                ? '窗口内 ${recs.length} 条请求，无匹配'
+                : desc,
+            matched.isEmpty
+                ? '窗口内无匹配请求（urlContains=$url${method.isEmpty ? '' : ' method=$method'}）'
+                : '');
+      case 'assertLog':
+        final contains = (st['contains'] ?? '').toString();
+        final notContains = (st['notContains'] ?? '').toString();
+        if (contains.isEmpty && notContains.isEmpty) {
+          return ('', 'assertLog 需要 contains 或 notContains');
+        }
+        if (_aiCtx()['log'] != true) {
+          return ('', 'SKIPPED: 日志上下文开关已关闭（AI 设置）');
+        }
+        final lv = (st['level'] ?? '').toString().trim().toUpperCase();
+        final src = (st['source'] ?? '').toString().trim().toLowerCase();
+        final within = (st['withinLastMs'] as num?)?.toInt() ??
+            (_ai.running
+                ? DateTime.now().difference(_ai.startedAt).inMilliseconds
+                : 300000);
+        final cutoffMs = DateTime.now().millisecondsSinceEpoch - within;
+        final hits = <String>[];
+        for (final e in _guiLogBuffer) {
+          final ms = (e['rcvMs'] as num?)?.toInt() ?? 0;
+          if (ms < cutoffMs) {
+            continue;
+          }
+          if (lv.isNotEmpty &&
+              (e['level'] ?? '').toString().toUpperCase() != lv) {
+            continue;
+          }
+          if (src.isNotEmpty &&
+              (e['source'] ?? '').toString().toLowerCase() != src) {
+            continue;
+          }
+          var m = (e['msg'] ?? '').toString().replaceAll('\n', ' ');
+          if (m.length > 160) m = m.substring(0, 160);
+          hits.add('[${e['level']}/${e['source']}] $m');
+        }
+        if (contains.isNotEmpty) {
+          final hit = hits.firstWhere((e) => e.contains(contains),
+              orElse: () => '');
+          return (hit.isEmpty ? '窗口内 ${hits.length} 条无匹配' : hit,
+              hit.isEmpty ? '日志中未找到「$contains」' : '');
+        }
+        final bad = hits.where((e) => e.contains(notContains)).take(3).toList();
+        return (bad.isEmpty ? '未出现「$notContains」' : bad.join(' | '),
+            bad.isEmpty ? '' : '日志中不应出现「$notContains」');
       default:
-        return ('', '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/assertVisible/assertRoute/assertInstance/eval）');
+        return ('', '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/assertVisible/assertRoute/assertInstance/assertText/assertRequest/assertLog/eval）');
     }
   } catch (e) {
     return ('', e.toString());
@@ -3920,6 +4040,24 @@ Map<String, String> _aiConfig() {
 String _aiMaskKey(String k) =>
     k.isEmpty ? '' : '****${k.length > 4 ? k.substring(k.length - 4) : ''}';
 
+/// 结构化上下文开关（存于 ai_config.json 的 ctx 字段，缺省全开）。
+Map<String, bool> _aiCtx() {
+  try {
+    final j = jsonDecode(File(_aiConfigPath).readAsStringSync());
+    final c = j is Map ? j['ctx'] : null;
+    if (c is Map) {
+      bool b(Object? v) => v is bool ? v : true;
+      return <String, bool>{
+        'routes': b(c['routes']),
+        'text': b(c['text']),
+        'net': b(c['net']),
+        'log': b(c['log']),
+      };
+    }
+  } catch (_) {}
+  return <String, bool>{'routes': true, 'text': true, 'net': true, 'log': true};
+}
+
 /// AI 一轮的完整记录（决策 + 执行结果）。
 class _AiRound {
   _AiRound(this.round);
@@ -3951,6 +4089,7 @@ class _AiRunState {
   var cur = 0;
   List<_AiRound> rounds = [];
   DateTime startedAt = DateTime.now();
+  int logCursorMs = 0; // 增量日志游标（上一轮收集到的最后一条 rcvMs）
   Map<String, Object?> statusJson() => <String, Object?>{
         'running': running,
         'done': done,
@@ -3965,7 +4104,8 @@ final _ai = _AiRunState();
 
 const int _aiMaxStepsPerRound = 5;
 const Set<String> _aiAllowedStepTypes = {
-  'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance', 'eval'
+  'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance',
+  'eval', 'assertText', 'assertRequest', 'assertLog',
 };
 
 const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员。你会看到 app 当前截图和操作目标，
@@ -3979,13 +4119,17 @@ const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员�
 - {"type":"assertVisible","widget":"Widget类名"} 断言某 Widget 类当前可见
 - {"type":"assertInstance","class":"类名"} 断言某类实例存在
 - {"type":"eval","expr":"Dart表达式","expect":"期望子串"} 执行任意 Dart 表达式（慎用，仅必要时）
+- {"type":"assertText","contains":"文本"} 或 {"type":"assertText","notContains":"文本"} 断言当前页面文本（依据上下文的「页面文本」）
+- {"type":"assertRequest","urlContains":"/api/xx","method":"GET","not":false} 断言最近发出过匹配请求（not:true 表示不应出现）
+- {"type":"assertLog","contains":"关键字","level":"E","source":"flutter 或 device"} 断言最近日志（反向用 notContains）
 规则：
 1. 只输出一个 JSON 对象：{"done":false,"think":"简短分析","steps":[...]}，不要输出任何其他文本。
 2. 每次最多 5 步，做一小批就等结果；点击若引起页面跳转，后续加 {"type":"wait","ms":900}。
 3. 从截图中识别按钮/输入框/列表位置，坐标对准元素中心；坐标基于给定的截图分辨率，(0,0) 在左上角、右下角约 (宽,高)；底部导航栏贴在截图底边（y 接近图像高度），不在屏幕中部。
 4. 连续两轮界面无变化时必须换策略（换坐标/滑动/返回）。
 5. 目标已达成时返回 {"done":true,"think":"...","steps":[]}。
-6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。''';
+6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。
+7. 消息里会附「结构化上下文」（路由栈/页面文本/网络请求/增量日志）：判断状态是否变化、请求是否发出、列表是否刷新、有无报错等数据层问题时，优先用这些证据与 assertText/assertRequest/assertLog 断言，截图只用于定位元素坐标。''';
 
 /// 从 AI 回复提取首个平衡的 JSON 对象（容忍 ``` 围栏与前后杂文本）。
 Map<String, dynamic>? _aiParseReply(String s) {
@@ -4070,6 +4214,148 @@ Future<String> _aiCall(List<Map<String, Object?>> messages) async {
   }
 }
 
+/// 页面文本收集表达式（binding.dart 上下文）：BFS 全树取 Text.data 与
+/// EditableText 内容，去重保序。binding.dart 未必导出 Text/EditableText
+/// 类名，用 runtimeType 匹配 + dynamic 取字段（P10 assertVisible 同理）。
+/// 条目间用 \u0002 分隔（String.fromCharCode 避免转义地狱），GUI 侧限流。
+String _aiPageTextExpr({int limit = 40}) =>
+    "(() { final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return ''; "
+    "final out = <String>[]; final seen = <String>{}; "
+    "void add(String? t) { if (t == null) return; final s = t.trim(); "
+    "if (s.isEmpty) return; if (seen.add(s)) out.add(s); } "
+    "void visit(Element e) { if (out.length >= $limit) return; "
+    "final tn = e.widget.runtimeType.toString(); "
+    // Offstage 子树（下层页面保活）的文本不属于当前可见页面，跳过避免误导
+    "if (tn == 'Offstage') { try { if ((e.widget as dynamic).offstage == true) return; } catch (_) {} } "
+    "try { if (tn == 'Text') { add((e.widget as dynamic).data as String?); } "
+    "else if (tn == 'EditableText') { add((e.widget as dynamic).controller.text as String?); } "
+    "} catch (_) {} "
+    "e.visitChildren(visit); } visit(root); "
+    "return out.join(String.fromCharCode(2)); })()";
+
+/// 拉取 app 端 network 记录（xb_ume core 库 eval，与 /api/network 同源），
+/// 可按时间窗过滤；app 未接入 network 模块时在此抛异常由调用方标 N/A。
+Future<List<Map<String, Object?>>> _aiNetRecords(String uri,
+    {DateTime? since, int limit = 8}) async {
+  final rpc = _SandboxRpc(uri);
+  try {
+    await rpc.libraryId('package:xb_ume/src/core/xb_ume.dart');
+    final cutoffExpr =
+        since == null ? '' : "final c = DateTime.parse('${since.toIso8601String()}'); ";
+    final filterExpr = since == null ? '' : '.where((e) => e.time.isAfter(c)) ';
+    final raw = await rpc.evalStringOn(
+      'package:xb_ume/src/core/xb_ume.dart',
+      "(() { final n = XBUme.controller.network; $cutoffExpr"
+      "return n$filterExpr.map((e) => [e.method, e.url, "
+      "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
+    );
+    final items = <Map<String, Object?>>[];
+    for (final line in raw.split('\u0002')) {
+      if (line.isEmpty) continue;
+      final p = line.split('\u0001');
+      if (p.length < 4) continue;
+      items.add(<String, Object?>{
+        'method': p[0],
+        'url': p[1],
+        'statusCode': p[2],
+        'status': p[3],
+      });
+    }
+    // n 为旧→新序（/api/network 同源），取末尾 limit 条即最近的
+    return items.length > limit ? items.sublist(items.length - limit) : items;
+  } finally {
+    await rpc.close();
+  }
+}
+
+/// 收集一轮的结构化上下文（路由栈/页面文本/最近网络请求）；单项失败标注
+/// N/A 继续，不中断循环。增量日志由 _aiLogDelta 在 _aiLoop 侧单独处理（带游标）。
+Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
+  final out = StringBuffer();
+  if (ctx['routes'] == true || ctx['text'] == true) {
+    final rpc = _SandboxRpc(uri);
+    try {
+      if (ctx['routes'] == true) {
+        try {
+          final s = await rpc.evalStringOn(
+              'package:flutter/src/widgets/navigator.dart', _autoRoutesExpr);
+          final names = (s == 'NO_ROOT' || s == 'NO_NAV')
+              ? <String>[]
+              : s.split(',').where((e) => e.isNotEmpty).toList();
+          out.write('当前路由栈：${names.isEmpty ? 'N/A' : names.join(' > ')}\n');
+        } catch (_) {
+          out.write('当前路由栈：N/A\n');
+        }
+      }
+      if (ctx['text'] == true) {
+        try {
+          final s = await rpc.evalStringOn(
+              'package:flutter/src/widgets/binding.dart', _aiPageTextExpr());
+          final items = s.split('\u0002').where((e) => e.isNotEmpty).toList();
+          // 总长限流，防超大列表撑爆消息
+          var joined = items.join(' / ');
+          if (joined.length > 300) joined = joined.substring(0, 300);
+          out.write('页面文本：${items.isEmpty ? 'N/A' : joined}\n');
+        } catch (_) {
+          out.write('页面文本：N/A\n');
+        }
+      }
+    } finally {
+      await rpc.close();
+    }
+  }
+  if (ctx['net'] == true) {
+    try {
+      final recs = await _aiNetRecords(uri, since: _ai.startedAt);
+      out.write(recs.isEmpty
+          ? '最近网络请求（本次运行以来）：无\n'
+          : '最近网络请求（本次运行以来）：\n');
+      for (final e in recs) {
+        out.write(
+            '- ${e['method']} ${e['url']} ${e['statusCode']} ${e['status']}\n');
+      }
+    } catch (_) {
+      out.write('最近网络请求：N/A（app 未接入 network 模块）\n');
+    }
+  }
+  return out.toString();
+}
+
+/// 增量日志：自游标 rcvMs 以来的新增条目（E/W 全给，I 级需含错误关键字），
+/// 上限 25 条超出附省略说明；返回（文本, 新游标）。
+(String, int) _aiLogDelta(int cursorMs) {
+  final kw = RegExp('error|exception|fail|crash', caseSensitive: false);
+  final all = _guiLogBuffer.where((e) {
+    final ms = (e['rcvMs'] as num?)?.toInt() ?? 0;
+    return ms >= cursorMs;
+  }).toList();
+  var next = cursorMs;
+  for (final e in all) {
+    final ms = (e['rcvMs'] as num?)?.toInt() ?? 0;
+    if (ms > next) next = ms;
+  }
+  final picked = <Map<String, Object?>>[];
+  for (final e in all) {
+    final lv = (e['level'] ?? 'I').toString();
+    if (lv == 'E' || lv == 'W' || kw.hasMatch((e['msg'] ?? '').toString())) {
+      picked.add(e);
+    }
+  }
+  if (picked.isEmpty) return ('无', next);
+  final show = picked.length > 25 ? picked.sublist(picked.length - 25) : picked;
+  final sb = StringBuffer();
+  for (final e in show) {
+    var m = (e['msg'] ?? '').toString().replaceAll('\n', ' ');
+    if (m.length > 120) m = m.substring(0, 120);
+    final tag = (e['tag'] ?? '').toString();
+    sb.write('- [${e['level']}/${e['source']}'
+        '${tag.isNotEmpty && tag != e['source'] ? '/' : ''}$tag] $m\n');
+  }
+  if (picked.length > 25) sb.write('-（另有 ${picked.length - 25} 条省略）\n');
+  return (sb.toString(), next);
+}
+
 /// AI 驱动主循环：截图 → AI 决策 → 执行 → 反馈，直至 done/轮数上限/停止。
 Future<void> _aiLoop(String uri, String goal) async {
   _ai
@@ -4082,6 +4368,7 @@ Future<void> _aiLoop(String uri, String goal) async {
     ..cur = 0
     ..startedAt = DateTime.now()
     ..rounds = <_AiRound>[];
+  _ai.logCursorMs = _ai.startedAt.millisecondsSinceEpoch;
   String? failB64; // 上一轮失败步骤截图（反馈给 AI 自适应，用后清空）
   try {
     while (!_ai.stopReq) {
@@ -4115,7 +4402,17 @@ Future<void> _aiLoop(String uri, String goal) async {
         iw = (pngBytes[16] << 24) | (pngBytes[17] << 16) | (pngBytes[18] << 8) | pngBytes[19];
         ih = (pngBytes[20] << 24) | (pngBytes[21] << 16) | (pngBytes[22] << 8) | pngBytes[23];
       }
-      // 2) 组消息：system + 目标 + 历史摘要 + 截图
+      // 2.5) 结构化上下文：路由栈/页面文本/最近请求/增量日志
+      //（单项失败标 N/A 继续，不中断循环；增量日志带游标只取新增）
+      final ctx = _aiCtx();
+      final ctxStr = await _aiCollectContext(uri, ctx);
+      var logStr = '无';
+      if (ctx['log'] == true) {
+        final (ls, nextCur) = _aiLogDelta(_ai.logCursorMs);
+        _ai.logCursorMs = nextCur;
+        logStr = ls;
+      }
+      // 3) 组消息：system + 目标 + 历史摘要 + 截图
       final hist = StringBuffer();
       for (final p in _ai.rounds) {
         if (p.round == r.round) continue;
@@ -4128,6 +4425,11 @@ Future<void> _aiLoop(String uri, String goal) async {
       userText.write('目标：$goal\n');
       if (iw > 0) {
         userText.write('截图分辨率：$iw×$ih（坐标以此像素坐标系为准，左上角为原点）\n');
+      }
+      userText.write('── 结构化上下文（数据层证据，判断状态变化优先用它）──\n');
+      userText.write(ctxStr);
+      if (ctx['log'] == true) {
+        userText.write('增量日志（自上轮以来）：$logStr\n');
       }
       userText.write('执行历史：');
       userText.write(hist.isEmpty ? '无（这是第一步）' : hist.toString());
@@ -4180,6 +4482,10 @@ Future<void> _aiLoop(String uri, String goal) async {
           final m = s.map((k, v) => MapEntry(k.toString(), v));
           final t = (m['type'] ?? '').toString();
           if (!_aiAllowedStepTypes.contains(t)) continue;
+          // 上下文开关关闭的断言步骤直接丢弃（消息里也没给对应上下文）
+          if (t == 'assertText' && ctx['text'] != true) continue;
+          if (t == 'assertRequest' && ctx['net'] != true) continue;
+          if (t == 'assertLog' && ctx['log'] != true) continue;
           if (t == 'tap' || t == 'swipe') m['phys'] = true;
           steps.add(m);
         }
@@ -5929,7 +6235,7 @@ const String guiHtml = r'''
       <label style="font-size:12px"><input type="checkbox" id="au-cont"> 失败继续</label>
       <button onclick="auImportRec()">导入录制(<span id="au-rec-n">0</span>)</button>
     </div>
-    <div class="muted" style="margin-top:4px;font-size:12px">步骤 JSON：[{"type":"tap","x":400,"y":280,"phys":true},{"type":"input","text":"hi"},{"type":"swipe","x1":400,"y1":400,"x2":400,"y2":150,"ms":400,"phys":true},{"type":"wait","ms":1000},{"type":"back"},{"type":"navigate","name":"xxx"},{"type":"assertVisible","widget":"页面类名"},{"type":"assertRoute","name":"路由名"},{"type":"assertInstance","class":"类名"},{"type":"eval","expr":"1+1","expect":"2"}]。tap/swipe 坐标：phys=true 为截图物理像素（录制坐标），否则逻辑像素。</div>
+    <div class="muted" style="margin-top:4px;font-size:12px">步骤 JSON：[{"type":"tap","x":400,"y":280,"phys":true},{"type":"input","text":"hi"},{"type":"swipe","x1":400,"y1":400,"x2":400,"y2":150,"ms":400,"phys":true},{"type":"wait","ms":1000},{"type":"back"},{"type":"navigate","name":"xxx"},{"type":"assertVisible","widget":"页面类名"},{"type":"assertRoute","name":"路由名"},{"type":"assertInstance","class":"类名"},{"type":"assertText","contains":"xx"},{"type":"assertRequest","urlContains":"/api/xx","method":"GET"},{"type":"assertLog","contains":"xx","level":"E"},{"type":"eval","expr":"1+1","expect":"2"}]。tap/swipe 坐标：phys=true 为截图物理像素（录制坐标），否则逻辑像素；assertText/assertRequest/assertLog 反向断言用 notContains / not:true，时间窗用 withinLastMs。</div>
     <textarea id="au-steps" style="width:100%;height:180px;margin-top:6px;font-family:monospace;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg)" placeholder='[{"type":"tap","x":400,"y":280,"phys":true}]'></textarea>
     <div style="margin-top:6px"><span id="au-prog" class="muted"></span></div>
     <div id="au-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
@@ -5948,6 +6254,14 @@ const String guiHtml = r'''
         <span>模型</span><input id="ai-model" style="width:170px" placeholder="gpt-4o / qwen-vl-max …">
         <button onclick="aiCfgSave()">保存配置</button>
         <span class="muted">OpenAI 兼容 /chat/completions，需支持图片输入</span>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px">
+        <span>上下文开关</span>
+        <label><input type="checkbox" id="ai-ctx-routes" checked> 路由栈</label>
+        <label><input type="checkbox" id="ai-ctx-text" checked> 页面文本</label>
+        <label><input type="checkbox" id="ai-ctx-net" checked> 网络请求</label>
+        <label><input type="checkbox" id="ai-ctx-log" checked> 增量日志</label>
+        <span class="muted">关闭后 AI 消息不含对应上下文、对应断言步骤被忽略</span>
       </div>
     </div>
     <div style="margin-top:6px"><span id="ai-prog" class="muted"></span></div>
@@ -6303,6 +6617,11 @@ function aiCfgShow(){
     var k = document.getElementById('ai-key');
     k.value = j.apiKey || '';
     k.dataset.masked = j.apiKey || '';
+    var c = j.ctx || {};
+    document.getElementById('ai-ctx-routes').checked = c.routes !== false;
+    document.getElementById('ai-ctx-text').checked = c.text !== false;
+    document.getElementById('ai-ctx-net').checked = c.net !== false;
+    document.getElementById('ai-ctx-log').checked = c.log !== false;
   });
 }
 function aiCfgSave(){
@@ -6311,7 +6630,11 @@ function aiCfgSave(){
   if (key === (k.dataset.masked || '')) key = ''; // 未修改 → 不覆盖旧密钥
   fetch('/api/ai/config', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ baseUrl: document.getElementById('ai-base').value.trim(),
-      apiKey: key, model: document.getElementById('ai-model').value.trim() }) })
+      apiKey: key, model: document.getElementById('ai-model').value.trim(),
+      ctx: { routes: document.getElementById('ai-ctx-routes').checked,
+        text: document.getElementById('ai-ctx-text').checked,
+        net: document.getElementById('ai-ctx-net').checked,
+        log: document.getElementById('ai-ctx-log').checked } }) })
     .then(function(r){ return r.json(); })
     .then(function(j){ alert(j.ok ? 'AI 配置已保存' : (j.error || '保存失败')); });
 }

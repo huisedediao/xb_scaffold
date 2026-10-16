@@ -306,6 +306,9 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | assertVisible | widget | 树中存在该类型（支持泛型前缀）且 RenderBox 有尺寸 |
 | assertRoute | name | 栈顶路由名包含 name |
 | assertInstance | class | 堆/树上存在该类实例（GC 后计数） |
+| assertText | contains 或 notContains | 全树页面文本（Text/输入框内容，跳过 Offstage）包含/不包含指定文本 |
+| assertRequest | urlContains, method?, not?, withinLastMs? | 最近网络请求中有/无匹配记录（时间窗默认 AI 运行起点，回放场景近 5 分钟） |
+| assertLog | contains 或 notContains, level?, source?, withinLastMs? | 最近日志（flutter + 设备 logcat/hilog）中存在/不存在匹配行 |
 | eval | expr, expect? | 任意 eval 表达式（binding.dart 上下文），结果含 expect 则过 |
 
 **使用**：
@@ -325,7 +328,9 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **使用**：页头选中会话 → 输入目标 →「▶ AI 执行」。每轮显示卡片：轮前截图缩略图（点击看大图）/ AI 分析文本 / 步骤执行表（同场景回放样式）。AI 坐标按截图像素自动换算；某步失败时失败截图会反馈给 AI 下一轮修正；执行中「■ 停止」在当前步骤结束后生效；每轮最多 5 步，轮数无上限（AI 判定完成或手动停止结束），跑之前留意 token 消耗。结束后「存为场景」把本次实际执行的步骤拍平保存，可回上方场景回放。
 
-**说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/eval，eval 提示慎用）；请求失败/超时/回复无法解析时立即停止并显示原因；AI 接口的可达性取决于你本机网络（内网网关或公网 API 均可）。
+**结构化上下文**：除了截图，GUI 每轮还会自动采集四项数据层证据一并发给 AI——当前路由栈 / 页面文本（全树 Text 与输入框内容，去重，跳过 Offstage 保活页面）/ 最近网络请求（本次运行以来，需 app 接入 network 模块）/ 增量日志（上一轮以来的 E/W 级与含 error/exception/fail/crash 关键字的日志，含 flutter 输出与设备 logcat/hilog）。「AI 设置」里可逐项开关（默认全开；关闭后 AI 消息不含该项、对应断言步骤被忽略）。
+
+**说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；请求失败/超时/回复无法解析时立即停止并显示原因；AI 接口的可达性取决于你本机网络（内网网关或公网 API 均可）。
 
 ## 十二、异常（Tab「异常」）
 

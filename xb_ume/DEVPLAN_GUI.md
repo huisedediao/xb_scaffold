@@ -64,6 +64,12 @@
 - 结束后「存为场景」拍平各轮已执行步骤 → P10 场景回放（无 AI 依赖）
 - UI：自动化 Tab 底部「AI 驱动」区块（目标输入/执行/停止/设置/轮卡片报告）
 
+## P12 AI 驱动增强：结构化上下文 + 非视觉断言 `[x]`
+- 每轮上下文四项拼进消息（单项失败标 N/A 不中断）：路由栈（复用 _autoRoutesExpr）/ 页面文本（_aiPageTextExpr BFS Text.data+EditableText，去重、跳过 Offstage 保活子树、限 40 项/300 字）/ 最近网络请求（_aiNetRecords 复用 xb_ume core eval，e.time >= run startedAt，最近 8 条）/ 增量日志（GUI 日志 buffer 加 rcvMs 毫秒戳，游标式增量，E/W 全给 + I 级含 error/exception/fail/crash 关键字，上限 25 条）
+- 三种非视觉断言（AI 与场景回放共用 _autoExecStep）：assertText contains/notContains、assertRequest urlContains/method/not/withinLastMs（时间窗默认 run 起点，回放兑底 5 分钟）、assertLog contains/notContains/level/source/withinLastMs
+- 上下文开关 ai_config.json ctx{routes,text,net,log}（默认全开）：关闭项消息不出现、AI 返回的对应断言步骤被丢弃、回放时该断言报 SKIPPED；AI 设置弹层 4 checkbox
+- system prompt 补三断言 schema + 「数据层问题优先用结构化上下文证据，截图只用于定位坐标」
+
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）
 - 2026-10-14 P2 完成（reassemble/_collectAllGarbage 探针定论 → /api/runtime/op + 守护 Tab 按钮，真机双 op 通过；热重启不可行已文档说明）
@@ -82,3 +88,4 @@
 - 2026-10-16 P11 完成（AI 驱动：_aiLoop 截图→AI→执行→反馈循环，_aiCall 显式 Content-Length（dart HttpClient 默认 chunked，python http.server 等本地服务读不到 body）；_aiParseReply 平衡大括号容错解析；AI 坐标自动 phys:true；失败步骤截图转 b64 附下一轮消息自适应；artifact 正则扩展 ai-<ts>-rN/stepN；/api/ai config/run/status/stop/save 5 端点 + 409/未配置/防穿越；前端 AI 区块（目标输入/执行/停止/设置/存为场景）+ 轮卡片报告（截图缩略图/AI 思考/步骤表）+ 切 Tab 自动恢复报告。验证：本地 mock OpenAI 服务端到端（轮0 tap+wait+assertVisible 全 pass 真实导航、轮1 done）、存为场景 3 步拍平落盘 + 普通回放全 pass 等价、错误路径（未配置/空步骤/防穿越）、浏览器 UI 全过 console 0 错误）
 
 - 2026-10-16 P11 修复（f_jlink 21 轮实录两 bug：① tap/swipe 注入 PointerDownEvent 未指定 pointer（默认 0），down 派发中业务异常致 up 未发 → _hitTests 残留 pointer 0 → 后续所有 tap 撞 !_hitTests.containsKey 断言永久卡死（AI 误判为坐标问题连点 5 轮）。修复：唯一 pointer id（微秒时间戳）+ down try/catch 补发 up 并返回 ERR 摘要（不 rethrow，避免 FlutterError 上报时 inspector 序列化 eval 栈帧二次炸 stack_frame.dart 断言污染错误）；swipe 全程同一 pointer + down 失败即中止。② AI 不知道截图分辨率产生坐标系幻觉（前 17 轮把底部导航 y 估在 2255 实际应≈2600+，轮 18 幻觉出 924×2000 点出屏外）。修复：_aiLoop 解析 PNG IHDR 宽高写进消息（截图分辨率：W×H），system prompt 明确坐标系与「底部导航贴截图底边」。example 回归：p10-smoke 7 步全 pass + swipe×2/assertRoute 全 pass）
+- 2026-10-16 P12 完成（四项结构化上下文 + 三断言端到端全通：mock 扩展剧本轮0 tap+wait+assertVisible 真实导航、轮1 assertText 命中 show + assertLog 命中 FlutterNapi(hilog) + assertRequest 反断言 pass、轮2 done；ctx 关闭 log/net 后消息无对应行且轮1 仅剩 assertText；Offstage 修复（back 回首页后 notContains "show" 误报——保活下层页面文本被收集）；p10-smoke 7 步回归全 pass；诊断插曲：合成 tap 失效排查（viewId/resampling/帧冻结逐一排除）最终定性 app 未真实前台——osascript activate 不可靠，CGEvent 真实点击强制前台化后合成 tap 恢复，GUI 日志 buffer 无 HTTP 端点故新增 _guiLogBuffer 全局引用供顶层断言函数读取）
