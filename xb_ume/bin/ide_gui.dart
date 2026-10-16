@@ -1882,6 +1882,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final file = _autoScenarioFile(name);
       if (file == null) {
         req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
         await req.response.close();
         return;
       }
@@ -1910,6 +1912,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final file = _autoScenarioFile((j['name'] ?? '').toString());
         if (file == null) {
           req.response.statusCode = HttpStatus.badRequest;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
           await req.response.close();
           return;
         }
@@ -2117,6 +2121,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final file = _autoScenarioFile((j['name'] ?? '').toString());
         if (file == null) {
           req.response.statusCode = HttpStatus.badRequest;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
           await req.response.close();
           return;
         }
@@ -3656,6 +3662,10 @@ final _auto = _AutoRunState();
 
 String get _autoScenariosDir => '$_home/.xb_ume_ide/scenarios';
 String get _autoArtifactsDir => '$_home/.xb_ume_ide/scenarios/artifacts';
+
+/// 场景名非法时的统一提示（400 响应与前端预校验共用）。
+const String _autoNameError =
+    '场景名非法：只允许中文/字母/数字/下划线/横线，长度 1-64（不能含空格、点号等）';
 
 /// 场景名 → json 文件；名字只允许字母数字下划线中横线中文，防穿越。
 File? _autoScenarioFile(String name) {
@@ -6549,17 +6559,20 @@ function auSave(){
   var name = document.getElementById('au-name').value.trim();
   var steps = auSteps(); if (!steps) return;
   if (!name) { alert('请填写场景名'); return; }
+  if (name.length > 64 || !/^[\w\u4e00-\u9fff-]+$/.test(name)) { alert('场景名只能包含中文、字母、数字、下划线、横线（不能含空格、点号等），长度 1-64'); return; }
   fetch('/api/auto/save', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ name: name, steps: steps }) })
-    .then(function(r){ return r.json(); })
-    .then(function(j){ if (j.ok) auLoad(); else alert(j.error || '保存失败'); });
+    .then(function(r){ return r.json().catch(function(){ return {ok:false, error:'保存失败（HTTP ' + r.status + '）'}; }); })
+    .then(function(j){ if (j.ok) auLoad(); else alert(j.error || '保存失败'); })
+    .catch(function(e){ alert('保存请求失败: ' + e); });
 }
 function auDelete(){
   var name = document.getElementById('au-name').value.trim();
   if (!name || !confirm('删除场景 ' + name + '？')) return;
   fetch('/api/auto/delete?name=' + encodeURIComponent(name), { method: 'POST' })
-    .then(function(r){ return r.json(); })
-    .then(function(j){ if (j.ok) { document.getElementById('au-steps').value = ''; auLoad(); } });
+    .then(function(r){ return r.json().catch(function(){ return {ok:false, error:'删除失败（HTTP ' + r.status + '）'}; }); })
+    .then(function(j){ if (j.ok) { document.getElementById('au-steps').value = ''; auLoad(); } else alert(j.error || '删除失败'); })
+    .catch(function(e){ alert('删除请求失败: ' + e); });
 }
 function auFmt(){
   var steps = auSteps(); if (!steps) return;
@@ -6727,11 +6740,14 @@ function aiRenderReport(rounds){
   el.innerHTML = html;
 }
 function aiSaveScenario(){
-  var name = prompt('场景名（保存后可在上方场景回放）');
+  var name = prompt('场景名（保存后可在上方场景回放）\n只允许中文/字母/数字/下划线/横线，长度 1-64');
   if (!name) return;
+  name = name.trim();
+  if (!name || name.length > 64 || !/^[\w\u4e00-\u9fff-]+$/.test(name)) { alert('场景名只能包含中文、字母、数字、下划线、横线（不能含空格、点号等），长度 1-64'); return; }
   fetch('/api/ai/save', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: name }) })
-    .then(function(r){ return r.json(); })
-    .then(function(j){ if (j.ok) { alert('已保存 ' + j.steps + ' 步，可回放'); auLoad(); } else alert(j.error || '保存失败'); });
+    .then(function(r){ return r.json().catch(function(){ return {ok:false, error:'保存失败（HTTP ' + r.status + '）'}; }); })
+    .then(function(j){ if (j.ok) { alert('已保存 ' + j.steps + ' 步，可回放'); auLoad(); } else alert(j.error || '保存失败'); })
+    .catch(function(e){ alert('保存请求失败: ' + e); });
 }
 function renderHdrDev() {
   var html = '<option value="">未选择设备</option>';
