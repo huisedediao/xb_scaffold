@@ -330,7 +330,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **结构化上下文**：除了截图，GUI 每轮还会自动采集四项数据层证据一并发给 AI——当前路由栈 / 页面文本（全树 Text 与输入框内容，去重，跳过 Offstage 保活页面）/ 最近网络请求（本次运行以来，需 app 接入 network 模块）/ 增量日志（上一轮以来的 E/W 级与含 error/exception/fail/crash 关键字的日志，含 flutter 输出与设备 logcat/hilog）。「AI 设置」里可逐项开关（默认全开；关闭后 AI 消息不含该项、对应断言步骤被忽略）。
 
-**说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；请求失败/超时/回复无法解析时立即停止并显示原因；AI 接口的可达性取决于你本机网络（内网网关或公网 API 均可）。
+**说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；接口请求失败/超时/回复无法解析为 JSON/未给出有效步骤时自动重试（每轮最多重试 3 次，退避 2s/4s/6s，轮卡片显示重试次数），重试期间仍可手动停止；重试耗尽才终止任务并显示原因；AI 接口的可达性取决于你本机网络（内网 网关或公网 API 均可）。
 
 ## 十二、异常（Tab「异常」）
 

@@ -70,6 +70,11 @@
 - 上下文开关 ai_config.json ctx{routes,text,net,log}（默认全开）：关闭项消息不出现、AI 返回的对应断言步骤被丢弃、回放时该断言报 SKIPPED；AI 设置弹层 4 checkbox
 - system prompt 补三断言 schema + 「数据层问题优先用结构化上下文证据，截图只用于定位坐标」
 
+## P13 AI 调用失败自动重试 `[x]`
+- _aiLoop 轮内重试：接口请求异常/回复不可解析为 JSON/未给出有效步骤三类 AI 侧故障不再直接终止，同轮自动重试（上限 _aiMaxRetries=3，递增退避 2s/4s/6s，每次重试前检查 stopReq 可手动打断）；重试耗尽才停止并报「已重试 N 次仍失败」
+- 轮报告加 retries 字段；前端轮卡片黄色显示「AI 调用重试 N 次」
+- 验证（example macOS 会话 + 故障 mock）：mock 前 N 次请求故障两种模式——HTTP 500（retries=1 后成功）与 200+纯文本无 JSON（retries=2 后成功），均走完三段剧本至 done，任务不中断
+
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）
 - 2026-10-14 P2 完成（reassemble/_collectAllGarbage 探针定论 → /api/runtime/op + 守护 Tab 按钮，真机双 op 通过；热重启不可行已文档说明）
@@ -89,3 +94,4 @@
 
 - 2026-10-16 P11 修复（f_jlink 21 轮实录两 bug：① tap/swipe 注入 PointerDownEvent 未指定 pointer（默认 0），down 派发中业务异常致 up 未发 → _hitTests 残留 pointer 0 → 后续所有 tap 撞 !_hitTests.containsKey 断言永久卡死（AI 误判为坐标问题连点 5 轮）。修复：唯一 pointer id（微秒时间戳）+ down try/catch 补发 up 并返回 ERR 摘要（不 rethrow，避免 FlutterError 上报时 inspector 序列化 eval 栈帧二次炸 stack_frame.dart 断言污染错误）；swipe 全程同一 pointer + down 失败即中止。② AI 不知道截图分辨率产生坐标系幻觉（前 17 轮把底部导航 y 估在 2255 实际应≈2600+，轮 18 幻觉出 924×2000 点出屏外）。修复：_aiLoop 解析 PNG IHDR 宽高写进消息（截图分辨率：W×H），system prompt 明确坐标系与「底部导航贴截图底边」。example 回归：p10-smoke 7 步全 pass + swipe×2/assertRoute 全 pass）
 - 2026-10-16 P12 完成（四项结构化上下文 + 三断言端到端全通：mock 扩展剧本轮0 tap+wait+assertVisible 真实导航、轮1 assertText 命中 show + assertLog 命中 FlutterNapi(hilog) + assertRequest 反断言 pass、轮2 done；ctx 关闭 log/net 后消息无对应行且轮1 仅剩 assertText；Offstage 修复（back 回首页后 notContains "show" 误报——保活下层页面文本被收集）；p10-smoke 7 步回归全 pass；诊断插曲：合成 tap 失效排查（viewId/resampling/帧冻结逐一排除）最终定性 app 未真实前台——osascript activate 不可靠，CGEvent 真实点击强制前台化后合成 tap 恢复，GUI 日志 buffer 无 HTTP 端点故新增 _guiLogBuffer 全局引用供顶层断言函数读取）
+- 2026-10-16 P13 完成（AI 调用失败/回复不可解析/无有效步骤自动重试：轮内重试 3 次退避 2s/4s/6s，重试耗尽才停，轮卡片显重试次数；f_jlink 用户实录反馈「AI 调用失败或回复为 null 时直接停下」改进；example 双模式故障 mock 验证：HTTP 500 retries=1 恢复、非 JSON 回复 retries=2 恢复，均走完剧本至 done 不中断）

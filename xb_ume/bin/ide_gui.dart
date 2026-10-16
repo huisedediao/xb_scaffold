@@ -4068,10 +4068,12 @@ class _AiRound {
   List<_AutoStepResult> results = [];
   String? shot; // 轮前截图文件名
   String error = ''; // 非空 = 本轮异常（截图/AI 调用/解析失败），循环终止
+  int retries = 0; // 本轮 AI 调用/解析失败的重试次数
   Map<String, Object?> toJson() => <String, Object?>{
         'round': round,
         'think': think,
         'error': error,
+        'retries': retries,
         'shot': shot,
         'steps': steps.length,
         'results': results.map((e) => e.toJson()).toList(),
@@ -4103,6 +4105,7 @@ class _AiRunState {
 final _ai = _AiRunState();
 
 const int _aiMaxStepsPerRound = 5;
+const int _aiMaxRetries = 3; // AI 调用/回复解析失败的单轮重试上限（退避 2s/4s/6s）
 const Set<String> _aiAllowedStepTypes = {
   'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance',
   'eval', 'assertText', 'assertRequest', 'assertLog',
@@ -4454,47 +4457,68 @@ Future<void> _aiLoop(String uri, String goal) async {
         <String, Object?>{'role': 'system', 'content': _aiSystemPrompt},
         <String, Object?>{'role': 'user', 'content': content},
       ];
-      // 3) 调 AI + 解析
-      String reply;
-      try {
-        reply = await _aiCall(messages);
-      } catch (e) {
-        r.error = 'AI 调用失败: $e';
+      // 3) 调 AI + 解析 + 步骤解析。网络失败/回复不可解析/无有效步骤都属 AI 侧故障，
+      // 自动重试（递增退避），不直接终止任务；重试耗尽才停下。
+      final steps = <Map<String, dynamic>>[];
+      var aiErr = '';
+      Map<String, dynamic>? obj;
+      for (var attempt = 0; attempt <= _aiMaxRetries; attempt++) {
+        if (_ai.stopReq) break;
+        if (attempt > 0) {
+          r.retries++;
+          await Future.delayed(Duration(seconds: 2 * attempt));
+          if (_ai.stopReq) break;
+        }
+        String reply;
+        try {
+          reply = await _aiCall(messages);
+        } catch (e) {
+          aiErr = 'AI 调用失败: $e';
+          continue;
+        }
+        r.raw = reply.length > 2000 ? reply.substring(0, 2000) : reply;
+        obj = _aiParseReply(reply);
+        if (obj == null) {
+          aiErr = 'AI 回复无法解析为 JSON';
+          continue;
+        }
+        r.think = (obj['think'] ?? '').toString();
+        if (obj['done'] == true) break;
+        // 4) 过滤步骤（白名单 + 每轮上限），AI 坐标即截图像素 → phys:true
+        steps.clear();
+        final rawSteps = obj['steps'] is List ? obj['steps'] as List : <Object?>[];
+        for (final s in rawSteps) {
+          if (steps.length >= _aiMaxStepsPerRound) break;
+          if (s is Map) {
+            final m = s.map((k, v) => MapEntry(k.toString(), v));
+            final t = (m['type'] ?? '').toString();
+            if (!_aiAllowedStepTypes.contains(t)) continue;
+            // 上下文开关关闭的断言步骤直接丢弃（消息里也没给对应上下文）
+            if (t == 'assertText' && ctx['text'] != true) continue;
+            if (t == 'assertRequest' && ctx['net'] != true) continue;
+            if (t == 'assertLog' && ctx['log'] != true) continue;
+            if (t == 'tap' || t == 'swipe') m['phys'] = true;
+            steps.add(m);
+          }
+        }
+        if (steps.isEmpty) {
+          aiErr =
+              'AI 未给出有效步骤（raw: ${r.raw.length > 200 ? r.raw.substring(0, 200) : r.raw}）';
+          continue;
+        }
+        aiErr = '';
         break;
       }
-      r.raw = reply.length > 2000 ? reply.substring(0, 2000) : reply;
-      final obj = _aiParseReply(reply);
-      if (obj == null) {
-        r.error = 'AI 回复无法解析为 JSON';
+      if (_ai.stopReq) break;
+      if (aiErr.isNotEmpty || obj == null) {
+        r.error = '$aiErr（已重试 ${r.retries} 次仍失败，任务停止）';
         break;
       }
-      r.think = (obj['think'] ?? '').toString();
       if (obj['done'] == true) {
         _ai.done = true;
         break;
       }
-      // 4) 过滤步骤（白名单 + 每轮上限），AI 坐标即截图像素 → phys:true
-      final rawSteps = obj['steps'] is List ? obj['steps'] as List : <Object?>[];
-      final steps = <Map<String, dynamic>>[];
-      for (final s in rawSteps) {
-        if (steps.length >= _aiMaxStepsPerRound) break;
-        if (s is Map) {
-          final m = s.map((k, v) => MapEntry(k.toString(), v));
-          final t = (m['type'] ?? '').toString();
-          if (!_aiAllowedStepTypes.contains(t)) continue;
-          // 上下文开关关闭的断言步骤直接丢弃（消息里也没给对应上下文）
-          if (t == 'assertText' && ctx['text'] != true) continue;
-          if (t == 'assertRequest' && ctx['net'] != true) continue;
-          if (t == 'assertLog' && ctx['log'] != true) continue;
-          if (t == 'tap' || t == 'swipe') m['phys'] = true;
-          steps.add(m);
-        }
-      }
       r.steps = steps;
-      if (steps.isEmpty) {
-        r.error = 'AI 未给出有效步骤（raw: ${r.raw.length > 200 ? r.raw.substring(0, 200) : r.raw}）';
-        break;
-      }
       // 5) 执行：失败即停本轮，失败截图反馈给 AI 重新决策
       for (final st in steps) {
         if (_ai.stopReq) break;
@@ -6681,6 +6705,7 @@ function aiRenderReport(rounds){
       + (r.shot ? '<a href="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" target="_blank">'
         + '<img src="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" style="height:64px;border:1px solid #444"></a>' : '')
       + '<div style="flex:1;font-size:12px">'
+      + ((r.retries || 0) > 0 ? '<span style="color:#e6b800">AI 调用重试 ' + r.retries + ' 次</span><br>' : '')
       + (r.error ? '<span style="color:#ef5350">' + esc(r.error) + '</span><br>' : '')
       + (r.think ? 'AI：' + esc(r.think) : '')
       + '</div></div>';
