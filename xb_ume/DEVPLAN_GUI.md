@@ -60,7 +60,7 @@
 ## P11 AI 驱动自动化 `[x]`
 - 自然语言目标 → 循环「截图→AI 决策→执行→反馈」；AI 返回 `{done, think, steps}`，steps 限白名单类型复用 P10 `_autoExecStep`
 - OpenAI 兼容 `/chat/completions`（vision）；配置 `~/.xb_ume_ide/ai_config.json`（baseUrl/apiKey/model，密钥打码）
-- 防失控：最多 20 轮、每轮 ≤5 步；失败截图反馈 AI 自适应；请求/解析失败即停
+- 防失控：每轮 ≤5 步（轮数不限制，AI done/手动停止结束）；失败截图反馈 AI 自适应；请求/解析失败即停
 - 结束后「存为场景」拍平各轮已执行步骤 → P10 场景回放（无 AI 依赖）
 - UI：自动化 Tab 底部「AI 驱动」区块（目标输入/执行/停止/设置/轮卡片报告）
 

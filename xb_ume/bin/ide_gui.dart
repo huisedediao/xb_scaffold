@@ -3963,7 +3963,6 @@ class _AiRunState {
 
 final _ai = _AiRunState();
 
-const int _aiMaxRounds = 20;
 const int _aiMaxStepsPerRound = 5;
 const Set<String> _aiAllowedStepTypes = {
   'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance', 'eval'
@@ -4086,12 +4085,6 @@ Future<void> _aiLoop(String uri, String goal) async {
   String? failB64; // 上一轮失败步骤截图（反馈给 AI 自适应，用后清空）
   try {
     while (!_ai.stopReq) {
-      if (_ai.rounds.length >= _aiMaxRounds) {
-        final r = _AiRound(_ai.rounds.length)
-          ..error = '达到轮数上限（$_aiMaxRounds），已停止';
-        _ai.rounds.add(r);
-        break;
-      }
       final r = _AiRound(_ai.rounds.length);
       _ai.rounds.add(r);
       _ai.cur = r.round;
