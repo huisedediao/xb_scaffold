@@ -6480,6 +6480,7 @@ function excCardHtml(it){
   if (it.app) h += ' · ' + esc(it.app);
   if (it.os) h += ' · ' + esc(it.os);
   if (it.count > 1) h += ' <span style="color:#e67e22">×' + it.count + '</span>';
+  h += ' <a href="javascript:void(0)" onclick="excCopy(' + it.id + ',this)" title="复制本条异常全部内容">复制</a>';
   h += '</div>';
   h += '<div style="margin-top:4px">' + esc(it.summary || '') + '</div>';
   if (it.desc) h += '<div class="muted" style="margin-top:4px;white-space:pre-wrap">' + esc(it.desc) + '</div>';
@@ -6505,6 +6506,27 @@ function excJump(id, line, el){ // 相关 widget 的 IDE 跳转
   var it = excById[id];
   if (!it || !it.widgetFile) return;
   excOpenIde(it.widgetFile, line, el);
+}
+function excCopy(id, el){ // 复制本条异常全部内容（头部/摘要/描述/Widget/栈帧逐行）
+  var it = excById[id];
+  if (!it) return;
+  var lines = [];
+  var head = (it.time || '') + ' [' + (it.channel === 'framework' ? '框架' : '未捕获') + '] ' + (it.source || '');
+  if (it.app) head += ' · ' + it.app;
+  if (it.os) head += ' · ' + it.os;
+  if (it.count > 1) head += ' ×' + it.count;
+  lines.push(head);
+  if (it.summary) lines.push(it.summary);
+  if (it.desc) lines.push(it.desc);
+  if (it.widget) lines.push('Widget：' + it.widget + (it.widgetFile ? '（' + it.widgetFile + ':' + (it.widgetLine || 1) + '）' : ''));
+  (it.stack || []).forEach(function(f){
+    lines.push(f.raw || ((f.method || '') + ' (' + (f.uri || '') + ':' + (f.line || 0) + ')'));
+  });
+  var text = lines.join('\n');
+  var done = function(){ el.textContent = '已复制✓'; setTimeout(function(){ el.textContent = '复制'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){ copyLogsFallback(text); done(); });
+  } else { copyLogsFallback(text); done(); }
 }
 function excFrameJump(id, idx, el){ // 栈帧行的 IDE 跳转（仅用户代码帧有 file）
   var it = excById[id];
