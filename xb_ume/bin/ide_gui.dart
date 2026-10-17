@@ -6197,6 +6197,7 @@ const String guiHtml = r'''
         <span class="muted" style="font-size:12px">按页头会话选择</span>
       </div>
       <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:300px">
+      <button onclick="copyLogs(this)" title="复制当前显示（含过滤）的全部日志到剪贴板">复制</button>
       <button onclick="togglePause(this)">暂停</button>
       <button onclick="clearLogs()">清屏</button>
       <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
@@ -6939,6 +6940,27 @@ function logFlushNew() {
   if (atBottom) view.scrollTop = view.scrollHeight;
 }
 function togglePause(btn){ paused = !paused; btn.textContent = paused ? '继续' : '暂停'; if (!paused) renderLogs(); }
+function copyLogs(btn) {
+  // 复制当前框中显示的全部日志（直接读 DOM 渲染行，所见即所得）。
+  // 不能从 logs 缓冲重算：5000 条全局缓冲会被其他来源（hilog/其他会话）
+  // 高频挤占，选中会话的行被挤出后重算结果会少于框中显示甚至为空。
+  var view = document.getElementById('logview');
+  var lines = [];
+  view.querySelectorAll('div[class^="lv-"]').forEach(function(d){ lines.push(d.innerText); });
+  if (!lines.length) { btn.textContent = '无日志'; setTimeout(function(){ btn.textContent = '复制'; }, 1200); return; }
+  var text = lines.join('\n');
+  var done = function(){ btn.textContent = '已复制 ' + lines.length + ' 行'; setTimeout(function(){ btn.textContent = '复制'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){ copyLogsFallback(text); done(); });
+  } else { copyLogsFallback(text); done(); }
+}
+function copyLogsFallback(text) { // 非安全上下文兑底：隐藏 textarea + execCommand
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
 function clearLogs(){ logs = []; renderLogs(); }
 function refreshDaemon(){
   fetch('/api/daemon').then(function(r){ return r.json(); }).then(function(d){
