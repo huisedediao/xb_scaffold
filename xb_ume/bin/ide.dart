@@ -740,6 +740,10 @@ String _ideLabel(String cli) {
 
 final Map<String, _Session> _sessions = <String, _Session>{};
 
+/// 日志时间前缀（daemon 日志无时间戳曾严重阻碍排障：无法对齐「重启→重
+/// 放」时间线）。
+String get _logTs => DateTime.now().toIso8601String().substring(11, 19);
+
 /// 已接入 VM service 实例的指纹（isolates id 组合）。
 /// 同一调试实例可能经多个端口可达（如 adb forward 与 flutter 工具代理），
 /// 以指纹去重避免重复接入。
@@ -822,6 +826,10 @@ Future<void> _requestEviction() async {
 
 /// 持锁侧：接管令牌即退出；status 查询令牌则应答 JSON 后保持连接。
 void _onLockConnection(Socket socket) {
+  // onError 必须吞掉：GUI 状态轮询等客户端断开时可能产生 RST，
+  // 未捕获的 SocketException 会杀死整个 daemon（launchd 拉起新实例
+  // → 重连 VM → DDS 重放缓冲事件 → 全部跳转重复执行，实测每
+  // 30s~1min 循环一次）。
   socket.listen((data) {
     final text = utf8.decode(data, allowMalformed: true);
     if (text.contains(kEvictToken)) {
@@ -847,6 +855,10 @@ void _onLockConnection(Socket socket) {
         ],
       }));
     }
+  }, onError: (Object _) {
+    // 客户端 RST（Connection reset by peer）：正常现象，忽略。
+  }, onDone: () {
+    // 客户端正常断开，忽略。
   });
 }
 
@@ -1066,6 +1078,13 @@ class _Session {
   bool alive = true;
   int _nextId = 1;
 
+  /// 已处理事件去重表（key → 首见时间），防 DDS 重连重放。
+  static final Map<String, DateTime> _seenEvents = <String, DateTime>{};
+
+  /// 无 ts 签名的去重窗口：窗口内相同 位置 的真实重复点击也会被吞，
+  /// 取 90s 平衡防重放（重连后立即重放）与误杀。
+  static const Duration _eventDedupWindow = Duration(seconds: 90);
+
   Future<void> connect() async {
     try {
       final WebSocket socket =
@@ -1131,7 +1150,23 @@ class _Session {
     final file = data['file']?.toString();
     final line = int.tryParse('${data['line']}');
     final column = int.tryParse('${data['column']}');
-    print('[xbume-ide] 收到跳转请求 ($source): $file:$line:$column');
+    // 去重：DDS/VM 会把缓冲的 postEvent 事件重放给新订阅者（daemon 重启
+    // / 会话重连时实测全部重放），不加去重会导致已处理过的跳转全部重复
+    // 执行。优先用 app 端 payload 的 ts（重放事件 ts 完全相同，可精确
+    // 识别且不误杀真实重复点击）；旧版 app 无 ts 时退化为 签名+时间窗。
+    final ts = int.tryParse('${data['ts']}');
+    final key = ts != null
+        ? 'ts:$ts'
+        : 'sig:$file:$line:$column';
+    final now = DateTime.now();
+    _seenEvents.removeWhere((_, t) => now.difference(t) > _eventDedupWindow);
+    final firstSeen = _seenEvents[key];
+    if (firstSeen != null) {
+      print('[xbume-ide] $_logTs 重放事件已忽略 ($source): $file:$line:$column');
+      return;
+    }
+    _seenEvents[key] = now;
+    print('[xbume-ide] $_logTs 收到跳转请求 ($source): $file:$line:$column');
     await openInIde(file: file, line: line, column: column, mode: ide);
   }
 

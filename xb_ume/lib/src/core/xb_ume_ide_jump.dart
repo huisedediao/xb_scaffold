@@ -42,6 +42,9 @@ abstract final class XBUmeIdeJump {
         'file': file,
         'line': line,
         'column': column ?? 0,
+        // 毫秒时间戳：daemon 侧据此精确识别 DDS 重连时的缓冲事件重放
+        //（重放事件 ts 与原事件完全相同），不误杀真实的重复点击。
+        'ts': DateTime.now().millisecondsSinceEpoch,
       });
       return true;
     } catch (_) {

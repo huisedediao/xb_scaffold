@@ -144,7 +144,8 @@ dart run xb_ume:ide --ide qodercn        # 单次显式指定 IDE（优先级最
 
 | 现象 | 排查步骤 |
 |---|---|
-| 点一次箭头唤起了多个 IDE | 旧版本存在多实例重复消费事件的问题，已加入单实例接管锁：更新脚本后重新 `--install`（新实例自动停止旧实例）即可 |
+| 点一次箭头唤起了多个 IDE | 旧版本存在多实例重复消费事件的问题，已加入单实例接 管锁：更新脚本后重新 `--install`（新实例自动停止旧实例）即可 |
+| 没点箭头也周期性自动跳转（选过几个就几个轮流跳） | 旧版两 bug 叠加：① 锁端口收到客户端 RST 未捕获杀死 daemon，launchd 拉起新实例 → ② DDS 会把缓冲的跳转事件重放给新连接，重放全部重复执行。已修复（锁 socket 吞错 + daemon 事件去重）；更新脚本后重启 daemon 即可，App 侧同步升级 xb_ume 并热重启后可精确去重 |
 | 点箭头只提示「路径已复制到剪贴板」 | daemon 未运行：`--configure --show` 查看状态；或前台运行 `dart run xb_ume:ide --daemon` 看日志 |
 | IDE 打开了文件但没定位到行列 | Android Studio 平台限制，见第六节；或旧版命令行工具不支持 `--column` |
 | 自动发现不到调试会话 | 手动兜底：`dart run xb_ume:ide --uri <ws-uri>`，URI 取自 `flutter run` 控制台输出 |
