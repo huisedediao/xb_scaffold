@@ -767,6 +767,15 @@ final Map<String, DateTime> _seenEvents = <String, DateTime>{};
 /// 62s（崩溃周期 30s~1min），窗口必须覆盖。
 const Duration _eventDedupWindow = Duration(seconds: 90);
 
+/// 带 ts 事件的去重窗口：ts 是 app 端发事件时刻的毫秒时间戳，重放事件
+/// 与原事件 ts 完全相同，可长窗口精确去重——手动重启 daemon 后的重放
+/// 也能拦住（签名窗口拦不住超过 90s 的重放）。窗口长于典型开发日即可。
+const Duration _tsDedupWindow = Duration(hours: 24);
+
+/// 按 key 前缀取对应去重窗口。
+Duration _dedupWindowOf(String key) =>
+    key.startsWith('ts:') ? _tsDedupWindow : _eventDedupWindow;
+
 /// 去重表持久化：daemon 若再被杀重启，内存表清空会导致重启后第一轮
 /// 重放全部放行（实测如此），落盘后跨重启仍可拦截窗口内重放。
 String get _seenPath => '$_home/$kInstallDirName/seen_events.json';
@@ -780,7 +789,7 @@ void _seenLoad() {
       final ms = int.tryParse('$v');
       if (k == null || ms == null) return;
       final t = DateTime.fromMillisecondsSinceEpoch(ms);
-      if (now.difference(t) <= _eventDedupWindow) _seenEvents['$k'] = t;
+      if (now.difference(t) <= _dedupWindowOf('$k')) _seenEvents['$k'] = t;
     });
   } catch (_) {
     // 无文件/损坏：空表起步。
@@ -1214,7 +1223,8 @@ class _Session {
         ? 'ts:$ts'
         : 'sig:$file:$line:$column';
     final now = DateTime.now();
-    _seenEvents.removeWhere((_, t) => now.difference(t) > _eventDedupWindow);
+    _seenEvents
+        .removeWhere((k, t) => now.difference(t) > _dedupWindowOf(k));
     final firstSeen = _seenEvents[key];
     if (firstSeen != null) {
       print('[xbume-ide] $_logTs 重放事件已忽略 ($source): $file:$line:$column');
