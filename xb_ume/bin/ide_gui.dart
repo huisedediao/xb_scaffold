@@ -7414,7 +7414,8 @@ function nwDetailRowHtml(id){
   var it = nwItems.filter(function(x){ return x.id === id; })[0] || {};
   var d = nwDetails[id];
   var head = '<div style="margin:2px 0 6px"><b>' + esc(it.method + ' ' + (it.url || '')) + '</b> '
-    + '<a href="javascript:void(0)" onclick="nwCurl(\'' + esc(id) + '\',this)">复制 cURL</a> '
+    + '<a href="javascript:void(0)" onclick="nwCopyAll(\'' + esc(id) + '\',this)" title="复制本请求全部内容（概要/Query/请求头/请求体/响应头/响应体/错误堆栈/重发响应）">复制全部</a> '
+    + '<a href="javascript:void(0)" onclick="nwCurl(\'' + esc(id) + '\',this)"> 复制 cURL</a> '
     + '<a href="javascript:void(0)" onclick="nwReplay(\'' + esc(id) + '\',this)">重发</a> '
     + '<a href="javascript:void(0)" onclick="nwEditReplay(\'' + esc(id) + '\',this)" title="可改 URL/请求头/请求体后重放，结果自动与原响应逐字段 diff">编辑重放</a></div>';
   if (d && d.error) return head + '<span class="bad">' + esc(d.error) + '</span>';
@@ -7532,6 +7533,53 @@ function nwGetDetail(id, cb){
     .then(function(r){ return r.json(); })
     .then(function(d){ if (d.error) { alert(d.error); return; } nwDetails[id] = d; cb(d); })
     .catch(function(e){ alert(String(e)); });
+}
+function nwCopyAll(id, a){
+  // 复制展开详情的全部内容为纯文本；未加载详情时先取。包含重发响应（如有）。
+  var it = nwItems.filter(function(x){ return x.id === id; })[0];
+  if (!it) return;
+  nwGetDetail(id, function(d){
+    var lines = [];
+    var headLine = (it.method || 'GET') + ' ' + (it.url || '');
+    var meta = [];
+    if (it.time) meta.push('时间: ' + String(it.time).replace('T', ' '));
+    if (it.statusCode) meta.push('状态码: ' + it.statusCode);
+    if (it.durationMs) meta.push('耗时: ' + it.durationMs + 'ms');
+    if (it.error) meta.push('错误: ' + it.error);
+    if (meta.length) headLine += '\n  ' + meta.join('  ');
+    lines.push(headLine);
+    var kv = function(title, rows){
+      if (!rows || !rows.length) return;
+      lines.push('', title + ':');
+      rows.forEach(function(h){ if (h.k) lines.push('  ' + h.k + ': ' + (h.v || '')); });
+    };
+    kv('Query', d.query);
+    kv('请求头', d.requestHeaders);
+    if (d.requestBody) { lines.push('', '请求体:'); lines.push(d.requestBody); }
+    kv('响应头', d.responseHeaders);
+    if (d.responseBody) { lines.push('', '响应体:'); lines.push(d.responseBody); }
+    if (d.error) { lines.push('', '错误:'); lines.push(d.error); }
+    if (d.stack) { lines.push('', '错误堆栈:'); lines.push(d.stack); }
+    var rep = nwReplays[id];
+    if (rep) {
+      lines.push('', '重发响应（电脑直发，不经 app）:');
+      if (rep.error) { lines.push('  重发失败: ' + rep.error); }
+      else {
+        lines.push('  状态码: ' + rep.statusCode);
+        Object.keys(rep.headers || {}).forEach(function(k){
+          lines.push('  ' + k + ': ' + (rep.headers[k] || []).join(', '));
+        });
+        if (rep.body) { lines.push('  响应体:'); lines.push(String(rep.body).split('\n').map(function(l){ return '  ' + l; }).join('\n')); }
+      }
+    }
+    var text = lines.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function(){ copyLogsFallback(text); });
+    } else {
+      copyLogsFallback(text);
+    }
+    var old = a.textContent; a.textContent = '已复制✓'; setTimeout(function(){ a.textContent = old; }, 1500);
+  });
 }
 function nwCurl(id, a){
   var it = nwItems.filter(function(x){ return x.id === id; })[0];
