@@ -79,7 +79,22 @@ String? _argValue(List<String> args, String name) {
   return null;
 }
 
-Future<void> main(List<String> args) async {
+void main(List<String> args) {
+  // Zone 兑底：任何遗漏的未捕获异步异常（如各 socket 的 RST）只记录不退出
+  // —— daemon 被杀 → launchd 拉起新实例 → DDS 重放缓冲跳转事件，用户
+  // 实测每 30s~1min 全部位置重复跳转，宁吞勿崩。
+  runZonedGuarded(
+    () => _mainImpl(args),
+    (Object e, StackTrace s) {
+      // 锁端口的 RST 每秒都在发生（GUI 客户端快速断开），静默避免刷屏；
+      // 其余异常仍记录（事后可查）。
+      if (e is SocketException && e.port == kLockPort) return;
+      print('[xbume-ide] $_logTs 未捕获异常已忽略: $e');
+    },
+  );
+}
+
+Future<void> _mainImpl(List<String> args) async {
   if (args.contains('--install')) {
     await install(args);
     return;
@@ -744,6 +759,47 @@ final Map<String, _Session> _sessions = <String, _Session>{};
 /// 放」时间线）。
 String get _logTs => DateTime.now().toIso8601String().substring(11, 19);
 
+/// 已处理事件去重表（key → 首见时间），防 DDS 重连/重启重放。
+final Map<String, DateTime> _seenEvents = <String, DateTime>{};
+
+/// 无 ts 签名的去重窗口：窗口内相同 位置 的真实重复点击也会被吞，
+/// 取 90s 平衡防重放（重连后立即重放）与误杀。实测重放与原事件相隔
+/// 62s（崩溃周期 30s~1min），窗口必须覆盖。
+const Duration _eventDedupWindow = Duration(seconds: 90);
+
+/// 去重表持久化：daemon 若再被杀重启，内存表清空会导致重启后第一轮
+/// 重放全部放行（实测如此），落盘后跨重启仍可拦截窗口内重放。
+String get _seenPath => '$_home/$kInstallDirName/seen_events.json';
+
+void _seenLoad() {
+  try {
+    final j = jsonDecode(File(_seenPath).readAsStringSync());
+    if (j is! Map) return;
+    final now = DateTime.now();
+    j.forEach((Object? k, Object? v) {
+      final ms = int.tryParse('$v');
+      if (k == null || ms == null) return;
+      final t = DateTime.fromMillisecondsSinceEpoch(ms);
+      if (now.difference(t) <= _eventDedupWindow) _seenEvents['$k'] = t;
+    });
+  } catch (_) {
+    // 无文件/损坏：空表起步。
+  }
+}
+
+void _seenSave() {
+  try {
+    final f = File(_seenPath);
+    f.parent.createSync(recursive: true);
+    f.writeAsStringSync(jsonEncode(<String, Object?>{
+      for (final e in _seenEvents.entries)
+        e.key: e.value.millisecondsSinceEpoch,
+    }));
+  } catch (_) {
+    // 持久化失败不影响去重（仅影响跨重启）。
+  }
+}
+
 /// 已接入 VM service 实例的指纹（isolates id 组合）。
 /// 同一调试实例可能经多个端口可达（如 adb forward 与 flutter 工具代理），
 /// 以指纹去重避免重复接入。
@@ -805,7 +861,12 @@ Future<void> _acquireSingletonLock() async {
     print('[xbume-ide] 警告：互斥端口 $kLockPort 被占用，本次运行无单实例保护。');
     return;
   }
-  server.listen(_onLockConnection);
+  // onError 必须吞：客户端（GUI 状态轮询）收到响应后立即 destroy，若 RST
+  // 到达时机在 accept 前/中，错误走 ServerSocket 的 onError 而非已接受
+  // socket 的 onError——此处不吞会未捕获异常杀死 daemon（实测）。
+  server.listen(_onLockConnection, onError: (Object _) {
+    // accept/底层错误：正常现象，忽略。
+  });
 }
 
 /// 通知当前持锁实例退出（接管协议）。
@@ -863,6 +924,7 @@ void _onLockConnection(Socket socket) {
 }
 
 Future<void> runDaemon(String ide) async {
+  _seenLoad();
   await _acquireSingletonLock();
   _daemonStartedAt = DateTime.now();
   print(
@@ -1078,13 +1140,6 @@ class _Session {
   bool alive = true;
   int _nextId = 1;
 
-  /// 已处理事件去重表（key → 首见时间），防 DDS 重连重放。
-  static final Map<String, DateTime> _seenEvents = <String, DateTime>{};
-
-  /// 无 ts 签名的去重窗口：窗口内相同 位置 的真实重复点击也会被吞，
-  /// 取 90s 平衡防重放（重连后立即重放）与误杀。
-  static const Duration _eventDedupWindow = Duration(seconds: 90);
-
   Future<void> connect() async {
     try {
       final WebSocket socket =
@@ -1166,6 +1221,7 @@ class _Session {
       return;
     }
     _seenEvents[key] = now;
+    _seenSave();
     print('[xbume-ide] $_logTs 收到跳转请求 ($source): $file:$line:$column');
     await openInIde(file: file, line: line, column: column, mode: ide);
   }
