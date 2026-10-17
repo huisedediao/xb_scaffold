@@ -6209,7 +6209,7 @@ const String guiHtml = r'''
         <span class="gsep"></span>
         <span class="muted" style="font-size:12px">按页头会话选择</span>
       </div>
-      <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:300px">
+      <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:380px">
       <button onclick="copyLogs(this)" title="复制当前显示（含过滤）的全部日志到剪贴板">复制</button>
       <button onclick="logTop()" title="滚动到最早日志">到顶</button>
       <button onclick="logBottom()" title="滚动到最新日志；到底后恢复自动跟随新日志">到底</button>
