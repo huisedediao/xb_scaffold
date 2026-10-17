@@ -145,6 +145,8 @@ class XBUmeController extends ChangeNotifier {
     required XBUmeRouteAction action,
     required String routeName,
     String? previousRouteName,
+    String phase = 'unknown',
+    String? stack,
   }) {
     _routes.add(
       XBUmeRouteItem(
@@ -153,6 +155,8 @@ class XBUmeController extends ChangeNotifier {
         action: action,
         routeName: routeName,
         previousRouteName: previousRouteName,
+        phase: phase,
+        stack: stack,
       ),
     );
     _emitChanged();

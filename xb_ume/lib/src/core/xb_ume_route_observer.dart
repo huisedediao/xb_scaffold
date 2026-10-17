@@ -1,3 +1,4 @@
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import '../models/xb_ume_route_item.dart';
@@ -16,6 +17,8 @@ class XBUmeRouteObserver extends NavigatorObserver {
       routeName: _routeName(route),
       previousRouteName:
           previousRoute == null ? null : _routeName(previousRoute),
+      phase: _schedulerPhase(),
+      stack: _stackIfSuspicious(),
     );
   }
 
@@ -27,6 +30,8 @@ class XBUmeRouteObserver extends NavigatorObserver {
       routeName: _routeName(route),
       previousRouteName:
           previousRoute == null ? null : _routeName(previousRoute),
+      phase: _schedulerPhase(),
+      stack: _stackIfSuspicious(),
     );
   }
 
@@ -38,6 +43,8 @@ class XBUmeRouteObserver extends NavigatorObserver {
       routeName: _routeName(route),
       previousRouteName:
           previousRoute == null ? null : _routeName(previousRoute),
+      phase: _schedulerPhase(),
+      stack: _stackIfSuspicious(),
     );
   }
 
@@ -48,10 +55,33 @@ class XBUmeRouteObserver extends NavigatorObserver {
       action: XBUmeRouteAction.replace,
       routeName: newRoute == null ? '<null>' : _routeName(newRoute),
       previousRouteName: oldRoute == null ? null : _routeName(oldRoute),
+      phase: _schedulerPhase(),
+      stack: _stackIfSuspicious(),
     );
   }
 
   String _routeName(Route<dynamic> route) {
     return route.settings.name ?? '${route.runtimeType}';
+  }
+
+  String _schedulerPhase() {
+    try {
+      return SchedulerBinding.instance.schedulerPhase.name;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  /// idle = 用户事件/任务直接触发（正常）；其余 phase（build/layout/动画帧中）
+  /// 触发路由变更是异常重建的高危来源，记录精简堆栈供定位。
+  String? _stackIfSuspicious() {
+    if (_schedulerPhase() == SchedulerPhase.idle.name) return null;
+    final lines = StackTrace.current
+        .toString()
+        .split('\n')
+        .where((l) => l.contains('.dart'))
+        .take(12)
+        .toList();
+    return lines.isEmpty ? null : lines.join('\n');
   }
 }
