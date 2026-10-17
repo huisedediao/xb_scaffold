@@ -5407,6 +5407,16 @@ const Map<String, String> _guiMacosIdeAppNames = <String, String>{
   'code': 'Visual Studio Code',
 };
 
+/// qodercn/qoder-cn 的 CLI 实为 dispatcher：`-g` 直传会被路由给独立安装的
+/// QoderCN CLI（qoderclicn，未装则 exit 127）而非 IDE，导致优先级检测失败
+/// 静默落到下一个 IDE（实测打开成 VSCode）。必须加 `ide` 子命令（走
+/// _run_ide → Qoder CN IDE.app 的原生 launcher）；只装 CLI 未装 IDE 时
+/// 同样 exit 127，正确落到下一优先级。
+const Map<String, List<String>> _guiIdeCliSubcommands = <String, List<String>>{
+  'qodercn': <String>['ide'],
+  'qoder-cn': <String>['ide'],
+};
+
 Future<void> _guiCopyClipboard(String text) async {
   try {
     if (Platform.isMacOS) {
@@ -5483,7 +5493,10 @@ Future<String?> _guiLaunchIde(String path, int line) async {
       }
     }
     if (cli == null) continue;
-    if (await _guiRunChecked(cli, <String>['-g', '$path:$line'])) {
+    if (await _guiRunChecked(cli, <String>[
+      ...(_guiIdeCliSubcommands[ide] ?? const <String>[]),
+      '-g', '$path:$line',
+    ])) {
       // 后台进程唤起不会激活 IDE 窗口，补一次 open -a 把它带到前台。
       if (Platform.isMacOS) {
         final appName = _guiMacosIdeAppNames[ide];

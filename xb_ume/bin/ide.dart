@@ -1199,6 +1199,16 @@ const List<String> _vscodeLikeClis = <String>[
   'code',
 ];
 
+/// qodercn/qoder-cn 的 CLI 实为 dispatcher：`-g` 直传会被路由给独立安装的
+/// QoderCN CLI（qoderclicn，未装则 exit 127）而非 IDE，导致优先级检测失败
+/// 静默落到下一个 IDE（实测打开成 VSCode）。必须加 `ide` 子命令（走
+/// _run_ide → IDE 原生 launcher）；只装 CLI 未装 IDE 时同样 exit 127，
+/// 正确落到下一优先级。
+const Map<String, List<String>> _ideCliSubcommands = <String, List<String>>{
+  'qodercn': <String>['ide'],
+  'qoder-cn': <String>['ide'],
+};
+
 /// 未配置时的默认检测顺序（兼容旧行为：CLI 全部不可用时兜底 Android Studio）。
 const List<String> _defaultIdeOrder = <String>[..._vscodeLikeClis, 'androidStudio'];
 
@@ -1375,7 +1385,10 @@ Future<bool> _launchIde(
     if (resolved == null) {
       return false;
     }
-    return _runChecked(resolved, <String>['-g', location]);
+    return _runChecked(resolved, <String>[
+      ...(_ideCliSubcommands[cli] ?? const <String>[]),
+      '-g', location,
+    ]);
   }
   if (ide == 'androidStudio') {
     // macOS：AS 注册的是 idea:// 协议（未注册 jetbrains://，深链无人处理；

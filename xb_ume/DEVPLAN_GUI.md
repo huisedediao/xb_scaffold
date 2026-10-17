@@ -89,6 +89,7 @@
 - 已知遗留（预存在，非本次引入）：5000 条全局缓冲无会话配额，多来源高频日志会挤掉低频会话的历史行，过滤条件变化触发全量重建时显示会缩水；如需彻底解决可做会话隔离配额
 - 到顶/到底按钮：一键滚到最早/最新日志；到底后距底 <40px 贴底跟随自动恢复（新日志持续可见），到顶后不被新日志拉走；浏览器验证 7 步全过（到底精确到底/到顶不被拉走/过滤态正常）
 - 异常条目复制按钮：每条异常卡片头部行加「复制」链接，复制该条全部内容（头部[框架/未捕获]来源·app·os·×N / summary / desc 多行 / Widget含文件:行 / 栈帔逐行 raw）；缺省字段自动跳行；复用剪贴板写入+execCommand 兑底；浏览器注入 mock 验证 7 步全过（两种 channel、缺字段、剪贴板逐行比对、mock 清理零残留）
+- IDE 跳转打开 VSCode 而非 Qoder 修复：qodercn CLI 实为 dispatcher，`-g` 直传被路由给独立安装的 qoderclicn（未装 exit 127）而非 IDE，优先级检测失败静默落到 code。修复：GUI _guiLaunchIde 与 daemon _launchIde 对 qodercn/qoder-cn 加 `ide` 子命令（qodercn ide -g file:line → IDE 原生 launcher）；验证：curl /api/openide 后 Qoder 前台窗口 = 目标文件、VSCode 未被打开
 
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）

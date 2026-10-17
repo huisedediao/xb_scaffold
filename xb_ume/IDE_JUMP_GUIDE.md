@@ -125,6 +125,7 @@ dart run xb_ume:ide --ide qodercn        # 单次显式指定 IDE（优先级最
 
 - 默认优先级：**Qoder（`qodercn`）→ Cursor（`cursor`）→ Trae（`trae`）→ Windsurf（`windsurf`）→ VS Code（`code`）→ Android Studio（`androidStudio`）**；
 - 顺序中未安装的 IDE 自动跳过；
+- qodercn/qoder-cn 的 CLI 实为 dispatcher：打开 IDE 必须加 `ide` 子命令（`qodercn ide -g file:line`，GUI 与 daemon 已自动处理）——若直接传 `-g` 会被路由给独立安装的 QoderCN CLI（qoderclicn，未装则失败）而非 IDE，导致静默落到下一优先级（实测打开成 VS Code）；
 - 配置缺失/损坏时回退默认顺序；
 - 优先级：`--ide` 显式参数 > `config.json` > 内置默认。
 
