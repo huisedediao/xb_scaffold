@@ -51,7 +51,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
-| Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图 + 截图录制点击；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
+| Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
 
 ## 三、功能详细使用说明
 
@@ -298,7 +298,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 | type | 参数 | 说明 |
 |---|---|---|
-| tap | x, y, phys? | 注入 PointerDown/Up；`phys:true` 为截图物理像素坐标（录制坐标），否则逻辑像素 |
+| tap | x, y, phys? | 注入 PointerDown/Up；`phys:true` 为截图物理像素坐标，否则逻辑像素 |
 | input | text | 向当前焦点输入框注入文本（需先 tap 输入框建立 TextInputConnection，否则报「无焦点输入框」） |
 | swipe | x1,y1,x2,y2, ms?, phys? | 8 段插值 move 模拟拖动/滚动（move 事件带递增 timeStamp 与显式 delta，真实触摸语义，慢拖/fling 均可触发滚动） |
 | wait | ms | 等待 |
@@ -317,7 +317,6 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 1. 场景下拉选已有场景（或直接在 textarea 写步骤 JSON）→ 填「场景名」→「保存」；「格式化」美化 JSON，「删除」删场景；
 2. 「▶ 运行」在选中会话上串行执行；默认失败即停（失败步骤截图落盘），勾「失败继续」跑完所有步骤；执行中「■ 停止」在当前步骤结束后跳过余下；
 3. 报告表实时刷新：步骤号/类型/状态（绿 pass / 红 fail / 灰 skip）/耗时/期望/实际/失败截图链接；
-4. 录制：到「截图」Tab 勾选「录制点击」，点截图任意位置即追加 `{type:tap, x, y, phys:true}` 到录制缓冲（计数显示在「导入录制(N)」按钮上），回「自动化」Tab 点「导入录制」生成步骤 JSON。
 
 **说明**：所有注入都走 `GestureBinding.handlePointerEvent` / `TextInput._instance` eval（零 app 侵入）；macOS 桌面 app 长时间后台后帧调度会冻结（push 动画不完成、新页面元素不上树），跑场景前把 app 置前台；步间默认等 700ms（步骤可加 `waitAfter` 覆盖）让 UI 渲染稳定。
 

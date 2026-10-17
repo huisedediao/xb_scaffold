@@ -6298,10 +6298,9 @@ const String guiHtml = r'''
         <option value="5">每 5 秒</option>
       </select>
       <button onclick="shSave()">下载 PNG</button>
-      <label style="font-size:12px"><input type="checkbox" id="sh-rec" onchange="shRecToggle(this)"> 录制点击</label>
     </div>
     <div class="muted" id="sh-tip" style="display:none;margin-top:8px"></div>
-    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444;cursor:crosshair" onclick="shImgClick(event)" alt="app 截图"></div>
+    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444" alt="app 截图"></div>
     <div class="muted" style="margin-top:6px">实时截图（_flutter.screenshot，debug 模式可用）；自动刷新选低频档，避免截图流量过大。</div>
   </section>
   <section class="page" id="page-wtree">
@@ -6337,9 +6336,8 @@ const String guiHtml = r'''
       <button class="primary" onclick="auRun()">▶ 运行</button>
       <button onclick="auStop()">■ 停止</button>
       <label style="font-size:12px"><input type="checkbox" id="au-cont"> 失败继续</label>
-      <button onclick="auImportRec()">导入录制(<span id="au-rec-n">0</span>)</button>
     </div>
-    <div class="muted" style="margin-top:4px;font-size:12px">步骤 JSON：[{"type":"tap","x":400,"y":280,"phys":true},{"type":"input","text":"hi"},{"type":"swipe","x1":400,"y1":400,"x2":400,"y2":150,"ms":400,"phys":true},{"type":"wait","ms":1000},{"type":"back"},{"type":"navigate","name":"xxx"},{"type":"assertVisible","widget":"页面类名"},{"type":"assertRoute","name":"路由名"},{"type":"assertInstance","class":"类名"},{"type":"assertText","contains":"xx"},{"type":"assertRequest","urlContains":"/api/xx","method":"GET"},{"type":"assertLog","contains":"xx","level":"E"},{"type":"eval","expr":"1+1","expect":"2"}]。tap/swipe 坐标：phys=true 为截图物理像素（录制坐标），否则逻辑像素；assertText/assertRequest/assertLog 反向断言用 notContains / not:true，时间窗用 withinLastMs。</div>
+    <div class="muted" style="margin-top:4px;font-size:12px">步骤 JSON：[{"type":"tap","x":400,"y":280,"phys":true},{"type":"input","text":"hi"},{"type":"swipe","x1":400,"y1":400,"x2":400,"y2":150,"ms":400,"phys":true},{"type":"wait","ms":1000},{"type":"back"},{"type":"navigate","name":"xxx"},{"type":"assertVisible","widget":"页面类名"},{"type":"assertRoute","name":"路由名"},{"type":"assertInstance","class":"类名"},{"type":"assertText","contains":"xx"},{"type":"assertRequest","urlContains":"/api/xx","method":"GET"},{"type":"assertLog","contains":"xx","level":"E"},{"type":"eval","expr":"1+1","expect":"2"}]。tap/swipe 坐标：phys=true 为截图物理像素，否则逻辑像素；assertText/assertRequest/assertLog 反向断言用 notContains / not:true，时间窗用 withinLastMs。</div>
     <textarea id="au-steps" style="width:100%;height:180px;margin-top:6px;font-family:monospace;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--fg)" placeholder='[{"type":"tap","x":400,"y":280,"phys":true}]'></textarea>
     <div style="margin-top:6px"><span id="au-prog" class="muted"></span></div>
     <div id="au-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
@@ -6585,7 +6583,7 @@ function shRefresh(){
     img.style.display = 'none'; tip.style.display = '';
     tip.textContent = '截图失败（app 需 debug 模式且在前台运行；会话可能已断开）';
   };
-  img.onload = function(){ img.style.display = ''; if (!document.getElementById('sh-rec').checked) tip.style.display = 'none'; };
+  img.onload = function(){ img.style.display = ''; tip.style.display = 'none'; };
   img.style.display = 'none';
   img.src = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
 }
@@ -6603,27 +6601,9 @@ function shSave(){
   a.download = 'xbume-shot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
   a.click();
 }
-// ── P10 自动化路径：截图录制点击 + 场景列表/编辑/运行/报告 ──
-var auRecBuf = [];   // 录制点击缓冲（sh-rec 开启时点击截图追加 tap 步骤，物理像素坐标）
+// ── P10 自动化路径：场景列表/编辑/运行/报告 ──
 var auTimer = null;  // 运行状态轮询定时器
 var auTotal = 0;     // 本次运行总步数（POST /api/auto/run 响应）
-function shRecToggle(cb){
-  auRecBuf = [];
-  document.getElementById('au-rec-n').textContent = '0';
-  var tip = document.getElementById('sh-tip');
-  if (cb.checked) { tip.style.display = ''; tip.textContent = '录制点击已开启：点击截图会追加 tap 步骤（物理像素坐标），到「自动化」Tab 导入'; }
-  else { tip.style.display = 'none'; }
-}
-function shImgClick(ev){
-  if (!document.getElementById('sh-rec').checked) return;
-  var img = document.getElementById('sh-img');
-  if (!img.src || img.style.display === 'none') return;
-  // 截图 PNG 为物理像素；img 被缩放显示，按显示比例换算回原图坐标
-  var px = Math.round(ev.offsetX / img.clientWidth * img.naturalWidth);
-  var py = Math.round(ev.offsetY / img.clientHeight * img.naturalHeight);
-  auRecBuf.push({ type: 'tap', x: px, y: py, phys: true });
-  document.getElementById('au-rec-n').textContent = String(auRecBuf.length);
-}
 function auLoad(){
   fetch('/api/auto/list').then(function(r){ return r.json(); }).then(function(j){
     var sel = document.getElementById('au-sel');
@@ -6670,10 +6650,6 @@ function auDelete(){
 function auFmt(){
   var steps = auSteps(); if (!steps) return;
   document.getElementById('au-steps').value = JSON.stringify(steps, null, 2);
-}
-function auImportRec(){
-  if (!auRecBuf.length) { alert('录制缓冲为空：到「截图」Tab 勾选「录制点击」后点击截图'); return; }
-  document.getElementById('au-steps').value = JSON.stringify(auRecBuf, null, 2);
 }
 function auRun(){
   var uri = shUri(); if (!uri) { alert('请先在页头选择 VM 会话'); return; }
