@@ -6198,6 +6198,8 @@ const String guiHtml = r'''
       </div>
       <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:300px">
       <button onclick="copyLogs(this)" title="复制当前显示（含过滤）的全部日志到剪贴板">复制</button>
+      <button onclick="logTop()" title="滚动到最早日志">到顶</button>
+      <button onclick="logBottom()" title="滚动到最新日志；到底后恢复自动跟随新日志">到底</button>
       <button onclick="togglePause(this)">暂停</button>
       <button onclick="clearLogs()">清屏</button>
       <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
@@ -6960,6 +6962,11 @@ function copyLogsFallback(text) { // 非安全上下文兑底：隐藏 textarea 
   document.body.appendChild(ta); ta.select();
   try { document.execCommand('copy'); } catch (e) {}
   document.body.removeChild(ta);
+}
+function logTop(){ var v = document.getElementById('logview'); v.scrollTop = 0; }
+function logBottom(){
+  // 到底后距底 <40px，增量追加的贴底跟随自动恢复（新日志持续可见）
+  var v = document.getElementById('logview'); v.scrollTop = v.scrollHeight;
 }
 function clearLogs(){ logs = []; renderLogs(); }
 function refreshDaemon(){
