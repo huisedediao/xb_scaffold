@@ -80,6 +80,12 @@
 - 根因：合成 PointerMoveEvent 默认 delta=Offset.zero，DragGestureRecognizer 用 event.delta 累计位移判 touchSlop（monodrag.dart _pendingDragOffset += event.delta），永远超不过 18px slop → drag 永不启动；且 timeStamp 全为 Duration.zero，真实触摸时间戳递增（VelocityTracker 算 fling 速度依赖它）
 - 修复：swipe 注入的 move 事件显式传 delta（相邻逻辑像素差）+ 按计划时刻生成递增微秒 timeStamp；验证：单 eval 同步派发探针 offset 0→416（含 fling 惯性）、example swipe-probe 场景前后截图不同且列表真实滚动
 
+## P15 日志多关键字过滤 + 增量渲染（复制友好）`[x]`
+- 多关键字 OR：f-kw 空格分隔多关键字，包含任一即显示（消息+tag 不区分大小写）；输入防抖 200ms
+- 增量渲染：旧实现每条 WS 日志到达都全量 innerHTML 重建 + 无条件拉底——选区被清、视觉闪烁，用户被迫暂停才能复制。新实现：过滤条件签名比对，条件不变时新日志只 insertAdjacentHTML 追加命中行（无命中时 DOM 完全不动）；5000 行环形缓冲截断产生游标缺口时回退全量
+- 滚动跟随改贴底判断（距底 <40px 才拉底）：往上翻阅/选中时不再被强制拉底
+- 验证（浏览器 agent + example 5500 行 hilog/flutter 日志）：多关键字 OR（两不同源词交集命中行全显）、选中 167 字符 10 秒不丢（期间 scrollHeight 增长 922px）、上翻 scrollTop 精确保持、清空过滤全量恢复，全过
+
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）
 - 2026-10-14 P2 完成（reassemble/_collectAllGarbage 探针定论 → /api/runtime/op + 守护 Tab 按钮，真机双 op 通过；热重启不可行已文档说明）
@@ -101,3 +107,4 @@
 - 2026-10-16 P12 完成（四项结构化上下文 + 三断言端到端全通：mock 扩展剧本轮0 tap+wait+assertVisible 真实导航、轮1 assertText 命中 show + assertLog 命中 FlutterNapi(hilog) + assertRequest 反断言 pass、轮2 done；ctx 关闭 log/net 后消息无对应行且轮1 仅剩 assertText；Offstage 修复（back 回首页后 notContains "show" 误报——保活下层页面文本被收集）；p10-smoke 7 步回归全 pass；诊断插曲：合成 tap 失效排查（viewId/resampling/帧冻结逐一排除）最终定性 app 未真实前台——osascript activate 不可靠，CGEvent 真实点击强制前台化后合成 tap 恢复，GUI 日志 buffer 无 HTTP 端点故新增 _guiLogBuffer 全局引用供顶层断言函数读取）
 - 2026-10-16 P13 完成（AI 调用失败/回复不可解析/无有效步骤自动重试：轮内重试 3  次退避 2s/4s/6s，重试耗尽才停，轮卡片显重试次数；f_jlink 用户实录反馈「AI 调用失败或回复为 null 时直接停下」改进；example 双模式故障 mock 验证：HTTP 500 retries=1 恢复、非 JSON 回复 retries=2 恢复，均走完剧本至 done 不中断）
 - 2026-10-16 P14 完成（swipe 滚动失效修复：合成 PointerMoveEvent 默认 delta=Offset.zero 致 DragGestureRecognizer 永远达不到 touchSlop、drag 永不启动；timeStamp 全零影响 fling 速度计算。move 事件补显式 delta + 递增微秒 timeStamp；example swipe-probe 前后截图字节级对比验证滚动生效；f_jlink 真机 AI 驱动滚动待用户回归）
+- 2026-10-17 P15 完成（日志 Tab：多关键字 OR 过滤 + 增量渲染 + 贴底跟随。根因是旧实现每条日志到达全量重建 DOM + 无条件拉底致选区丢失；新实现条件签名比对增量追加、无命中不动 DOM。浏览器 agent 验证四项全过：OR 过滤/选中保持/上翻不拉底/清空恢复）

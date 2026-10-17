@@ -6196,13 +6196,13 @@ const String guiHtml = r'''
         <span class="gsep"></span>
         <span class="muted" style="font-size:12px">按页头会话选择</span>
       </div>
-      <input id="f-kw" placeholder="关键字过滤" oninput="renderLogs()">
+      <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:300px">
       <button onclick="togglePause(this)">暂停</button>
       <button onclick="clearLogs()">清屏</button>
       <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
     </div>
     <div id="logview"><span class="muted">暂无日志</span></div>
-    <div class="muted" style="margin-top:6px">打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
+    <div class="muted" style="margin-top:6px">关键字过滤支持空格分隔多个，日志包含任一关键字即显示（实时生效，新日志到达时增量追加，不打断选中/复制；新行只在底部追加，往上翻不会被强制拉底，需回到底部跟随可点底部或再滚到底）。打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
   </section>
   <section class="page" id="page-exc">
     <div style="display:flex;align-items:center;gap:10px">
@@ -6371,7 +6371,7 @@ function connect() {
     var msg = JSON.parse(e.data);
     if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); }
     else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
-    else if (msg.type === 'logs') { logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) renderLogs(); }
+    else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) logFlushNew(); }
     else if (msg.type === 'cleared') { logs = []; renderLogs(); }
     else if (msg.type === 'exception') { excOnItem(msg.item); }
     else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); }
@@ -6840,51 +6840,103 @@ function refreshDevices(){ ws.send(JSON.stringify({type:'refresh'})); }
 function refreshAll(){ refreshDevices(); refreshDaemon(); }
 function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); renderLogs(); renderHdrDev(); }
 var osByPlatform = { android: 'android', ohos: 'ohos', 'ios-sim': 'ios', 'ios-real': 'ios' };
-function renderLogs() {
-  var view = document.getElementById('logview');
-  var wantDevice = document.getElementById('f-src-device').checked;
-  var wantFlutter = document.getElementById('f-src-flutter').checked;
-  var lv = {}; document.querySelectorAll('.f-lv').forEach(function(c){ lv[c.value] = c.checked; });
-  var kw = document.getElementById('f-kw').value.toLowerCase();
-  var html = '';
+var logSeq = 0, logCursor = 0, logDebounce = null, logLastKey = null;
+function logKws(){
+  return document.getElementById('f-kw').value.trim().toLowerCase()
+    .split(/\s+/).filter(function(s){ return s; });
+}
+function logKwInput(){ // 防抖：连续输入只重建一次
+  if (logDebounce) clearTimeout(logDebounce);
+  logDebounce = setTimeout(function(){ logDebounce = null; renderLogs(); }, 200);
+}
+function logParams() {
+  var p = { wantDevice: document.getElementById('f-src-device').checked,
+    wantFlutter: document.getElementById('f-src-flutter').checked, lv: {},
+    kws: logKws(), vmFilter: vmFilter, selected: selected, devOs: null };
+  document.querySelectorAll('.f-lv').forEach(function(c){ p.lv[c.value] = c.checked; });
   var dev = null;
   if (selected) { devices.forEach(function(d){ if (d.id === selected) dev = d; }); }
-  var devOs = dev ? osByPlatform[dev.platform] : null;
-  logs.forEach(function(l){
-    var isFlutter = l.source && l.source.indexOf('flutter') === 0;
-    // 过滤规则：未选 VM 也未选设备时不打印；选 VM 只看该会话的 Flutter 输出；
-    // 选设备看该设备的日志及其上的 VM；都选则两个源并集（互不约束）。
-    if (isFlutter) {
-      if (!wantFlutter) return;
-      if (vmFilter) {
-        // 选了 VM：仅该会话的输出（不再要求归属于选中设备）。
-        if ((l.tag || '') !== vmFilter) return;
-      } else if (selected) {
-        // 只选设备：仅属于该设备的 VM（来源带设备号则精确匹配，否则按平台推断）。
-        var belong = (l.device && l.device === selected) ||
-          (!l.device && devOs && l.os && l.os === devOs);
-        if (!belong) return;
-      } else {
-        return;
-      }
+  p.devOs = dev ? osByPlatform[dev.platform] : null;
+  // 过滤条件签名：条件没变时新日志可增量追加，条件变了才全量重建
+  p.key = JSON.stringify([p.wantDevice, p.wantFlutter, p.kws, p.vmFilter, p.selected, p.devOs,
+    Object.keys(p.lv).filter(function(k){ return p.lv[k]; }).sort()]);
+  return p;
+}
+function logFilterOne(l, p) {
+  var isFlutter = l.source && l.source.indexOf('flutter') === 0;
+  // 过滤规则：未选 VM 也未选设备时不打印；选 VM 只看该会话的 Flutter 输出；
+  // 选设备看该设备的日志及其上的 VM；都选则两个源并集（互不约束）。
+  if (isFlutter) {
+    if (!p.wantFlutter) return false;
+    if (p.vmFilter) {
+      // 选了 VM：仅该会话的输出（不再要求归属于选中设备）。
+      if ((l.tag || '') !== p.vmFilter) return false;
+    } else if (p.selected) {
+      // 只选设备：仅属于该设备的 VM（来源带设备号则精确匹配，否则按平台推断）。
+      var belong = (l.device && l.device === p.selected) ||
+        (!l.device && p.devOs && l.os && l.os === p.devOs);
+      if (!belong) return false;
     } else {
-      if (!wantDevice) return;
-      if (!lv[l.level]) return;
-      if (selected) {
-        if ((l.device || '') !== selected) return;
-      } else {
-        return;
-      }
+      return false;
     }
-    if (kw && ((l.msg || '') + ' ' + (l.tag || '') + ' ' + (l.app || '')).toLowerCase().indexOf(kw) < 0) return;
-    var t = l.ts || l.rcv || '';
-    var src = l.source + (l.device ? '·' + l.device : '');
-    html += '<div class="lv-' + (l.level || 'I') + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
+  } else {
+    if (!p.wantDevice) return false;
+    if (!p.lv[l.level]) return false;
+    if (p.selected) {
+      if ((l.device || '') !== p.selected) return false;
+    } else {
+      return false;
+    }
+  }
+  // 多关键字 OR：包含任一关键字即保留
+  if (p.kws.length) {
+    var hay = ((l.msg || '') + ' ' + (l.tag || '') + ' ' + (l.app || '')).toLowerCase();
+    var hit = false;
+    for (var i = 0; i < p.kws.length; i++) { if (hay.indexOf(p.kws[i]) >= 0) { hit = true; break; } }
+    if (!hit) return false;
+  }
+  return true;
+}
+function logLineHtml(l) {
+  var t = l.ts || l.rcv || '';
+  var src = l.source + (l.device ? '·' + l.device : '');
+  return '<div class="lv-' + (l.level || 'I') + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
+}
+function renderLogs() {
+  var view = document.getElementById('logview');
+  var p = logParams();
+  // 仅当原本贴底时才跟随滚动：用户往上翻/选中文字时不会被强制拉底
+  var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  var html = '';
+  logs.forEach(function(l){
+    if (l._seq === undefined) l._seq = ++logSeq;
+    if (!logFilterOne(l, p)) return;
+    html += logLineHtml(l);
   });
   view.innerHTML = html || (!vmFilter && !selected
     ? '<span class="muted">未选择 VM 或设备，不显示日志（请在页头右侧选择）</span>'
     : '<span class="muted">暂无日志</span>');
-  if (!paused) view.scrollTop = view.scrollHeight;
+  logLastKey = p.key;
+  logCursor = logs.length ? logs[logs.length - 1]._seq : 0;
+  if (!paused && atBottom) view.scrollTop = view.scrollHeight;
+}
+function logFlushNew() {
+  // 新日志到达：过滤条件未变且无截断缺口时只追加新命中行（DOM 不重建，
+  // 保住选中文字/避免闪烁）；无命中行时 DOM 完全不动。条件已变或缓冲
+  // 被截断（游标失效）则交由 renderLogs 全量重建。
+  var view = document.getElementById('logview');
+  var p = logParams();
+  if (p.key !== logLastKey || (logs.length && logs[0]._seq > logCursor)) { renderLogs(); return; }
+  var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  var html = '';
+  logs.forEach(function(l){
+    if (l._seq <= logCursor) return;
+    logCursor = l._seq;
+    if (logFilterOne(l, p)) html += logLineHtml(l);
+  });
+  if (!html) return;
+  view.insertAdjacentHTML('beforeend', html);
+  if (atBottom) view.scrollTop = view.scrollHeight;
 }
 function togglePause(btn){ paused = !paused; btn.textContent = paused ? '继续' : '暂停'; if (!paused) renderLogs(); }
 function clearLogs(){ logs = []; renderLogs(); }
