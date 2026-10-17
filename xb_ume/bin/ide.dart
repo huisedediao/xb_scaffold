@@ -33,6 +33,24 @@ import 'dart:io';
 /// App 端 XBUmeIdeJump.eventId，双端约定一致。
 const String kEventKind = 'xb_ume:openSource';
 
+/// 事件过期窗口：DDS 重放缓冲事件时 Event.timestamp 保留原值（实测注入
+/// 与重放完全相同），事件年龄超窗口即判定为重放丢弃，无需 app 升级即可
+/// 精确拦住重放。真实事件从 app 发出到 daemon 收到通常 <1s，取 10s 留
+/// 足余量。
+const Duration _staleEventWindow = Duration(seconds: 10);
+
+/// Event.timestamp → 事件年龄（ms）；无/非法字段返回 -1（不过滤）。
+/// 文档标注 timestamp 为微秒，实测 Flutter 引擎给出毫秒，按量级自适应。
+int _eventAgeMs(Object? ts) {
+  final v = int.tryParse('$ts');
+  if (v == null || v <= 0) return -1;
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final ms = v > 100000000000000
+      ? v ~/ 1000 // 微秒级
+      : (v > 100000000000 ? v : v * 1000); // 毫秒级 / 秒级
+  return nowMs - ms;
+}
+
 /// LaunchAgent 标签 / 安装路径约定。
 const String kLabel = 'com.xbume.ide';
 const String kInstallDirName = '.xb_ume_ide';
@@ -1205,6 +1223,13 @@ class _Session {
     // developer.postEvent(eventKind, data) →
     // event.extensionKind + event.extensionData（实测 wire 格式）。
     if (event['extensionKind'] != kEventKind) return;
+    // 事件年龄过滤：DDS 重放保留原始 timestamp，过期即重放丢弃。
+    final age = _eventAgeMs(event['timestamp']);
+    if (age >= 0 && age > _staleEventWindow.inMilliseconds) {
+      print('[xbume-ide] $_logTs 过期事件已忽略 ($source): '
+          'age=${age}ms event=${event['extensionData']}');
+      return;
+    }
     final data = event['extensionData'];
     if (data is! Map<String, Object?>) return;
     _handle(data);
