@@ -7947,6 +7947,21 @@ function clearLogs(){ logs = []; renderLogs(); if (tlOnTab()) tlSchedule(); }
 // 日志与异常不进服务端，避免与已有 WS 通道重复传输。
 var tlOrder = [], tlByKey = {}, tlPaused = false, tlDirtyTimer = null;
 var tlExpanded = {}, tlSubUri = '', tlNewCount = 0, tlKwTimer = null;
+// 按住鼠标（准备点击/拖选）时不重建时间轴 DOM：否则 mousedown 与 mouseup
+// 之间的行被 250ms 合帧刷新替换，click 不会触发，表现为要点两次才生效。
+var tlPointerHeld = false, tlPointerReleaseTimer = null;
+document.addEventListener('mousedown', function(e){
+  if (e.target && e.target.closest && e.target.closest('#tl-body')) {
+    tlPointerHeld = true;
+    if (tlPointerReleaseTimer) { clearTimeout(tlPointerReleaseTimer); tlPointerReleaseTimer = null; }
+  }
+}, true);
+document.addEventListener('mouseup', function(){
+  // 松开后再保留 300ms：click 在 mouseup 之后单独派发，若这期间合帧刷新
+  // 替换了行，click 仍会丢失（仍需点第二次）。
+  if (tlPointerReleaseTimer) clearTimeout(tlPointerReleaseTimer);
+  tlPointerReleaseTimer = setTimeout(function(){ tlPointerHeld = false; tlPointerReleaseTimer = null; }, 300);
+}, true);
 
 function tlOnTab(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'timeline'; }
 function tlUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
@@ -8009,7 +8024,11 @@ function tlSchedule(){
   if (!tlOnTab()) return;
   if (tlPaused) { tlNewCount = 1; tlUpdateNewBar(); return; }
   if (tlDirtyTimer) return;
-  tlDirtyTimer = setTimeout(function(){ tlDirtyTimer = null; tlRender(); }, 250);
+  tlDirtyTimer = setTimeout(function(){
+    tlDirtyTimer = null;
+    if (tlPointerHeld) { tlSchedule(); return; } // 等松手后再渲染
+    tlRender();
+  }, 250);
 }
 
 function tlKwInput(){
