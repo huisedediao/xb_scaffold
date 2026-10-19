@@ -34,3 +34,14 @@
 - 新增电脑端 GUI 工具箱（`bin/ide_gui.dart`，本机 Web GUI、零新增依赖）：`--install` 时随守护脚本一并部署，并在系统常用位置创建桌面入口（macOS 应用程序文件夹 `xb_ume 工具箱.app` 可从 Launchpad/Spotlight 启动，无写权限时装到 `~/Applications`；Windows 桌面快捷方式），另有启动器与 `dart run xb_ume:ide --gui` 命令入口；三个 Tab——设备管理（adb/hdc/Xcode 模拟器/idevice_id 发现与选择）、守护进程（状态查询经互斥端口 status 协议、一键重启、IDE 优先级展示）、日志（选中设备的全量设备日志 + 全部调试会话 stdout/stderr 实时展示，支持来源/级别/关键字过滤、暂停、清屏、导出）；`--uninstall` 一并移除桌面入口。
 - 守护进程增加单实例接管锁：新实例启动时自动停止旧实例（命令行匹配 + 回环端口互斥双保险），只保留最新实例，避免多实例重复消费事件导致一次点击唤起多个 IDE；`--uninstall` 现在会停止所有 daemon 实例后再清理文件。
 - 修复 Windows 下 Android Studio 已安装但检测不到的问题：`_hasAndroidStudio` 原先仅对 macOS 检查二进制路径，现按平台路径（含 `%LOCALAPPDATA%\Programs\Android Studio`）与命令名统一检测；同时修复文档示例中不存在的 `XBUme.app` API，新增 IDE 跳转使用指南 `IDE_JUMP_GUIDE.md`。
+
+## 0.1.6
+
+- 修复 GUI 临时连接泄漏：`/api/sandbox/read`（监听页 50ms~2s 轮询）、`/api/screenshot`（自动刷新）、`/api/wtree`、`/api/wtree/pick`、`/api/sandbox/delete`、`/api/sandbox/upload`、`/api/runtime/op` 七处未关闭 `_SandboxRpc`，长时间使用会累积 WebSocket 与文件描述符（对端 app 进程内同样被占用）；关闭流程统一加超时，避免握手挂住阻塞 HTTP 响应。
+- 修复 GUI 轮询重入：设备轮询加互斥，设备日志进程启动期间占位去重，避免慢设备下重复启动 logcat/hilog 并遗留孤儿进程。
+- 修复 VM 会话失效不恢复：建连失败或连接断开后按轮询周期自动重建（原实现会永久失效到 GUI 重启），握手增加 5s 超时。
+- 修复实例字段写回字符串转义：值中的 `$`、换行、制表符改用 `_escEvalString`，并校验字段名，避免写回失败或写错值。
+- 路由操作新增 `_debugLocked` 保护：App 正在转场时返回 `BUSY`，避免与自身导航竞争触发 Navigator 断言。
+- GUI 退出新增 SIGHUP 处理（关闭终端窗口也会先断开 VM 会话，降低 DDS 死锁风险）。
+- 守护进程：修复实例指纹去重集合从未写入导致跨轮去重失效；`--uri` 模式断线后自动重连（原实现永久挂起）；事件年龄过滤兼容手机与本机时钟偏差；停止旧实例时优先用状态 pid 精确停止，并以 `ps` 严格校验命令行，避免误伤其他调试进程。
+- 修复 Widget 树输出缺段时的 `RangeError`。

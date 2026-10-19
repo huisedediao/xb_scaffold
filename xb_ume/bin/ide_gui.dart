@@ -88,22 +88,32 @@ Future<void> _mainImpl(List<String> args) async {
   state.start();
   // 顶层自动化函数（assertLog / AI 增量日志上下文）共享同一份日志缓冲
   _guiLogBuffer = state.buffer;
-  // 优雅退出：kill（SIGTERM）/Ctrl-C（SIGINT）时先关闭全部 VM 会话连接
-  // 再退出。实测：持有流订阅（Stdout/Extension）的连接被硬切断后，
-  // DDS 会永久死锁（该会话此后对所有客户端无响应），必须主动 close
-  // 让 DDS 清理订阅状态；dispose 加超时兑底，避免 close 握手卡死退出。
-  ProcessSignal.sigterm.watch().first.then((_) async {
+  // 优雅退出：kill（SIGTERM）/Ctrl-C（SIGINT）/关闭终端（SIGHUP）时先
+  // 关闭全部 VM 会话连接再退出。实测：持有流订阅（Stdout/Extension）的
+  // 连接被硬切断后，DDS 会永久死锁（该会话此后对所有客户端无响应），必须
+  // 主动 close 让 DDS 清理订阅状态；dispose 加超时兑底，避免 close 握手
+  // 卡死退出。Windows 无法捕获控制台关闭事件，只能尽量在启动器侧先发
+  // 终止信号；不支持的信号 watch() 会抛 SignalException，这里统一吞掉。
+  Future<void> shutdown() async {
     try {
       await state.dispose().timeout(const Duration(seconds: 2));
     } catch (_) {}
     exit(0);
-  });
-  ProcessSignal.sigint.watch().first.then((_) async {
+  }
+
+  for (final signal in <ProcessSignal>[
+    ProcessSignal.sigterm,
+    ProcessSignal.sigint,
+    ProcessSignal.sighup,
+  ]) {
     try {
-      await state.dispose().timeout(const Duration(seconds: 2));
-    } catch (_) {}
-    exit(0);
-  });
+      signal.watch().first.then((_) {
+        unawaited(shutdown());
+      }).catchError((_) {});
+    } catch (_) {
+      // 当前平台不支持该信号：跳过。
+    }
+  }
   try {
     await for (final req in server) {
       unawaited(handleRequest(state, req));
@@ -428,6 +438,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           case 'pop':
             expr = "(() { $walk"
                 "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                // 转场/构建过程中调用 pop/push 会触发 Navigator 断言，_debugLocked
+                // 是它与自身导航操作互斥的现成标记（debug 模式 eval 可见）。
+                "if (navigators[$nav]._debugLocked) return 'BUSY'; "
                 "final h = navigators[$nav]._history; "
                 "if ($idx < 0 || $idx >= h.length) return 'BAD_IDX'; "
                 "if ($idx != h.length - 1) return 'NOT_TOP'; "
@@ -435,6 +448,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           case 'remove':
             expr = "(() { $walk"
                 "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                "if (navigators[$nav]._debugLocked) return 'BUSY'; "
                 "final h = navigators[$nav]._history; "
                 "if ($idx < 0 || $idx >= h.length) return 'BAD_IDX'; "
                 // 栈里只剩一条（初始路由）时不允许移除，避免整窗白屏。
@@ -444,6 +458,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             final escName = _escEvalString(name);
             expr = "(() { $walk"
                 "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
+                "if (navigators[$nav]._debugLocked) return 'BUSY'; "
                 // 未配置路由表的 Navigator（如纯面板容器）不支持命名路由。
                 "if (navigators[$nav].widget.onGenerateRoute == null) return 'NO_ROUTE_TABLE'; "
                 "try { final r = navigators[$nav]._routeNamed('$escName', arguments: null); "
@@ -1522,6 +1537,10 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.write(
           jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
         );
+      } finally {
+        // 必须显式关闭：该端点被监听页按 50ms~2s 轮询，不关会持续泄漏
+        // WebSocket（本地与 app 进程两侧各占一个 fd）。
+        await rpc.close();
       }
       await req.response.close();
       return;
@@ -1568,6 +1587,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      } finally {
+        await rpc.close();
       }
       await req.response.close();
       return;
@@ -1669,6 +1690,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      } finally {
+        await rpc.close();
       }
       await req.response.close();
       return;
@@ -1683,8 +1706,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      final rpc = _SandboxRpc(uri);
       try {
-        final rpc = _SandboxRpc(uri);
         if (op == 'reassemble') {
           // service extension 线上协议：扩展名直接作 method（callServiceExtension
           // 不是 JSON-RPC 方法名，实测 Unknown method）。
@@ -1711,6 +1734,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
         );
         await req.response.close();
+      } finally {
+        await rpc.close();
       }
       return;
     }
@@ -1722,8 +1747,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      final rpc = _SandboxRpc(uri);
       try {
-        final rpc = _SandboxRpc(uri);
         final r = await rpc.rawRpc('_flutter.screenshot');
         final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
         if (b64.isEmpty) throw '截图响应为空（app 需 debug 模式且前台运行）';
@@ -1737,6 +1762,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
         );
         await req.response.close();
+      } finally {
+        await rpc.close();
       }
       return;
     }
@@ -1765,9 +1792,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           return;
         }
         final parts = s.split('\u0003');
-        // 末两段为空行分隔与尾部元数据（dpr\u0001物理宽\u0001物理高）
+        // 末两段为空行分隔与尾部元数据（dpr\u0001物理宽\u0001物理高）；
+        // 输出异常（空/缺段）时按空树处理，避免 sublist 越界。
         final meta = parts.length >= 2 ? parts[parts.length - 1].split('\u0001') : <String>[];
-        final rows = parts.sublist(0, parts.length - 2);
+        final rows = parts.length >= 2
+            ? parts.sublist(0, parts.length - 2)
+            : const <String>[];
         final nodes = <Map<String, Object?>>[];
         for (final r in rows) {
           final f = r.split('\u0001');
@@ -1800,6 +1830,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      } finally {
+        await rpc.close();
       }
       await req.response.close();
       return;
@@ -1878,6 +1910,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+      } finally {
+        await rpc.close();
       }
       await req.response.close();
       return;
@@ -2464,6 +2498,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 字段名会直接拼进 evaluate 表达式，只允许合法标识符（含 _ 私有字段）。
+      if (!RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$').hasMatch(field)) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+          <String, Object?>{'ok': false, 'error': '字段名不合法：$field'},
+        ));
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final iso = await rpc.isolateId();
@@ -2485,7 +2529,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           case 'null':
             literal = 'null';
           default:
-            literal = "'${_escPath(value)}'";
+            // 必须用 _escEvalString：值里的 $（字符串插值）、换行、制表符
+            // 不转义会生成非法表达式或写错值。
+            literal = "'${_escEvalString(value)}'";
         }
         // 在实例上下文 eval：this 绑定为该实例，直接给字段赋值。
         final result = await rpc.rawRpc('evaluate', {
@@ -2678,6 +2724,10 @@ class GuiState {
   Timer? _pollTimer;
   Timer? _flushTimer;
 
+  /// poll 重入保护：3s 定时器与前端「刷新」都会触发 poll，设备命令变慢时
+  /// 两轮并发会重复启动设备日志进程（后者覆盖 map，前者成孤儿进程）。
+  bool _polling = false;
+
   /// 异常缓冲（全部会话汇总，最新在末尾；供异常 Tab 与 /api/exceptions）。
   final List<Map<String, Object?>> _exceptions = <Map<String, Object?>>[];
   int _excSeq = 0;
@@ -2687,6 +2737,9 @@ class GuiState {
 
   /// 每台设备一个日志流进程（所有设备并行采集，选择器只做前端过滤）。
   final Map<String, Process> _deviceLogProcesses = <String, Process>{};
+
+  /// 正在启动中的设备 id（Process.start 未返回前占位，防并发重入）。
+  final Set<String> _deviceLogStarting = <String>{};
   final Set<String> _deviceLogStartFailed = <String>{};
   List<Map<String, String>> devices = <Map<String, String>>[];
   String? selectedId;
@@ -2747,22 +2800,28 @@ class GuiState {
 
   /// 轮询设备列表并维护日志源生命周期（全部设备并行采集）。
   Future<void> poll() async {
+    if (_polling) return;
+    _polling = true;
     try {
-      devices = await discoverDevices();
-    } catch (e) {
-      print('[xbume-gui] 设备发现异常: $e');
-    }
-    broadcast(<String, Object?>{'type': 'devices', 'devices': devices});
-    final ids = devices.map((d) => d['id'] ?? '').toSet();
-    for (final device in devices) {
-      await _ensureDeviceLogSource(device);
-    }
-    for (final id in _deviceLogProcesses.keys.toList()) {
-      if (!ids.contains(id)) {
-        await _stopDeviceLogSource(id);
+      try {
+        devices = await discoverDevices();
+      } catch (e) {
+        print('[xbume-gui] 设备发现异常: $e');
       }
+      broadcast(<String, Object?>{'type': 'devices', 'devices': devices});
+      final ids = devices.map((d) => d['id'] ?? '').toSet();
+      for (final device in devices) {
+        await _ensureDeviceLogSource(device);
+      }
+      for (final id in _deviceLogProcesses.keys.toList()) {
+        if (!ids.contains(id)) {
+          await _stopDeviceLogSource(id);
+        }
+      }
+      await _syncVmSessions();
+    } finally {
+      _polling = false;
     }
-    await _syncVmSessions();
   }
 
   /// 选择设备只影响前端过滤，不再切换日志源/清空缓冲。
@@ -2814,7 +2873,9 @@ class GuiState {
 
   Future<void> _ensureDeviceLogSource(Map<String, String> device) async {
     final id = device['id'] ?? '';
-    if (id.isEmpty || _deviceLogProcesses.containsKey(id)) {
+    if (id.isEmpty ||
+        _deviceLogProcesses.containsKey(id) ||
+        _deviceLogStarting.contains(id)) {
       return;
     }
     final command = _deviceLogCommand(device);
@@ -2822,6 +2883,7 @@ class GuiState {
       return;
     }
     final source = _sourceForPlatform(device['platform'] ?? '');
+    _deviceLogStarting.add(id);
     try {
       final process = await Process.start(
         command.first,
@@ -2848,6 +2910,8 @@ class GuiState {
       if (_deviceLogStartFailed.add(id)) {
         addDeviceLog(id, source, '[GUI] 无法启动 ${command.first}（未安装或不在 PATH）: $e');
       }
+    } finally {
+      _deviceLogStarting.remove(id);
     }
   }
 
@@ -2881,8 +2945,15 @@ class GuiState {
     for (final uri in uris) {
       for (final stream in const <String>['Stdout', 'Stderr', 'Extension']) {
         final key = '$uri|$stream';
-        if (_vmSessions.containsKey(key)) {
-          continue;
+        final existing = _vmSessions[key];
+        if (existing != null) {
+          if (!existing.needsReconnect) {
+            continue;
+          }
+          // 建连失败/连接已断开：丢弃后重建，下一轮 poll（3s）自然重试。
+          // 旧实现把失败会话留在 map 里，该 uri 的这条流会永久失效到 GUI
+          // 重启（app 重启/拔线重插后日志与异常通道不再恢复）。
+          _vmSessions.remove(key)?.close();
         }
         // 多个 Flutter 应用同时接入时，用会话来源（如 adb:xxx）区分输出。
         final label = (labels[uri] != null && labels[uri]!.isNotEmpty)
@@ -3134,6 +3205,12 @@ class _VmSession {
   /// Extension 流的原始事件回调（仅 streamId=Extension 时使用）。
   final void Function(Map<String, Object?> event)? onEvent;
   WebSocket? _socket;
+
+  /// 建连进行中（防止重复 connect）。
+  bool _connecting = false;
+
+  /// 需要重建：既包括建连失败（_socket 始终为空），也包括连上后断开。
+  bool get needsReconnect => !_connecting && _socket == null;
   String _remainder = '';
 
   /// VM 所属平台（getVM 的 operatingSystem：android/ohos/ios/macos...），
@@ -3145,8 +3222,14 @@ class _VmSession {
   String? appName;
 
   Future<void> connect() async {
+    if (_connecting) return;
+    _connecting = true;
     try {
-      final socket = await WebSocket.connect(uri);
+      // 死会话（app 已断但端口仍在）会让握手挂起，必须限时。
+      final socket = await WebSocket.connect(uri).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw '连接 VM service 超时',
+      );
       _socket = socket;
       socket.listen(
         _onData,
@@ -3172,7 +3255,14 @@ class _VmSession {
       }));
     } catch (e) {
       print('[xbume-gui] VM service 连接失败 $uri($streamId): $e');
+      try {
+        await _socket?.close();
+      } catch (_) {
+        // ignored
+      }
       _socket = null;
+    } finally {
+      _connecting = false;
     }
   }
 
@@ -5184,10 +5274,18 @@ class _SandboxRpc {
   }
 
   /// 关闭连接（请求方在 finally 中调用）。
+  /// close 握手可能因对端无响应而挂住，加超时兑底（超时后 socket 由
+  /// 底层销毁，不再阻塞 HTTP 响应）。
   Future<void> close() async {
-    await _sub?.cancel();
+    // 任何一步失败/挂住都不能让调用方的 finally 卡死（否则 HTTP 响应
+    // 永远不 close，前端轮询直接挂起）。
     try {
-      await _socket?.close();
+      await _sub?.cancel().timeout(const Duration(seconds: 1));
+    } catch (_) {
+      // ignored
+    }
+    try {
+      await _socket?.close().timeout(const Duration(seconds: 2));
     } catch (_) {
       // ignored
     }
@@ -5380,15 +5478,37 @@ Future<void> killOtherDaemons() async {
           "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
       await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
     } else {
+      // 优先用 daemon 状态里的 pid 精确停止；无状态时再扫进程命令行兜底。
+      final status = await queryDaemonStatus();
+      final statusPid = int.tryParse('${status?['pid'] ?? ''}');
+      final targets = <int>{};
+      if (statusPid != null && statusPid > 0 && statusPid != pid) {
+        targets.add(statusPid);
+      }
       final pgrep = await Process.run(
         'pgrep',
         <String>['-f', r'ide\.dart.*--daemon'],
       );
       for (final line in pgrep.stdout.toString().split('\n')) {
         final other = int.tryParse(line.trim());
-        if (other != null && other != pid) {
-          await Process.run('kill', <String>['-9', '$other']);
+        if (other == null || other == pid || targets.contains(other)) {
+          continue;
         }
+        // 严格校验命令行：只杀部署目录下的 ide.dart --daemon，避免误伤
+        // 本机其他含 ide.dart 字样的调试进程（用户机器上常同时开着多个）。
+        final ps = await Process.run(
+          'ps',
+          <String>['-p', '$other', '-o', 'command='],
+        );
+        final cmdline = ps.stdout.toString().trim();
+        if (!cmdline.contains('$_home/.xb_ume_ide/ide.dart') ||
+            !cmdline.contains('--daemon')) {
+          continue;
+        }
+        targets.add(other);
+      }
+      for (final target in targets) {
+        await Process.run('kill', <String>['-9', '$target']);
       }
     }
   } catch (_) {

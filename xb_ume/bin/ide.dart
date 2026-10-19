@@ -780,6 +780,12 @@ String get _logTs => DateTime.now().toIso8601String().substring(11, 19);
 /// 已处理事件去重表（key → 首见时间），防 DDS 重连/重启重放。
 final Map<String, DateTime> _seenEvents = <String, DateTime>{};
 
+/// 已处理事件里最大的 app 端 ts（毫秒）。用于区分「新事件」与「重放」：
+/// 事件 ts 与 Event.timestamp 都来自手机时钟，手机时钟慢于本机超过
+/// _staleEventWindow 时，真实新事件会被年龄过滤误杀；而比历史最大值
+/// 更新的 ts 只可能是新事件（重放事件 ts 必然更旧）。
+int _newestEventTs = 0;
+
 /// 无 ts 签名的去重窗口：窗口内相同 位置 的真实重复点击也会被吞，
 /// 取 90s 平衡防重放（重连后立即重放）与误杀。实测重放与原事件相隔
 /// 62s（崩溃周期 30s~1min），窗口必须覆盖。
@@ -807,7 +813,13 @@ void _seenLoad() {
       final ms = int.tryParse('$v');
       if (k == null || ms == null) return;
       final t = DateTime.fromMillisecondsSinceEpoch(ms);
-      if (now.difference(t) <= _dedupWindowOf('$k')) _seenEvents['$k'] = t;
+      if (now.difference(t) > _dedupWindowOf('$k')) return;
+      _seenEvents['$k'] = t;
+      final key = '$k';
+      if (key.startsWith('ts:')) {
+        final ts = int.tryParse(key.substring(3));
+        if (ts != null && ts > _newestEventTs) _newestEventTs = ts;
+      }
     });
   } catch (_) {
     // 无文件/损坏：空表起步。
@@ -855,9 +867,19 @@ Future<void> _killOtherDaemons() async {
       );
       for (final line in pgrep.stdout.toString().split('\n')) {
         final other = int.tryParse(line.trim());
-        if (other != null && other != pid) {
-          await Process.run('kill', <String>['-9', '$other']);
+        if (other == null || other == pid) continue;
+        // 严格校验命令行：只停部署目录下的 ide.dart --daemon，避免模糊
+        // 模式误伤本机其他调试进程。
+        final ps = await Process.run(
+          'ps',
+          <String>['-p', '$other', '-o', 'command='],
+        );
+        final cmdline = ps.stdout.toString().trim();
+        if (!cmdline.contains('$_home/$kInstallDirName/ide.dart') ||
+            !cmdline.contains('--daemon')) {
+          continue;
         }
+        await Process.run('kill', <String>['-9', '$other']);
       }
     }
   } catch (_) {
@@ -969,11 +991,23 @@ Future<void> runDaemon(String ide) async {
 }
 
 Future<void> _runSingleSession(String wsUrl, String ide) async {
-  final session = _Session(wsUrl, 'manual', ide);
-  _sessions[wsUrl] = session;
-  await session.connect();
-  print('[xbume-ide] 手动监听中，Ctrl-C 退出。');
-  await Completer<void>().future;
+  // 连接失败/掉线后自动重连，避免 `--uri` 模式断一次就永久挂起。
+  while (true) {
+    final session = _Session(wsUrl, 'manual', ide);
+    _sessions[wsUrl] = session;
+    await session.connect();
+    if (!session.alive) {
+      _sessions.remove(wsUrl);
+      print('[xbume-ide] 连接失败，3s 后重试：$wsUrl');
+      await Future<void>.delayed(const Duration(seconds: 3));
+      continue;
+    }
+    print('[xbume-ide] 手动监听中，Ctrl-C 退出。');
+    await session.closed;
+    _sessions.remove(wsUrl);
+    print('[xbume-ide] 会话断开，3s 后重连：$wsUrl');
+    await Future<void>.delayed(const Duration(seconds: 3));
+  }
 }
 
 Future<void> _poll(String ide) async {
@@ -995,6 +1029,12 @@ Future<void> _poll(String ide) async {
       );
       _sessions[entry.key] = session;
       await session.connect();
+      if (session.alive) {
+        // 只有接成功才记指纹；失败从会话表移除，下一轮重试。
+        _knownFingerprints.add(entry.value.$2);
+      } else {
+        _sessions.remove(entry.key);
+      }
     }
     // 清理已断开会话。
     final dead = _sessions.values.where((s) => !s.alive).toList();
@@ -1167,6 +1207,10 @@ class _Session {
   bool alive = true;
   int _nextId = 1;
 
+  /// 会话断开时完成（连接失败也会先走 _close），供 --uri 模式等待重连。
+  final Completer<void> _closed = Completer<void>();
+  Future<void> get closed => _closed.future;
+
   Future<void> connect() async {
     try {
       final WebSocket socket =
@@ -1223,15 +1267,23 @@ class _Session {
     // developer.postEvent(eventKind, data) →
     // event.extensionKind + event.extensionData（实测 wire 格式）。
     if (event['extensionKind'] != kEventKind) return;
-    // 事件年龄过滤：DDS 重放保留原始 timestamp，过期即重放丢弃。
-    final age = _eventAgeMs(event['timestamp']);
-    if (age >= 0 && age > _staleEventWindow.inMilliseconds) {
-      print('[xbume-ide] $_logTs 过期事件已忽略 ($source): '
-          'age=${age}ms event=${event['extensionData']}');
-      return;
-    }
     final data = event['extensionData'];
     if (data is! Map<String, Object?>) return;
+    // 事件年龄过滤：DDS 重放保留原始 timestamp，过期即重放丢弃。
+    // 事件 ts 与 timestamp 都来自手机时钟，手机时钟慢于本机超过窗口时
+    // 真实新事件也会被误杀；比历史最大 ts 更新的只可能是新事件，跳过年龄
+    // 判断（重放事件 ts 必然更旧）。
+    final payloadTs = int.tryParse('${data['ts']}');
+    final newerThanSeen =
+        payloadTs != null && _newestEventTs > 0 && payloadTs > _newestEventTs;
+    if (!newerThanSeen) {
+      final age = _eventAgeMs(event['timestamp']);
+      if (age >= 0 && age > _staleEventWindow.inMilliseconds) {
+        print('[xbume-ide] $_logTs 过期事件已忽略 ($source): '
+            'age=${age}ms event=$data');
+        return;
+      }
+    }
     _handle(data);
   }
 
@@ -1256,6 +1308,9 @@ class _Session {
       return;
     }
     _seenEvents[key] = now;
+    if (ts != null && ts > _newestEventTs) {
+      _newestEventTs = ts;
+    }
     _seenSave();
     print('[xbume-ide] $_logTs 收到跳转请求 ($source): $file:$line:$column');
     await openInIde(file: file, line: line, column: column, mode: ide);
@@ -1272,6 +1327,9 @@ class _Session {
     final fp = fingerprint;
     if (fp != null) {
       _knownFingerprints.remove(fp);
+    }
+    if (!_closed.isCompleted) {
+      _closed.complete();
     }
     print('[xbume-ide] 会话断开 $source');
   }
