@@ -343,6 +343,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         return;
       }
       final rpc = _SandboxRpc(uri);
+      final sw = Stopwatch()..start();
       try {
         // 单行 IIFE（VM eval 对多行 IIFE 会返回未调用的 Closure）。
         // 在 navigator.dart 库上下文执行：可访问 NavigatorState 的私有 _history。
@@ -394,7 +395,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           jsonEncode(<String, Object?>{'navigators': navigators}),
         );
         await req.response.close();
+        final routeCount = navigators.fold<int>(
+            0, (n, m) => n + ((m['routes'] as List?)?.length ?? 0));
+        _routeDebugLog('routestack',
+            'port=${_vmPortTag(uri)} navs=${navigators.length} routes=$routeCount ms=${sw.elapsedMilliseconds}');
       } catch (e) {
+        _routeDebugLog('routestack',
+            'port=${_vmPortTag(uri)} error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}');
         req.response.statusCode = HttpStatus.badGateway;
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode({'error': e.toString()}));
@@ -423,6 +430,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         return;
       }
       final rpc = _SandboxRpc(uri);
+      final sw = Stopwatch()..start();
       try {
         // Navigator 收集逻辑与 /api/routestack 一致（单行 IIFE，
         // navigator.dart 库上下文可访问私有 _history）。
@@ -475,7 +483,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           jsonEncode(<String, Object?>{'ok': true, 'result': reply}),
         );
         await req.response.close();
+        _routeDebugLog('routeop',
+            'port=${_vmPortTag(uri)} op=$op nav=$nav idx=$idx name=${name.isEmpty ? '-' : name} -> $reply ms=${sw.elapsedMilliseconds}');
       } catch (e) {
+        _routeDebugLog('routeop',
+            'port=${_vmPortTag(uri)} op=$op nav=$nav idx=$idx error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}');
         req.response.statusCode = HttpStatus.badGateway;
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode({'error': e.toString()}));
@@ -845,8 +857,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
 
       final rpc = _SandboxRpc(uri);
+      final sw = Stopwatch()..start();
       try {
         // 第 1 步：收集该路由子树的候选 widget（浅→深；单行 IIFE）。
+        // 只从该路由自己的 ModalRoute.subtreeContext 往下扫，不再用
+        // ModalRoute.of(e) 遍历整棵树：后者会给树里每个 Element 注册
+        // _ModalScopeStatus 依赖（相当于让全树的 didChangeDependencies
+        // 在每次路由状态变化时被触发），可能诱发业务代码在构建/转场期间
+        // 执行导航或换桶，出现 framework 的「check that it really is our
+        // descendant」断言（UnmanagedRestorationScope.notifyClients）。
         final expr =
             "(() { final root = WidgetsBinding.instance.renderViewElement; "
             "if (root == null) return 'NO_ROOT'; "
@@ -856,12 +875,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             "e.visitChildren(walkN); } "
             "root.visitChildren(walkN); "
             "if ($nav < 0 || $nav >= navigators.length) return 'BAD_NAV'; "
-            "if ($idx < 0 || $idx >= navigators[$nav]._history.length) return 'BAD_IDX'; "
-            "final route = navigators[$nav]._history[$idx].route; "
+            "final h = navigators[$nav]._history; "
+            "if ($idx < 0 || $idx >= h.length) return 'BAD_IDX'; "
+            "final route = h[$idx].route; "
+            "if (route is! ModalRoute) return 'NO_SUBTREE'; "
+            "final ctx = route.subtreeContext; "
+            "if (ctx is! Element || !ctx.mounted) return 'NO_SUBTREE'; "
             "final cands = <Widget>[]; "
-            "void walk(Element e) { if (identical(ModalRoute.of(e), route)) cands.add(e.widget); "
-            "e.visitChildren(walk); } "
-            "root.visitChildren(walk); "
+            "void walk(Element e) { cands.add(e.widget); e.visitChildren(walk); } "
+            "walk(ctx); "
             "return cands.length > 250 ? cands.sublist(0, 250) : cands; })()";
         final libId = await rpc
             .libraryId('package:flutter/src/widgets/navigator.dart');
@@ -873,8 +895,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         });
         final listKind = listRes['kind']?.toString();
         if (listKind == 'String') {
-          // NO_ROOT / BAD_NAV / BAD_IDX：直接作为错误提示。
-          throw listRes['valueAsString']?.toString() ?? '定位失败';
+          // NO_ROOT / BAD_NAV / BAD_IDX / NO_SUBTREE：直接作为错误提示。
+          final why = listRes['valueAsString']?.toString() ?? '定位失败';
+          _routeDebugLog('routelocate',
+              'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} -> $why ms=${sw.elapsedMilliseconds}');
+          throw why;
         }
         if (listKind != 'List') {
           throw '候选收集失败（kind=$listKind）';
@@ -935,6 +960,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final line = _findClassDeclLine(file, clsName);
           String? ideError;
           if (open) ideError = await _guiLaunchIde(file, line);
+          _routeDebugLog('routelocate',
+              'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} -> $clsName ($file:$line) scanned=$scanned fw=$framework ms=${sw.elapsedMilliseconds}');
           req.response.headers.contentType = ContentType.json;
           req.response.write(
             jsonEncode(<String, Object?>{
@@ -952,6 +979,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             : '无法定位：${scanned - framework} 个用户类均未解析到本机文件（依赖包可能不在本机）';
       } catch (e, st) {
         stderr.writeln('[routelocate] $e\n$st');
+        _routeDebugLog('routelocate',
+            'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}');
         await fail(e);
       } finally {
         await rpc.close();
@@ -3101,6 +3130,7 @@ class GuiState {
     if (_exceptions.length > 200) {
       _exceptions.removeAt(0);
     }
+    _dumpRouteTraceForException(rec, channel, label);
     broadcast(<String, Object?>{'type': 'exception', 'item': rec});
   }
 
@@ -5386,6 +5416,72 @@ void _vmSelLog(String tag, String msg) {
 /// 上一轮 /api/daemon 返回的会话集合签名（source|fp 排序拼接），用于只记变化。
 var _lastDaemonSessionsSig = '';
 
+// ---------------------------------------------------------------------------
+// 路由调试日志（路由栈 Tab 异常复现用）
+// ---------------------------------------------------------------------------
+
+/// 路由调试日志：~/.xb_ume_ide/logs/route_debug.log（超 2MB 轮转为 .1）。
+/// 记录路由栈读取/路由定位/路由操作的耗时与结果；框架异常到达时追加最近
+/// 操作快照，用于复现「切到路由栈 Tab 后操作手机出现 framework 断言」时
+/// 对齐电脑端操作与手机端异常的时间线。
+String get _routeDebugLogFile => '$_home/.xb_ume_ide/logs/route_debug.log';
+
+/// 最近路由操作（异常快照用，最多 80 条）。
+final List<String> _routeTrace = <String>[];
+
+/// uri 只取端口，避免把 VM service token 写进日志。
+String _vmPortTag(String uri) {
+  final port = Uri.tryParse(uri)?.port;
+  return port == null || port == 0 ? '?' : '$port';
+}
+
+String _oneLine(Object e) =>
+    e.toString().replaceAll('\n', ' ').replaceAll('\r', ' ');
+
+void _routeDebugLog(String tag, String msg, {bool trace = true}) {
+  final line = '${DateTime.now().toIso8601String()} [$tag] $msg';
+  if (trace) {
+    _routeTrace.add(line);
+    if (_routeTrace.length > 80) _routeTrace.removeAt(0);
+  }
+  try {
+    final dir = Directory('$_home/.xb_ume_ide/logs');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final f = File(_routeDebugLogFile);
+    if (f.existsSync() && f.lengthSync() > 2 * 1024 * 1024) {
+      f.renameSync('${f.path}.1');
+    }
+    f.writeAsStringSync('$line\n', mode: FileMode.append, flush: true);
+  } catch (_) {
+    // 日志写入失败不影响主流程
+  }
+}
+
+/// 框架异常到达时把最近路由操作追加到日志，便于直接对齐时间线
+///（assertion 本身仍走 /api/exceptions 与设备日志）。
+void _dumpRouteTraceForException(
+    Map<String, Object?> rec, String channel, String label) {
+  final summary =
+      (rec['summary'] ?? '').toString().replaceAll('\n', ' ').trim();
+  final frames = (rec['stack'] as List? ?? const <Object?>[])
+      .take(3)
+      .map((f) => f is Map ? (f['raw'] ?? '').toString() : '$f')
+      .join(' | ')
+      .replaceAll('\n', ' ');
+  final sum = summary.length > 200 ? '${summary.substring(0, 200)}…' : summary;
+  final head = frames.length > 300 ? '${frames.substring(0, 300)}…' : frames;
+  _routeDebugLog(
+      'exception/$channel',
+      'source=$label summary=$sum'
+      '${head.isEmpty ? '' : ' firstFrames=$head'}');
+  final recent = _routeTrace.length > 25
+      ? _routeTrace.sublist(_routeTrace.length - 25)
+      : List<String>.of(_routeTrace);
+  for (final line in recent) {
+    _routeDebugLog('exception/ctx', line, trace: false);
+  }
+}
+
 /// 查询 daemon 状态（经互斥端口 status 协议）。未运行返回 null。
 Future<Map<String, Object?>?> queryDaemonStatus() async {
   Socket? socket;
@@ -7503,6 +7599,11 @@ function rtToInstances(name){
   document.getElementById('in-cls').value = name;
   inFind();
 }
+function rtLocErr(m){
+  if (m === 'NO_SUBTREE') return '该路由页面不在树上（maintainState=false 或转场尚未完成）';
+  if (m === 'BAD_NAV' || m === 'BAD_IDX') return '路由栈已变化，请刷新重试';
+  return m || '未定位到文件';
+}
 function rtResolve(nav, i){
   var uri = rtUri();
   if (!uri) return;
@@ -7511,7 +7612,7 @@ function rtResolve(nav, i){
     .then(function(d){
       var cell = document.getElementById('rtf-' + nav + '-' + i);
       if (!cell) return;
-      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(d.error || '未定位到文件') + '">—</span>'; var re = document.getElementById('rti-' + nav + '-' + i); if (re) re.innerHTML = '<span class="muted">\\</span>'; return; }
+      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(rtLocErr(d.error)) + '">—</span>'; var re = document.getElementById('rti-' + nav + '-' + i); if (re) re.innerHTML = '<span class="muted">\\</span>'; return; }
       var fileName = d.file.split('/').pop();
       var pos = fileName + (d.line ? ':' + d.line : '');
       cell.innerHTML = '<span title="' + esc(d.file + (d.className ? '（' + d.className + '）' : '')) + '">' + esc(pos) + '</span>';
