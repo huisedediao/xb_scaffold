@@ -2123,6 +2123,33 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // AI 运行测试报告下载：优先取运行结束落盘的文件，无文件时现场生成兜底
+    if (path == '/api/ai/report') {
+      final saved = _ai.runId.isEmpty
+          ? null
+          : File('$_autoScenariosDir/reports/${_ai.runId}.html');
+      final hasSaved = saved != null && saved.existsSync();
+      if (!hasSaved && _ai.rounds.isEmpty) {
+        req.response.statusCode = HttpStatus.notFound;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': '暂无可导出的 AI 运行报告'}));
+        await req.response.close();
+        return;
+      }
+      req.response.headers.contentType = ContentType.html;
+      req.response.headers.set(
+          'Content-Disposition',
+          'attachment; filename="xb_ume_ai_report_'
+          '${_ai.runId.isEmpty ? DateTime.now().millisecondsSinceEpoch : _ai.runId}.html"');
+      if (hasSaved) {
+        await saved.openRead().pipe(req.response);
+      } else {
+        req.response.write(_aiReportHtml());
+      }
+      await req.response.close();
+      return;
+    }
     if (path == '/api/ai/stop' && req.method == 'POST') {
       _ai.stopReq = true;
       req.response.headers.contentType = ContentType.json;
@@ -4155,6 +4182,7 @@ class _AiRunState {
   var cur = 0;
   List<_AiRound> rounds = [];
   DateTime startedAt = DateTime.now();
+  DateTime? endedAt; // 运行结束时间（报告总耗时用）
   int logCursorMs = 0; // 增量日志游标（上一轮收集到的最后一条 rcvMs）
   Map<String, Object?> statusJson() => <String, Object?>{
         'running': running,
@@ -4613,7 +4641,146 @@ Future<void> _aiLoop(String uri, String goal) async {
     }
   } finally {
     _ai.running = false;
+    _ai.endedAt = DateTime.now();
+    // 结束即落盘测试报告（自包含 HTML，截图 base64 内嵌），GUI 重启后
+    // 仍可通过 /api/ai/report 下载当前运行Id对应的报告。
+    if (_ai.rounds.isNotEmpty) {
+      try {
+        final dir = Directory('$_autoScenariosDir/reports');
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        File('${dir.path}/${_ai.runId}.html').writeAsStringSync(_aiReportHtml());
+      } catch (_) {
+        // 报告落盘失败不影响主流程（前端仍可现场生成）
+      }
+    }
   }
+}
+
+/// HTML 文本转义（AI 报告生成用）。
+String _htmlEsc(String s) => s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+
+/// 截图文件 → data URI（报告内嵌用，读取失败返回 null）。
+String? _autoShotDataUri(String? name) {
+  if (name == null || name.isEmpty) return null;
+  final f = File('$_autoArtifactsDir/$name');
+  if (!f.existsSync()) return null;
+  return 'data:image/png;base64,${base64Encode(f.readAsBytesSync())}';
+}
+
+/// AI 驱动运行测试报告（自包含 HTML）：结论/遇到的问题/逐轮明细（截图内嵌）。
+String _aiReportHtml() {
+  const bd = 'padding:4px 8px;border-bottom:1px solid #ddd;text-align:left';
+  final endedAt = _ai.endedAt ?? DateTime.now();
+  final dur = endedAt.difference(_ai.startedAt);
+  var steps = 0, pass = 0, fail = 0;
+  for (final r in _ai.rounds) {
+    for (final s in r.results) {
+      steps++;
+      if (s.status == 'pass') pass++;
+      if (s.status == 'fail') fail++;
+    }
+  }
+  final lastErr = _ai.rounds.isEmpty ? '' : _ai.rounds.last.error;
+  String verdict;
+  var verdictColor = '#c62828';
+  if (_ai.done) {
+    verdict = '✅ 目标完成（AI 判定 done）';
+    verdictColor = '#2e7d32';
+  } else if (lastErr.isNotEmpty) {
+    verdict = '❌ 异常终止：${_htmlEsc(lastErr)}';
+  } else if (_ai.stopReq) {
+    verdict = '⚠️ 手动停止（目标未确认完成）';
+    verdictColor = '#b26a00';
+  } else {
+    verdict = '❓ 未完成';
+  }
+  // 问题清单：轮级错误 / AI 重试 / 步骤级 fail，聚合为平铺列表
+  final problems = <String>[];
+  for (final r in _ai.rounds) {
+    if (r.error.isNotEmpty) problems.add('轮 ${r.round + 1}：${r.error}');
+    if (r.retries > 0) problems.add('轮 ${r.round + 1}：AI 调用重试 ${r.retries} 次');
+    for (final s in r.results) {
+      if (s.status == 'fail') {
+        problems.add('轮 ${r.round + 1} 步 ${s.index + 1}（${s.type}）：'
+            '${s.error.isNotEmpty ? s.error : '期望 ${s.expect}，实际 ${s.actual}'}');
+      }
+    }
+  }
+  if (problems.isEmpty) {
+    problems.add(_ai.done ? '无' : '执行提前结束且无失败步骤，但 AI 未判定目标完成');
+  }
+  // 逐轮明细（同前端轮卡片形态，截图内嵌）
+  final roundsHtml = StringBuffer();
+  for (final r in _ai.rounds) {
+    roundsHtml.write('<div style="border:1px solid #ccc;margin:8px 0;padding:8px">');
+    final shotUri = _autoShotDataUri(r.shot);
+    roundsHtml.write('<div style="display:flex;gap:8px;align-items:flex-start">'
+        '<b style="font-size:13px">轮 ${r.round + 1}</b>');
+    if (shotUri != null) {
+      roundsHtml.write('<img src="$shotUri" style="height:96px;border:1px solid #999">');
+    }
+    roundsHtml.write('<div style="flex:1;font-size:13px">');
+    if (r.retries > 0) {
+      roundsHtml.write('<div style="color:#b26a00">AI 调用重试 ${r.retries} 次</div>');
+    }
+    if (r.error.isNotEmpty) {
+      roundsHtml.write('<div style="color:#c62828">${_htmlEsc(r.error)}</div>');
+    }
+    if (r.think.isNotEmpty) {
+      roundsHtml.write('<div>AI 思考：${_htmlEsc(r.think)}</div>');
+    }
+    roundsHtml.write('</div></div>');
+    if (r.results.isNotEmpty) {
+      roundsHtml.write('<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:6px">'
+          '<tr><th style="$bd">#</th><th style="$bd">类型</th><th style="$bd">期望</th>'
+          '<th style="$bd">状态</th><th style="$bd">耗时</th><th style="$bd">实际 / 错误</th></tr>');
+      for (final s in r.results) {
+        final c = s.status == 'pass'
+            ? '#2e7d32'
+            : (s.status == 'fail' ? '#c62828' : '#666');
+        roundsHtml.write('<tr><td style="$bd">${s.index + 1}</td>'
+            '<td style="$bd">${_htmlEsc(s.type)}</td>'
+            '<td style="$bd">${_htmlEsc(s.expect)}</td>'
+            '<td style="$bd;color:$c">${_htmlEsc(s.status)}</td>'
+            '<td style="$bd">${s.ms}ms</td>'
+            '<td style="$bd">${_htmlEsc(s.actual)}'
+            '${s.error.isEmpty ? '' : ' | ${_htmlEsc(s.error)}'}</td></tr>');
+        final sUri = _autoShotDataUri(s.shot);
+        if (sUri != null) {
+          roundsHtml.write('<tr><td colspan="6" style="$bd">'
+              '<img src="$sUri" style="max-height:160px;border:1px solid #999"></td></tr>');
+        }
+      }
+      roundsHtml.write('</table>');
+    }
+    roundsHtml.write('</div>');
+  }
+  final buf = StringBuffer();
+  buf.write('<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">'
+      '<title>xb_ume AI 自动化测试报告 ${_htmlEsc(_ai.runId)}</title></head>'
+      '<body style="font-family:-apple-system,\'PingFang SC\',sans-serif;'
+      'max-width:900px;margin:24px auto;color:#222">'
+      '<h2 style="margin:0 0 4px">xb_ume AI 自动化测试报告</h2>'
+      '<table style="border-collapse:collapse;font-size:13px;margin:8px 0">'
+      '<tr><td style="$bd">目标</td><td style="$bd">${_htmlEsc(_ai.goal)}</td></tr>'
+      '<tr><td style="$bd">结论</td><td style="$bd;color:$verdictColor"><b>$verdict</b></td></tr>'
+      '<tr><td style="$bd">开始时间</td><td style="$bd">${_ai.startedAt.toIso8601String()}</td></tr>'
+      '<tr><td style="$bd">总耗时</td><td style="$bd">${dur.inSeconds}s</td></tr>'
+      '<tr><td style="$bd">规模</td><td style="$bd">${_ai.rounds.length} 轮 · $steps 步'
+      '（pass $pass / fail $fail）</td></tr>'
+      '</table>'
+      '<h3>遇到的问题</h3>'
+      '<ul style="margin:4px 0;padding-left:20px;font-size:13px">\n'
+      '${problems.map((p) => '<li>${_htmlEsc(p)}</li>').join('\n')}\n'
+      '</ul>'
+      '<h3>执行明细</h3>'
+      '$roundsHtml'
+      '</body></html>');
+  return buf.toString();
 }
 
 /// 取路径最后一段（os 为 app 端 Platform.operatingSystem）。
@@ -6349,6 +6516,7 @@ const String guiHtml = r'''
       <button onclick="aiStop()">■ 停止</button>
       <button onclick="aiCfgShow()">AI 设置</button>
       <button id="ai-save-btn" style="display:none" onclick="aiSaveScenario()">存为场景</button>
+      <button id="ai-report-btn" style="display:none" onclick="window.open('/api/ai/report')">⬇ 导出报告</button>
     </div>
     <div id="ai-cfg" style="display:none;margin-top:6px;padding:8px;border:1px solid var(--line);font-size:12px">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -6750,6 +6918,7 @@ function aiStart(){
   if (!goal) { alert('请先描述目标'); return; }
   document.getElementById('ai-report').innerHTML = '';
   document.getElementById('ai-save-btn').style.display = 'none';
+  document.getElementById('ai-report-btn').style.display = 'none';
   fetch('/api/ai/run?uri=' + encodeURIComponent(uri) + '&goal=' + encodeURIComponent(goal), { method: 'POST' })
     .then(function(r){ return r.json().then(function(j){ j._code = r.status; return j; }); })
     .then(function(j){
@@ -6795,7 +6964,10 @@ function aiPoll(){
       : (rounds.length ? ('结束：' + rounds.length + ' 轮' + (j.done ? ' · AI 判定目标完成' : (lastErr ? ' · ' + lastErr : ''))) : '');
     if (!j.running && aiTimer) {
       clearInterval(aiTimer); aiTimer = null;
-      if (rounds.length) document.getElementById('ai-save-btn').style.display = '';
+      if (rounds.length) {
+        document.getElementById('ai-save-btn').style.display = '';
+        document.getElementById('ai-report-btn').style.display = '';
+      }
     }
     aiRenderReport(rounds);
   });
