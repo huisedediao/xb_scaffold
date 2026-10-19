@@ -361,7 +361,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | 日志页没有「设备日志」 | 未选中设备，或选中设备的平台工具不可用；「Flutter 输出」源不依赖设备选择，但需要 daemon 正在运行且有调试会话接入 |
 | 跑 `flutter test` 时报 `Unable to connect to flutter_tester process` | daemon 会轮询本机 VM service，可能干扰测试进程握手；跑全量测试前先停 daemon（`pgrep -fl ide.dart` 找到 pid 后 kill） |
 | Windows 下启动器窗口一闪而过 | 先用命令 `dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart` 前台启动看报错（常见原因：dart 不在 PATH） |
-| 页头选中的 VM 会话过一会儿变回「未选择会话」 | 会话 ws 瞬断（热重载/重连）时页面会保持你的选择，连续约 15s 仍缺失才回退；重连后端口变化时按实例指纹自动找回同一会话。若仍频繁掉选，说明该会话连接本身不稳定 |
+| 页头选中的 VM 会话过一会儿变回「未选择会话」 | 会话 ws 瞬断（热重载/重连）时页面会保持你的选择，连续约 15s 仍缺失才回退；重连后端口变化时按实例指纹自动找回同一会话，回退后指纹保留、会话回来自动重选。若仍频繁掉选，把 `~/.xb_ume_ide/logs/vm_sel.log` 发给开发者排查（记录每次会话增减、用户选择、指纹找回/回退、页面前后台切换，超 2MB 轮转为 `.1`） |
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 

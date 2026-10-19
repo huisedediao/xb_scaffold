@@ -158,6 +158,23 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }
         return s;
       }).toList();
+      // 会话集合变化落盘（掉选排查）：只在增/减时记一行，避免 5s 轮询噪声
+      final sig = sessions
+          .whereType<Map>()
+          .map((s) => '${s['source'] ?? ''}|${s['fp'] ?? ''}')
+          .toList()
+        ..sort();
+      final sigStr = sig.join(',');
+      if (sigStr != _lastDaemonSessionsSig) {
+        final prev = _lastDaemonSessionsSig.isEmpty
+            ? <String>[]
+            : _lastDaemonSessionsSig.split(',');
+        final added = sig.where((e) => !prev.contains(e)).toList();
+        final removed = prev.where((e) => !sig.contains(e)).toList();
+        _vmSelLog('daemon',
+            'running=${status != null} 会话变化 +$added -$removed 当前 ${sig.length} 个');
+        _lastDaemonSessionsSig = sigStr;
+      }
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'running': status != null,
@@ -166,6 +183,20 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'sessions': sessions,
         'config': readGuiIdeOrder(),
       }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/clientlog' && req.method == 'POST') {
+      // 前端事件上报（会话选择链路排障）：{tag,msg} → vm_sel.log
+      try {
+        final body = await utf8.decoder.bind(req).join();
+        final j = body.isEmpty ? null : jsonDecode(body);
+        if (j is Map && j['msg'] != null) {
+          _vmSelLog('web', '${j['tag'] ?? ''} ${j['msg']}');
+        }
+      } catch (_) {}
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
       return;
     }
@@ -5230,6 +5261,33 @@ List<int> _tarEnd() => List<int>.filled(1024, 0);
 // 守护进程控制模块
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 会话选择排障日志（掉选复盘用）
+// ---------------------------------------------------------------------------
+
+/// 会话选择链路日志：~/.xb_ume_ide/logs/vm_sel.log（超 2MB 轮转为 .1）。
+/// 记录 daemon 会话增减与前端上报的选择事件（用户选择/指纹找回/回退/前后台切换）。
+String get _vmSelLogFile => '$_home/.xb_ume_ide/logs/vm_sel.log';
+
+void _vmSelLog(String tag, String msg) {
+  try {
+    final dir = Directory('$_home/.xb_ume_ide/logs');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final f = File(_vmSelLogFile);
+    if (f.existsSync() && f.lengthSync() > 2 * 1024 * 1024) {
+      f.renameSync('${f.path}.1');
+    }
+    final t = DateTime.now().toIso8601String();
+    f.writeAsStringSync('$t [$tag] $msg\n',
+        mode: FileMode.append, flush: true);
+  } catch (_) {
+    // 日志写入失败不影响主流程
+  }
+}
+
+/// 上一轮 /api/daemon 返回的会话集合签名（source|fp 排序拼接），用于只记变化。
+var _lastDaemonSessionsSig = '';
+
 /// 查询 daemon 状态（经互斥端口 status 协议）。未运行返回 null。
 Future<Map<String, Object?>?> queryDaemonStatus() async {
   Socket? socket;
@@ -6547,6 +6605,11 @@ var fpBySource = {}, vmMiss = 0; // 会话指纹映射与瞬断容忍计数
 function loadVmFp(){ try { return localStorage.getItem('xbume_vm_fp') || ''; } catch (e) { return ''; } }
 function saveVmFp(fp){ vmFilterFp = fp; try { fp ? localStorage.setItem('xbume_vm_fp', fp) : localStorage.removeItem('xbume_vm_fp'); } catch (e) {} }
 var vmFilterFp = loadVmFp();
+if (vmFilterFp) clog('页面加载：从 localStorage 恢复指纹 ' + vmFilterFp);
+// 会话选择链路排障日志：上报后端落盘 ~/.xb_ume_ide/logs/vm_sel.log（fire-and-forget）
+function clog(msg){ try { fetch('/api/clientlog', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tag:'vmsel', msg: msg}) }); } catch (e) {} }
+document.addEventListener('visibilitychange', function(){ clog('页面' + (document.hidden ? '进入后台' : '恢复前台')); });
+var lastDaemonRunning = null;
 var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
@@ -7163,10 +7226,14 @@ function refreshDaemon(){
     var vm = document.getElementById('vmstat');
     var sel = document.getElementById('vmsel');
     if (!d.running) {
+      if (lastDaemonRunning !== false) clog('daemon 未运行（会话下拉隐藏）');
+      lastDaemonRunning = false;
       el.innerHTML = '<span class="bad">未运行</span>（启动：dart run xb_ume:ide --install）';
       vm.style.display = ''; vm.textContent = 'VM 未连接'; vm.title = '守护进程未运行';
       sel.style.display = 'none';
     } else {
+      if (lastDaemonRunning === false) clog('daemon 恢复运行');
+      lastDaemonRunning = true;
       var ss = d.sessions || [];
       var sess = ss.map(function(s){ return (s.app ? s.app + ' · ' : '') + esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
       el.innerHTML = '<span class="ok">运行中</span> pid=' + d.pid + '，已运行 ' + Math.floor(d.uptimeSec / 60) + ' 分 ' + (d.uptimeSec % 60) + ' 秒<br>调试会话：<br>' + sess;
@@ -7198,12 +7265,18 @@ function refreshDaemon(){
       } else {
         var restored = vmFilterFp ? ss.find(function(s){ return s.fp === vmFilterFp; }) : null;
         if (restored) {
+          clog('指纹找回会话: ' + (restored.source || restored.uri) + ' (fp=' + vmFilterFp + ')');
           vmFilter = restored.source || restored.uri;
           if (restored.fp) saveVmFp(restored.fp);
           sel.value = vmFilter;
           vmMiss = 0;
-        } else if (vmFilter && ++vmMiss >= 3) {
-          vmFilter = ''; vmMiss = 0; // 回退显示，vmFilterFp 保留待自动恢复
+        } else if (vmFilter) {
+          vmMiss++;
+          if (vmMiss === 1) clog('会话缺失第 1 轮（容忍 3 轮）: ' + vmFilter + '；当前列表 ' + ss.map(function(s){ return s.source || s.uri; }).join(', ') + '；fp=' + vmFilterFp);
+          if (vmMiss >= 3) {
+            clog('会话缺失 ' + vmMiss + ' 轮，回退未选择（保留指纹 ' + vmFilterFp + ' 待自愈）');
+            vmFilter = ''; vmMiss = 0;
+          }
         }
       }
       if (vmFilter !== prevVmFilter) {
@@ -7218,7 +7291,11 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; saveVmFp(fpBySource[v] || ''); sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
+function setVmFilter(v){
+  vmFilter = v; saveVmFp(fpBySource[v] || '');
+  clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
+  sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh();
+}
 
 // -- 路由栈 Tab -------------------------------------------------------------
 function rtActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'routes'; }

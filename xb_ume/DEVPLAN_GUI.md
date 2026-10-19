@@ -121,3 +121,5 @@
 - 2026-10-16 P14 完成（swipe 滚动失效修复：合成 PointerMoveEvent 默认 delta=Offset.zero 致 DragGestureRecognizer 永远达不到 touchSlop、drag 永不启动；timeStamp 全零影响 fling 速度计算。move 事件补显式 delta + 递增微秒 timeStamp；example swipe-probe 前后截图字节级对比验证滚动生效；f_jlink 真机 AI 驱动滚动待用户回归）
 - 2026-10-17 P15 完成（日志 Tab：多关键字 OR 过滤 + 增量渲染 + 贴底跟随。根因是旧实现每条日志到达全量重建 DOM + 无条件拉底致选区丢失；新实现条件签名比对增量追加、无命中不动 DOM。浏览器 agent 验证四项全过：OR 过滤/选中保持/上翻不拉底/清空恢复）
 - 2026-10-17 P16 完成（AI 驱动测试报告：结束后自动落盘自包含 HTML（结论/问题清单/统计/逐轮明细+截图内嵌），/api/ai/report 下载端点 + 前端「⬇ 导出报告」按钮；deepseek-flash 真实调用成功路径 + 故障 mock 重试路径双验证全过）
+- 2026-10-19 会话选择保持 v2（掉选自愈 + localStorage 指纹持久化：回退不清指纹、每轮按 fp 自动找回，页面刷新/重开浏览器自动选回；node 状态机单测 10 断言 + 浏览器端到端全过）
+- 2026-10-19 会话选择排障日志：`~/.xb_ume_ide/logs/vm_sel.log`（2MB 轮转）记录 daemon 会话增减（source|fp 集合差异，仅变化时记）与前端上报（页面加载恢复指纹/用户选择/指纹找回/缺失计数/回退/前后台切换/daemon 断连恢复，POST /api/clientlog）；验证：GUI 重启后页面自动恢复指纹 + 会话变化日志 + 上报链路落盘全通
