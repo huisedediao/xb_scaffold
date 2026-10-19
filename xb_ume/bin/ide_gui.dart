@@ -2313,6 +2313,61 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // ── 时间轴：路由/网络事件（日志与异常由前端本地合并，服务端不重复存）──
+    if (path == '/api/timeline' && req.method == 'GET') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'uri': state.timelineUri ?? '',
+        'items': state.timelineItems,
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/timeline/sub' && req.method == 'POST') {
+      var uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        try {
+          final raw = await utf8.decoder.bind(req).join();
+          if (raw.isNotEmpty) {
+            final body = jsonDecode(raw);
+            if (body is Map) uri = body['uri']?.toString() ?? '';
+          }
+        } catch (_) {
+          // body 不是 JSON：按空 uri 处理，下面返回 400
+        }
+      }
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'error': '缺少 uri'}));
+        await req.response.close();
+        return;
+      }
+      final error = await state.startTimeline(uri);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': error == null,
+        'error': error,
+        'uri': uri,
+        'items': state.timelineItems,
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/timeline/off' && req.method == 'POST') {
+      state.stopTimeline();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/timeline/clear' && req.method == 'POST') {
+      state.clearTimeline();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
     // ── IDE 跳转：异常栈帧 / 相关 widget 的「跳转」用（异常 Tab）──
     if (path == '/api/openide') {
       final file = req.uri.queryParameters['file'] ?? '';
@@ -2814,6 +2869,10 @@ class GuiState {
   Future<void> dispose() async {
     _pollTimer?.cancel();
     _flushTimer?.cancel();
+    _tlTimer?.cancel();
+    final tlRpc = _tlRpc;
+    _tlRpc = null;
+    if (tlRpc != null) unawaited(tlRpc.close());
     for (final process in _deviceLogProcesses.values) {
       process.kill();
     }
@@ -3176,6 +3235,203 @@ class GuiState {
     _pending.clear();
     broadcast(<String, Object?>{'type': 'logs', 'items': items});
   }
+
+  // -- 时间轴模块（路由 / 网络；日志与异常由前端本地合并）--------------------
+  //
+  // 设计取舍：日志已由 WS 全量推送、异常也在前端内存里，服务端再存一份只会
+  // 翻倍流量；这里只轮询 app 端的 routes / network 两个环形缓冲（各 300 条），
+  // 做 id 去重与状态更新后增量广播。轮询仅在「时间轴」Tab 激活时运行。
+
+  static const String _timelineExpr =
+      "(() { final r = StringBuffer(); "
+      "for (final e in XBUme.controller.routes) { "
+      "r..write(e.id)..write('\\u0001')..write(e.time.millisecondsSinceEpoch)..write('\\u0001')"
+      "..write(e.action.name)..write('\\u0001')"
+      "..write(e.routeName.replaceAll('\\u0001', ' ').replaceAll('\\u0002', ' ').replaceAll('\\u0003', ' '))..write('\\u0001')"
+      "..write((e.previousRouteName ?? '').replaceAll('\\u0001', ' ').replaceAll('\\u0002', ' ').replaceAll('\\u0003', ' '))..write('\\u0001')"
+      "..write(e.phase)..write('\\u0002'); } "
+      "final n = StringBuffer(); "
+      "for (final e in XBUme.controller.network) { "
+      "n..write(e.id)..write('\\u0001')..write(e.time.millisecondsSinceEpoch)..write('\\u0001')"
+      "..write(e.method)..write('\\u0001')"
+      "..write(e.url.replaceAll('\\u0001', ' ').replaceAll('\\u0002', ' ').replaceAll('\\u0003', ' '))..write('\\u0001')"
+      "..write((e.statusCode ?? '').toString())..write('\\u0001')"
+      "..write((e.durationMs ?? '').toString())..write('\\u0001')"
+      "..write(e.status.name)..write('\\u0001')"
+      "..write((e.error ?? '').replaceAll('\\u0001', ' ').replaceAll('\\u0002', ' ').replaceAll('\\u0003', ' '))..write('\\u0002'); } "
+      "return r.toString() + '\\u0003' + n.toString(); })()";
+
+  /// 路由/网络事件累积（单会话）。上限 2000，超出淘汰最旧。
+  final List<Map<String, Object?>> _tlItems = <Map<String, Object?>>[];
+  final Map<String, int> _tlIndex = <String, int>{};
+  String? _tlUri;
+  Timer? _tlTimer;
+  bool _tlBusy = false;
+  int _tlFail = 0;
+
+  /// 清空时刻：早于此时间的历史事件不再回填（app 端环形缓冲仍有旧记录）。
+  int _tlFloorMs = 0;
+  _SandboxRpc? _tlRpc;
+
+  /// 当前订阅的会话 uri（空表示未订阅）。
+  String? get timelineUri => _tlUri;
+
+  /// 时间轴事件只读快照（供 /api/timeline）。
+  List<Map<String, Object?>> get timelineItems =>
+      List<Map<String, Object?>>.unmodifiable(_tlItems);
+
+  /// 订阅会话的时间轴：立即同步一次，之后 1.5s 增量。
+  /// 返回首次同步的错误（null 表示成功），供前端提示未接入 xb_ume 等场景。
+  Future<String?> startTimeline(String uri) async {
+    if (_tlUri == uri && _tlTimer != null) return null;
+    // 同一会话（切走再切回）保留已累积的历史与清空下限，只重启轮询；
+    // 切换到其它会话才清空，避免两个会话的事件混在一起。
+    final sameUri = _tlUri == uri;
+    stopTimeline();
+    _tlUri = uri;
+    if (!sameUri) {
+      _tlItems.clear();
+      _tlIndex.clear();
+      _tlFloorMs = 0;
+    }
+    _tlFail = 0;
+    final error = await _timelinePoll();
+    if (_tlUri != uri) return error;
+    _tlTimer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => unawaited(_timelinePoll()),
+    );
+    broadcast(<String, Object?>{'type': 'tl', 'items': _tlItems});
+    return error;
+  }
+
+  void stopTimeline() {
+    _tlTimer?.cancel();
+    _tlTimer = null;
+    _tlUri = null;
+    final rpc = _tlRpc;
+    _tlRpc = null;
+    if (rpc != null) unawaited(rpc.close());
+  }
+
+  /// 清空当前会话的累积事件，并设置回填下限（避免下一轮又把旧记录拉回来）。
+  void clearTimeline() {
+    _tlItems.clear();
+    _tlIndex.clear();
+    _tlFloorMs = DateTime.now().millisecondsSinceEpoch;
+    broadcast(<String, Object?>{'type': 'tlCleared'});
+  }
+
+  Future<String?> _timelinePoll() async {
+    final uri = _tlUri;
+    if (uri == null || _tlBusy) return null;
+    _tlBusy = true;
+    final rpc = _tlRpc ??= _SandboxRpc(uri);
+    try {
+      final raw = await rpc.evalStringOn(
+        'package:xb_ume/src/core/xb_ume.dart',
+        _timelineExpr,
+      );
+      _tlFail = 0;
+      // 会话已切换：丢弃本轮结果，避免旧会话事件写进新会话的累积。
+      if (_tlUri != uri) return null;
+      final changed = _tlUpsert(_parseTimeline(raw));
+      if (_tlUri == uri && changed.isNotEmpty) {
+        broadcast(<String, Object?>{'type': 'tl', 'items': changed});
+      }
+      return null;
+    } catch (e) {
+      _tlFail++;
+      // 连接可能已失效（app 重启/断线）：丢弃复用连接，下一轮重建。
+      // 只有当前连接仍是本轮所用时才清空（避免误清新一轮已建立的连接）。
+      if (identical(_tlRpc, rpc)) {
+        _tlRpc = null;
+        unawaited(rpc.close());
+      }
+      if (_tlFail == 1 || _tlFail % 10 == 0) {
+        print('[xbume-gui] 时间轴同步失败($uri): $e');
+      }
+      return '$e';
+    } finally {
+      _tlBusy = false;
+    }
+  }
+
+  List<Map<String, Object?>> _parseTimeline(String raw) {
+    final events = <Map<String, Object?>>[];
+    final halves = raw.split('\u0003');
+    // 路由：id / ms / action / name / prev / phase
+    for (final line in (halves.isNotEmpty ? halves[0] : '').split('\u0002')) {
+      if (line.isEmpty) continue;
+      final p = line.split('\u0001');
+      if (p.length < 6) continue;
+      final ms = int.tryParse(p[1]) ?? 0;
+      if (ms <= _tlFloorMs) continue;
+      events.add(<String, Object?>{
+        't': 'route',
+        'id': p[0],
+        'ms': ms,
+        'action': p[2],
+        'name': p[3],
+        'prev': p[4],
+        'phase': p[5],
+      });
+    }
+    // 网络：id / ms / method / url / code / dur / status / err
+    for (final line
+        in (halves.length > 1 ? halves[1] : '').split('\u0002')) {
+      if (line.isEmpty) continue;
+      final p = line.split('\u0001');
+      if (p.length < 8) continue;
+      final ms = int.tryParse(p[1]) ?? 0;
+      if (ms <= _tlFloorMs) continue;
+      events.add(<String, Object?>{
+        't': 'net',
+        'id': p[0],
+        'ms': ms,
+        'method': p[2],
+        'url': p[3],
+        'code': p[4],
+        'dur': p[5],
+        'status': p[6],
+        'err': p[7],
+      });
+    }
+    return events;
+  }
+
+  /// 合并一批事件：同 key 原地更新（网络 pending → 完成），新 key 追加。
+  /// 返回实际变化的事件（供 WS 增量推送；无变化返回空列表）。
+  List<Map<String, Object?>> _tlUpsert(List<Map<String, Object?>> batch) {
+    final changed = <Map<String, Object?>>[];
+    for (final e in batch) {
+      final key = '${e['t']}:${e['id']}';
+      final i = _tlIndex[key];
+      if (i == null) {
+        _tlIndex[key] = _tlItems.length;
+        _tlItems.add(e);
+        changed.add(e);
+        continue;
+      }
+      final old = _tlItems[i];
+      if (old['status'] != e['status'] ||
+          old['code'] != e['code'] ||
+          old['dur'] != e['dur'] ||
+          old['err'] != e['err']) {
+        _tlItems[i] = e;
+        changed.add(e);
+      }
+    }
+    if (_tlItems.length > 2000) {
+      _tlItems.removeRange(0, _tlItems.length - 2000);
+      _tlIndex.clear();
+      for (var i = 0; i < _tlItems.length; i++) {
+        _tlIndex['${_tlItems[i]['t']}:${_tlItems[i]['id']}'] = i;
+      }
+    }
+    return changed;
+  }
+
   // -- 客户端与广播 ----------------------------------------------------------
 
   void addClient(WebSocket ws) {
@@ -3206,7 +3462,7 @@ class GuiState {
       } else if (parsed['type'] == 'refresh') {
         unawaited(poll());
       }
-    }, onDone: () => _clients.remove(ws), onError: (_) => _clients.remove(ws));
+    }, onDone: () { _clients.remove(ws); if (_clients.isEmpty) stopTimeline(); }, onError: (_) { _clients.remove(ws); if (_clients.isEmpty) stopTimeline(); });
   }
 
   void broadcast(Map<String, Object?> message) {
@@ -6725,6 +6981,28 @@ const String guiHtml = r'''
   .muted { color:var(--dim); }
   .ok { color:#46d68c; } .bad { color:#e5484d; }
   #logview { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; height:calc(100vh - 210px); overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
+  #tl-body { font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; height:calc(100vh - 250px); overflow-y:auto; }
+  .tl-row { display:flex; align-items:baseline; gap:8px; padding:2px 8px; border-left:3px solid transparent; cursor:pointer; white-space:nowrap; overflow:hidden; }
+  .tl-row:hover { background:#161b22; }
+  .tl-row.tl-open { background:#161b22; }
+  .tl-t { color:#8b949e; flex:0 0 auto; }
+  .tl-badge { flex:0 0 auto; font-size:11px; padding:0 5px; border-radius:3px; }
+  .tl-sum { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; }
+  .tl-aux { flex:0 0 auto; color:#8b949e; }
+  .tl-route { border-left-color:#bc8cff; }
+  .tl-route .tl-badge { background:#3a2a5a; color:#d2a8ff; }
+  .tl-net { border-left-color:#58a6ff; }
+  .tl-net .tl-badge { background:#173a5e; color:#79c0ff; }
+  .tl-log { border-left-color:#6e7681; }
+  .tl-log .tl-badge { background:#30363d; color:#c9d1d9; }
+  .tl-log.tl-w { border-left-color:#d29922; }
+  .tl-log.tl-e { border-left-color:#f85149; }
+  .tl-exc { border-left-color:#f85149; }
+  .tl-exc .tl-badge { background:#5c1a1a; color:#ffb4b4; }
+  .tl-detail { padding:6px 12px 10px 22px; background:#161b22; border-left:3px solid var(--line); font-size:12px; white-space:pre-wrap; word-break:break-all; }
+  .tl-detail a { color:#58a6ff; text-decoration:none; }
+  .tl-detail a:hover { text-decoration:underline; }
+  .tl-newbar { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:80; padding:6px 14px; border-radius:16px; background:#1f6feb; color:#fff; cursor:pointer; font-size:12px; box-shadow:0 2px 10px rgba(0,0,0,.5); }
   .lv-V { color:#8aa0b4; } .lv-D { color:#6fa8dc; } .lv-I { color:#dbe6f0; } .lv-W { color:#f5c451; } .lv-E { color:#ef6a6a; }
   .tag { color:var(--acc); }
   .src { color:#b07de8; }
@@ -6775,6 +7053,7 @@ const String guiHtml = r'''
   <h1>xb_ume 工具箱</h1>
   <div class="tab active" data-tab="daemon">守护进程</div>
   <div class="tab" data-tab="logs">日志</div>
+  <div class="tab" data-tab="timeline">时间轴</div>
   <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
   <div class="tab" data-tab="sandbox">应用沙盒</div>
   <div class="tab" data-tab="routes">路由栈</div>
@@ -6838,6 +7117,43 @@ const String guiHtml = r'''
     </div>
     <div id="logview"><span class="muted">暂无日志</span></div>
     <div class="muted" style="margin-top:6px">关键字过滤支持空格分隔多个，日志包含任一关键字即显示（实时生效，新日志到达时增量追加，不打断选中/复制；新行只在底部追加，往上翻不会被强制拉底，需回到底部跟随可点底部或再滚到底）。打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
+  </section>
+  <section class="page" id="page-timeline">
+    <div class="row">
+      <div class="fgroup">
+        <b class="gtitle">范围</b>
+        <select id="tl-range" onchange="tlRender()">
+          <option value="1">近 1 分钟</option>
+          <option value="5" selected>近 5 分钟</option>
+          <option value="30">近 30 分钟</option>
+          <option value="0">全部</option>
+        </select>
+        <span class="gsep"></span>
+        <span class="vlv">
+          <label class="chk"><input type="checkbox" id="tl-t-route" checked onchange="tlRender()">路由</label>
+          <label class="chk"><input type="checkbox" id="tl-t-net" checked onchange="tlRender()">网络</label>
+          <label class="chk"><input type="checkbox" id="tl-t-log" checked onchange="tlRender()">日志</label>
+          <label class="chk"><input type="checkbox" id="tl-t-exc" checked onchange="tlRender()">异常</label>
+        </span>
+      </div>
+      <div class="fgroup" title="日志量很大：默认只看 Flutter 输出的信息级与设备日志的警告/错误">
+        <b class="gtitle">日志级别</b>
+        <span class="vlv">
+          <label class="chk"><input type="checkbox" id="tl-lv-flutter" checked onchange="tlRender()">Flutter I</label>
+          <label class="chk"><input type="checkbox" id="tl-lv-warn" checked onchange="tlRender()">W/E</label>
+          <label class="chk"><input type="checkbox" id="tl-lv-all" onchange="tlRender()">全部 D/V</label>
+        </span>
+      </div>
+      <input id="tl-kw" placeholder="关键字（路由名/URL/日志/异常）" oninput="tlKwInput()" style="width:260px">
+      <button onclick="tlPause(this)" id="tl-pause-btn">暂停</button>
+      <button onclick="tlToLatest()" title="滚到最新事件">最新</button>
+      <button onclick="tlClear()" title="仅清空时间轴里的路由/网络记录；日志与异常请到各自 Tab 清空">清空</button>
+      <button onclick="tlCopy()" title="复制当前过滤后的时间轴文本">复制</button>
+      <span class="muted" id="tl-stat">请先选择 VM</span>
+    </div>
+    <div id="tl-body"><span class="muted">请先在页头右侧选择调试会话</span></div>
+    <div id="tl-newbar" class="tl-newbar" style="display:none" onclick="tlToLatest()"></div>
+    <div class="muted" style="margin-top:6px">把路由变化、网络请求、日志、异常按同一时间轴排列，看「点完按钮后发生了什么」不用来回切 Tab。路由/网络来自 app 内 xb_ume 记录（页面激活时 1.5s 增量同步，时间取 app 端记录时刻）；日志取电脑接收时刻，异常取捕获时刻。需要 app 在 MaterialApp 的 navigatorObservers 里加 XBUme.routeObserver（example 已配置）并接入 Network 模块。点击行展开详情，详情内可跳到对应 Tab 查看原始数据。</div>
   </section>
   <section class="page" id="page-exc">
     <div style="display:flex;align-items:center;gap:10px">
@@ -7013,22 +7329,27 @@ function connect() {
   ws.onclose = function(){ document.getElementById('wsdot').classList.remove('on'); setTimeout(connect, 1500); };
   ws.onmessage = function(e){
     var msg = JSON.parse(e.data);
-    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); }
+    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); if (tlOnTab()) tlSchedule(); }
     else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
-    else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) logFlushNew(); }
-    else if (msg.type === 'cleared') { logs = []; renderLogs(); }
+    else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) logFlushNew(); if (tlOnTab()) tlSchedule(); }
+    else if (msg.type === 'cleared') { logs = []; renderLogs(); tlSchedule(); }
     else if (msg.type === 'exception') { excOnItem(msg.item); }
-    else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); }
+    else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); tlSchedule(); }
+    else if (msg.type === 'tl') { tlMerge(msg.items || []); }
+    else if (msg.type === 'tlCleared') { tlOrder = []; tlByKey = {}; tlExpanded = {}; tlRender(); }
   };
 }
 connect();
 document.querySelectorAll('.tab').forEach(function(t){
   t.onclick = function(){
+    var prevTab = document.querySelector('.tab.active');
+    if (prevTab && prevTab.dataset.tab === 'timeline' && t.dataset.tab !== 'timeline') tlHide();
     document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('active'); });
     document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
     t.classList.add('active');
     document.getElementById('page-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'daemon') { refreshDaemon(); loadIdeOrder(); }
+    else if (t.dataset.tab === 'timeline') tlShow();
     else if (t.dataset.tab === 'sandbox') sbRefresh();
     else if (t.dataset.tab === 'routes') rtRefresh();
     else if (t.dataset.tab === 'network') nwRefresh();
@@ -7059,6 +7380,7 @@ function excGoTab(){
 }
 function excOnItem(item){
   if (!item) return;
+  if (tlOnTab()) tlSchedule();
   var i = excItems.length - 1;
   for (; i >= 0; i--) { if (excItems[i].id === item.id) break; }
   if (i >= 0) excItems[i] = item; else excItems.push(item);
@@ -7078,11 +7400,12 @@ function excRefresh(){
   fetch('/api/exceptions').then(function(r){ return r.json(); }).then(function(d){
     excItems = d.items || [];
     excRender();
+    if (tlOnTab()) tlSchedule();
   }).catch(function(e){ document.getElementById('exc-stat').textContent = '拉取失败：' + e; });
 }
 function excClear(){
   fetch('/api/exceptions/clear', { method: 'POST' })
-    .then(function(){ excItems = []; excRender(); })
+    .then(function(){ excItems = []; excRender(); if (tlOnTab()) tlSchedule(); })
     .catch(function(e){ alert('清空失败：' + e); });
 }
 function excRender(){
@@ -7486,7 +7809,7 @@ function renderHdrDev() {
 }
 function refreshDevices(){ ws.send(JSON.stringify({type:'refresh'})); }
 function refreshAll(){ refreshDevices(); refreshDaemon(); }
-function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); renderLogs(); renderHdrDev(); }
+function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); renderLogs(); renderHdrDev(); if (tlOnTab()) tlRender(); }
 var osByPlatform = { android: 'android', ohos: 'ohos', 'ios-sim': 'ios', 'ios-real': 'ios' };
 var logSeq = 0, logCursor = 0, logDebounce = null, logLastKey = null;
 function logKws(){
@@ -7613,7 +7936,299 @@ function logBottom(){
   // 到底后距底 <40px，增量追加的贴底跟随自动恢复（新日志持续可见）
   var v = document.getElementById('logview'); v.scrollTop = v.scrollHeight;
 }
-function clearLogs(){ logs = []; renderLogs(); }
+function clearLogs(){ logs = []; renderLogs(); if (tlOnTab()) tlSchedule(); }
+
+// -- 时间轴 Tab ------------------------------------------------------------
+// 合并四类数据：服务端推的路由/网络（tlOrder）+ 本地日志 logs + 异常 excItems。
+// 日志与异常不进服务端，避免与已有 WS 通道重复传输。
+var tlOrder = [], tlByKey = {}, tlPaused = false, tlDirtyTimer = null;
+var tlExpanded = {}, tlSubUri = '', tlNewCount = 0, tlKwTimer = null;
+
+function tlOnTab(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'timeline'; }
+function tlUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function tlStat(msg){ var el = document.getElementById('tl-stat'); if (el) el.textContent = msg; }
+function tlCb(id){ var el = document.getElementById(id); return !!(el && el.checked); }
+
+function tlShow(){
+  tlRender();
+  tlSubscribe();
+}
+
+function tlHide(){
+  // 切走即停轮询：避免后台持续 eval 影响 app（重新进入时再同步一次）
+  tlSubUri = '';
+  fetch('/api/timeline/off', { method: 'POST' }).catch(function(){});
+}
+
+function tlSubscribe(){
+  var uri = tlUri();
+  if (!uri) { tlStat('请先选择 VM（页头右侧会话下拉框）'); return; }
+  if (uri === tlSubUri) return;
+  tlSubUri = uri;
+  tlStat('同步中…');
+  fetch('/api/timeline/sub', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ uri: uri }) })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { tlStat('同步失败：' + d.error); return; }
+      tlOrder = []; tlByKey = {};
+      tlMerge(d.items || []);
+      tlRender();
+    })
+    .catch(function(e){ tlStat('同步失败：' + e); });
+}
+
+function tlResub(){
+  if (!tlOnTab()) return;
+  tlSubUri = '';
+  tlSubscribe();
+}
+
+function tlMerge(items){
+  var changed = false;
+  items.forEach(function(e){
+    if (!e || !e.t) return;
+    var k = e.t + ':' + e.id;
+    var old = tlByKey[k];
+    if (old) {
+      // 网络 pending → 完成：原地更新可变字段（不新增行，保持发起时间位置）
+      var upd = false;
+      ['code','dur','status','err'].forEach(function(f){ if (old[f] !== e[f]) { old[f] = e[f]; upd = true; } });
+      if (upd) changed = true;
+      return;
+    }
+    tlByKey[k] = e; tlOrder.push(e); changed = true;
+  });
+  if (changed) tlSchedule();
+}
+
+function tlSchedule(){
+  if (!tlOnTab()) return;
+  if (tlPaused) { tlNewCount = 1; tlUpdateNewBar(); return; }
+  if (tlDirtyTimer) return;
+  tlDirtyTimer = setTimeout(function(){ tlDirtyTimer = null; tlRender(); }, 250);
+}
+
+function tlKwInput(){
+  if (tlKwTimer) clearTimeout(tlKwTimer);
+  tlKwTimer = setTimeout(function(){ tlKwTimer = null; tlRender(); }, 200);
+}
+
+function tlTime(ms){
+  var d = new Date(ms || 0);
+  function p(n, w){ n = String(n); while (n.length < (w || 2)) n = '0' + n; return n; }
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+}
+
+function tlLogVisible(l, wantFlutter, wantWarn, wantAll){
+  var isFlutter = l.source && l.source.indexOf('flutter') === 0;
+  if (isFlutter) {
+    if (!wantFlutter) return false;
+    if (vmFilter) return (l.tag || '') === vmFilter;
+    return !!selected; // 只选设备时无法精确归属，宽松展示避免漏
+  }
+  if (!selected) return false;
+  if ((l.device || '') !== selected) return false;
+  var lv = l.level || 'I';
+  if (lv === 'W' || lv === 'E' || lv === 'F') return wantWarn || wantAll;
+  return wantAll;
+}
+
+function tlBuild(){
+  var now = Date.now();
+  var range = parseInt(document.getElementById('tl-range').value, 10) || 0;
+  var cutoff = range > 0 ? now - range * 60000 : 0;
+  var evs = [];
+  if (tlCb('tl-t-route')) tlOrder.forEach(function(e){ if (e.t === 'route' && e.ms >= cutoff) evs.push(e); });
+  if (tlCb('tl-t-net')) tlOrder.forEach(function(e){ if (e.t === 'net' && e.ms >= cutoff) evs.push(e); });
+  if (tlCb('tl-t-log')) {
+    var wantFlutter = tlCb('tl-lv-flutter'), wantWarn = tlCb('tl-lv-warn'), wantAll = tlCb('tl-lv-all');
+    logs.forEach(function(l){
+      if (l._seq === undefined) l._seq = ++logSeq;
+      if (!tlLogVisible(l, wantFlutter, wantWarn, wantAll)) return;
+      var ms = l.rcvMs || 0;
+      if (ms < cutoff) return;
+      evs.push({ t:'log', id:'l' + l._seq, ms: ms, level: l.level, tag: l.tag, app: l.app,
+        msg: l.msg, ts: l.ts, source: l.source, device: l.device, _l: l });
+    });
+  }
+  if (tlCb('tl-t-exc')) {
+    excItems.forEach(function(it){
+      var ms = it.ts || 0;
+      if (ms < cutoff) return;
+      evs.push({ t:'exc', id:'e' + it.id, ms: ms, item: it, count: it.count || 1, summary: it.summary || '' });
+    });
+  }
+  var kw = (document.getElementById('tl-kw').value || '').trim().toLowerCase();
+  if (kw) evs = evs.filter(function(e){ return tlHay(e).indexOf(kw) >= 0; });
+  var weight = { exc: 4, net: 3, route: 2, log: 1 };
+  evs.sort(function(a, b){ return a.ms - b.ms || weight[b.t] - weight[a.t]; });
+  return evs;
+}
+
+function tlHay(e){
+  if (e.t === 'route') return ((e.action || '') + ' ' + (e.name || '') + ' ' + (e.prev || '') + ' ' + (e.phase || '')).toLowerCase();
+  if (e.t === 'net') return ((e.method || '') + ' ' + (e.url || '') + ' ' + (e.code || '') + ' ' + (e.status || '') + ' ' + (e.err || '')).toLowerCase();
+  if (e.t === 'exc') return ((e.summary || '') + ' ' + ((e.item && (e.item.desc || e.item.widget || e.item.source)) || '')).toLowerCase();
+  return ((e.msg || '') + ' ' + (e.tag || '') + ' ' + (e.app || '')).toLowerCase();
+}
+
+function tlPlain(e){
+  if (e.t === 'route') return (e.action || 'push') + ' ' + (e.name || '<unnamed>') + (e.prev ? ' <- ' + e.prev : '');
+  if (e.t === 'net') return (e.method || '') + ' ' + (e.url || '') + (e.code ? ' ' + e.code : '') + (e.dur ? ' ' + e.dur + 'ms' : '') + (e.err ? ' ERR ' + e.err : '');
+  if (e.t === 'exc') return '异常 ' + (e.summary || '') + (e.count > 1 ? ' x' + e.count : '');
+  return '[' + (e.level || 'I') + '/' + (e.tag || '') + '] ' + (e.msg || '');
+}
+
+function tlShortUrl(u){
+  u = u || '';
+  return u.length > 110 ? u.substring(0, 110) + '…' : u;
+}
+
+function tlRowHtml(e){
+  var k = e.t + ':' + e.id;
+  var open = !!tlExpanded[k];
+  var cls = 'tl-row tl-' + e.t;
+  var sum = '', aux = '', badge = '';
+  if (e.t === 'route') {
+    badge = '路由';
+    sum = esc(e.action || 'push') + ' ' + esc(e.name || '<unnamed>');
+    if (e.prev) sum += ' <span class="muted">← ' + esc(e.prev) + '</span>';
+    if (e.phase && e.phase !== 'idle') aux = '<span style="color:#d29922">' + esc(e.phase) + '</span>';
+  } else if (e.t === 'net') {
+    badge = '网络';
+    var code = parseInt(e.code, 10);
+    var color = (e.status === 'failure' || e.status === 'cancelled') ? '#f85149'
+      : (e.status === 'pending' ? '#8b949e' : (code >= 200 && code < 400 ? '#7ee787' : '#f85149'));
+    sum = esc(e.method) + ' ' + esc(tlShortUrl(e.url));
+    if (!isNaN(code)) sum += ' <span style="color:' + color + '">' + code + '</span>';
+    if (e.err) sum += ' <span class="bad">' + esc(String(e.err).substring(0, 80)) + '</span>';
+    aux = e.dur ? e.dur + 'ms' : (e.status === 'pending' ? '进行中' : '');
+  } else if (e.t === 'exc') {
+    badge = '异常';
+    sum = esc(e.summary || '(无摘要)');
+    aux = e.count > 1 ? '×' + e.count : '';
+  } else {
+    badge = '日志';
+    var lv = e.level || 'I';
+    if (lv === 'W' || lv === 'E' || lv === 'F') cls += ' tl-' + (lv === 'W' ? 'w' : 'e');
+    sum = esc(String(e.msg || '').substring(0, 400));
+    aux = esc(e.app || e.tag || '');
+  }
+  var html = '<div class="' + cls + (open ? ' tl-open' : '') + '" onclick="tlToggle(\'' + esc(k) + '\')" title="点击展开">'
+    + '<span class="tl-t">' + tlTime(e.ms) + '</span>'
+    + '<span class="tl-badge">' + badge + '</span>'
+    + '<span class="tl-sum">' + sum + '</span>'
+    + '<span class="tl-aux">' + aux + '</span></div>';
+  if (open) html += '<div class="tl-detail">' + tlDetailHtml(e) + '</div>';
+  return html;
+}
+
+function tlDetailHtml(e){
+  var rows = [];
+  function row(k, v){ if (v !== undefined && v !== null && v !== '') rows.push('<div><span class="muted">' + k + '：</span>' + esc(String(v)) + '</div>'); }
+  if (e.t === 'route') {
+    row('动作', e.action); row('路由名', e.name); row('上一路由', e.prev); row('SchedulerPhase', e.phase);
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoRoutes()">在路由栈中查看当前栈</a></div>');
+  } else if (e.t === 'net') {
+    row('方法', e.method); row('URL', e.url); row('状态码', e.code); row('耗时', e.dur ? e.dur + 'ms' : '');
+    row('状态', e.status); row('错误', e.err);
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoNet(\'' + esc(e.id) + '\')">在 Network 中查看详情</a></div>');
+  } else if (e.t === 'exc') {
+    var it = e.item || {};
+    row('摘要', it.summary); row('相关 Widget', it.widget); row('来源', it.source); row('通道', it.channel);
+    if (it.desc) rows.push('<div style="margin-top:4px">' + esc(String(it.desc).substring(0, 1200)) + '</div>');
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoExc()">在异常 Tab 中查看完整栈</a></div>');
+  } else {
+    var l = e._l || {};
+    row('时间', l.ts || ''); row('来源', (l.source || '') + (l.device ? ' · ' + l.device : ''));
+    row('级别', l.level); row('Tag', l.tag); row('应用', l.app);
+    rows.push('<div style="margin-top:4px">' + esc(String(l.msg || '')) + '</div>');
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoLogs()">在日志 Tab 中查看</a></div>');
+  }
+  return rows.join('');
+}
+
+function tlRender(){
+  if (!tlOnTab()) return;
+  var body = document.getElementById('tl-body');
+  var evs = tlBuild();
+  var total = evs.length;
+  var LIMIT = 1500;
+  var truncated = total > LIMIT;
+  if (truncated) evs = evs.slice(total - LIMIT);
+  var atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  var prevTop = body.scrollTop;
+  var html = '';
+  evs.forEach(function(e){ html += tlRowHtml(e); });
+  if (!html) html = '<span class="muted" style="padding:8px;display:block">' + (tlUri() ? '当前范围/过滤下没有事件（触发一次操作后再看，或放宽范围）' : '请先选择调试会话') + '</span>';
+  if (truncated) html = '<div class="muted" style="padding:4px 8px">仅显示最新 ' + LIMIT + ' 条（共 ' + total + ' 条），请缩小时间范围或加关键字</div>' + html;
+  body.innerHTML = html;
+  if (!tlPaused && atBottom) body.scrollTop = body.scrollHeight;
+  else body.scrollTop = prevTop;
+  tlStat(tlUri() ? '共 ' + total + ' 条' + (truncated ? '（显示最新 ' + LIMIT + '）' : '') : '请先选择 VM');
+  tlUpdateNewBar();
+}
+
+function tlToggle(k){
+  tlExpanded[k] = !tlExpanded[k];
+  tlRender();
+}
+
+function tlUpdateNewBar(){
+  var bar = document.getElementById('tl-newbar');
+  if (!bar) return;
+  if (tlPaused && tlNewCount > 0) {
+    bar.style.display = 'block';
+    bar.textContent = '有新事件（点击恢复并跳到底部）';
+  } else { bar.style.display = 'none'; }
+}
+
+function tlPause(btn){
+  tlPaused = !tlPaused;
+  btn.textContent = tlPaused ? '继续' : '暂停';
+  if (!tlPaused) { tlNewCount = 0; tlRender(); }
+}
+
+function tlToLatest(){
+  if (tlPaused) { tlPaused = false; document.getElementById('tl-pause-btn').textContent = '暂停'; }
+  tlNewCount = 0;
+  tlRender();
+  var body = document.getElementById('tl-body');
+  body.scrollTop = body.scrollHeight;
+  tlUpdateNewBar();
+}
+
+function tlClear(){
+  if (!confirm('清空时间轴里的路由/网络记录？\n（app 内记录、日志、异常都不受影响）')) return;
+  fetch('/api/timeline/clear', { method: 'POST' }).then(function(){
+    tlOrder = []; tlByKey = {}; tlExpanded = {}; tlRender();
+  }).catch(function(e){ alert('清空失败：' + e); });
+}
+
+function tlCopy(){
+  var evs = tlBuild();
+  var lines = evs.map(function(e){ return tlTime(e.ms) + ' [' + e.t + '] ' + tlPlain(e); });
+  if (!lines.length) return;
+  var text = lines.join('\n');
+  var done = function(){ tlStat('已复制 ' + lines.length + ' 条'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){ copyLogsFallback(text); done(); });
+  } else { copyLogsFallback(text); done(); }
+}
+
+function tlGoRoutes(){ document.querySelector('.tab[data-tab="routes"]').click(); }
+function tlGoExc(){ excGoTab(); }
+function tlGoLogs(){ document.querySelector('.tab[data-tab="logs"]').click(); }
+function tlGoNet(id){
+  document.querySelector('.tab[data-tab="network"]').click();
+  var tries = 0;
+  (function wait(){
+    var hit = nwItems.filter(function(x){ return x.id === id; })[0];
+    if (hit) { nwOpen[id] = true; nwRender(); return; }
+    if (++tries > 25) return;
+    setTimeout(wait, 150);
+  })();
+}
 function refreshDaemon(){
   fetch('/api/daemon').then(function(r){ return r.json(); }).then(function(d){
     var el = document.getElementById('daemon-status');
@@ -7688,7 +8303,7 @@ setInterval(refreshDaemon, 5000);
 function setVmFilter(v){
   vmFilter = v; saveVmFp(fpBySource[v] || '');
   clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
-  sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh();
+  sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); tlResub();
 }
 
 // -- 路由栈 Tab -------------------------------------------------------------

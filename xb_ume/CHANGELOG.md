@@ -56,3 +56,12 @@
 - 修复路由栈 Tab 可能诱发的 App 端 framework 断言（`InheritedElement.notifyClients` 的 `check that it really is our descendant`，多发生在 `UnmanagedRestorationScope` 重建时）：`/api/routelocate` 原先用 `ModalRoute.of(e)` 遍历整棵 Element 树来收集目标路由的候选 Widget，而 `ModalRoute.of` 会给每个 Element 注册 `_ModalScopeStatus` 依赖——相当于让全树的 `didChangeDependencies` 在每次路由状态变化（isCurrent/canPop）时都被触发，可能诱导业务代码在构建/转场期间执行导航或重建，进而触发 framework 断言。现改为只从目标路由自己的 `ModalRoute.subtreeContext` 向下遍历页面子树，不再注册任何 InheritedWidget 依赖，同时避免 250 候选上限把深页面的用户 Widget 截掉。
 - 新增路由调试日志 `~/.xb_ume_ide/logs/route_debug.log`（超 2MB 轮转）：记录路由栈读取、路由定位、路由操作的端口/耗时/结果；当 App 端框架异常或未捕获异常到达时，自动追加最近 25 条路由操作快照，便于复现「切到路由栈 Tab 后操作手机出现异常」时直接对齐电脑端操作与手机端异常的时间线。
 - 上述 `check that it really is our descendant` 断言到达后，额外在 App 内只读跑一次依赖一致性探针，把「仍登记在 InheritedElement._dependents 里、但祖先链已回不到该 InheritedElement」的元素以 `[deps]` 写入 `route_debug.log`（继承点/失效 dependent/生命周期/祖先链，最多 8 对），用于确认断言是哪一对依赖失效导致。
+
+## 0.2.0
+
+- GUI 新增「时间轴」Tab：把路由、网络、日志、异常四类调试事件按时间合并为一条流，用来对齐「一次操作前后 app 内先后发生了什么」。
+  - 数据来源：路由 / 网络仅在时间轴 Tab 激活时由服务端每 1.5s 经 VM service eval 增量拉取（`XBUme.controller.routes` / `XBUme.controller.network`），经 WebSocket 只推送新增或状态变化的条目；日志 / 异常复用页面已实时接收的数据在前端本地合并，不重复传输。
+  - 过滤与操作：时间范围（1/5/30 分钟/全部，默认 5 分钟）、事件类型（路由/网络/日志/异常分别开关）、日志级别（Flutter I / W·E / D·V）、空格分隔多关键字、暂停/恢复、一键回到最新、清空、复制当前视图。
+  - 展示：按时间升序合并（同一毫秒权重 异常 > 网络 > 路由 > 日志），行内为时间、类型徽标、摘要与状态；点击行展开详情——路由含前后路由与 phase，网络含方法/URL/状态码/耗时与错误，异常含摘要/相关 Widget/栈帧，日志含来源/tag/完整消息，详情内可跳转到对应 Tab 查看完整内容。
+  - 暂停时底部浮条提示有新事件，点击恢复并跳到底部；清空只清 GUI 视图里的路由/网络副本（不动 app 内记录），并以时间下限阻止旧记录回填；同一会话切走再切回保留已合并的历史。
+  - 日志与异常使用本机接收/捕获时间，路由与网络使用 app 端事件时间；手机与本机时钟偏差大时跨源排序可能有偏差（页面说明文案已注明）。
