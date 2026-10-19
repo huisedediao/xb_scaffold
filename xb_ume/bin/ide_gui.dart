@@ -6541,7 +6541,12 @@ const String guiHtml = r'''
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
-var fpBySource = {}, vmFilterFp = '', vmMiss = 0; // 会话指纹映射、所选会话指纹与瞬断容忍计数
+var fpBySource = {}, vmMiss = 0; // 会话指纹映射与瞬断容忍计数
+// 所选会话指纹持久化：localStorage 存 fp，刷新/重开浏览器后自动选回同一会话；
+// 手动选「未选择会话」才清除（saveVmFp/removeVmFp）
+function loadVmFp(){ try { return localStorage.getItem('xbume_vm_fp') || ''; } catch (e) { return ''; } }
+function saveVmFp(fp){ vmFilterFp = fp; try { fp ? localStorage.setItem('xbume_vm_fp', fp) : localStorage.removeItem('xbume_vm_fp'); } catch (e) {} }
+var vmFilterFp = loadVmFp();
 var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
@@ -7179,28 +7184,26 @@ function refreshDaemon(){
         html += '<option value="' + esc(v) + '">' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
-      // 保持用户选择：会话瞬断（如热重载导致 ws 抖动）不立即回退，
-      // 连续 3 个周期（15s）仍缺失才回退到全部；重连后端口可能变化，
-      // 按实例指纹（fp，端口无关）找回同一会话并更新到新来源。
+      // 保持用户选择：会话瞬断（休眠唤醒/热重启/ws 断链）不立即回退，
+      // 缺失时按实例指纹（fp，端口无关）每轮尝试找回同一会话（含掉选后
+      // 自愈与刷新页面后恢复）；连续 3 个周期仍缺失才回退显示为未选择，
+      // 但保留指纹，会话回来自动重选。手动选「未选择会话」才清指纹。
       var prevVmFilter = vmFilter;
       var stillEntry = null;
       ss.forEach(function(s){ if ((s.source || s.uri) === vmFilter) stillEntry = s; });
-      if (stillEntry && stillEntry.fp) vmFilterFp = stillEntry.fp;
-      if (!vmFilter) {
-        vmMiss = 0; vmFilterFp = '';
-      } else if (stillEntry) {
+      if (stillEntry) {
         vmMiss = 0;
+        if (stillEntry.fp) saveVmFp(stillEntry.fp);
         sel.value = vmFilter;
       } else {
         var restored = vmFilterFp ? ss.find(function(s){ return s.fp === vmFilterFp; }) : null;
         if (restored) {
           vmFilter = restored.source || restored.uri;
-          if (restored.fp) vmFilterFp = restored.fp;
+          if (restored.fp) saveVmFp(restored.fp);
           sel.value = vmFilter;
           vmMiss = 0;
-        } else if (++vmMiss >= 3) {
-          vmFilter = ''; vmFilterFp = '';
-          vmMiss = 0;
+        } else if (vmFilter && ++vmMiss >= 3) {
+          vmFilter = ''; vmMiss = 0; // 回退显示，vmFilterFp 保留待自动恢复
         }
       }
       if (vmFilter !== prevVmFilter) {
@@ -7215,7 +7218,7 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
-function setVmFilter(v){ vmFilter = v; vmFilterFp = fpBySource[v] || ''; sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
+function setVmFilter(v){ vmFilter = v; saveVmFp(fpBySource[v] || ''); sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); }
 
 // -- 路由栈 Tab -------------------------------------------------------------
 function rtActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'routes'; }
