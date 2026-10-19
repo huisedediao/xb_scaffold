@@ -83,6 +83,7 @@ Future<void> _mainImpl(List<String> args) async {
     return;
   }
   print('[xbume-gui] GUI 服务已启动: http://127.0.0.1:$port （Ctrl-C 退出）');
+  _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree', trace: false);
   await openBrowser(port);
   final state = GuiState();
   state.start();
@@ -3131,6 +3132,7 @@ class GuiState {
       _exceptions.removeAt(0);
     }
     _dumpRouteTraceForException(rec, channel, label);
+    if (_isDescendantAssert(rec)) _dumpDepsForException(session, label);
     broadcast(<String, Object?>{'type': 'exception', 'item': rec});
   }
 
@@ -3605,6 +3607,40 @@ Map<String, Object?>? parseFlutterError(Map data) {
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
 String _escPath(String p) =>
     p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+/// 「check that it really is our descendant」断言专用探针（framework.dart
+/// 上下文：可访问 Element._parent/_widget、InheritedElement._dependents 等私有
+/// 成员）。遍历整棵 Element 树，找出仍登记在某个 InheritedElement 的
+/// _dependents 里、但沿 _parent 链已经回不到该 InheritedElement 的元素，
+/// 输出继承点/失效依赖/生命周期/祖先链，用于确认依赖是在哪次树变动中失效的。
+const String _depsProbeExpr =
+    "(() { final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return 'NO_ROOT'; "
+    "final out = StringBuffer(); var scanned = 0; var inh = 0; var broken = 0; "
+    "void walk(Element e) { scanned++; "
+    "if (e is InheritedElement && e.mounted) { inh++; "
+    "for (final d in e._dependents.keys.toList()) { "
+    "Element? a = d._parent; "
+    "while (a != null && !identical(a, e)) { a = a._parent; } "
+    "if (a == null) { broken++; "
+    "if (broken <= 8) { "
+    "final chain = <String>[]; Element? p = d; var n = 0; "
+    "while (p != null && n < 6) { final w = p._widget; "
+    "chain.add(w == null ? 'defunct' : w.runtimeType.toString()); p = p._parent; n++; } "
+    "final ew = e._widget; final dw = d._widget; "
+    "out.write('--- inh='); out.write(ew == null ? 'defunct' : ew.runtimeType.toString()); "
+    "out.write(' key='); out.write(ew?.key?.toString() ?? '-'); "
+    "out.write(' dep='); out.write(dw == null ? 'defunct' : dw.runtimeType.toString()); "
+    "out.write(' life='); out.write(d._lifecycleState.toString()); "
+    "out.write(' chain='); out.write(chain.join('<')); out.writeln(); "
+    "} } } } "
+    "e.visitChildren(walk); } "
+    "try { root.visitChildren(walk); } catch (err) { "
+    "out.write('ERR='); out.write(err.toString()); out.writeln(); } "
+    "out.write('scanned='); out.write(scanned.toString()); "
+    "out.write(' inherited='); out.write(inh.toString()); "
+    "out.write(' broken='); out.write(broken.toString()); "
+    "return out.toString(); })()";
 
 /// P9：Element 树全量拉取表达式（binding.dart 上下文可见 WidgetsBinding/Element）。
 /// 输出格式：每行 深度\u0001 类型 \u0001 key\u0001 bounds(x,y,w,h 逻辑像素，无则为空)\u0003；
@@ -5480,6 +5516,58 @@ void _dumpRouteTraceForException(
   for (final line in recent) {
     _routeDebugLog('exception/ctx', line, trace: false);
   }
+}
+
+/// 该异常是否为「依赖元素已不在继承点子树内」的断言：典型是
+/// InheritedElement.notifyClients 里的
+/// 「check that it really is our descendant」。
+bool _isDescendantAssert(Map<String, Object?> rec) {
+  final summary = (rec['summary'] ?? '').toString();
+  final desc = (rec['desc'] ?? '').toString();
+  if (summary.contains('really is our descendant') ||
+      summary.contains('UnmanagedRestorationScope') ||
+      summary.contains('notifyClients') ||
+      desc.contains('UnmanagedRestorationScope')) {
+    return true;
+  }
+  for (final f in (rec['stack'] as List? ?? const <Object?>[])) {
+    if (f is Map &&
+        (f['raw'] ?? '').toString().contains('InheritedElement.notifyClients')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+DateTime _lastDepsDump = DateTime.fromMillisecondsSinceEpoch(0);
+
+/// 断言到达后 600ms 在 app 内跑一次依赖一致性探针，把失效依赖写进
+/// route_debug.log（[deps] 标签）。只读遍历，不注册依赖；限频 8s。
+void _dumpDepsForException(_VmSession session, String label) {
+  final now = DateTime.now();
+  if (now.difference(_lastDepsDump).inSeconds < 8) return;
+  _lastDepsDump = now;
+  Future<void>.delayed(const Duration(milliseconds: 600), () async {
+    final rpc = _SandboxRpc(session.uri);
+    try {
+      final out = await rpc.evalStringOn(
+          'package:flutter/src/widgets/framework.dart', _depsProbeExpr);
+      var lines = 0;
+      for (final line in out.split('\n')) {
+        if (line.isEmpty) continue;
+        _routeDebugLog('deps',
+            'port=${_vmPortTag(session.uri)} source=$label $line',
+            trace: false);
+        if (++lines >= 40) break;
+      }
+    } catch (e) {
+      _routeDebugLog('deps',
+          'port=${_vmPortTag(session.uri)} source=$label error=${_oneLine(e)}',
+          trace: false);
+    } finally {
+      await rpc.close();
+    }
+  });
 }
 
 /// 查询 daemon 状态（经互斥端口 status 协议）。未运行返回 null。
