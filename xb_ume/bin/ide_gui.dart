@@ -7002,6 +7002,10 @@ const String guiHtml = r'''
   .tl-detail { padding:6px 12px 10px 22px; background:#161b22; border-left:3px solid var(--line); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   .tl-detail a { color:#58a6ff; text-decoration:none; }
   .tl-detail a:hover { text-decoration:underline; }
+  /* 跨 Tab 定位：目标行闪烁高亮 + 失败提示条 */
+  .locate-flash, .locate-flash td { animation: locateFlash 1.1s ease-in-out 2; }
+  @keyframes locateFlash { 0%,100% { background:transparent; } 50% { background:#4a3a00; } }
+  #locate-toast { position:fixed; left:50%; bottom:60px; transform:translateX(-50%); z-index:95; padding:6px 14px; border-radius:16px; background:#3d2b00; color:#ffd479; border:1px solid #7a5c00; font-size:12px; display:none; box-shadow:0 2px 10px rgba(0,0,0,.5); }
   .tl-newbar { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:80; padding:6px 14px; border-radius:16px; background:#1f6feb; color:#fff; cursor:pointer; font-size:12px; box-shadow:0 2px 10px rgba(0,0,0,.5); }
   .lv-V { color:#8aa0b4; } .lv-D { color:#6fa8dc; } .lv-I { color:#dbe6f0; } .lv-W { color:#f5c451; } .lv-E { color:#ef6a6a; }
   .tag { color:var(--acc); }
@@ -7437,7 +7441,7 @@ function excRender(){
 }
 function excCardHtml(it){
   excById[it.id] = it;
-  var h = '<div class="exccard">';
+  var h = '<div class="exccard" id="exccard-' + esc(String(it.id)) + '">';
   h += '<div class="exchead">' + esc(it.time || '') +
     ' <b style="color:' + (it.channel === 'framework' ? '#e74c3c' : '#e67e22') + '">' +
     (it.channel === 'framework' ? '框架' : '未捕获') + '</b> ' + esc(it.source || '');
@@ -7871,7 +7875,7 @@ function logFilterOne(l, p) {
 function logLineHtml(l) {
   var t = l.ts || l.rcv || '';
   var src = l.source + (l.device ? '·' + l.device : '');
-  return '<div class="lv-' + (l.level || 'I') + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
+  return '<div class="lv-' + (l.level || 'I') + '" data-seq="' + (l._seq || 0) + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
 }
 function renderLogs() {
   var view = document.getElementById('logview');
@@ -8128,7 +8132,7 @@ function tlDetailHtml(e){
   function row(k, v){ if (v !== undefined && v !== null && v !== '') rows.push('<div><span class="muted">' + k + '：</span>' + esc(String(v)) + '</div>'); }
   if (e.t === 'route') {
     row('动作', e.action); row('路由名', e.name); row('上一路由', e.prev); row('SchedulerPhase', e.phase);
-    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoRoutes()">在路由栈中查看当前栈</a></div>');
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoRoutesById(\'' + esc(e.id) + '\')">在路由栈中定位该路由</a></div>');
   } else if (e.t === 'net') {
     row('方法', e.method); row('URL', e.url); row('状态码', e.code); row('耗时', e.dur ? e.dur + 'ms' : '');
     row('状态', e.status); row('错误', e.err);
@@ -8137,13 +8141,13 @@ function tlDetailHtml(e){
     var it = e.item || {};
     row('摘要', it.summary); row('相关 Widget', it.widget); row('来源', it.source); row('通道', it.channel);
     if (it.desc) rows.push('<div style="margin-top:4px">' + esc(String(it.desc).substring(0, 1200)) + '</div>');
-    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoExc()">在异常 Tab 中查看完整栈</a></div>');
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoExc(' + esc(String(it.id)) + ')">在异常 Tab 中定位该条</a></div>');
   } else {
     var l = e._l || {};
     row('时间', l.ts || ''); row('来源', (l.source || '') + (l.device ? ' · ' + l.device : ''));
     row('级别', l.level); row('Tag', l.tag); row('应用', l.app);
     rows.push('<div style="margin-top:4px">' + esc(String(l.msg || '')) + '</div>');
-    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoLogs()">在日志 Tab 中查看</a></div>');
+    rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoLogs(' + (l._seq || 0) + ')">在日志 Tab 中定位该行</a></div>');
   }
   return rows.join('');
 }
@@ -8216,16 +8220,93 @@ function tlCopy(){
   } else { copyLogsFallback(text); done(); }
 }
 
-function tlGoRoutes(){ document.querySelector('.tab[data-tab="routes"]').click(); }
-function tlGoExc(){ excGoTab(); }
-function tlGoLogs(){ document.querySelector('.tab[data-tab="logs"]').click(); }
+// -- 时间轴详情 → 目标 Tab 的具体位置 ---------------------------------------
+// 目标 Tab 的渲染是异步的（Network/异常/路由栈切过去才拉数据），这里轮询等待
+// 目标行出现后滚动到视野中央并闪烁高亮；等待超时给出明确提示。
+var locateToastTimer = null;
+function locateToast(msg){
+  var el = document.getElementById('locate-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'locate-toast'; document.body.appendChild(el); }
+  el.textContent = msg;
+  el.style.display = 'block';
+  if (locateToastTimer) clearTimeout(locateToastTimer);
+  locateToastTimer = setTimeout(function(){ el.style.display = 'none'; locateToastTimer = null; }, 3200);
+}
+function locateWhenFound(find, failMsg){
+  var tries = 0;
+  (function wait(){
+    var el = find();
+    if (el) {
+      el.scrollIntoView({ block:'center' });
+      el.classList.remove('locate-flash');
+      void el.offsetWidth; // 重启动画
+      el.classList.add('locate-flash');
+      setTimeout(function(){ el.classList.remove('locate-flash'); }, 2600);
+      return;
+    }
+    if (++tries > 40) { if (failMsg) locateToast(failMsg); return; }
+    setTimeout(wait, 150);
+  })();
+}
+function tlGoRoutesById(id){
+  // 路由名可能含引号/空格，不能直接拼进 onclick，先按事件 id 反查名字
+  var e = tlByKey['route:' + id];
+  if (!e) { locateToast('该路由事件已不在时间轴中'); return; }
+  tlGoRoutes(e.name || '');
+}
+function tlGoRoutes(name){
+  document.querySelector('.tab[data-tab="routes"]').click();
+  locateWhenFound(function(){
+    var rows = document.querySelectorAll('#rt-body tr[data-rt-name]');
+    for (var i = 0; i < rows.length; i++) {
+      if ((rows[i].getAttribute('data-rt-name') || '') === name) return rows[i];
+    }
+    return null;
+  }, '当前路由栈里没有该路由（可能已 pop 或尚未加载完成）');
+}
+function tlGoExc(id){
+  document.querySelector('.tab[data-tab="exc"]').click();
+  var kw = document.getElementById('exc-kw');
+  if (kw && kw.value) { kw.value = ''; } // 关键字过滤会藏掉目标卡片
+  locateWhenFound(function(){ return document.getElementById('exccard-' + id); },
+    '异常列表里没有这条记录（可能已被清空）');
+}
+function tlGoLogs(seq){
+  document.querySelector('.tab[data-tab="logs"]').click();
+  // 日志 Tab 有独立的来源/级别/关键字过滤：临时放开，保证目标行可见
+  var changed = false;
+  var kw = document.getElementById('f-kw');
+  if (kw && kw.value) { kw.value = ''; changed = true; }
+  ['f-src-device', 'f-src-flutter'].forEach(function(id){
+    var c = document.getElementById(id);
+    if (c && !c.checked) { c.checked = true; changed = true; }
+  });
+  document.querySelectorAll('.f-lv').forEach(function(c){
+    if (!c.checked) { c.checked = true; changed = true; }
+  });
+  if (changed) syncGroup();
+  renderLogs(); // 无条件重建：即使日志 Tab 处于暂停，也把目标行渲染出来
+  locateWhenFound(function(){ return document.querySelector('#logview [data-seq="' + seq + '"]'); },
+    '日志视图里没有该行（可能已被过滤，或超出 5000 条缓冲）');
+}
 function tlGoNet(id){
   document.querySelector('.tab[data-tab="network"]').click();
   var tries = 0;
   (function wait(){
     var hit = nwItems.filter(function(x){ return x.id === id; })[0];
-    if (hit) { nwOpen[id] = true; nwRender(); return; }
-    if (++tries > 25) return;
+    if (hit) {
+      var kw = document.getElementById('nw-kw');
+      if (kw && kw.value) { kw.value = ''; } // 关键字过滤会藏掉目标行
+      nwOpen[id] = true;
+      nwRender();
+      // 等切页触发的 nwRefresh 落地（会再渲染一次），避免高亮被重渲染冲掉
+      setTimeout(function(){
+        locateWhenFound(function(){ return document.getElementById('nwrow-' + id); },
+          'Network 列表里没有该请求（可能已被 app 端清空）');
+      }, 500);
+      return;
+    }
+    if (++tries > 30) { locateToast('Network 列表尚未加载到该请求，请稍后重试'); return; }
     setTimeout(wait, 150);
   })();
 }
@@ -8373,7 +8454,7 @@ function rtRender(d){
       if (routes.length > 1) {
         ops += (ops ? ' <span class="muted">·</span> ' : '') + '<a href="javascript:void(0)" onclick="rtOp(' + nav.index + ',' + i + ',\'remove\',this)" title="直接从栈中移除该路由（无转场）">remove</a>';
       }
-      html += '<tr><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + instCell + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td><td style="white-space:nowrap">' + (ops || '<span class="muted">—</span>') + '</td></tr>';
+      html += '<tr data-rt-name="' + esc(r.name || '') + '"><td>' + (i + 1) + (pos ? ' <span class="muted">' + pos + '</span>' : '') + '</td><td>' + name + cur + '</td>' + instCell + fileCell + '<td>' + esc(r.type) + '</td><td>' + args + '</td><td>' + jump + '</td><td style="white-space:nowrap">' + (ops || '<span class="muted">—</span>') + '</td></tr>';
     });
     html += '</table>';
   });
@@ -8619,7 +8700,7 @@ function nwRender(){
     var url = it.url || '';
     var short = url.length > 80 ? url.substring(0, 80) + '…' : url;
     var open = !!nwOpen[it.id];
-    html += '<tr style="cursor:pointer;' + (open ? 'background:var(--bg2,#161b22)' : '') + '" onclick="nwToggle(\'' + esc(it.id) + '\')">'
+    html += '<tr id="nwrow-' + esc(it.id) + '" style="cursor:pointer;' + (open ? 'background:var(--bg2,#161b22)' : '') + '" onclick="nwToggle(\'' + esc(it.id) + '\')">'
       + '<td>' + esc(t) + '</td><td>' + esc(it.method) + '</td>'
       + '<td title="' + esc(url) + '">' + esc(short) + '</td>'
       + '<td>' + codeHtml + '</td><td>' + (it.durationMs ? it.durationMs + 'ms' : '') + '</td>'
