@@ -49,6 +49,7 @@
 ## 0.1.8
 
 - 路由栈名称列新增 XBVM：`/api/routeinfo` 除了 State / ChangeNotifier，还会静态解析页面的 XBVM 子类（`extends XBPage<HomeVM>` 泛型实参、`generateVM` 返回类型或构造调用、State 字段、`vmOf/vmWatch/Provider.of/Consumer` 等泛型实参，沿 extends 链验证 XBVM / XBPageVM 体系）；表格列改为「Widget / State / VM / Notifier」，VM 名可点击跳到「实例」Tab 扫描堆上实例。
+- 隐藏「状态」Tab（ChangeNotifier 聚合面板），代码保留，恢复时去掉页头 tab 的 `display:none` 即可。
 
 ## 0.1.7
 

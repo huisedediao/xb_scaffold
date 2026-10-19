@@ -253,7 +253,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：注册表经 VM service 在 `xb_ume_store_registry.dart` 库上下文 eval 读注册 Map；查找走 Element 树遍历 + 堆扫描双通道；字段树用 `getObject` 递归展开；写回是在实例上下文 eval 字段赋值表达式（eval 作用域为实例所属库，私有可见）。
 
-## 九、状态面板（Tab「状态」）
+## 九、状态面板（Tab「状态」，当前版本已隐藏，代码保留）
 
 **ChangeNotifier 状态聚合视图**——一屏看清 app 内活跃的 ChangeNotifier（控制器/状态对象）：实例数、监听者数、字段摘要。仅 debug 会话可用。
 
