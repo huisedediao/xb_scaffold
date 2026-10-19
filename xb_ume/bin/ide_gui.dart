@@ -806,11 +806,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
-    // -- 路由的 State / ChangeNotifier 解析 ---------------------------------
+    // -- 路由的 State / XBVM / ChangeNotifier 解析 --------------------------
     // 纯静态解析（不再连 VM）：routelocate 已定位到路由子树中第一个用户
     // widget 类的源文件，State 名取该类 createState() 的返回类型；
-    // ChangeNotifier 名取 State 字段里第一个沿 extends 链能到
-    // ChangeNotifier 的类型（仅搜本机项目源码，框架类型自然跳过）。
+    // VM 名取 widget 声明处泛型实参（extends XBPage<HomeVM>）、generateVM
+    // 的返回类型/构造调用、State 字段与 Provider 泛型实参；其余沿 extends
+    // 链能到 ChangeNotifier 的类型归入 Notifier（仅搜本机项目源码）。
     if (path == '/api/routeinfo') {
       final file = req.uri.queryParameters['file'] ?? '';
       final cls = req.uri.queryParameters['class']?.trim() ?? '';
@@ -822,15 +823,17 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         return;
       }
       String state = '';
+      List<String> vmList = const <String>[];
       List<String> cnList = const <String>[];
       try {
-        (state, cnList) = _routeStateAndNotifier(file, cls);
+        (state, vmList, cnList) = _routeStateAndNotifier(file, cls);
       } catch (_) {}
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'ok': true,
         'widget': cls,
         'state': state,
+        'vm': vmList,
         'cn': cnList,
       }));
       await req.response.close();
@@ -6151,35 +6154,61 @@ int _findClassDeclLine(String path, String className) {
   return 1;
 }
 
-// -- 路由 State / ChangeNotifier 的静态源码解析 ------------------------------
+// -- 路由 State / VM / Notifier 的静态源码解析 --------------------------------
 // 前置条件：routelocate 已把路由子树中第一个用户 widget 类定位到本机源
-// 文件。State 名与 ChangeNotifier 名均从源码推导，不再连 VM：
-//   State 名 = widget 类 createState() 的返回类型；
-//   ChangeNotifier 名 = State 字段里第一个沿 extends 链能到
-//   ChangeNotifier 的类型（仅搜本机项目 lib/，框架类型自然跳过）。
+// 文件。State 名与 VM / Notifier 名均从源码推导，不再连 VM：
+//   State 名 = widget 类 createState() 的返回类型（纯 XBWidget 页面继承自
+//   XBWidget.createState，用户类里没有覆盖，此时为空）；
+//   VM 名 = widget 声明处泛型实参（extends XBPage<HomeVM>）、generateVM
+//   返回类型或构造调用、State 字段类型、vmOf/vmWatch/Provider.of/Consumer
+//   等泛型实参，沿 extends 链验证是否 XBVM / XBPageVM 体系；
+//   Notifier = 其余沿 extends 链能到 ChangeNotifier 的字段/泛型实参。
 
-/// 从 widget 类源码静态解析（State 类名, ChangeNotifier 类名列表）。
-/// State 可能持有多个 CN 字段（controller2/3/4…），全部收集。
-(String, List<String>) _routeStateAndNotifier(String widgetFile, String widgetCls) {
+/// 从 widget 类源码静态解析（State 类名, XBVM 类名列表, Notifier 类名列表）。
+(String, List<String>, List<String>) _routeStateAndNotifier(
+    String widgetFile, String widgetCls) {
   final src = File(widgetFile).readAsStringSync();
   final widgetBody = _classBodyOf(src, widgetCls);
-  if (widgetBody == null) return ('', const <String>[]);
+  if (widgetBody == null) return ('', const <String>[], const <String>[]);
   // createState() => _HomePageState(); / createState() { return _HomePageState(); }
-  final sm = RegExp(r'createState\s*\(\s*\)\s*(?:=>|=>)\s*([A-Za-z_$][\w$]*)')
+  final sm = RegExp(r'createState\s*\(\s*\)\s*=>\s*([A-Za-z_$][\w$]*)')
           .firstMatch(widgetBody) ??
       RegExp(r'createState\s*\(\s*\)\s*\{\s*(?:return\s+)?([A-Za-z_$][\w$]*)')
           .firstMatch(widgetBody);
-  final stateName = sm?.group(1);
-  if (stateName == null || stateName.isEmpty) return ('', const <String>[]);
+  final stateName = sm?.group(1) ?? '';
   // State 类多与 widget 同文件（私有类）；不在时按项目类索引找。
-  var stateBody = _classBodyOf(src, stateName);
-  if (stateBody == null) {
-    final root = _pubspecRootFor(widgetFile);
-    final f = root == null ? null : _clsFileIndexFor(root)[stateName];
-    if (f != null) stateBody = _classBodyOf(File(f).readAsStringSync(), stateName);
+  String? stateSrc;
+  String? stateBody;
+  if (stateName.isNotEmpty) {
+    stateBody = _classBodyOf(src, stateName);
+    stateSrc = src;
+    if (stateBody == null) {
+      final root = _pubspecRootFor(widgetFile);
+      final f = root == null ? null : _clsFileIndexFor(root)[stateName];
+      if (f != null) {
+        stateSrc = File(f).readAsStringSync();
+        stateBody = _classBodyOf(stateSrc, stateName);
+      }
+    }
   }
-  if (stateBody == null) return (stateName, const <String>[]);
-  return (stateName, _notifierFieldsOf(stateBody, src, widgetFile));
+  final (vms, cns) = _notifierNamesOf(
+    widgetSrc: src,
+    widgetBody: widgetBody,
+    widgetCls: widgetCls,
+    stateSrc: stateSrc,
+    stateName: stateName,
+    stateBody: stateBody,
+    root: _pubspecRootFor(widgetFile),
+  );
+  return (stateName, vms, cns);
+}
+
+/// 源码中类 <clsName> 的声明子句（class 关键字到类体 `{` 之前）。
+String? _classDeclOf(String src, String clsName) {
+  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+              '${RegExp.escape(clsName)}[\\s<][^{]*\\{')
+      .firstMatch(src);
+  return m?.group(0);
 }
 
 /// 源码中类 <clsName> 的类体（大括号配平截取，不含外层花括号）。
@@ -6203,47 +6232,107 @@ String? _classBodyOf(String src, String clsName) {
 
 /// 源文件中类 <clsName> 声明子句里的直接父类名（无 extends 返回 null）。
 String? _superClassOf(String src, String clsName) {
-  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+)*class\\s+'
-              '${RegExp.escape(clsName)}[\\s<][^{]*\\{')
-      .firstMatch(src);
-  if (m == null) return null;
-  return RegExp(r'\bextends\s+([A-Za-z_$][\w$]*)').firstMatch(m.group(0)!)?.group(1);
+  final decl = _classDeclOf(src, clsName);
+  if (decl == null) return null;
+  return RegExp(r'\bextends\s+([A-Za-z_$][\w$]*)').firstMatch(decl)?.group(1);
 }
 
-/// State 类体中所有 ChangeNotifier 子类字段 + 同文件内 Provider
-/// ConsumerN<A, B, …> 泛型参数（页面用 Consumer2/3/4 监听多个 CN，
-/// 这些 CN 经 Provider 注入、不是 State 字段），去重保序。
-List<String> _notifierFieldsOf(String stateBody, String fileSrc, String stateFile) {
-  final root = _pubspecRootFor(stateFile);
-  // 字段声明：修饰符 + 类型（可泛型/可空）+ 字段名，以 = 或 ; 结尾。
+/// 从 widget / State 源码收集 XBVM 与 ChangeNotifier 类名（去重保序）。
+///
+/// 依次探测：声明处泛型实参、generateVM 返回类型与构造调用、字段类型、
+/// vmOf/vmWatch/Provider.of/watch/read/select/Consumer/Selector 泛型实参；
+/// 沿 extends 链把 XBVM / XBPageVM 体系归入 VM，其余 CN 归入 Notifier。
+(List<String>, List<String>) _notifierNamesOf({
+  required String widgetSrc,
+  required String widgetBody,
+  required String widgetCls,
+  required String? stateSrc,
+  required String stateName,
+  required String? stateBody,
+  required String? root,
+}) {
+  final vms = <String>[];
+  final cns = <String>[];
+  final seen = <String>{};
+  void probe(String raw) {
+    final t = RegExp(r'^[A-Za-z_$][\w$]*').firstMatch(raw.trim())?.group(0);
+    if (t == null || t.isEmpty || seen.contains(t)) return;
+    // XBVM / XBPageVM 是体系基类，既不作为具体实例候选，也不能点击跳转。
+    if (t == 'XBVM' || t == 'XBPageVM') return;
+    if (_extendsXbVM(t, root, 0)) {
+      seen.add(t);
+      vms.add(t);
+    } else if (t == 'ChangeNotifier' ||
+        t == 'ValueNotifier' ||
+        (root != null && _extendsChangeNotifier(t, root, 0))) {
+      seen.add(t);
+      cns.add(t);
+    }
+  }
+
+  // ① 声明处泛型实参：class X extends XBPage<HomeVM> / State<Widget>。
+  for (final decl in <String?>[
+    _classDeclOf(widgetSrc, widgetCls),
+    if (stateSrc != null && stateName.isNotEmpty)
+      _classDeclOf(stateSrc, stateName),
+  ]) {
+    if (decl == null) continue;
+    final m = RegExp(r'\bextends\s+[A-Za-z_$][\w$]*\s*<([^>]*)>').firstMatch(decl);
+    if (m == null) continue;
+    for (final raw in m.group(1)!.split(',')) {
+      probe(raw);
+    }
+  }
+  // ② generateVM 的返回类型（显式时）与构造函数（返回类型省略时）。
+  final gmType = RegExp(
+          r'(?:^|\n)\s*(?:@override\s+)?([A-Za-z_$][\w$]*(?:<[^>]*>)?)\s+generateVM\s*\(')
+      .firstMatch(widgetBody);
+  if (gmType != null) probe(gmType.group(1)!);
+  final gmExpr = RegExp(
+          r'generateVM\s*\([^)]*\)\s*(?:async\s*)?=>\s*([A-Za-z_$][\w$]*)')
+      .firstMatch(widgetBody) ??
+      RegExp(r'generateVM\s*\([^)]*\)\s*(?:async\s*)?\{[\s\S]{0,400}?\breturn\s+([A-Za-z_$][\w$]*)')
+          .firstMatch(widgetBody);
+  if (gmExpr != null) probe(gmExpr.group(1)!);
+  // ③ 字段类型：State 里持有 controller / VM 字段。
   final fieldRe = RegExp(
       r'^\s*(?:final\s+|late\s+|const\s+|static\s+)*'
       r'([A-Za-z_$][\w$]*)(?:<[^;=]*?>)?\??\s+_?[a-z][\w$]*\s*(?:=|;)',
       multiLine: true);
-  final seen = <String>{};
-  final out = <String>[];
-  void probe(String t) {
-    if (!seen.add(t)) return;
-    if (t == 'ChangeNotifier' || t == 'ValueNotifier') {
-      out.add(t);
-    } else if (root != null && _extendsChangeNotifier(t, root, 0)) {
-      out.add(t);
+  for (final body in <String?>[widgetBody, stateBody]) {
+    if (body == null) continue;
+    for (final m in fieldRe.allMatches(body)) {
+      probe(m.group(1)!);
     }
   }
+  // ④ 泛型调用实参：Provider 注入、Consumer 监听、context.vmOf 等。
+  // 只扫本页 widget / State 类体，避免把同文件其它页面的 VM 归到当前行。
+  final genericRe = RegExp(
+      r'\b(?:Provider\.of|ChangeNotifierProvider|vmOf|vmWatch|vmOfOrNull|vmWatchOrNull|watch|read|select|Consumer[2-9]?|Selector)\s*<([^>]*)>');
+  for (final body in <String?>[widgetBody, stateBody]) {
+    if (body == null) continue;
+    for (final m in genericRe.allMatches(body)) {
+      for (final raw in m.group(1)!.split(',')) {
+        probe(raw);
+      }
+    }
+  }
+  return (vms, cns);
+}
 
-  for (final m in fieldRe.allMatches(stateBody)) {
-    probe(m.group(1)!);
+/// 项目内类型 <type> 是否沿 extends 链最终继承 XBVM（含 XBPageVM）。
+bool _extendsXbVM(String type, String? root, int depth) {
+  if (type == 'XBVM' || type == 'XBPageVM') return true;
+  if (root == null || depth > 4) return false;
+  final f = _clsFileIndexFor(root)[type];
+  if (f == null) return false;
+  try {
+    final sup = _superClassOf(File(f).readAsStringSync(), type);
+    if (sup == null) return false;
+    return _extendsXbVM(sup, root, depth + 1);
+  } catch (_) {
+    return false;
   }
-  // ConsumerN<...>：泛型参数即被监听的类型，逐个验证是否 CN 子类
-  // （如 Consumer2<HomeController, AppTheme>；非 CN 参数自然被过滤）。
-  final consumerRe = RegExp(r'\bConsumer[2-9]<([^>]*)>');
-  for (final m in consumerRe.allMatches(fileSrc)) {
-    for (final raw in m.group(1)!.split(',')) {
-      final idm = RegExp(r'^[A-Za-z_$][\w$]*').firstMatch(raw.trim());
-      if (idm != null) probe(idm.group(0)!);
-    }
-  }
-  return out;
 }
 
 /// 项目内类型 <type> 是否沿 extends 链最终继承 ChangeNotifier。
@@ -6691,7 +6780,8 @@ const String guiHtml = r'''
   <div class="tab" data-tab="routes">路由栈</div>
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="storage">Storage</div>
-  <div class="tab" data-tab="status">状态</div>
+  <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
+  <div class="tab" data-tab="status" style="display:none">状态</div>
   <div class="tab" data-tab="instances">实例</div>
   <div class="tab" data-tab="shot">截图</div>
   <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
@@ -7647,7 +7737,7 @@ function rtRender(d){
       + '<button onclick="rtPush(' + nav.index + ')" title="在 app 内经 Navigator.pushNamed 压入指定名字的路由">pushNamed</button>'
       + '<span id="rt-pushmsg-' + nav.index + '" class="muted"></span></div>';
     if (!routes.length) { html += '<span class="muted">空栈</span>'; return; }
-    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>Widget / State / Notifier</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th><th>操作</th></tr>';
+    html += '<table class="sbtable"><tr><th>栈序</th><th>路由名</th><th>Widget / State / VM / Notifier</th><th>文件</th><th>类型</th><th>参数</th><th>定位</th><th>操作</th></tr>';
     routes.forEach(function(r, i){
       var pos = i === 0 ? '栈底' : (i === routes.length - 1 ? '栈顶' : '');
       var name = r.name ? esc(r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
@@ -7656,7 +7746,7 @@ function rtRender(d){
       var args = r.argsType
         ? '<span title="' + esc(r.argsType + (r.args ? ' ' + r.args : '')) + '">' + esc((r.args || '').length > 60 ? r.args.substring(0, 60) + '…' : (r.args || '空')) + ' <span class="muted">(' + esc(r.argsType) + ')</span></span>'
         : '<span class="muted">—</span>';
-      // Widget/State/Notifier 三列：名称由 rtResolve→rtInfo 静态解析后填充，
+      // Widget/State/VM/Notifier 名称由 rtResolve→rtInfo 静态解析后填充，
       // 空显示 \；点击名称跳到实例 Tab 自动查找。
       var instCell = '<td id="rti-' + nav.index + '-' + i + '" style="white-space:nowrap"><span class="muted">…</span></td>';
       var jump = '<a href="javascript:void(0)" onclick="rtJump(' + nav.index + ',' + i + ',this)" title="在 IDE 中打开该页面对应的源码文件">跳转</a>';
@@ -7674,7 +7764,7 @@ function rtRender(d){
   });
   return html;
 }
-// Widget/State/Notifier 名称单元格：无则显示 \\，有则可点击跳实例 Tab。
+// Widget/State/VM/Notifier 名称单元格：无则显示 \\，有则可点击跳实例 Tab。
 function rtInstLink(name, tip){
   if (!name) return '<span class="muted" title="未找到">\\</span>';
   return '<a href="javascript:void(0)" style="font-family:monospace" title="' + esc(tip) + '：点击跳到「实例」Tab 自动查找 ' + esc(name) + '" onclick="rtToInstances(\'' + esc(name).replace(/'/g, "\\'") + '\')">' + esc(name) + '</a>';
@@ -7710,7 +7800,7 @@ function rtResolve(nav, i){
     })
     .catch(function(){ var cell = document.getElementById('rtf-' + nav + '-' + i); if (cell) cell.innerHTML = '<span class="muted">—</span>'; var rc = document.getElementById('rti-' + nav + '-' + i); if (rc) rc.innerHTML = '<span class="muted">\\</span>'; });
 }
-// 用 routelocate 已定位到的 widget 类与源文件静态解析 State / ChangeNotifier 名。
+// 用 routelocate 已定位到的 widget 类与源文件静态解析 State / VM / Notifier 名。
 function rtInfo(nav, i, widgetCls, file){
   fetch('/api/routeinfo?class=' + encodeURIComponent(widgetCls) + '&file=' + encodeURIComponent(file))
     .then(function(r){ return r.json(); })
@@ -7718,8 +7808,9 @@ function rtInfo(nav, i, widgetCls, file){
       var cell = document.getElementById('rti-' + nav + '-' + i);
       if (!cell) return;
       if (!d || !d.ok) { cell.innerHTML = '<span class="muted">\\</span>'; return; }
-      // Widget/State/多个 ChangeNotifier（controller2/3/4…）全部可点击。
+      // Widget/State/XBVM/其它 ChangeNotifier 全部可点击。
       var parts = [rtInstLink(d.widget, 'Widget 实例（堆扫描）'), rtInstLink(d.state, 'State 实例（Element 树 + 堆扫描）')];
+      (d.vm || []).forEach(function(v){ parts.push(rtInstLink(v, 'XBVM 实例（堆扫描）')); });
       (d.cn || []).forEach(function(c){ parts.push(rtInstLink(c, 'ChangeNotifier 实例（堆扫描）')); });
       cell.innerHTML = parts.join(' <span class="muted">/</span> ');
       // 记录本行解析结果：泄漏检测的类名来源（当前栈 + 历史已退出集合）。

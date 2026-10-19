@@ -164,7 +164,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - **类型**（MaterialPageRoute / DialogRoute / BottomSheet 等，弹窗也是路由栈的一层）；
 - **参数**（`settings.arguments` 的摘要，悬停看完整内容；复杂对象只显示 toString/类型）；
 - **文件**（该页面对应的源码文件名：类声明行，如 `device_advanced_config_page.dart:15`，悬停看完整路径与类名；无法解析时显示 `—`）；
-- **Widget / State / Notifier**（页面 Widget 类名 / 其 State 类名 / ChangeNotifier 类名，无则显示 `\`；**State 有多个 CN 字段时全部列出，页面用 Provider `Consumer2/3/4<...>` 监听的多个 CN 也会被识别**——泛型参数逐个验证是否 CN 子类）；**点击名称会跳到「实例」Tab 并自动查找该类的实例**（复用实例 Tab 的 Element 树 + 堆扫描双通道查找）；
+- **Widget / State / VM / Notifier**（页面 Widget 类名 / 其 State 类名 / XBVM 子类名 / 其它 ChangeNotifier 类名，无则显示 `\`；**State 有多个 CN 字段、页面用 Provider `Consumer2/3/4<...>` 监听的多个 CN、以及 `extends XBPage<HomeVM>` 泛型或 `generateVM` 返回类型声明的 VM 都会被识别**——泛型参数逐个验证是否 XBVM / CN 子类）；**点击名称会跳到「实例」Tab 并自动查找该类的实例**（复用实例 Tab 的 Element 树 + 堆扫描双通道查找）；
 - **定位**（行尾「跳转」链接，见下文）；
 - **操作**（行尾「pop」/「remove」链接，见下文「路由操作」）；
 - 栈顶当前路由带 **● 当前** 高亮标记。
@@ -175,7 +175,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **刷新方式**：切换到本 Tab 自动拉取一次；也可点「刷新」手动拉取（导航、开关弹窗后点刷新即可看到最新栈）。
 
-**Widget / State / Notifier 列原理**：纯静态解析、零 VM 调用——复用「跳转」已定位 到的用户 widget 类源文件：State 名取 `createState()` 的返回类型；ChangeNotifier 名 取 State 字段里沿 `extends` 链能到 ChangeNotifier 的类型，加上同文件内 `ConsumerN<...>` 泛型参数（均仅搜本机项目 `lib/`，框架类型与外部包类型自然跳过）。解析在浏览器加载后自动进行，无需点击。
+**Widget / State / VM / Notifier 列原理**：纯静态解析、零 VM 调用——复用「跳转」已定位 到的用户 widget 类源文件：State 名取 `createState()` 的返回类型；VM 名取 widget 声明处泛型实参（`extends XBPage<HomeVM>`）、`generateVM` 的返回类型或构造调用、State 字段类型、`vmOf/vmWatch/Provider.of/Consumer` 等泛型实参，沿 `extends` 链验证是否 `XBVM` / `XBPageVM` 体系；其余能到 `ChangeNotifier` 的类型归入 Notifier（均仅搜本机项目 `lib/`，框架类型与外部包类型自然跳过）。解析在浏览器加载后自动进行，无需点击。
 
 **原理**：通过 VM service 在 app 进程内（`navigator.dart` 库上下文）读取 NavigatorState 的路由历史，零 app 端改动；仅 debug 模式可用。
 
