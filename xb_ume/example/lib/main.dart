@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:xb_analytics_plus/xb_analytics_plus.dart';
 import 'package:xb_ume/xb_ume.dart';
 
+import 'pages/login_demo_page.dart';
 import 'pages/xb_analytics_locator_test_page.dart';
 
 Future<void> main() async {
@@ -132,6 +133,17 @@ class _HomePageState extends State<HomePage> {
                   );
                 },
                 child: const Text('XB Analytics Locator Test'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      settings: const RouteSettings(name: '/login-demo'),
+                      builder: (_) => const LoginDemoPage(),
+                    ),
+                  );
+                },
+                child: const Text('Login Demo'),
               ),
             ],
           ),

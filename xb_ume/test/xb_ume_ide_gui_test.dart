@@ -215,4 +215,15 @@ short
       expect(prompt, contains('出现次数：2'));
     });
   });
+
+  group('remoteOpAllowed', () {
+    test('遥控只放行 tap/swipe/input', () {
+      expect(gui.remoteOpAllowed('tap'), isTrue);
+      expect(gui.remoteOpAllowed('swipe'), isTrue);
+      expect(gui.remoteOpAllowed('input'), isTrue);
+      expect(gui.remoteOpAllowed('eval'), isFalse);
+      expect(gui.remoteOpAllowed('navigate'), isFalse);
+      expect(gui.remoteOpAllowed(''), isFalse);
+    });
+  });
 }

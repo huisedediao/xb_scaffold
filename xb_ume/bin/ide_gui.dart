@@ -1799,6 +1799,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
         if (b64.isEmpty) throw '截图响应为空（app 需 debug 模式且前台运行）';
         req.response.headers.contentType = ContentType('image', 'png');
+        req.response.headers.set('Cache-Control', 'no-store');
         req.response.add(base64Decode(b64));
         await req.response.close();
       } catch (e) {
@@ -2096,6 +2097,56 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       _auto.stopReq = true;
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    // 截图遥控：单步 tap/swipe/input，不占用场景执行状态、不落步骤截图；
+    // 供截图 Tab 的点击/拖拽/输入使用，回放仍走 /api/auto/run。
+    if (path == '/api/remote/op' && req.method == 'POST') {
+      Map<String, dynamic> body = <String, dynamic>{};
+      try {
+        final raw = await utf8.decoder.bind(req).join();
+        if (raw.isNotEmpty) body = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
+        await req.response.close();
+        return;
+      }
+      final uri = (body['uri'] ?? '').toString().trim();
+      final rawStep = body['step'];
+      final step = rawStep is Map
+          ? Map<String, dynamic>.from(rawStep)
+          : <String, dynamic>{};
+      final type = (step['type'] ?? '').toString();
+      String? bad;
+      if (uri.isEmpty) bad = '缺少 uri';
+      if (bad == null && !remoteOpAllowed(type)) {
+        bad = '遥控只支持 tap / swipe / input';
+      }
+      if (bad == null && type == 'input' &&
+          (step['text'] ?? '').toString().length > 5000) {
+        bad = '输入文本过长（最多 5000 字）';
+      }
+      if (bad != null) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
+        await req.response.close();
+        return;
+      }
+      try {
+        final (actual, err) = await _autoExecStep(uri, step);
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': err.isEmpty, 'actual': actual, 'error': err}));
+      } catch (e) {
+        req.response.statusCode = HttpStatus.internalServerError;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
+      }
       await req.response.close();
       return;
     }
@@ -4107,6 +4158,10 @@ String _escEvalString(String s) => s
 /// 业务抛异常导致 up 未发，_hitTests 残留 pointer 0 会让后续所有 tap 撞
 /// '!_hitTests.containsKey(event.pointer)' 断言永久卡死（f_jlink 实测）。
 int _nextPointer() => DateTime.now().microsecondsSinceEpoch & 0x3fffffff;
+
+/// 截图遥控白名单：只允许直接操作手势/文本，不允许 eval 等通用步骤。
+const Set<String> remoteOpTypes = <String>{'tap', 'swipe', 'input'};
+bool remoteOpAllowed(String type) => remoteOpTypes.contains(type);
 
 String _autoTapExpr(String x, String y, {bool phys = false, int pointer = 0}) {
   final pos = phys
@@ -7372,6 +7427,24 @@ const String guiHtml = r'''
   .excai { margin-top:8px; border-top:1px dashed #5c2a2a; padding-top:8px; font-size:12px; color:#e8d5d5; }
   .excai .aihead { color:#ffb4b4; font-weight:600; margin-bottom:4px; }
   .excai .aitext { white-space:pre-wrap; line-height:1.55; }
+  .shwrap { position:relative; display:inline-block; max-width:100%; line-height:0; }
+  .shwrap img { display:block; max-width:100%; border:1px solid #444; user-select:none; -webkit-user-drag:none; touch-action:none; }
+  .shring { position:absolute; width:18px; height:18px; margin:-9px 0 0 -9px; border:2px solid #f0b429; border-radius:50%; pointer-events:none; display:none; box-shadow:0 0 0 3px rgba(240,180,41,.18); }
+  .shline { position:absolute; height:2px; background:#f0b429; transform-origin:0 50%; pointer-events:none; display:none; opacity:.9; }
+  .shrec { border:1px solid var(--line); border-radius:8px; padding:10px; background:#0e141c; }
+  .shrec .hd { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .shrec .dot { width:8px; height:8px; border-radius:50%; background:#ef5350; display:none; }
+  .shrec .dot.on { display:inline-block; animation:shblink 1.1s infinite; }
+  @keyframes shblink { 50% { opacity:.25; } }
+  .shsteps { max-height:42vh; overflow:auto; margin-top:8px; border-top:1px solid var(--line); font-size:12px; }
+  .shstep { display:flex; align-items:flex-start; gap:6px; padding:3px 0; border-bottom:1px dashed #24303d; }
+  .shstep .idx { color:#66788a; min-width:18px; text-align:right; }
+  .shstep .ty { color:var(--acc); min-width:38px; }
+  .shstep .ds { flex:1; color:#c6d4e2; word-break:break-all; }
+  .shstep .del { color:#8aa0b4; cursor:pointer; }
+  .shstatus { margin-top:8px; font-size:12px; color:#8aa0b4; white-space:pre-wrap; }
+  .shstatus .err { color:#ef5350; }
+  .shstatus .ok { color:#4caf50; }
 </style>
 </head>
 <body>
@@ -7550,19 +7623,63 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。</div>
   </section>
   <section class="page" id="page-shot">
-    <div style="display:flex;align-items:center;gap:8px">
-      <button class="primary" onclick="shRefresh()">刷新截图</button>
-      <select id="sh-auto" onchange="shAuto(this.value)">
-        <option value="">自动刷新：关</option>
-        <option value="1">每 1 秒</option>
-        <option value="2">每 2 秒</option>
-        <option value="5">每 5 秒</option>
-      </select>
-      <button onclick="shSave()">下载 PNG</button>
+    <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:320px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="primary" onclick="shRefresh()">刷新截图</button>
+          <select id="sh-auto" onchange="shAuto(this.value)">
+            <option value="">自动刷新：关</option>
+            <option value="1">每 1 秒</option>
+            <option value="2">每 2 秒</option>
+            <option value="5">每 5 秒</option>
+          </select>
+          <button onclick="shSave()">下载 PNG</button>
+          <label style="font-size:12px" title="开启后单击截图=Tap、按住拖拽=Swipe；开始录制会自动开启"><input type="checkbox" id="sh-remote" onchange="shRemote(this.checked)"> 遥控</label>
+          <span id="sh-meta" class="muted"></span>
+        </div>
+        <div class="muted" id="sh-tip" style="display:none;margin-top:8px"></div>
+        <div class="shwrap" style="margin-top:8px">
+          <img id="sh-img" style="display:none;cursor:default" draggable="false"
+               onpointerdown="shDown(event)" onpointermove="shMove(event)" onpointerup="shUp(event)" onpointercancel="shCancel(event)"
+               alt="app 截图">
+          <div id="sh-ring" class="shring"></div>
+          <div id="sh-line" class="shline"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <input id="sh-input" placeholder="输入文本（回车发送到 app 当前焦点输入框）" style="flex:1;min-width:240px" onkeydown="shInputKey(event)">
+          <button class="primary" onclick="shSend()">发送</button>
+        </div>
+        <div id="sh-op" class="muted" style="margin-top:4px;font-size:12px"></div>
+        <div class="muted" style="margin-top:6px;font-size:12px">开启「遥控」后：单击截图=Tap，按住拖拽=Swipe，上方输入框回车=Input；开始录制会自动开启遥控。截图按物理像素坐标映射，自动刷新建议选低频档。</div>
+      </div>
+      <div class="shrec" style="flex:0 0 340px;max-width:100%">
+        <div class="hd">
+          <span id="sh-rec-dot" class="dot"></span><b>录制</b>
+          <span id="sh-rec-stat" class="muted" style="flex:1">未开始</span>
+          <button id="sh-rec-btn" class="primary" onclick="shRecToggle()">● 开始录制</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <input id="sh-scn-name" placeholder="场景名" style="flex:1;min-width:110px">
+          <button onclick="shSaveScn()">保存场景</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="primary" onclick="shPlayNow()">▶ 回放当前步骤</button>
+          <button onclick="shStopPlay()">■ 停止</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <select id="sh-scn-sel" style="flex:1"><option value="">— 已保存场景 —</option></select>
+          <button onclick="shLoadScn()">载入</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button onclick="shUndo()">撤销上一步</button>
+          <button onclick="shClear()">清空步骤</button>
+          <span id="sh-steps-n" class="muted"></span>
+        </div>
+        <div id="sh-steps" class="shsteps"><span class="muted">暂无步骤</span></div>
+        <div id="sh-play" class="shstatus"></div>
+        <div class="muted" style="margin-top:6px;font-size:11px">步骤保存在 ~/.xb_ume_ide/scenarios；input 文本按原文写入 JSON，含密码等敏感信息时请注意。</div>
+      </div>
     </div>
-    <div class="muted" id="sh-tip" style="display:none;margin-top:8px"></div>
-    <div style="margin-top:8px"><img id="sh-img" style="display:none;max-width:100%;border:1px solid #444" alt="app 截图"></div>
-    <div class="muted" style="margin-top:6px">实时截图（_flutter.screenshot，debug 模式可用）；自动刷新选低频档，避免截图流量过大。</div>
   </section>
   <section class="page" id="page-wtree">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -7682,7 +7799,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'storage') stRefresh();
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
-    else if (t.dataset.tab === 'shot') shRefresh();
+    else if (t.dataset.tab === 'shot') { shRefresh(); shScnRefresh(); shRecStat(); }
     else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
     else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
@@ -7892,8 +8009,15 @@ function excOpenIde(file, line, el){
     .then(function(d){ el.textContent = d.ok ? '已打开 ✓' : '失败：' + (d.message || '未知错误'); })
     .catch(function(e){ el.textContent = '失败：' + e; });
 }
-// -- 截图 Tab ------------------------------------------------------------
-var shTimer = null;
+// -- 截图 Tab：实时截图 + 遥控（Tap/Swipe/Input）+ 录制/回放 ------------
+var shTimer = null;      // 自动刷新定时器
+var shRefSoon = null;    // 操作后的去抖刷新
+var shDrag = null;       // 当前拖拽（pointerId/起点/时间/物理起点）
+var shOpQ = Promise.resolve(); // 串行化遥控请求，避免 pointer 事件交叉
+var shOpPending = 0;
+var shRec = {on: false, steps: [], lastAt: 0, startedAt: 0, timer: null};
+var shRun = {on: false, timer: null, seen: false, t0: 0, name: '', total: 0};
+var shRingTimer = null;
 // -- 运行时操作（reassemble / GC） ---------------------------------------
 function rtOp(op){
   var uri = vmFilter ? (vmUriBySource[vmFilter] || '') : '';
@@ -7914,24 +8038,34 @@ function shRefresh(){
   var uri = shUri();
   var img = document.getElementById('sh-img');
   var tip = document.getElementById('sh-tip');
+  var meta = document.getElementById('sh-meta');
   if (!uri) {
     img.style.display = 'none'; tip.style.display = '';
     tip.textContent = '请先在页头选择 VM 会话（仅 debug 模式可用）';
+    if (meta) meta.textContent = '';
     return;
   }
+  if (!img.getAttribute('src')) img.style.display = 'none';
   img.onerror = function(){
-    img.style.display = 'none'; tip.style.display = '';
-    tip.textContent = '截图失败（app 需 debug 模式且在前台运行；会话可能已断开）';
+    tip.style.display = '';
+    if (img.naturalWidth) {
+      tip.textContent = '刷新截图失败，保留上一次画面（app 可能已断开）';
+    } else {
+      img.style.display = 'none';
+      tip.textContent = '截图失败（app 需 debug 模式且在前台运行；会话可能已断开）';
+    }
   };
-  img.onload = function(){ img.style.display = ''; tip.style.display = 'none'; };
-  img.style.display = 'none';
+  img.onload = function(){
+    img.style.display = ''; tip.style.display = 'none';
+    if (meta) meta.textContent = img.naturalWidth + '×' + img.naturalHeight + ' 物理像素 · 点击/拖拽映射';
+  };
   img.src = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
 }
 function shAuto(v){
   if (shTimer) { clearInterval(shTimer); shTimer = null; }
   if (v) shTimer = setInterval(function(){
     var t = document.querySelector('.tab.active');
-    if (t && t.dataset.tab === 'shot') shRefresh();
+    if (t && t.dataset.tab === 'shot' && !shDrag) shRefresh();
   }, (+v) * 1000);
 }
 function shSave(){
@@ -7940,6 +8074,384 @@ function shSave(){
   a.href = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
   a.download = 'xbume-shot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
   a.click();
+}
+function shSetOp(s, cls){
+  var el = document.getElementById('sh-op'); if (!el) return;
+  el.textContent = s || '';
+  el.style.color = cls === 'err' ? '#ef5350' : (cls === 'ok' ? '#4caf50' : '');
+}
+function shRefreshSoon(){
+  if (shRefSoon) clearTimeout(shRefSoon);
+  shRefSoon = setTimeout(function(){
+    shRefSoon = null;
+    if (!shDrag) shRefresh();
+  }, 350);
+}
+function shPhys(ev){
+  var img = document.getElementById('sh-img');
+  var r = img.getBoundingClientRect();
+  if (!img.naturalWidth || !r.width) return {x: 0, y: 0};
+  return {
+    x: Math.round((ev.clientX - r.left) * img.naturalWidth / r.width),
+    y: Math.round((ev.clientY - r.top) * img.naturalHeight / r.height)
+  };
+}
+function shLocal(ev){
+  var img = document.getElementById('sh-img');
+  var r = img.getBoundingClientRect();
+  return {x: ev.clientX - r.left, y: ev.clientY - r.top};
+}
+function shRing(x, y, hold){
+  var el = document.getElementById('sh-ring'); if (!el) return;
+  el.style.display = '';
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  if (shRingTimer) clearTimeout(shRingTimer);
+  shRingTimer = setTimeout(function(){ el.style.display = 'none'; }, hold || 700);
+}
+function shRemote(on){
+  var img = document.getElementById('sh-img');
+  if (img) img.style.cursor = on ? 'crosshair' : 'default';
+  if (!on) {
+    shCancel();
+    if (shRec.on) shRecStop('遥控已关闭，录制停止');
+    shSetOp('遥控已关闭（截图仅查看）');
+  } else {
+    shSetOp('遥控已开启：单击=Tap，拖拽=Swipe，输入框回车=Input');
+  }
+}
+function shDown(ev){
+  if (!document.getElementById('sh-remote').checked) return;
+  if (shRun.on) { shSetOp('回放中，暂不接受手动操作', 'err'); return; }
+  if (!shUri()) { shSetOp('请先在页头选择 VM 会话', 'err'); return; }
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+  var img = document.getElementById('sh-img');
+  if (!img.naturalWidth) return;
+  ev.preventDefault();
+  try { ev.target.setPointerCapture(ev.pointerId); } catch (e) {}
+  var p = shLocal(ev);
+  shDrag = {id: ev.pointerId, x0: p.x, y0: p.y, t0: Date.now(), p0: shPhys(ev)};
+  var line = document.getElementById('sh-line'); line.style.display = 'none';
+  shRing(p.x, p.y, 3000);
+  shSetOp('按下（' + shDrag.p0.x + ', ' + shDrag.p0.y + '）');
+}
+function shMove(ev){
+  if (!shDrag || ev.pointerId !== shDrag.id) return;
+  ev.preventDefault();
+  var p = shLocal(ev);
+  var dx = p.x - shDrag.x0, dy = p.y - shDrag.y0;
+  var len = Math.sqrt(dx * dx + dy * dy);
+  shRing(p.x, p.y, 3000);
+  var line = document.getElementById('sh-line');
+  line.style.display = len > 6 ? '' : 'none';
+  line.style.left = shDrag.x0 + 'px';
+  line.style.top = shDrag.y0 + 'px';
+  line.style.width = len + 'px';
+  line.style.transform = 'rotate(' + Math.atan2(dy, dx) + 'rad)';
+}
+function shUp(ev){
+  if (!shDrag || ev.pointerId !== shDrag.id) return;
+  ev.preventDefault();
+  try { ev.target.releasePointerCapture(ev.pointerId); } catch (e) {}
+  var d = shDrag; shDrag = null;
+  document.getElementById('sh-line').style.display = 'none';
+  shRing(d.x0, d.y0, 450);
+  var p1 = shPhys(ev);
+  var dx = p1.x - d.p0.x, dy = p1.y - d.p0.y;
+  var dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 8) {
+    shQueueOp({type: 'tap', x: p1.x, y: p1.y, phys: true},
+        'Tap (' + p1.x + ', ' + p1.y + ')');
+  } else {
+    var ms = Math.max(120, Math.min(1500, Date.now() - d.t0));
+    shQueueOp({type: 'swipe', x1: d.p0.x, y1: d.p0.y, x2: p1.x, y2: p1.y, ms: ms, phys: true},
+        'Swipe (' + d.p0.x + ',' + d.p0.y + ')→(' + p1.x + ',' + p1.y + ')');
+  }
+}
+function shCancel(){
+  shDrag = null;
+  var line = document.getElementById('sh-line'); if (line) line.style.display = 'none';
+  var ring = document.getElementById('sh-ring'); if (ring) ring.style.display = 'none';
+}
+function shQueueOp(step, label, done){
+  if (shRun.on) { shSetOp('回放中，已忽略本次操作', 'err'); return; }
+  var uri = shUri();
+  if (!uri) { shSetOp('请先在页头选择 VM 会话', 'err'); return; }
+  shOpPending++;
+  shSetOp(label + ' 执行中…');
+  shOpQ = shOpQ.then(function(){
+    return fetch('/api/remote/op', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uri: uri, step: step})
+    }).then(function(r){
+      return r.json().catch(function(){ return {ok: false, error: 'HTTP ' + r.status}; });
+    }).then(function(d){
+      if (!d.ok) {
+        shSetOp('失败：' + (d.error || d.actual || '未知错误'), 'err');
+        return;
+      }
+      shSetOp(label + ' ✓', 'ok');
+      if (shRec.on) shRecAdd(step);
+      if (done) done();
+      shRefreshSoon();
+    }).catch(function(e){
+      shSetOp('请求失败：' + e, 'err');
+    });
+  }).then(function(){
+    shOpPending--;
+    if (shOpPending <= 0 && shRec.on) shRecStat();
+  }, function(e){
+    shOpPending--;
+    shSetOp('遥控请求失败：' + e, 'err');
+  });
+}
+function shInputKey(ev){
+  if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); shSend(); }
+}
+function shSend(){
+  if (!document.getElementById('sh-remote').checked) { shSetOp('请先勾选「遥控」', 'err'); return; }
+  var el = document.getElementById('sh-input');
+  var text = el.value;
+  if (text.length > 5000) { shSetOp('输入文本过长（最多 5000 字）', 'err'); return; }
+  var sent = text;
+  shQueueOp({type: 'input', text: text}, 'Input', function(){
+    if (el.value === sent) el.value = '';
+    el.focus();
+  });
+}
+function shRecStat(){
+  var el = document.getElementById('sh-rec-stat');
+  var n = document.getElementById('sh-steps-n');
+  if (el) {
+    if (shRec.on) {
+      var sec = Math.floor((Date.now() - shRec.startedAt) / 1000);
+      el.textContent = '录制中 ' + sec + 's · ' + shRec.steps.length + ' 步';
+    } else if (shRec.steps.length) {
+      el.textContent = '已停止 · ' + shRec.steps.length + ' 步';
+    } else {
+      el.textContent = '未开始';
+    }
+  }
+  if (n) n.textContent = shRec.steps.length ? shRec.steps.length + ' 步' : '';
+}
+function shRecToggle(){
+  if (shRec.on) { shRecStop(''); return; }
+  if (!shUri()) { alert('请先在页头选择 VM 会话'); return; }
+  if (shRec.steps.length && !confirm('开始录制会清空当前 ' + shRec.steps.length + ' 个步骤，继续？')) return;
+  shRec.on = true;
+  shRec.steps = [];
+  shRec.lastAt = Date.now();
+  shRec.startedAt = Date.now();
+  document.getElementById('sh-remote').checked = true;
+  shRemote(true);
+  document.getElementById('sh-rec-dot').classList.add('on');
+  document.getElementById('sh-rec-btn').textContent = '■ 停止录制';
+  shRenderSteps(); shRecStat();
+  shSetOp('录制已开始：操作截图或输入文本');
+  if (shRec.timer) clearInterval(shRec.timer);
+  shRec.timer = setInterval(shRecStat, 1000);
+}
+function shRecStop(msg){
+  if (!shRec.on) { if (msg) shSetOp(msg); return; }
+  shRec.on = false;
+  if (shRec.timer) { clearInterval(shRec.timer); shRec.timer = null; }
+  document.getElementById('sh-rec-dot').classList.remove('on');
+  document.getElementById('sh-rec-btn').textContent = '● 开始录制';
+  shRecStat();
+  shSetOp(msg || ('录制已停止 · ' + shRec.steps.length + ' 步'));
+}
+function shRecAdd(step){
+  var now = Date.now();
+  // 人工停顿超过 0.9s 时补一步 wait（最长 4s），让回放等待页面/请求完成。
+  // input 前面的间隔是打字时间，不算 app 等待，不插 wait。
+  if (shRec.lastAt && step.type !== 'input') {
+    var gap = now - shRec.lastAt;
+    if (gap > 900) shRec.steps.push({type: 'wait', ms: Math.min(gap, 4000), waitAfter: 0});
+  }
+  shRec.steps.push(JSON.parse(JSON.stringify(step)));
+  shRec.lastAt = now;
+  shRenderSteps(); shRecStat();
+}
+function shStepDesc(s){
+  var t = s.type || '?';
+  if (t === 'tap') return '(' + s.x + ', ' + s.y + ') 物理像素';
+  if (t === 'swipe') return '(' + s.x1 + ',' + s.y1 + ')→(' + s.x2 + ',' + s.y2 + ') · ' + (s.ms || 300) + 'ms';
+  if (t === 'input') {
+    var txt = String(s.text == null ? '' : s.text);
+    return '「' + (txt.length > 80 ? txt.slice(0, 80) + '…' : txt) + '」';
+  }
+  if (t === 'wait') return (s.ms || 500) + 'ms';
+  try { return JSON.stringify(s).slice(0, 120); } catch (e) { return t; }
+}
+function shRenderSteps(){
+  var el = document.getElementById('sh-steps');
+  var n = document.getElementById('sh-steps-n');
+  if (!el) return;
+  if (!shRec.steps.length) { el.innerHTML = '<span class="muted">暂无步骤</span>'; }
+  else {
+    var html = '';
+    shRec.steps.forEach(function(s, i){
+      html += '<div class="shstep">'
+        + '<span class="idx">' + (i + 1) + '</span>'
+        + '<span class="ty">' + esc(s.type || '?') + '</span>'
+        + '<span class="ds">' + esc(shStepDesc(s)) + '</span>'
+        + '<span class="del" onclick="shDelStep(' + i + ')" title="删除这一步">×</span>'
+        + '</div>';
+    });
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+  }
+  if (n) n.textContent = shRec.steps.length ? shRec.steps.length + ' 步' : '';
+  shRecStat();
+}
+function shDelStep(i){
+  if (i < 0 || i >= shRec.steps.length) return;
+  shRec.steps.splice(i, 1);
+  shRec.lastAt = Date.now();
+  shRenderSteps();
+}
+function shUndo(){
+  if (!shRec.steps.length) return;
+  shRec.steps.pop();
+  shRec.lastAt = Date.now();
+  shRenderSteps();
+}
+function shClear(){
+  if (shRec.steps.length && !confirm('清空当前 ' + shRec.steps.length + ' 个步骤？')) return;
+  shRec.steps = []; shRec.lastAt = Date.now();
+  shRenderSteps(); shSetOp('步骤已清空');
+}
+function shScnRefresh(pick){
+  fetch('/api/auto/list').then(function(r){ return r.json(); }).then(function(j){
+    var sel = document.getElementById('sh-scn-sel');
+    var cur = pick || sel.value;
+    var html = '<option value="">— 已保存场景 —</option>';
+    (j.items || []).forEach(function(it){
+      html += '<option value="' + esc(it.name) + '">' + esc(it.name) + '（' + it.steps + ' 步）</option>';
+    });
+    sel.innerHTML = html;
+    if (cur) sel.value = cur;
+  });
+}
+function shSaveScn(){
+  var name = document.getElementById('sh-scn-name').value.trim();
+  if (!shRec.steps.length) { alert('没有可保存的步骤'); return; }
+  if (!name) { alert('请填写场景名'); return; }
+  if (name.length > 64 || !/^[\w\u4e00-\u9fff-]+$/.test(name)) {
+    alert('场景名只能包含中文、字母、数字、下划线、横线（不能含空格、点号等），长度 1-64');
+    return;
+  }
+  if (shRec.on) shRecStop('保存前已停止录制');
+  fetch('/api/auto/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, steps: shRec.steps})})
+    .then(function(r){ return r.json().catch(function(){ return {ok: false, error: '保存失败（HTTP ' + r.status + '）'}; }); })
+    .then(function(j){
+      if (!j.ok) { shSetOp('保存失败：' + (j.error || '未知错误'), 'err'); return; }
+      shSetOp('已保存场景 ' + name + '（' + shRec.steps.length + ' 步）', 'ok');
+      shScnRefresh(name);
+      if (typeof auLoad === 'function') auLoad();
+    })
+    .catch(function(e){ shSetOp('保存请求失败：' + e, 'err'); });
+}
+function shLoadScn(){
+  var name = document.getElementById('sh-scn-sel').value;
+  if (!name) { alert('请选择已保存场景'); return; }
+  fetch('/api/auto/get?name=' + encodeURIComponent(name))
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (!j.ok) { shSetOp('载入失败：' + (j.error || '未知错误'), 'err'); return; }
+      if (shRec.on) shRecStop('载入前已停止录制');
+      shRec.steps = Array.isArray(j.steps) ? j.steps : [];
+      shRec.lastAt = 0;
+      document.getElementById('sh-scn-name').value = j.name || name;
+      shRenderSteps();
+      shSetOp('已载入场景 ' + (j.name || name) + '（' + shRec.steps.length + ' 步）', 'ok');
+    })
+    .catch(function(e){ shSetOp('载入请求失败：' + e, 'err'); });
+}
+function shPlayStatus(html){ document.getElementById('sh-play').innerHTML = html || ''; }
+function shPlayRows(results){
+  var out = '';
+  (results || []).forEach(function(r){
+    var c = r.status === 'pass' ? '#4caf50' : (r.status === 'fail' ? '#ef5350' : '#8aa0b4');
+    out += '<div><span style="color:' + c + '">' + esc(r.status) + '</span> #' + (r.index + 1)
+      + ' ' + esc(r.type)
+      + (r.error ? ' · <span class="err">' + esc(r.error) + '</span>' : '')
+      + (r.shot ? ' · <a href="/api/auto/artifact?f=' + encodeURIComponent(r.shot) + '" target="_blank">截图</a>' : '')
+      + '</div>';
+  });
+  return out;
+}
+function shGoAuto(){
+  auTotal = shRun.total || 0;
+  var t = document.querySelector('.tab[data-tab="auto"]');
+  if (t) t.click();
+  setTimeout(function(){ if (typeof auPoll === 'function') auPoll(); }, 250);
+}
+function shPlayNow(){
+  var uri = shUri();
+  if (!uri) { alert('请先在页头选择 VM 会话'); return; }
+  if (!shRec.steps.length) { alert('步骤为空：先录制或载入场景'); return; }
+  if (shRun.on) { alert('已有回放在执行'); return; }
+  if (shRec.on) shRecStop('回放前已停止录制');
+  var name = document.getElementById('sh-scn-name').value.trim() || '录制回放';
+  var steps = shRec.steps;
+  shRun = {on: true, timer: null, seen: false, t0: Date.now(), name: name, total: steps.length};
+  shPlayStatus('回放请求中…');
+  fetch('/api/auto/run?uri=' + encodeURIComponent(uri) + '&continue=0&name=' + encodeURIComponent(name),
+    {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(steps)})
+    .then(function(r){ return r.json().then(function(j){ j._code = r.status; return j; }); })
+    .then(function(j){
+      if (!j.ok) {
+        shRun.on = false;
+        shPlayStatus('<span class="err">启动失败：' + esc(j.error || ('HTTP ' + j._code)) + '</span>');
+        return;
+      }
+      shRun.total = j.total || steps.length;
+      if (shRun.timer) clearInterval(shRun.timer);
+      shRun.timer = setInterval(shPlayPoll, 400);
+      shPlayPoll();
+    })
+    .catch(function(e){
+      shRun.on = false;
+      shPlayStatus('<span class="err">回放请求失败：' + esc(e) + '</span>');
+    });
+}
+function shStopPlay(){
+  if (!shRun.on) return;
+  fetch('/api/auto/stop', {method: 'POST'});
+  shPlayStatus('正在停止回放…');
+}
+function shPlayPoll(){
+  fetch('/api/auto/status').then(function(r){ return r.json(); }).then(function(j){
+    if (!shRun.on) return;
+    if (j.running) shRun.seen = true;
+    var st = Date.parse(j.startedAt || '');
+    // 防串到自动化 Tab 的旧报告：旧 run 的 startedAt 明显早于本次请求。
+    if (!j.running && st && st < shRun.t0 - 1500) return;
+    if (!j.running && !shRun.seen && Date.now() - shRun.t0 < 1200) return;
+    var results = j.results || [];
+    var fails = results.filter(function(r){ return r.status === 'fail'; }).length;
+    var done = !j.running;
+    var head;
+    if (done) {
+      head = fails
+        ? '<span class="err">回放失败：' + fails + ' 步失败</span> · ' + results.length + ' 步'
+        : '<span class="ok">回放通过</span> · ' + results.length + ' 步';
+      head += ' · <a href="javascript:void(0)" onclick="shGoAuto()">在自动化 Tab 查看完整报告</a>';
+      shRun.on = false;
+      if (shRun.timer) { clearInterval(shRun.timer); shRun.timer = null; }
+      shRefresh();
+    } else {
+      head = '回放中：' + esc(j.name || shRun.name) + ' · 步骤 ' + Math.min(j.cur + 1, shRun.total) + '/' + shRun.total;
+    }
+    shPlayStatus(head + '<div style="margin-top:4px">' + shPlayRows(results) + '</div>');
+  }).catch(function(e){
+    if (!shRun.on) return;
+    shRun.on = false;
+    if (shRun.timer) { clearInterval(shRun.timer); shRun.timer = null; }
+    shPlayStatus('<span class="err">读取回放状态失败：' + esc(e) + '</span>');
+  });
 }
 // ── P10 自动化路径：场景列表/编辑/运行/报告 ──
 var auTimer = null;  // 运行状态轮询定时器
