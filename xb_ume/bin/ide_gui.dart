@@ -27,6 +27,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
@@ -2835,6 +2836,207 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // -- SQLite / DB 浏览器 -----------------------------------------------
+    // 把 app 沙盒里的 .db 分段拉到本机缓存，再用 sqlite3 命令行只读查询；
+    // app 端零改动。写操作由 -readonly 拒绝，SQL 限单条。
+    if (path.startsWith('/api/db/') && path != '/api/db/download') {
+      Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
+        req.response.statusCode = code;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      }
+
+      Map<String, Object?> body = <String, Object?>{};
+      if (req.method == 'POST') {
+        try {
+          final raw = await utf8.decoder.bind(req).join();
+          if (raw.isNotEmpty) {
+            body = (jsonDecode(raw) as Map).cast<String, Object?>();
+          }
+        } catch (_) {}
+      }
+      String param(String k) =>
+          (body[k] ?? req.uri.queryParameters[k])?.toString() ?? '';
+
+      try {
+        if (path == '/api/db/open') {
+          final uri = param('uri');
+          final target = param('path');
+          final force = body['force'] == true;
+          if (uri.isEmpty || target.isEmpty) {
+            await fail('缺少 uri/path', code: HttpStatus.badRequest);
+            return;
+          }
+          final rpc = _SandboxRpc(uri);
+          try {
+            final stat = await rpc.evalString(
+              "(() { final st = File('${_escPath(target)}').statSync(); "
+              "return '\${st.size}\\t\${st.modified.millisecondsSinceEpoch}'; })()",
+            );
+            final parts = stat.split('\t');
+            final size = int.tryParse(parts.first) ?? 0;
+            final mtime =
+                parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+            if (size <= 0) {
+              await fail('文件为空或不是普通文件', code: HttpStatus.badRequest);
+              return;
+            }
+            if (size > 256 * 1024 * 1024) {
+              await fail('数据库文件 ${(size / 1024 / 1024).toStringAsFixed(1)}MB '
+                  '超过 256MB 上限', code: HttpStatus.badRequest);
+              return;
+            }
+            final id = dbCacheId(uri, target, size, mtime);
+            final dir = Directory(dbCacheDir())..createSync(recursive: true);
+            final file = File('${dir.path}/$id.db');
+            final baseName = target.split(RegExp(r'[/\\]')).last;
+            var cached = false;
+            if (!force && file.existsSync() && file.lengthSync() == size) {
+              cached = true;
+            } else {
+              final tmp = File('${file.path}.tmp');
+              if (tmp.existsSync()) tmp.deleteSync();
+              final raf = tmp.openSync(mode: FileMode.write);
+              try {
+                await _readSandboxFileChunks(rpc, target, raf.writeFromSync);
+              } finally {
+                raf.closeSync();
+              }
+              final got = tmp.lengthSync();
+              if (got != size) {
+                tmp.deleteSync();
+                await fail('文件拉取不完整（$got/$size 字节），请重试');
+                return;
+              }
+              tmp.renameSync(file.path);
+            }
+            final check = await dbRunSqlite(file.path, 'PRAGMA schema_version');
+            if (check.exitCode != 0) {
+              if (!cached) file.deleteSync();
+              await fail('不是有效的 SQLite 数据库：${dbSqliteErrorText(check)}',
+                  code: HttpStatus.badRequest);
+              return;
+            }
+            final tables = await dbListTables(file.path);
+            var sqliteVer = '';
+            final ver = await dbRunSqlite(
+                file.path, 'SELECT sqlite_version() AS v');
+            if (ver.exitCode == 0) {
+              final p = dbParseJsonRows(ver.stdout);
+              final rows = (p['rows'] as List).cast<List<Object?>>();
+              if (rows.isNotEmpty && rows.first.isNotEmpty) {
+                sqliteVer = rows.first.first?.toString() ?? '';
+              }
+            }
+            // 记录原库名，供 CSV 下载时命名（缓存命中也刷新）。
+            try {
+              File('${dir.path}/$id.name').writeAsStringSync(baseName);
+            } catch (_) {}
+            req.response.headers.contentType = ContentType.json;
+            req.response.write(jsonEncode(<String, Object?>{
+              'dbId': id,
+              'name': baseName,
+              'path': target,
+              'size': size,
+              'mtime': mtime,
+              'cached': cached,
+              'sqlite': sqliteVer,
+              'tables': tables,
+            }));
+            await req.response.close();
+          } finally {
+            await rpc.close();
+          }
+          return;
+        }
+
+        final dbId = param('dbId');
+        if (!dbIdOk(dbId)) {
+          await fail('dbId 非法', code: HttpStatus.badRequest);
+          return;
+        }
+        final file = File('${dbCacheDir()}/$dbId.db');
+        if (!file.existsSync()) {
+          await fail('数据库缓存不存在，请重新打开', code: HttpStatus.notFound);
+          return;
+        }
+
+        if (path == '/api/db/schema') {
+          final table = param('table');
+          if (table.isEmpty) {
+            await fail('缺少 table', code: HttpStatus.badRequest);
+            return;
+          }
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(await dbTableInfo(file.path, table)));
+          await req.response.close();
+          return;
+        }
+
+        final sql = param('sql');
+        final sqlErr = dbSqlError(sql);
+        if (sqlErr != null) {
+          await fail(sqlErr, code: HttpStatus.badRequest);
+          return;
+        }
+
+        if (path == '/api/db/query') {
+          final r = await dbRunSqlite(file.path, sql);
+          if (r.exitCode != 0) {
+            await fail(dbSqliteErrorText(r), code: HttpStatus.badRequest);
+            return;
+          }
+          final parsed = dbParseJsonRows(r.stdout);
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            'columns': parsed['columns'],
+            'rows': parsed['rows'],
+            'truncated': r.truncated,
+            'ms': r.ms,
+          }));
+          await req.response.close();
+          return;
+        }
+
+        if (path == '/api/db/csv') {
+          final r = await dbRunSqlite(file.path, sql,
+              csv: true, maxBytes: 64 * 1024 * 1024);
+          if (r.exitCode != 0) {
+            await fail(dbSqliteErrorText(r));
+            return;
+          }
+          req.response.headers.contentType =
+              ContentType('text', 'csv', charset: 'utf-8');
+          final fileName = dbCsvFileName(dbId);
+          req.response.headers.set(
+            'Content-Disposition',
+            'attachment; filename="$fileName"; filename*=UTF-8\'\''
+            '${Uri.encodeComponent(fileName)}',
+          );
+          // BOM：让 Excel 正确识别 UTF-8 中文。
+          req.response.add(utf8.encode('\uFEFF'));
+          req.response.write(r.stdout);
+          await req.response.close();
+          return;
+        }
+
+        if (path == '/api/db/close') {
+          if (file.existsSync()) file.deleteSync();
+          final meta = File('${dbCacheDir()}/$dbId.name');
+          if (meta.existsSync()) meta.deleteSync();
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+          await req.response.close();
+          return;
+        }
+
+        await fail('未知的数据库接口', code: HttpStatus.notFound);
+      } catch (e) {
+        await fail(e);
+      }
+      return;
+    }
     if (path == '/api/sandbox/download' || path == '/api/sandbox/downloadDir') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final target = req.uri.queryParameters['path'] ?? '';
@@ -2853,30 +3055,6 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
 
       // 分段读取文件：每次 evaluate 读 1MB 并 gzip 压缩传输，
       // app 端与 GUI 端内存峰值均为常数级，文件大小无上限。
-      Future<void> readFileChunks(
-        String rpcFile,
-        void Function(List<int> chunk) onChunk,
-      ) async {
-        final size = int.parse(
-          (await rpc.evalString("File('${_escPath(rpcFile)}').lengthSync()"))
-              .trim(),
-        );
-        const chunkSize = 1024 * 1024;
-        for (var offset = 0; offset < size; offset += chunkSize) {
-          final n = size - offset < chunkSize ? size - offset : chunkSize;
-          final data = await rpc.evalString(
-            "(() { final fh = File('${_escPath(rpcFile)}').openSync(); "
-            "try { fh.setPositionSync($offset); final b = fh.readSync($n); "
-            "return gzip.encode(b).join(','); } finally { fh.closeSync(); } })()",
-          );
-          if (data.isEmpty) continue;
-          final gz = data.split(',').map(int.parse).toList();
-          if (gz.isNotEmpty) {
-            final plain = gzip.decode(gz);
-            if (plain.isNotEmpty) onChunk(plain);
-          }
-        }
-      }
 
       var streaming = false; // 响应已开始流式输出（此时不能再改状态码）
       try {
@@ -2892,7 +3070,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           );
           req.response.contentLength = size;
           streaming = true;
-          await readFileChunks(target, req.response.add);
+          await _readSandboxFileChunks(rpc, target, req.response.add);
           await req.response.close();
           return;
         }
@@ -2934,7 +3112,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             continue;
           }
           req.response.add(header);
-          await readFileChunks(f[0], req.response.add);
+          await _readSandboxFileChunks(rpc, f[0], req.response.add);
           final padding = (512 - (size % 512)) % 512;
           if (padding > 0) {
             req.response.add(List<int>.filled(padding, 0));
@@ -6218,6 +6396,263 @@ String vmServiceErrorText(Object? error) {
   return '$message（$details）';
 }
 
+/// 分段读取 app 沙盒文件：每次 evaluate 读 1MB 并 gzip 压缩传输，
+/// app 端与 GUI 端内存峰值均为常数级，文件大小无上限。返回文件字节数。
+Future<int> _readSandboxFileChunks(
+  _SandboxRpc rpc,
+  String path,
+  void Function(List<int> chunk) onChunk,
+) async {
+  final size = int.parse(
+    (await rpc.evalString("File('${_escPath(path)}').lengthSync()")).trim(),
+  );
+  const chunkSize = 1024 * 1024;
+  for (var offset = 0; offset < size; offset += chunkSize) {
+    final n = size - offset < chunkSize ? size - offset : chunkSize;
+    final data = await rpc.evalString(
+      "(() { final fh = File('${_escPath(path)}').openSync(); "
+      "try { fh.setPositionSync($offset); final b = fh.readSync($n); "
+      "return gzip.encode(b).join(','); } finally { fh.closeSync(); } })()",
+    );
+    if (data.isEmpty) continue;
+    final gz = data.split(',').map(int.parse).toList();
+    if (gz.isNotEmpty) {
+      final plain = gzip.decode(gz);
+      if (plain.isNotEmpty) onChunk(plain);
+    }
+  }
+  return size;
+}
+
+/// SQLite 数据库文件的本地缓存目录（GUI 本机，源文件在 app 沙盒里）。
+String dbCacheDir() {
+  final home = Platform.environment['HOME'] ??
+      Platform.environment['USERPROFILE'] ??
+      Directory.systemTemp.path;
+  return '$home/.xb_ume_ide/db';
+}
+
+/// 会话 + 路径 + 大小 + mtime → 8 位缓存 id（FNV-1a 32）。
+/// 同一文件内容变化（mtime/size 变）会得到新 id，天然避免读到旧缓存。
+String dbCacheId(String uri, String path, int size, int mtime) {
+  var h = 0x811c9dc5;
+  for (final c in '$uri|$path|$size|$mtime'.codeUnits) {
+    h ^= c;
+    h = (h * 0x01000193) & 0xFFFFFFFF;
+  }
+  return h.toRadixString(16).padLeft(8, '0');
+}
+
+/// 校验 dbId：只接受 8 位小写十六进制，防路径穿越。
+bool dbIdOk(String id) => RegExp(r'^[0-9a-f]{8}$').hasMatch(id);
+
+/// 校验待执行 SQL：单条、非空、限长（只读由 sqlite3 -readonly 保证）。
+String? dbSqlError(String sql) {
+  final s = sql.trim();
+  if (s.isEmpty) return 'SQL 为空';
+  if (s.length > 20000) return 'SQL 过长（上限 20000 字符）';
+  final body = s.replaceFirst(RegExp(r';\s*$'), '');
+  if (body.contains(';')) return '一次只能执行一条 SQL';
+  return null;
+}
+
+/// CSV 单元格转义（RFC 4180）。
+String dbCsvCell(Object? v) {
+  if (v == null) return '';
+  final s = v.toString();
+  if (s.contains(RegExp(r'[",\n\r]'))) {
+    return '"${s.replaceAll('"', '""')}"';
+  }
+  return s;
+}
+
+/// 解析 `sqlite3 -json` 输出 → {columns, rows}；rows 为按 columns 顺序的值数组。
+/// 空结果（stdout 为空）返回空列表，由前端提示 0 行。
+Map<String, Object?> dbParseJsonRows(String stdout) {
+  final text = stdout.trim();
+  if (text.isEmpty) {
+    return <String, Object?>{'columns': <String>[], 'rows': <Object?>[]};
+  }
+  final decoded = jsonDecode(text);
+  if (decoded is! List) throw 'sqlite3 输出不是 JSON 数组';
+  final columns = <String>[];
+  if (decoded.isNotEmpty && decoded.first is Map) {
+    columns.addAll((decoded.first as Map).keys.map((e) => e.toString()));
+  }
+  final rows = <List<Object?>>[];
+  for (final r in decoded) {
+    if (r is! Map) continue;
+    rows.add(<Object?>[for (final c in columns) r[c]]);
+  }
+  return <String, Object?>{'columns': columns, 'rows': rows};
+}
+
+/// sqlite3 命令行执行结果。
+class DbRunResult {
+  DbRunResult({
+    required this.stdout,
+    required this.stderr,
+    required this.exitCode,
+    required this.truncated,
+    required this.ms,
+  });
+
+  final String stdout;
+  final String stderr;
+  final int exitCode;
+  final bool truncated;
+  final int ms;
+}
+
+/// 以只读模式执行一条 SQL：`sqlite3 -readonly`，默认输出 JSON，
+/// csv=true 时输出带表头的 CSV（导出用）。20s 超时、16MB 输出上限。
+Future<DbRunResult> dbRunSqlite(
+  String dbPath,
+  String sql, {
+  bool csv = false,
+  int maxBytes = 16 * 1024 * 1024,
+}) async {
+  final sw = Stopwatch()..start();
+  final args = <String>['-readonly'];
+  if (csv) {
+    args.addAll(<String>['-csv', '-header']);
+  } else {
+    args.add('-json');
+  }
+  args.addAll(<String>[dbPath, sql]);
+  Process proc;
+  try {
+    proc = await Process.start('sqlite3', args);
+  } on ProcessException catch (e) {
+    throw '无法启动 sqlite3 命令行（${e.message}）：请安装 sqlite3 并加入 PATH（macOS 自带）';
+  }
+  final out = BytesBuilder(copy: false);
+  var truncated = false;
+  final outDone = Completer<void>();
+  final sub = proc.stdout.listen((chunk) {
+    if (out.length + chunk.length > maxBytes) {
+      truncated = true;
+      proc.kill();
+      return;
+    }
+    out.add(chunk);
+  }, onDone: () {
+    if (!outDone.isCompleted) outDone.complete();
+  });
+  final errSb = StringBuffer();
+  final errSub = proc.stderr.transform(utf8.decoder).listen(errSb.write);
+  int code;
+  try {
+    code = await proc.exitCode.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        proc.kill();
+        return -1;
+      },
+    );
+    await outDone.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+  } finally {
+    await sub.cancel();
+    await errSub.cancel();
+  }
+  return DbRunResult(
+    stdout: utf8.decode(out.takeBytes(), allowMalformed: true),
+    stderr: errSb.toString(),
+    exitCode: code,
+    truncated: truncated,
+    ms: sw.elapsedMilliseconds,
+  );
+}
+
+/// sqlite3 失败时的可读原因。
+String dbSqliteErrorText(DbRunResult r) {
+  final err = r.stderr.trim();
+  if (err.contains('readonly database')) {
+    return '只读模式：DELETE / UPDATE / INSERT / DDL 写操作均被拒绝';
+  }
+  if (err.isNotEmpty) return err;
+  if (r.truncated) return '结果超过 16MB 上限，请加 LIMIT 缩小范围';
+  return 'sqlite3 退出码 ${r.exitCode}';
+}
+
+/// CSV 下载用的文件名：优先用打开时的原库名（demo.db → demo.csv），
+/// 缺失元数据时退回 dbId。
+String dbCsvFileName(String dbId) {
+  var name = dbId;
+  try {
+    final meta = File('${dbCacheDir()}/$dbId.name');
+    if (meta.existsSync()) {
+      final raw = meta.readAsStringSync().trim();
+      if (raw.isNotEmpty) {
+        name = raw.replaceAll(RegExp(r'\.(db|sqlite3?|db3)$', caseSensitive: false), '');
+      }
+    }
+  } catch (_) {}
+  name = name.replaceAll(RegExp(r'["\r\n\\/]'), '_');
+  if (name.isEmpty) name = dbId;
+  return '$name.csv';
+}
+
+/// 列出库内表与视图（忽略 sqlite_ 内部表），附带建表 SQL。
+Future<List<Map<String, Object?>>> dbListTables(String dbPath) async {
+  const sql = "SELECT name, type, sql FROM sqlite_master "
+      "WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' "
+      "ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name";
+  final r = await dbRunSqlite(dbPath, sql);
+  if (r.exitCode != 0) throw dbSqliteErrorText(r);
+  final parsed = dbParseJsonRows(r.stdout);
+  final cols = (parsed['columns'] as List).cast<String>();
+  final rows = (parsed['rows'] as List).cast<List<Object?>>();
+  return <Map<String, Object?>>[
+    for (final row in rows)
+      <String, Object?>{
+        for (var i = 0; i < cols.length; i++) cols[i]: row[i],
+      },
+  ];
+}
+
+/// 表结构：列（PRAGMA table_info）、索引（PRAGMA index_list）与建表 SQL。
+Future<Map<String, Object?>> dbTableInfo(String dbPath, String table) async {
+  final quoted = '"${table.replaceAll('"', '""')}"';
+  final cols = await dbRunSqlite(dbPath, 'PRAGMA table_info($quoted)');
+  if (cols.exitCode != 0) throw dbSqliteErrorText(cols);
+  final idx = await dbRunSqlite(dbPath, 'PRAGMA index_list($quoted)');
+  final create = await dbRunSqlite(
+    dbPath,
+    "SELECT sql FROM sqlite_master WHERE name = "
+    "'${table.replaceAll("'", "''")}'",
+  );
+  Map<String, Object?> toMaps(DbRunResult r) {
+    final parsed = dbParseJsonRows(r.stdout);
+    final names = (parsed['columns'] as List).cast<String>();
+    final rows = (parsed['rows'] as List).cast<List<Object?>>();
+    return <String, Object?>{
+      'columns': names,
+      'rows': <Map<String, Object?>>[
+        for (final row in rows)
+          <String, Object?>{
+            for (var i = 0; i < names.length; i++) names[i]: row[i],
+          },
+      ],
+    };
+  }
+
+  final tableSql = <String>[];
+  if (create.exitCode == 0) {
+    final parsed = dbParseJsonRows(create.stdout);
+    final rows = (parsed['rows'] as List).cast<List<Object?>>();
+    for (final row in rows) {
+      final v = row.isEmpty ? null : row.first;
+      if (v != null && v.toString().isNotEmpty) tableSql.add(v.toString());
+    }
+  }
+  return <String, Object?>{
+    'columns': toMaps(cols)['rows'],
+    'indexes': idx.exitCode == 0 ? toMaps(idx)['rows'] : <Object?>[],
+    'sql': tableSql.isEmpty ? '' : tableSql.first,
+  };
+}
+
 /// 应用沙盒浏览器：通过 VM service evaluate 在 app 进程内执行 dart:io 代码，
 /// 零 app 端改动（debug 模式即可，release 无 VM service）。
 /// 每次请求新建临时连接，用完即断。
@@ -7842,6 +8277,9 @@ const String guiHtml = r'''
   .tl-detail { padding:6px 12px 10px 22px; background:#161b22; border-left:3px solid var(--line); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   .tl-detail a { color:#58a6ff; text-decoration:none; }
   .tl-detail a:hover { text-decoration:underline; }
+  /* 数据库页：表名/链接用亮蓝，默认深蓝在深色背景上对比度不足。 */
+  #page-db a { color:#58a6ff; text-decoration:none; }
+  #page-db a:hover { text-decoration:underline; }
   /* 跨 Tab 定位：目标行闪烁高亮 + 失败提示条 */
   .locate-flash, .locate-flash td { animation: locateFlash 1.1s ease-in-out 2; }
   @keyframes locateFlash { 0%,100% { background:transparent; } 50% { background:#4a3a00; } }
@@ -7921,6 +8359,7 @@ const String guiHtml = r'''
   <div class="tab" data-tab="timeline">时间轴</div>
   <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
   <div class="tab" data-tab="sandbox">应用沙盒</div>
+  <div class="tab" data-tab="db">数据库</div>
   <div class="tab" data-tab="routes">路由栈</div>
   <div class="tab" data-tab="network">Network</div>
   <div class="tab" data-tab="storage">Storage</div>
@@ -8036,6 +8475,36 @@ const String guiHtml = r'''
     <div id="sb-up-tip" class="muted" style="display:none;margin-bottom:4px"></div>
     <div id="sb-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">通过 VM service 读取应用进程可见的文件系统（仅 debug 模式可用）；看哪个 app 的沙盒由页头右侧的会话选择决定。文件/文件夹均可下载（文件夹为 .tar，分段流式传输，无大小限制，超大文件耗时线性增长）。每行提供「上传」，把本地文件写入该目录（文件行则写入其所在目录），单个文件上限 12MB。</div>
+  </section>
+  <section class="page" id="page-db">
+    <div class="row">
+      <b id="db-title" class="muted">未打开数据库</b>
+      <span id="db-stat" class="muted"></span>
+      <button onclick="dbReload()" title="从 app 沙盒重新拉取数据库文件（库更新后用）">重新拉取</button>
+      <button onclick="dbClose()" title="关闭并删除本机缓存副本（不影响 app 内数据库）">关闭</button>
+    </div>
+    <div class="row">
+      <input id="db-sql" placeholder="SELECT * FROM 表名 LIMIT 100（⌘/Ctrl+Enter 执行）" style="flex:1;min-width:320px;font-family:monospace" onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))dbRun()">
+      <button class="primary" onclick="dbRun()">执行</button>
+      <a href="javascript:void(0)" onclick="dbCsv()"><button>导出 CSV</button></a>
+      <span id="db-msg" class="muted"></span>
+    </div>
+    <div style="display:flex;gap:14px;align-items:flex-start;margin-top:8px">
+      <div style="width:230px;flex:none">
+        <div class="muted" style="margin-bottom:4px">表 / 视图</div>
+        <div id="db-tables"><span class="muted">未打开</span></div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div id="db-schema"></div>
+        <div id="db-result" style="margin-top:6px"></div>
+        <div class="row" id="db-pager" style="display:none">
+          <button onclick="dbPage(-1)">上一页</button>
+          <button onclick="dbPage(1)">下一页</button>
+          <span class="muted" id="db-pageinfo"></span>
+        </div>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:6px">在「应用沙盒」里点 .db / .sqlite 文件的「查询」进入：GUI 经 VM service 分段拉取文件到本机缓存（app 端零改动），再用本机 sqlite3 命令行只读执行——支持表结构、分页浏览、任意只读 SQL 与 CSV 导出。写操作会被拒绝；macOS 自带 sqlite3，Windows/Linux 需安装并加入 PATH。</div>
   </section>
   <section class="page" id="page-routes">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -8285,6 +8754,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     if (t.dataset.tab === 'daemon') { refreshDaemon(); loadIdeOrder(); }
     else if (t.dataset.tab === 'timeline') tlShow();
     else if (t.dataset.tab === 'sandbox') sbRefresh();
+    else if (t.dataset.tab === 'db') dbRefresh();
     else if (t.dataset.tab === 'routes') rtRefresh();
     else if (t.dataset.tab === 'network') nwRefresh();
     else if (t.dataset.tab === 'storage') stRefresh();
@@ -9836,7 +10306,7 @@ setInterval(refreshDaemon, 5000);
 function setVmFilter(v){
   vmFilter = v; saveVmFp(fpBySource[v] || '');
   clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
-  sbPath = null; renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); tlResub();
+  sbPath = null; dbReset(); renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); tlResub();
 }
 
 // -- 路由栈 Tab -------------------------------------------------------------
@@ -10814,9 +11284,11 @@ function sbRender(d){
   html += '<table class="sbtable"><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr>';
   d.entries.forEach(function(e){
     var q = encodeURIComponent(sbUri()), p = encodeURIComponent(e.path);
+    var isDb = !e.dir && /\.(db|sqlite3?|db3)$/i.test(e.name);
     var act = (e.dir
       ? '<a href="/api/sandbox/downloadDir?uri=' + q + '&path=' + p + '"><button title="递归打包为 tar（无压缩）下载">下载 .tar</button></a>'
-      : '<a href="javascript:void(0)" onclick="sbOpenSub(\'view\',this)" data-p="' + p + '"><button title="新标签页展示文件内容">查看</button></a>'
+      : (isDb ? '<a href="javascript:void(0)" onclick="dbOpenFromSandbox(this)" data-p="' + p + '" title="用本机 sqlite3 只读浏览表结构与数据"><button>查询</button></a> ' : '')
+        + '<a href="javascript:void(0)" onclick="sbOpenSub(\'view\',this)" data-p="' + p + '"><button title="新标签页展示文件内容">查看</button></a>'
         + ' <a href="javascript:void(0)" onclick="sbOpenSub(\'tail\',this)" data-p="' + p + '"><button title="新标签页实时监听文件新增内容">监听</button></a>'
         + ' <a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
       + ' <a href="javascript:void(0)" onclick="sbUpload(this)" data-p="' + p + '" data-dir="' + (e.dir ? '1' : '0') + '" title="上传本地文件到此' + (e.dir ? '目录' : '文件所在目录') + '">上传</a>'
@@ -10827,6 +11299,154 @@ function sbRender(d){
     html += '<tr><td>' + name + '</td><td>' + (e.dir ? '目录' : fmtSize(e.size)) + '</td><td class="muted">' + (e.mtime ? new Date(e.mtime).toLocaleString() : '') + '</td><td>' + act + '</td></tr>';
   });
   return html + '</table>';
+}
+// -- 数据库（SQLite） --------------------------------------------------
+var dbState = { id:'', name:'', path:'', table:'', offset:0, limit:100, mode:'' };
+function dbActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'db'; }
+function dbSetMsg(s, bad){
+  var el = document.getElementById('db-msg');
+  if (!el) return;
+  el.textContent = s || '';
+  el.className = bad ? 'bad' : 'muted';
+}
+function dbReset(){
+  dbState = { id:'', name:'', path:'', table:'', offset:0, limit:100, mode:'' };
+  var t = document.getElementById('db-title'); if (t) t.textContent = '未打开数据库';
+  var st = document.getElementById('db-stat'); if (st) st.textContent = '';
+  var tb = document.getElementById('db-tables'); if (tb) tb.innerHTML = '<span class="muted">未打开</span>';
+  var sc = document.getElementById('db-schema'); if (sc) sc.innerHTML = '';
+  var rs = document.getElementById('db-result'); if (rs) rs.innerHTML = '';
+  var pg = document.getElementById('db-pager'); if (pg) pg.style.display = 'none';
+  var sq = document.getElementById('db-sql'); if (sq) sq.value = '';
+  dbSetMsg('');
+}
+function dbRefresh(){
+  if (dbActive() && !dbState.id) dbSetMsg('从「应用沙盒」里点 .db / .sqlite 文件的「查询」打开数据库');
+}
+function dbOpenFromSandbox(el){
+  var p = decodeURIComponent(el.dataset.p);
+  var tab = document.querySelector('.tab[data-tab="db"]');
+  if (tab) tab.click();
+  dbOpen(p, false);
+}
+function dbOpen(path, force){
+  var uri = sbUri();
+  if (!uri) { dbSetMsg('请先选择 VM', true); return; }
+  dbSetMsg(force ? '正在重新拉取…' : '正在拉取数据库文件（大文件需要几秒）…');
+  fetch('/api/db/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({uri:uri, path:path, force:!!force})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { dbSetMsg('打开失败：' + d.error, true); return; }
+      dbState.id = d.dbId; dbState.name = d.name; dbState.path = d.path;
+      dbState.table = ''; dbState.offset = 0; dbState.mode = '';
+      document.getElementById('db-title').textContent = d.name;
+      document.getElementById('db-stat').textContent = fmtSize(d.size)
+        + (d.cached ? ' · 本机缓存' : ' · 已拉取')
+        + (d.sqlite ? ' · SQLite ' + d.sqlite : '')
+        + ' · ' + (d.tables || []).length + ' 个表/视图';
+      var tables = d.tables || [];
+      document.getElementById('db-tables').innerHTML = tables.length
+        ? tables.map(function(t){
+            return '<div style="margin:2px 0"><a href="javascript:void(0)" onclick="dbTable(decodeURIComponent(\''
+              + encodeURIComponent(t.name) + '\'))">' + esc(t.name) + '</a>'
+              + ' <span class="muted" style="font-size:11px">' + (t.type === 'view' ? '视图' : '表') + '</span></div>';
+          }).join('')
+        : '<span class="muted">（无表）</span>';
+      if (tables.length) dbTable(tables[0].name);
+      else dbSetMsg('数据库已打开，但没有表');
+    })
+    .catch(function(e){ dbSetMsg('打开失败：' + String(e), true); });
+}
+function dbTable(name){
+  if (!dbState.id) return;
+  dbState.table = name; dbState.offset = 0; dbState.mode = 'table';
+  var sql = 'SELECT * FROM "' + name.replace(/"/g, '""') + '" LIMIT ' + dbState.limit + ' OFFSET 0';
+  document.getElementById('db-sql').value = sql;
+  dbSchema(name);
+  dbFetch(sql);
+}
+function dbSchema(name){
+  fetch('/api/db/schema?dbId=' + encodeURIComponent(dbState.id) + '&table=' + encodeURIComponent(name))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var host = document.getElementById('db-schema');
+      if (d.error) { host.innerHTML = '<span class="bad">结构读取失败：' + esc(d.error) + '</span>'; return; }
+      var cols = d.columns || [];
+      var html = '<div class="muted" style="margin-bottom:2px">结构：' + esc(name) + '</div>'
+        + '<table class="sbtable"><tr><th>列</th><th>类型</th><th>非空</th><th>主键</th><th>默认值</th></tr>'
+        + cols.map(function(c){
+            return '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.type || '') + '</td>'
+              + '<td>' + (c.notnull ? '是' : '') + '</td><td>' + (c.pk ? '是' : '') + '</td>'
+              + '<td>' + (c.dflt_value == null ? '' : esc(String(c.dflt_value))) + '</td></tr>';
+          }).join('')
+        + '</table>';
+      if (d.sql) html += '<details style="margin-top:4px"><summary class="muted">建表 SQL</summary><pre class="muted" style="white-space:pre-wrap;font-size:12px">' + esc(d.sql) + '</pre></details>';
+      host.innerHTML = html;
+    })
+    .catch(function(e){ document.getElementById('db-schema').innerHTML = '<span class="bad">结构读取失败：' + esc(String(e)) + '</span>'; });
+}
+function dbRun(){
+  var sql = document.getElementById('db-sql').value.trim();
+  if (!sql) { dbSetMsg('SQL 为空', true); return; }
+  dbState.mode = 'sql';
+  dbFetch(sql);
+}
+function dbFetch(sql){
+  if (!dbState.id) { dbSetMsg('请先从「应用沙盒」打开 .db 文件', true); return; }
+  dbSetMsg('执行中…');
+  fetch('/api/db/query', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dbId:dbState.id, sql:sql})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { dbSetMsg('执行失败：' + d.error, true); return; }
+      dbRenderResult(d);
+      var n = (d.rows || []).length;
+      dbSetMsg(n + ' 行 · ' + d.ms + 'ms' + (d.truncated ? ' · 结果过大已截断' : ''));
+      var pager = document.getElementById('db-pager');
+      pager.style.display = dbState.mode === 'table' ? '' : 'none';
+      document.getElementById('db-pageinfo').textContent =
+        '第 ' + (dbState.offset + 1) + ' ~ ' + (dbState.offset + n) + ' 行（每页 ' + dbState.limit + '）';
+    })
+    .catch(function(e){ dbSetMsg('执行失败：' + String(e), true); });
+}
+function dbRenderResult(d){
+  var cols = d.columns || [], rows = d.rows || [];
+  var host = document.getElementById('db-result');
+  if (!rows.length) { host.innerHTML = '<span class="muted">0 行</span>'; return; }
+  var head = '<tr><th style="width:46px">#</th>' + cols.map(function(c){ return '<th>' + esc(c) + '</th>'; }).join('') + '</tr>';
+  var body = rows.map(function(r, i){
+    return '<tr><td class="muted">' + (dbState.offset + i + 1) + '</td>' + r.map(function(v){
+      if (v === null || v === undefined) return '<td class="muted">NULL</td>';
+      var s = String(v);
+      var show = s.length > 300 ? s.slice(0, 300) + '…' : s;
+      return '<td style="max-width:420px;word-break:break-all" title="' + esc(s.slice(0, 2000)) + '">' + esc(show) + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  host.innerHTML = '<div style="max-height:460px;overflow:auto"><table class="sbtable">' + head + body + '</table></div>';
+}
+function dbPage(delta){
+  if (dbState.mode !== 'table' || !dbState.table) return;
+  var next = dbState.offset + delta * dbState.limit;
+  if (next < 0) next = 0;
+  dbState.offset = next;
+  var sql = 'SELECT * FROM "' + dbState.table.replace(/"/g, '""') + '" LIMIT ' + dbState.limit + ' OFFSET ' + next;
+  document.getElementById('db-sql').value = sql;
+  dbFetch(sql);
+}
+function dbCsv(){
+  if (!dbState.id) { dbSetMsg('请先打开数据库', true); return; }
+  var sql = document.getElementById('db-sql').value.trim();
+  if (!sql) { dbSetMsg('SQL 为空', true); return; }
+  window.location = '/api/db/csv?dbId=' + encodeURIComponent(dbState.id) + '&sql=' + encodeURIComponent(sql);
+}
+function dbReload(){
+  if (!dbState.path) { dbSetMsg('请先从「应用沙盒」打开 .db 文件', true); return; }
+  dbOpen(dbState.path, true);
+}
+function dbClose(){
+  if (!dbState.id) { dbReset(); return; }
+  fetch('/api/db/close', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dbId:dbState.id})})
+    .then(function(){ dbReset(); })
+    .catch(function(){ dbReset(); });
 }
 function syncGroup(){
   var on = document.getElementById('f-src-device').checked;

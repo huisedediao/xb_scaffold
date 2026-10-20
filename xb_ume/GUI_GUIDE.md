@@ -49,6 +49,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab 时间轴 | 四类事件合并流 | 路由/网络/日志/异常按时间合并展示，可过滤/暂停/展开详情并跳转对应 Tab，详见下文「统一时间轴」 |
 | Tab 异常 | 实时异常捕获 | 实时捕获调试会话的框架异常与未捕获异常（App 零接入），栈帧可跳 IDE，新异常右上角红浮层提醒，详见下文「异常」 |
 | Tab 应用沙盒 | 沙盒文件浏览 | 浏览/下载/删除选中调试会话（app）沙盒内的目录与文件（删除需确认）；文件可新标签页「查看」（含搜索/过滤）或「监听」（实时 tail），详见下文「应用沙盒」 |
+| Tab 数据库 | SQLite 在线浏览 | 打开 app 沙盒里的 .db 文件（沙盒文件行的「查询」入口），查看表结构与数据、分页浏览、执行只读 SQL、导出 CSV，app 端零改动，详见下文「数据库」 |
 | Tab 路由栈 | 路由栈查看 | 展示选中调试会话 app 的 Navigator 路由栈（栈底 → 栈顶），详见下文「路由栈」 |
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
@@ -191,7 +192,31 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意**：可浏览范围是 app 进程可见的全部路径，请勿在不可信环境开启本功能。
 
-## 五、路由栈（Tab「路由栈」）
+## 五、数据库（Tab「数据库」）
+
+**用途**：在电脑上直接浏览调试会话 app 沙盒里的 SQLite 数据库（`.db` / `.sqlite` / `.sqlite3` / `.db3`），查看表结构与数据、分页浏览、执行只读 SQL、导出 CSV，**app 端零改动**。
+
+**入口**：在 Tab「应用沙盒」里找到数据库文件，点行首的「查询」按钮——会自动切到「数据库」Tab 并打开该库。
+
+**原理**：打开时通过 VM service 分块（每次 1MB + gzip）把库文件拉到本机缓存 `~/.xb_ume_ide/db/<8位哈希>.db`（缓存键 = 会话 uri + 文件路径 + 大小 + 修改时间，命中则直接复用、不重复拉取），再用**本机 `sqlite3` 命令行以 `-readonly` 只读模式**执行查询。因此：
+
+- 依赖本机安装 `sqlite3`（macOS 自带；Windows / Linux 需安装并加入 PATH）；
+- 浏览的是**拉取那一刻的快照**，app 之后写入的新数据需要点「重新拉取」才能看到；
+- 写操作（DELETE / UPDATE / INSERT / DDL）全部被拒绝，不会影响 app 内的真实数据；
+- 单个库文件上限 256MB（超出请先下载到本机用其他工具打开）。
+
+**功能**：
+
+1. **表 / 视图**：左栏列出全部表与视图（`sqlite_` 内部表除外），点击切换；打开库时默认自动展示第一张表；
+2. **结构**：显示选中表的列（名称/类型/非空/主键/默认值）、索引与建表 SQL（默认折叠）；
+3. **数据浏览**：点表自动执行 `SELECT * FROM "表" LIMIT 100 OFFSET 0`，底部分页「上一页 / 下一页」每页 100 行，并显示当前行区间；
+4. **执行 SQL**：顶部输入框可写任意单条只读 SQL（**一次只能一条**，去掉结尾分号后不允许再出现分号，长度上限 20000 字符），回车或点「执行」；状态栏显示行数与耗时。手写 SQL 的结果不分页（翻页按钮隐藏），需要分页请在 SQL 里自己写 LIMIT/OFFSET；
+5. **导出 CSV**：对当前 SQL 结果导出 CSV——UTF-8 带 BOM（Excel 打开中文不乱码）、字段按 RFC 4180 转义（逗号/引号/换行）、NULL 导出为空，文件名取原库名（`demo.db` → `demo.csv`）；
+6. **重新拉取 / 关闭**：「重新拉取」强制从 app 重新拉取库文件（app 写入后刷新数据用）；「关闭」删除本机缓存文件并清空页面。
+
+**限制**：只读、单条 SQL、快照数据、依赖本机 sqlite3；单次查询 20 秒超时，结果超过 16MB 会被截断并提示加 LIMIT 缩小范围。本 Tab 与其他依赖 VM `evaluate` 的功能一样，要求会话引擎提供表达式编译服务——鸿蒙 Flutter 引擎（无编译服务）与 release/AOT 会话（无 VM service）不可用。
+
+## 六、路由栈（Tab「路由栈」）
 
 **前提**：在页头右侧选中某个 VM 会话后，本 Tab 才展示内容；未选择时显示「请先选择 VM」。
 
@@ -243,7 +268,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 判定要点：页面被上层不透明页面覆盖时其元素会从树上临时卸载（State 仍由 Route 正常持有），此时树上计 0 属正常，不会误报；类名来自静态解析，带泛型的 State（如 `_FooState<T>`）会自动剥掉泛型再去堆里匹配。记录仅存于浏览器内存（刷新页面重置），多扫几轮路由栈可让候选类更全。仅 debug 模式可用。
 
-## 六、Network（Tab「Network」）
+## 七、Network（Tab「Network」）
 
 **编辑重放与响应 diff**：每条请求详情头部除「复制 cURL」「重发」外，还有「**编辑重放**」——展开编辑表单（URL / 请求头每行 `k: v` / 请求体，均预填原值），改完点「执行重放」由**电脑直接发起**（不经 app，method 固定为原请求方法），响应展示在「重发响应」卡内，并自动与原响应做**逐字段 diff**：JSON 递归对比（对象按字段、数组按下标），●改 / +增 / −删 三种标注 + 差异计数，完全一致时显示绿色「✓ 与原响应完全一致」；原/新响应任一非 JSON 时降级为提示（人工比对两段响应体）。重放后编辑内容保留在表单中，可连续微调多次重放对比。典型用途：改请求参数验证服务端行为、对比接口版本差异、复现边界参数。
 
@@ -264,7 +289,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：通过 VM service 在 `package:xb_ume` core 库上下文读 `XBUme.controller.network`（同步 getter，零 app 端改动）；仅 debug 模式可用，app 未接入 xb_ume 时会提示错误。
 
-## 七、Storage（Tab「Storage」）
+## 八、Storage（Tab「Storage」）
 
 读写 app 的 **shared_preferences 数据**——Android 为 `/data/data/<包名>/shared_prefs/*.xml`（`<map>` 格式）；鸿蒙为 app 沙盒 preferences 目录（`/data/storage/el2/base/preferences/`，如 `FlutterSharedPreferences`，无扩展名，`<preferences>` 格式）；iOS 为沙盒 `Library/Preferences/<bundleId>.plist`（binary plist，GUI 端经 plutil 转换读写）：列出全部 prefs 文件，展示每个 key 的类型与值，可直接编辑。
 
@@ -278,7 +303,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 / iOS debug 会话可用。保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>` / iOS plist 经 plutil 转 binary 写回）。iOS 的 plist 复杂类型（dict/date/data）不支持编辑但保存时原样保留。
 
-## 八、实例（Tab「实例」）
+## 九、实例（Tab「实例」）
 
 **在 GUI 上直接查看与修改 app 运行时内存里的对象**——比如某个 State 里的 `int age`、Provider 的 ChangeNotifier 里的字段。仅 debug 会话可用。
 
@@ -303,7 +328,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 - **管理**：列表实时显示当前值、累计变化/截图次数与最近错误，可暂停/恢复/删除；同一目标重复添加会直接返回已有监听（不重复轮询）；连续失败 30 次（表达式写错、实例被回收、会话断开等）自动暂停并在状态里注明；
 - **生命周期**：监听由 GUI 服务端常驻轮询（切 Tab / 关页面不中断），删除监听或退出 GUI 后停止；会话短暂断开时下一轮自动重建连接，连续 30 次失败（实例被回收、表达式异常等）自动暂停。
 
-## 九、状态面板（Tab「状态」，当前版本已隐藏，代码保留）
+## 十、状态面板（Tab「状态」，当前版本已隐藏，代码保留）
 
 **ChangeNotifier 状态聚合视图**——一屏看清 app 内活跃的 ChangeNotifier（控制器/状态对象）：实例数、监听者数、字段摘要。仅 debug 会话可用。
 
@@ -323,7 +348,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意**：监听者数/字段摘要取该类**首个实例**（同类多实例状态可能不同，全量与实时查看点类名跳「实例」Tab）；聚合是快照不是订阅，需手动重扫刷新。
 
-## 十、Widget 树浏览（Tab「Widget树」）
+## 十一、Widget 树浏览（Tab「Widget树」）
 
 **前提**：页头选中 VM 会话；仅 debug 模式可用。
 
@@ -338,7 +363,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：bounds 由 app 内 `localToGlobal(paintBounds)` 实时计算（逻辑像素），按 devicePixelRatio 对齐截图物理像素；每个 Element 都输出其 renderObject 子树的 bounds（组件节点高亮=其实际渲染范围）。超过 24 层的深层节点不真实缩进（避免行宽过 大导致内容横向滚出视口），行首以灰色「祖先/父级/」前缀标识层级位置。SDK/系统包装类节点在树中以淡化样式展示（仅视觉，不影响点选），方便快速找到业务组件。刷新树与截图是两次独立抓取，app 界面若在两次抓取间变化，高亮位置可能轻微偏移，再点一次刷新即可。
 
-## 十一、截图遥控与录制（Tab「截图」）
+## 十二、截图遥控与录制（Tab「截图」）
 
 **前提**：页头选中 VM 会话；仅 debug 模式可用。截图来自 `_flutter.screenshot`，坐标按图片物理像素映射，服务端再除以 app 的 devicePixelRatio 转逻辑像素。
 
@@ -360,7 +385,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：遥控端点 `POST /api/remote/op` 只放行 `tap/swipe/input`（不允许 eval/navigate 等通用步骤），单次输入上限 5000 字；它不占用场景执行状态，回放仍由 `/api/auto/run` 串行执行。input 文本会按原文写入场景 JSON，含密码等敏感信息时请注意。macOS 桌面 app 被浏览器完全遮挡时系统可能冻结帧调度，截图会停在最后一帧；录制/回放时把 app 窗口露出来（左右分屏即可）。示例 app 首页的「Login Demo」可用于验收：录制「点 Login Demo → 点账号 → 输入 → 点密码 → 输入 → 点登录」，保存后回放应得到「登录成功：<账号>」。
 
-## 十二、自动化路径（Tab「自动化」）
+## 十三、自动化路径（Tab「自动化」）
 
 **前提**：页头选中 VM 会话；仅 debug 模式可用。场景存电脑端 `~/.xb_ume_ide/scenarios/*.json`（与 app 零侵入，全部通过 VM service eval 驱动）。
 
@@ -406,7 +431,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；接口请求失败/超时/回复无法解析为 JSON/未给出有效步骤时自动重试（每轮最多重试 3 次，退避 2s/4s/6s，轮卡片显示重试次数），重试期间仍可手动停止；重试耗尽才终止任务并显示原因；AI 接口的可达性取决于你本机网络（内网 网关或公网 API 均可）。
 
-## 十三、异常（Tab「异常」）
+## 十四、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -424,7 +449,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十四、常见问题
+## 十五、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -439,7 +464,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十五、卸载
+## 十六、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -447,7 +472,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十六、相关文档
+## 十七、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

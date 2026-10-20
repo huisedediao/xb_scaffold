@@ -330,4 +330,61 @@ short
       expect(gui.vmServiceErrorText('连接已关闭'), '连接已关闭');
     });
   });
+
+  group('dbCacheId', () {
+    test('稳定且区分会话/路径/大小/时间', () {
+      final a = gui.dbCacheId('ws://x/ws', '/a.db', 10, 100);
+      expect(a, hasLength(8));
+      expect(gui.dbCacheId('ws://x/ws', '/a.db', 10, 100), a);
+      expect(gui.dbCacheId('ws://x/ws', '/a.db', 11, 100), isNot(a));
+      expect(gui.dbCacheId('ws://y/ws', '/a.db', 10, 100), isNot(a));
+    });
+  });
+
+  group('dbIdOk', () {
+    test('只接受 8 位小写十六进制', () {
+      expect(gui.dbIdOk('0123abcd'), isTrue);
+      expect(gui.dbIdOk('0123ABCD'), isFalse);
+      expect(gui.dbIdOk('../abcdef'), isFalse);
+      expect(gui.dbIdOk('abc'), isFalse);
+      expect(gui.dbIdOk(''), isFalse);
+    });
+  });
+
+  group('dbSqlError', () {
+    test('拒绝空、多语句与超长 SQL，允许末尾分号', () {
+      expect(gui.dbSqlError(''), isNotNull);
+      expect(gui.dbSqlError('SELECT 1; SELECT 2'), '一次只能执行一条 SQL');
+      expect(gui.dbSqlError('SELECT 1;'), isNull);
+      expect(gui.dbSqlError('SELECT 1'), isNull);
+      expect(gui.dbSqlError('x' * 20001), contains('过长'));
+    });
+  });
+
+  group('dbCsvCell', () {
+    test('按 RFC 4180 转义', () {
+      expect(gui.dbCsvCell(null), '');
+      expect(gui.dbCsvCell('abc'), 'abc');
+      expect(gui.dbCsvCell('a,b'), '"a,b"');
+      expect(gui.dbCsvCell('a"b'), '"a""b"');
+      expect(gui.dbCsvCell('a\nb'), '"a\nb"');
+    });
+  });
+
+  group('dbParseJsonRows', () {
+    test('解析对象数组为 columns + 值数组', () {
+      final r = gui.dbParseJsonRows('[{"id":1,"name":"a"},{"id":2,"name":null}]');
+      expect(r['columns'], <String>['id', 'name']);
+      expect(r['rows'], <Object?>[
+        <Object?>[1, 'a'],
+        <Object?>[2, null],
+      ]);
+    });
+
+    test('空输出返回空列表，非数组输出抛错', () {
+      expect(gui.dbParseJsonRows(''),
+          <String, Object?>{'columns': <String>[], 'rows': <Object?>[]});
+      expect(() => gui.dbParseJsonRows('{"a":1}'), throwsA(isA<String>()));
+    });
+  });
 }
