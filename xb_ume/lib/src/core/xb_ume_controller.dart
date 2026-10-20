@@ -196,6 +196,8 @@ class XBUmeController extends ChangeNotifier {
     Map<String, dynamic>? requestHeaders,
     dynamic requestBody,
     String? requestId,
+    String? initiator,
+    String? initiatorStack,
   }) {
     final id = requestId ?? nextId('net');
     final item = XBUmeNetworkItem(
@@ -206,6 +208,8 @@ class XBUmeController extends ChangeNotifier {
       queryParameters: _sanitizeMap(queryParameters),
       requestHeaders: _sanitizeHeaders(requestHeaders),
       requestBody: _sanitizeBody(requestBody),
+      initiator: initiator,
+      initiatorStack: initiatorStack,
       status: XBUmeNetworkStatus.pending,
     );
 

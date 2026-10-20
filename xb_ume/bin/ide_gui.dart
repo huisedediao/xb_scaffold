@@ -1077,7 +1077,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               "if (v is Iterable) { return '[' + v.map(js).join(',') + ']'; } "
               "return q(v.toString()); } "
               "String toS(Object? v) => v == null ? '' : "
-              "(v is Map || v is List ? js(v) : v.toString()); ";
+              "(v is Map || v is List ? js(v) : v.toString()); "
+              // 动态取发起位置字段：兼容未升级的 app 端（旧版无该字段，
+              // 直接静态访问会编译失败，dynamic + try/catch 降级为空）。
+              "String initi(dynamic e) { try { return e.initiator ?? ''; } catch (_) { return ''; } } "
+              "String initiStack(dynamic e) { try { return e.initiatorStack ?? ''; } catch (_) { return ''; } } ";
           final raw = await evalNet(
             "$jsHelpers"
             "XBUmeNetworkItem? e; "
@@ -1086,7 +1090,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             "String kv(Map<String, dynamic>? m) => m == null ? '' : "
             "m.entries.map((en) => en.key + '\u0003' + en.value.toString()).join('\u0004'); "
             "return [kv(e.queryParameters), kv(e.requestHeaders), toS(e.requestBody), "
-            "kv(e.responseHeaders), toS(e.responseBody), e.stack ?? ''].join('\u0001'); ",
+            "kv(e.responseHeaders), toS(e.responseBody), e.stack ?? '', "
+            "initi(e), initiStack(e)].join('\u0001'); ",
           );
           if (raw == 'NOT_FOUND') return null;
           final p = raw.split('\u0001');
@@ -1102,6 +1107,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                     };
                   })
                   .toList();
+          final initiatorStack = p.length > 7 ? p[7] : '';
+          final initiatorFrames = initiatorStack
+              .split('\n')
+              .where((line) => line.trim().isNotEmpty)
+              .map(_excParseFrame)
+              .toList();
           return <String, Object?>{
             'query': parseKv(p.isNotEmpty ? p[0] : ''),
             'requestHeaders': parseKv(p.length > 1 ? p[1] : ''),
@@ -1109,6 +1120,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             'responseHeaders': parseKv(p.length > 3 ? p[3] : ''),
             'responseBody': p.length > 4 ? p[4] : '',
             'stack': p.length > 5 ? p[5] : '',
+            'initiator': p.length > 6 ? p[6] : '',
+            'initiatorFrames': initiatorFrames,
           };
         }
         if (path == '/api/network/detail') {
@@ -8677,7 +8690,7 @@ function cnScan(){
 }
 
 // -- Network Tab ------------------------------------------------------------
-var nwItems = [], nwDetails = {}, nwOpen = {}, nwReplays = {}, nwFetching = {}, nwEditOpen = {}, nwEditVals = {};
+var nwItems = [], nwDetails = {}, nwOpen = {}, nwReplays = {}, nwFetching = {}, nwEditOpen = {}, nwEditVals = {}, nwInitFrames = {};
 function nwActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'network'; }
 function nwUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function nwRefresh(){
@@ -8745,6 +8758,31 @@ function nwDetailHtml(id, d){
   }
   var sec = function(title, inner){ return '<div style="margin:8px 0 2px"><b>' + title + '</b></div>' + inner; };
   var html = '<div class="card">';
+  // 发起位置：app 端在请求开始时捕获的用户代码栈帧（首帧即调用点）。
+  if (d.initiatorFrames && d.initiatorFrames.length) {
+    var fs = d.initiatorFrames;
+    nwInitFrames[id] = fs;
+    var initHtml = fs.map(function(f, idx){
+      return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
+        + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+    }).join('');
+    if (fs.length > 1) {
+      initHtml = fs.slice(0, 1).map(function(f, idx){
+        return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
+          + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+      }).join('')
+        + '<details style="margin-top:4px"><summary class="muted">完整调用栈（' + fs.length + ' 帧）</summary>'
+        + fs.slice(1).map(function(f, i){
+            var idx = i + 1;
+            return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
+              + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+          }).join('')
+        + '</details>';
+    }
+    html += sec('发起位置', initHtml);
+  } else {
+    html += sec('发起位置', '<span class="muted">未记录（app 端 xb_ume 需 0.3.0+，且该请求需发生在升级后）</span>');
+  }
   html += sec('Query', kvTable(d.query));
   html += sec('请求头', kvTable(d.requestHeaders));
   html += sec('请求体', pretty(d.requestBody));
@@ -8752,6 +8790,11 @@ function nwDetailHtml(id, d){
   html += sec('响应体', pretty(d.responseBody));
   if (d.stack) html += sec('错误堆栈', pretty(d.stack));
   return html + '</div>';
+}
+function nwInitJump(id, idx, el){ // 发起位置栈帧的 IDE 跳转（仅解析到本机文件的帧）
+  var f = (nwInitFrames[id] || [])[idx];
+  if (!f || !f.file) return;
+  excOpenIde(f.file, f.line, el);
 }
 function nwDetailRowHtml(id){
   var it = nwItems.filter(function(x){ return x.id === id; })[0] || {};
@@ -8891,6 +8934,10 @@ function nwCopyAll(id, a){
     if (it.error) meta.push('错误: ' + it.error);
     if (meta.length) headLine += '\n  ' + meta.join('  ');
     lines.push(headLine);
+    if (d.initiatorFrames && d.initiatorFrames.length) {
+      lines.push('', '发起位置:');
+      d.initiatorFrames.forEach(function(f){ lines.push('  ' + (f.raw || '')); });
+    }
     var kv = function(title, rows){
       if (!rows || !rows.length) return;
       lines.push('', title + ':');

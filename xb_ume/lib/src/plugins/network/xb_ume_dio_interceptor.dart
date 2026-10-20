@@ -13,6 +13,11 @@ class XBUmeDioInterceptor extends Interceptor {
       queryParameters: options.queryParameters.cast<String, dynamic>(),
       requestHeaders: options.headers.cast<String, dynamic>(),
       requestBody: options.data,
+      // Dio 5 的 onRequest 在独立 Future 中执行，当前栈已无用户调用帧；
+      // 用 Dio 在 request() 入口记录的 sourceStackTrace 作为发起位置
+      // （@internal 字段，Dio 5.x 稳定存在，降级为空不影响请求）。
+      // ignore: invalid_use_of_internal_member
+      sourceStackTrace: options.sourceStackTrace,
     );
     options.extra[_requestIdKey] = requestId;
     super.onRequest(options, handler);

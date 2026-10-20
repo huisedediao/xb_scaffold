@@ -20,6 +20,8 @@ class XBUmeNetworkItem {
     this.durationMs,
     this.error,
     this.stack,
+    this.initiator,
+    this.initiatorStack,
     this.status = XBUmeNetworkStatus.pending,
     this.progress,
   });
@@ -37,6 +39,11 @@ class XBUmeNetworkItem {
   final int? durationMs;
   final String? error;
   final String? stack;
+  /// 请求发起位置：首个用户代码栈帧原文（捕获于请求开始时）。
+  final String? initiator;
+  /// 请求发起时的用户代码调用栈（已过滤框架/Dio/http 等基础设施帧，
+  /// 每行一个原始栈帧，供 GUI 解析并跳转）。
+  final String? initiatorStack;
   final XBUmeNetworkStatus status;
   final double? progress;
 
@@ -53,6 +60,8 @@ class XBUmeNetworkItem {
     int? durationMs,
     String? error,
     String? stack,
+    String? initiator,
+    String? initiatorStack,
     XBUmeNetworkStatus? status,
     double? progress,
     bool clearProgress = false,
@@ -71,6 +80,8 @@ class XBUmeNetworkItem {
       durationMs: durationMs ?? this.durationMs,
       error: error ?? this.error,
       stack: stack ?? this.stack,
+      initiator: initiator ?? this.initiator,
+      initiatorStack: initiatorStack ?? this.initiatorStack,
       status: status ?? this.status,
       progress: clearProgress ? null : (progress ?? this.progress),
     );
@@ -91,6 +102,8 @@ class XBUmeNetworkItem {
       'durationMs': durationMs,
       'error': error,
       'stack': stack,
+      'initiator': initiator,
+      'initiatorStack': initiatorStack,
       'status': status.name,
       'progress': progress,
     };
@@ -113,6 +126,8 @@ class XBUmeNetworkItem {
       durationMs: json['durationMs'] as int?,
       error: json['error'] as String?,
       stack: json['stack'] as String?,
+      initiator: json['initiator'] as String?,
+      initiatorStack: json['initiatorStack'] as String?,
       status: XBUmeNetworkStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => XBUmeNetworkStatus.pending,
