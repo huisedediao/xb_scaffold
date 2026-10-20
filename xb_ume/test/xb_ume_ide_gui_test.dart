@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import '../bin/ide_gui.dart' as gui;
@@ -138,6 +140,79 @@ short
       final entry = gui.makeLogEntry('I/flutter (1234): hi', 'flutter');
       expect(entry['msg'], 'I/flutter (1234): hi');
       expect(entry['source'], 'flutter');
+    });
+  });
+
+  group('excSourceSnippet', () {
+    test('截取目标行前后并标记目标行', () {
+      final dir = Directory.systemTemp.createTempSync('xbume_exc_');
+      try {
+        final f = File('${dir.path}/demo.dart')
+          ..writeAsStringSync(
+              List.generate(60, (i) => 'line ${i + 1}').join('\n'));
+        final s = gui.excSourceSnippet(f.path, 30, before: 2, after: 2);
+        expect(s, contains('>   30  line 30'));
+        expect(s, contains('    28  line 28'));
+        expect(s, contains('    32  line 32'));
+        expect(s, isNot(contains('line 27')));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('文件不存在或行号越界时返回空串或邻近片段', () {
+      expect(gui.excSourceSnippet('/no/such/file.dart', 1), '');
+      final dir = Directory.systemTemp.createTempSync('xbume_exc_');
+      try {
+        final f = File('${dir.path}/short.dart')
+          ..writeAsStringSync('only one line');
+        final s = gui.excSourceSnippet(f.path, 999, before: 2, after: 2);
+        expect(s, contains('>    1  only one line'));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+  });
+
+  group('excBuildAnalysisUserPrompt', () {
+    test('包含异常摘要、栈帧、源码、上下文与日志', () {
+      final prompt = gui.excBuildAnalysisUserPrompt(
+        rec: <String, Object?>{
+          'summary': 'Null check operator used on a null value',
+          'desc': 'The following _CastError was thrown building HomePage',
+          'widget': 'HomePage',
+          'widgetFile': '/app/lib/home.dart',
+          'widgetLine': 42,
+          'channel': 'framework',
+          'app': 'example',
+          'os': 'macos',
+          'count': 2,
+          'stack': <Object?>[
+            <String, Object?>{
+              'raw':
+                  '#0      _HomePageState.build (package:xb_ume_example/main.dart:153:35)',
+              'method': '_HomePageState.build',
+              'uri': 'package:xb_ume_example/main.dart',
+              'line': 153,
+            },
+            <String, Object?>{
+              'raw':
+                  '#1      StatefulElement.build (package:flutter/src/widgets/framework.dart:1:1)',
+            },
+          ],
+        },
+        snippets: '--- #0 ---\n>  153  final x = data!;\n',
+        context: '异常发生时的路由栈：/home',
+        logs: '- [E/flutter] boom\n',
+      );
+      expect(prompt, contains('Null check operator used on a null value'));
+      expect(prompt, contains('The following _CastError was thrown building HomePage'));
+      expect(prompt, contains('HomePage（/app/lib/home.dart:42）'));
+      expect(prompt, contains('#0      _HomePageState.build'));
+      expect(prompt, contains('--- #0 ---'));
+      expect(prompt, contains('异常发生时的路由栈：/home'));
+      expect(prompt, contains('- [E/flutter] boom'));
+      expect(prompt, contains('出现次数：2'));
     });
   });
 }

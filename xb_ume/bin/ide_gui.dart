@@ -2326,6 +2326,52 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    // ── 异常 AI 归因：栈帧源码 + 路由/页面/网络/日志 → 根因与修复建议 ──
+    if (path == '/api/exc/analyze' && req.method == 'POST') {
+      Map<String, Object?> body = <String, Object?>{};
+      try {
+        final raw = await utf8.decoder.bind(req).join();
+        if (raw.isNotEmpty) {
+          body = jsonDecode(raw) as Map<String, Object?>;
+        }
+      } catch (_) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
+        await req.response.close();
+        return;
+      }
+      final id = int.tryParse('${body['id']}');
+      Map<String, Object?>? rec;
+      if (id != null) {
+        for (final item in state.exceptions) {
+          if (item['id'] == id) {
+            rec = item;
+            break;
+          }
+        }
+      }
+      req.response.headers.contentType = ContentType.json;
+      if (rec == null) {
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '异常记录不存在（可能已被清空或超出 200 条缓冲）',
+        }));
+        await req.response.close();
+        return;
+      }
+      var uri = (body['uri'] ?? '').toString().trim();
+      if (uri.isEmpty) uri = rec['wsUri']?.toString() ?? '';
+      try {
+        final result = await _excAnalyze(rec, uri);
+        req.response.write(jsonEncode(result));
+      } catch (e) {
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': '$e'}));
+      }
+      await req.response.close();
+      return;
+    }
     // ── 时间轴：路由/网络事件（日志与异常由前端本地合并，服务端不重复存）──
     if (path == '/api/timeline' && req.method == 'GET') {
       req.response.headers.contentType = ContentType.json;
@@ -3183,6 +3229,9 @@ class GuiState {
     rec['hash'] = hash;
     rec['channel'] = channel;
     rec['source'] = label;
+    // 记录异常来源会话的 VM service 地址：AI 归因需要回连该会话取路由/
+    // 网络上下文（异常可能来自非当前选中的会话）。
+    rec['wsUri'] = session.uri;
     rec['time'] = _clock();
     rec['ts'] = now.millisecondsSinceEpoch;
     final os = session.os;
@@ -4878,11 +4927,19 @@ Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
 
 /// 增量日志：自游标 rcvMs 以来的新增条目（E/W 全给，I 级需含错误关键字），
 /// 上限 25 条超出附省略说明；返回（文本, 新游标）。
-(String, int) _aiLogDelta(int cursorMs) {
+/// [source] 非空时只保留该会话来源（Flutter 日志的 tag 即会话标签），
+/// 供异常 AI 归因过滤掉其他 app/设备的无关日志。
+(String, int) _aiLogDelta(int cursorMs, {String? source}) {
   final kw = RegExp('error|exception|fail|crash', caseSensitive: false);
   final all = _guiLogBuffer.where((e) {
     final ms = (e['rcvMs'] as num?)?.toInt() ?? 0;
-    return ms >= cursorMs;
+    if (ms < cursorMs) return false;
+    if (source != null &&
+        source.isNotEmpty &&
+        (e['tag'] ?? '').toString() != source) {
+      return false;
+    }
+    return true;
   }).toList();
   var next = cursorMs;
   for (final e in all) {
@@ -4908,6 +4965,255 @@ Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
   }
   if (picked.length > 25) sb.write('-（另有 ${picked.length - 25} 条省略）\n');
   return (sb.toString(), next);
+}
+
+// ---------------------------------------------------------------------------
+// 异常 AI 归因
+// ---------------------------------------------------------------------------
+
+/// 系统提示：约束输出结构与引用来源，避免模型编造文件/行号。
+const String _excAiSystemPrompt = '你是资深 Flutter 调试专家。请根据给定的异常、'
+    '调用栈、用户代码源码片段与运行上下文做根因分析。用中文纯文本回答'
+    '（不要输出 **、#、``` 等 Markdown 标记），结构固定：\n'
+    '1. 结论：一句话说明最可能的根因；\n'
+    '2. 定位：引用给出的文件:行与相关代码，说明异常如何发生；\n'
+    '3. 修复建议：给出具体改法，必要时附最小代码片段；\n'
+    '4. 需要补充：信息不足时列出还需查看的日志或代码。\n'
+    '只能引用材料中出现的文件与行号，不要编造；若无法确定，明确说明假设。';
+
+/// 读取源码片段：目标行前后各若干行，目标行以 `>` 标记，带行号。
+/// 文件不存在/读取失败/过大时返回空串（AI 分析降级，不影响异常展示）。
+String excSourceSnippet(String path, int line,
+    {int before = 12, int after = 18}) {
+  try {
+    final f = File(path);
+    if (!f.existsSync() || f.lengthSync() > 2 * 1024 * 1024) return '';
+    final lines = f.readAsLinesSync();
+    if (lines.isEmpty) return '';
+    final center = line.clamp(1, lines.length);
+    final start = (center - before).clamp(1, lines.length);
+    final end = (center + after).clamp(1, lines.length);
+    final sb = StringBuffer();
+    for (var i = start; i <= end; i++) {
+      sb.write(i == center ? '>' : ' ');
+      sb.write(i.toString().padLeft(5));
+      sb.write('  ');
+      sb.write(lines[i - 1]);
+      sb.write('\n');
+    }
+    return sb.toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+/// 栈帧对应的本机文件：优先已解析的 file，其次按 package: 补解析。
+String _excFrameFile(Map f) {
+  final file = f['file']?.toString() ?? '';
+  if (file.isNotEmpty) return file;
+  final uri = f['uri']?.toString() ?? '';
+  if (uri.isEmpty) return '';
+  return _resolveLibraryFile(uri) ?? '';
+}
+
+/// 从栈帧中挑最多 5 个用户代码文件，截取目标行附近源码。
+/// Flutter SDK / pub-cache / 构建产物默认跳过，只有全是框架帧时才回退取用。
+String _excBuildSnippets(List<Map<String, Object?>> frames) {
+  final sb = StringBuffer();
+  final seen = <String>{};
+  var count = 0;
+  // Flutter SDK 路径随安装目录而异（flutter/packages、flutter_flutter/packages…），
+  // 用正则匹配 SDK 包目录，避免把框架源码当用户代码。
+  final sdkPackage = RegExp(
+      r'/flutter[^/]*/packages/(flutter|flutter_test|flutter_web_plugins)/');
+  bool framework(String file) =>
+      file.contains('/flutter/bin/cache/') ||
+      file.contains('/.pub-cache/') ||
+      file.contains('/.dart_tool/flutter_build/') ||
+      sdkPackage.hasMatch(file);
+  void take(Map f) {
+    if (count >= 5) return;
+    final file = _excFrameFile(f);
+    final line = (f['line'] as num?)?.toInt() ?? 0;
+    if (file.isEmpty || line <= 0 || !seen.add(file)) return;
+    final snippet = excSourceSnippet(file, line);
+    if (snippet.isEmpty) return;
+    sb.writeln('--- ${f['raw'] ?? '$file:$line'} ---');
+    sb.write(snippet);
+    sb.writeln();
+    count++;
+  }
+
+  for (final f in frames) {
+    if (_excFrameFile(f).isNotEmpty && !framework(_excFrameFile(f))) take(f);
+  }
+  if (count == 0) {
+    for (final f in frames) {
+      if (_excFrameFile(f).isNotEmpty) take(f);
+    }
+  }
+  return sb.toString();
+}
+
+/// 组装异常分析的 user 消息（纯文本，无截图）。
+String excBuildAnalysisUserPrompt({
+  required Map<String, Object?> rec,
+  required String snippets,
+  required String context,
+  required String logs,
+  int maxFrames = 12,
+}) {
+  final summary = rec['summary']?.toString() ?? '';
+  final desc = rec['desc']?.toString() ?? '';
+  final widget = rec['widget']?.toString() ?? '';
+  final widgetFile = rec['widgetFile']?.toString() ?? '';
+  final widgetLine = (rec['widgetLine'] as num?)?.toInt() ?? 0;
+  final channel = rec['channel'] == 'framework' ? '框架异常（FlutterError）' : '未捕获异常';
+  final frames = <Map<String, Object?>>[];
+  for (final f in (rec['stack'] as List? ?? const <Object?>[])) {
+    if (f is Map) frames.add(Map<String, Object?>.from(f));
+  }
+  final b = StringBuffer()
+    ..writeln('请分析以下 Flutter 异常，给出根因和修复建议。')
+    ..writeln()
+    ..writeln('【异常信息】')
+    ..writeln('通道：$channel')
+    ..writeln('摘要：${summary.isEmpty ? '（无）' : summary}');
+  if (desc.isNotEmpty) b.writeln('描述：$desc');
+  if (widget.isNotEmpty) {
+    b.write('相关 Widget：$widget');
+    if (widgetFile.isNotEmpty) {
+      b.write('（$widgetFile${widgetLine > 0 ? ':$widgetLine' : ''}）');
+    }
+    b.writeln();
+  }
+  final app = rec['app']?.toString() ?? '';
+  final os = rec['os']?.toString() ?? '';
+  final count = rec['count'] ?? 1;
+  b.writeln('应用：${app.isEmpty ? '未知' : app}'
+      '；平台：${os.isEmpty ? '未知' : os}；出现次数：$count');
+  b.writeln();
+  b.writeln('【调用栈】');
+  if (frames.isEmpty) {
+    b.writeln('（无调用栈）');
+  } else {
+    for (var i = 0; i < frames.length && i < maxFrames; i++) {
+      final raw = frames[i]['raw']?.toString();
+      b.writeln(raw != null && raw.isNotEmpty
+          ? raw
+          : '#$i ${frames[i]['method'] ?? ''} (${frames[i]['uri'] ?? ''}:${frames[i]['line'] ?? 0})');
+    }
+    if (frames.length > maxFrames) {
+      b.writeln('...（另有 ${frames.length - maxFrames} 帧省略）');
+    }
+  }
+  b.writeln();
+  b.writeln('【相关源码片段】');
+  b.write(snippets.isEmpty ? '（未能解析到本机源码，请仅依据栈帧与上下文推断）\n' : snippets);
+  b.writeln();
+  b.writeln('【异常发生时运行上下文】');
+  b.write(context.isEmpty ? '（无）\n' : context);
+  b.writeln();
+  b.writeln('【异常前后日志】');
+  b.write(logs.isEmpty ? '无\n' : logs);
+  return b.toString();
+}
+
+/// 回连异常来源会话取路由/页面/网络上下文；失败只降级不中断分析。
+Future<Map<String, Object?>> _excCollectContext(String uri, int excTs) async {
+  final out = StringBuffer();
+  var hasRoutes = false;
+  var netCount = 0;
+  if (uri.isEmpty) {
+    out.writeln('VM 会话不可用（异常来源会话已断开），缺少路由/页面/网络上下文。');
+    return <String, Object?>{
+      'text': out.toString(),
+      'routes': false,
+      'network': 0,
+    };
+  }
+  final rpc = _SandboxRpc(uri);
+  try {
+    try {
+      final s = await rpc.evalStringOn(
+          'package:flutter/src/widgets/navigator.dart', _autoRoutesExpr);
+      final names = (s == 'NO_ROOT' || s == 'NO_NAV')
+          ? <String>[]
+          : s.split(',').where((e) => e.isNotEmpty).toList();
+      hasRoutes = names.isNotEmpty;
+      out.writeln('异常发生时的路由栈：${names.isEmpty ? 'N/A' : names.join(' > ')}');
+    } catch (_) {
+      out.writeln('路由栈：N/A');
+    }
+    try {
+      final s = await rpc.evalStringOn(
+          'package:flutter/src/widgets/binding.dart', _aiPageTextExpr());
+      final items = s.split('\u0002').where((e) => e.isNotEmpty).toList();
+      var joined = items.join(' / ');
+      if (joined.length > 300) joined = joined.substring(0, 300);
+      out.writeln('页面文本：${items.isEmpty ? 'N/A' : joined}');
+    } catch (_) {
+      out.writeln('页面文本：N/A');
+    }
+  } finally {
+    await rpc.close();
+  }
+  try {
+    final recs = await _aiNetRecords(uri,
+        since: DateTime.fromMillisecondsSinceEpoch(excTs - 30000), limit: 10);
+    netCount = recs.length;
+    out.writeln(recs.isEmpty ? '异常前 30s 网络请求：无' : '异常前 30s 网络请求：');
+    for (final e in recs) {
+      out.writeln(
+          '- ${e['method']} ${e['url']} ${e['statusCode']} ${e['status']}');
+    }
+  } catch (_) {
+    out.writeln('网络请求：N/A（app 未接入 network 模块）');
+  }
+  return <String, Object?>{
+    'text': out.toString(),
+    'routes': hasRoutes,
+    'network': netCount,
+  };
+}
+
+/// 异常 AI 归因主流程：挑源码片段 + 收集上下文 + 调模型。
+Future<Map<String, Object?>> _excAnalyze(
+    Map<String, Object?> rec, String uri) async {
+  final frames = <Map<String, Object?>>[];
+  for (final f in (rec['stack'] as List? ?? const <Object?>[])) {
+    if (f is Map) frames.add(Map<String, Object?>.from(f));
+  }
+  final snippets = _excBuildSnippets(frames);
+  final excTs = (rec['ts'] as num?)?.toInt() ??
+      DateTime.now().millisecondsSinceEpoch;
+  final ctx = await _excCollectContext(uri, excTs);
+  final (logs, _) = _aiLogDelta(excTs - 15000,
+      source: rec['source']?.toString() ?? '');
+  final user = excBuildAnalysisUserPrompt(
+    rec: rec,
+    snippets: snippets,
+    context: (ctx['text'] ?? '').toString(),
+    logs: logs,
+  );
+  final reply = await _aiCall(<Map<String, Object?>>[
+    <String, Object?>{'role': 'system', 'content': _excAiSystemPrompt},
+    <String, Object?>{'role': 'user', 'content': user},
+  ]);
+  final logCount = logs == '无'
+      ? 0
+      : logs.split('\n').where((l) => l.startsWith('- ')).length;
+  return <String, Object?>{
+    'ok': true,
+    'analysis': reply,
+    'meta': <String, Object?>{
+      'sources': snippets.isEmpty ? 0 : snippets.split('--- ').length - 1,
+      'frames': frames.length,
+      'routes': ctx['routes'] == true,
+      'network': ctx['network'] ?? 0,
+      'logs': logCount,
+    },
+  };
 }
 
 /// AI 驱动主循环：截图 → AI 决策 → 执行 → 反馈，直至 done/轮数上限/停止。
@@ -7063,6 +7369,9 @@ const String guiHtml = r'''
   .exccard .exchead { color:#ff9d9d; font-weight:600; word-break:break-all; }
   .excframe { font-family:monospace; font-size:12px; padding:1px 0; word-break:break-all; }
   .excframe .muted { color:#666; }
+  .excai { margin-top:8px; border-top:1px dashed #5c2a2a; padding-top:8px; font-size:12px; color:#e8d5d5; }
+  .excai .aihead { color:#ffb4b4; font-weight:600; margin-bottom:4px; }
+  .excai .aitext { white-space:pre-wrap; line-height:1.55; }
 </style>
 </head>
 <body>
@@ -7383,6 +7692,8 @@ function esc(s){ var d = document.createElement('div'); d.textContent = s == nul
 // -- 异常 Tab -------------------------------------------------------------
 var excItems = [];      // 异常记录（后端 schema：id/summary/desc/widget/stack/…）
 var excById = {};       // id → 记录（栈帧行「跳转」回调按 id+idx 反查，免转义）
+var excAiCache = {};    // id → {loading/error/text/meta}：AI 归因结果（重渲染保留）
+var excAiBusy = {};     // id → true：分析请求进行中，防重复点击
 var excOvTimer = null;  // 红浮层自动隐藏定时器
 function excBadge(){
   var b = document.getElementById('exc-badge');
@@ -7462,6 +7773,7 @@ function excCardHtml(it){
   if (it.os) h += ' · ' + esc(it.os);
   if (it.count > 1) h += ' <span style="color:#e67e22">×' + it.count + '</span>';
   h += ' <a href="javascript:void(0)" onclick="excCopy(' + it.id + ',this)" title="复制本条异常全部内容">复制</a>';
+  h += ' <a href="javascript:void(0)" onclick="excAi(' + it.id + ',this)" title="把异常栈、相关源码与最近路由/网络/日志发给 AI 分析">AI 分析</a>';
   h += '</div>';
   h += '<div style="margin-top:4px">' + esc(it.summary || '') + '</div>';
   if (it.desc) h += '<div class="muted" style="margin-top:4px;white-space:pre-wrap">' + esc(it.desc) + '</div>';
@@ -7480,8 +7792,66 @@ function excCardHtml(it){
     });
     h += '</div>';
   }
+  var ai = excAiCache[it.id];
+  h += '<div class="excai" id="exc-ai-' + it.id + '"' + (ai ? '' : ' style="display:none"') + '>' +
+    (ai ? excAiInner(it.id, ai) : '') + '</div>';
   h += '</div>';
   return h;
+}
+function excUri(it){ // 优先异常来源会话，退回当前选中会话
+  var u = (it && it.wsUri) ? it.wsUri : '';
+  if (u) return u;
+  return vmFilter ? (vmUriBySource[vmFilter] || '') : '';
+}
+function excAiInner(id, a){
+  if (a.loading) return '<span class="muted">AI 分析中…（附带栈帧源码与最近上下文）</span>';
+  if (a.error) return '<span style="color:#ff9d9d">分析失败：' + esc(a.error) + '</span>';
+  var h = '<div class="aihead">AI 归因</div><div class="aitext">' + esc(a.text || '') + '</div>';
+  var m = a.meta || {};
+  var bits = [];
+  if (m.sources) bits.push(m.sources + ' 个源码片段');
+  if (m.frames) bits.push(m.frames + ' 帧栈');
+  if (m.routes) bits.push('路由栈');
+  if (m.network) bits.push(m.network + ' 条网络');
+  if (m.logs) bits.push(m.logs + ' 条日志');
+  if (bits.length) h += '<div class="muted" style="margin-top:4px">依据：' + esc(bits.join(' · ')) + '</div>';
+  h += ' <a href="javascript:void(0)" onclick="excAiCopy(' + id + ',this)">复制分析</a>';
+  return h;
+}
+function excAi(id, el){
+  var it = excById[id];
+  if (!it) return;
+  if (excAiBusy[id]) return;
+  var box = document.getElementById('exc-ai-' + id);
+  if (!box) return;
+  excAiBusy[id] = true;
+  excAiCache[id] = {id: id, loading: true};
+  box.style.display = '';
+  box.innerHTML = excAiInner(id, excAiCache[id]);
+  fetch('/api/exc/analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: id, uri: excUri(it)})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    excAiBusy[id] = false;
+    if (!d.ok) { excAiCache[id] = {id: id, error: d.error || '未知错误'}; }
+    else { excAiCache[id] = {id: id, text: d.analysis || '', meta: d.meta || {}}; }
+    var box2 = document.getElementById('exc-ai-' + id);
+    if (box2) box2.innerHTML = excAiInner(id, excAiCache[id]);
+  }).catch(function(e){
+    excAiBusy[id] = false;
+    excAiCache[id] = {id: id, error: '请求失败：' + e};
+    var box2 = document.getElementById('exc-ai-' + id);
+    if (box2) box2.innerHTML = excAiInner(id, excAiCache[id]);
+  });
+}
+function excAiCopy(id, el){
+  var a = excAiCache[id];
+  if (!a || !a.text) return;
+  var done = function(){ el.textContent = '已复制✓'; setTimeout(function(){ el.textContent = '复制分析'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(a.text).then(done, function(){ copyLogsFallback(a.text); done(); });
+  } else { copyLogsFallback(a.text); done(); }
 }
 function excJump(id, line, el){ // 相关 widget 的 IDE 跳转
   var it = excById[id];
