@@ -8,6 +8,7 @@ import 'package:xb_analytics_plus/xb_analytics_plus.dart';
 import 'package:xb_ume/xb_ume.dart';
 
 import 'pages/login_demo_page.dart';
+import 'pages/watch_demo_page.dart';
 import 'pages/xb_analytics_locator_test_page.dart';
 
 Future<void> main() async {
@@ -144,6 +145,17 @@ class _HomePageState extends State<HomePage> {
                   );
                 },
                 child: const Text('Login Demo'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      settings: const RouteSettings(name: '/watch-demo'),
+                      builder: (_) => const WatchDemoPage(),
+                    ),
+                  );
+                },
+                child: const Text('Watch Demo'),
               ),
             ],
           ),

@@ -226,4 +226,108 @@ short
       expect(gui.remoteOpAllowed(''), isFalse);
     });
   });
+
+  group('watchIntervalMs', () {
+    test('默认 500ms，并把间隔限制在 200ms ~ 10s', () {
+      expect(gui.watchIntervalMs(null), 500);
+      expect(gui.watchIntervalMs(''), 500);
+      expect(gui.watchIntervalMs('abc'), 500);
+      expect(gui.watchIntervalMs('300'), 300);
+      expect(gui.watchIntervalMs(250.7), 250);
+      expect(gui.watchIntervalMs(50), 200);
+      expect(gui.watchIntervalMs(60000), 10000);
+    });
+  });
+
+  group('watchFieldOk', () {
+    test('只接受 Dart 标识符形式的字段名', () {
+      expect(gui.watchFieldOk('count'), isTrue);
+      expect(gui.watchFieldOk('_count'), isTrue);
+      expect(gui.watchFieldOk(r'$value'), isTrue);
+      expect(gui.watchFieldOk('a1'), isTrue);
+      expect(gui.watchFieldOk(''), isFalse);
+      expect(gui.watchFieldOk('1a'), isFalse);
+      expect(gui.watchFieldOk('a-b'), isFalse);
+      expect(gui.watchFieldOk('a.b'), isFalse);
+      expect(gui.watchFieldOk('计数'), isFalse);
+    });
+  });
+
+  group('fmtWatchValue', () {
+    test('优先用 valueAsString，超长截断', () {
+      expect(gui.fmtWatchValue(<String, Object?>{'valueAsString': '12'}), '12');
+      final long = 'x' * 260;
+      final out = gui.fmtWatchValue(<String, Object?>{
+        'valueAsString': long,
+        'valueAsStringIsTruncated': true,
+      });
+      expect(out, '${'x' * 200}…');
+    });
+
+    test('对象展示类名与 id 尾号', () {
+      expect(
+        gui.fmtWatchValue(<String, Object?>{
+          'class': <String, Object?>{'name': 'WatchDemoVm'},
+          'id': 'objects/1234567890',
+        }),
+        '<WatchDemoVm#567890>',
+      );
+      expect(
+        gui.fmtWatchValue(<String, Object?>{
+          'class': <String, Object?>{'name': 'Foo'},
+        }),
+        '<Foo>',
+      );
+    });
+
+    test('无可用信息时返回类型占位', () {
+      expect(gui.fmtWatchValue(<String, Object?>{'type': '@Instance'}), '@Instance');
+      expect(gui.fmtWatchValue(<String, Object?>{}), '?');
+    });
+  });
+
+  group('vmServiceErrorText', () {
+    test('鸿蒙等无编译服务的会话给出明确提示', () {
+      final text = gui.vmServiceErrorText(<String, Object?>{
+        'message': 'Expression compilation error',
+        'data': <String, Object?>{
+          'details':
+              '_compileExpression: No compilation service available; cannot evaluate from source.',
+        },
+      });
+      expect(text, contains('不支持表达式求值'));
+      expect(text, contains('鸿蒙'));
+    });
+
+    test('普通错误拼接 details，过长截断', () {
+      expect(
+        gui.vmServiceErrorText(<String, Object?>{
+          'message': 'Bad state',
+          'data': <String, Object?>{'details': 'boom'},
+        }),
+        'Bad state（boom）',
+      );
+      final long = 'd' * 400;
+      expect(
+        gui.vmServiceErrorText(<String, Object?>{
+          'message': 'E',
+          'data': <String, Object?>{'details': long},
+        }),
+        'E（${'d' * 300}…）',
+      );
+    });
+
+    test('无 details 或 message 已含 details 时不重复', () {
+      expect(gui.vmServiceErrorText(<String, Object?>{'message': 'Bad state'}),
+          'Bad state');
+      expect(
+        gui.vmServiceErrorText(<String, Object?>{
+          'message': 'boom happened',
+          'data': <String, Object?>{'details': 'boom'},
+        }),
+        'boom happened',
+      );
+      expect(gui.vmServiceErrorText('连接已关闭'), '连接已关闭');
+    });
+  });
 }

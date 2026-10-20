@@ -2152,11 +2152,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/auto/artifact') {
       final f = req.uri.queryParameters['f'] ?? '';
-      // 文件名防穿越：只允许 run-<ts>-stepN.png / ai-<ts>-rN.png / ai-<ts>-stepN.png
+      // 文件名防穿越：只允许 run-/ai- 步骤截图与 watch-<ts>-<n>.png 监听截图
       if (f.isEmpty ||
           f.contains('/') ||
           f.contains('\\') ||
-          !RegExp(r'^(?:run|ai)-\d+-(?:step\d+|r\d+)\.png$').hasMatch(f)) {
+          (!RegExp(r'^(?:run|ai)-\d+-(?:step\d+|r\d+)\.png$').hasMatch(f) &&
+              !RegExp(r'^watch-\d+-\d+\.png$').hasMatch(f))) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -2473,6 +2474,70 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/timeline/clear' && req.method == 'POST') {
       state.clearTimeline();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    // ── P12 Watch：实例字段 / eval 表达式监听 → 变化写时间轴、条件命中截图 ──
+    if (path == '/api/watch/list') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': true,
+        'items': state.watchItems(req.uri.queryParameters['uri'] ?? ''),
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/watch/events') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'ok': true,
+        'items': state.watchEvents(req.uri.queryParameters['uri'] ?? ''),
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/watch/add' && req.method == 'POST') {
+      Map<String, dynamic> body = <String, dynamic>{};
+      try {
+        final raw = await utf8.decoder.bind(req).join();
+        if (raw.isNotEmpty) body = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(
+          <String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'},
+        ));
+        await req.response.close();
+        return;
+      }
+      final r = state.addWatch(body);
+      req.response.statusCode =
+          r['ok'] == true ? HttpStatus.ok : HttpStatus.badRequest;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(r));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/watch/remove' && req.method == 'POST') {
+      final ok = state.removeWatch(req.uri.queryParameters['id'] ?? '');
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': ok}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/watch/pause' && req.method == 'POST') {
+      final on = (req.uri.queryParameters['on'] ?? '1') == '1';
+      final ok =
+          state.pauseWatch(req.uri.queryParameters['id'] ?? '', on);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': ok}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/watch/clear' && req.method == 'POST') {
+      state.clearWatchEvents();
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
@@ -2983,6 +3048,11 @@ class GuiState {
     final tlRpc = _tlRpc;
     _tlRpc = null;
     if (tlRpc != null) unawaited(tlRpc.close());
+    _watchTimer?.cancel();
+    for (final rpc in _watchRpcs.values) {
+      unawaited(rpc.close());
+    }
+    _watchRpcs.clear();
     for (final process in _deviceLogProcesses.values) {
       process.kill();
     }
@@ -3545,6 +3615,289 @@ class GuiState {
     return changed;
   }
 
+  // -- P12 字段/表达式 Watch -------------------------------------------------
+
+  final List<_WatchState> _watches = <_WatchState>[];
+  final List<Map<String, Object?>> _watchEvents = <Map<String, Object?>>[];
+  final Map<String, _SandboxRpc> _watchRpcs = <String, _SandboxRpc>{};
+  Timer? _watchTimer;
+  bool _watchBusy = false;
+  int _watchSeq = 0;
+  int _watchShotSeq = 0;
+
+  /// 监听列表（uri 为空不过滤）。
+  List<Map<String, Object?>> watchItems(String uri) => _watches
+      .where((w) => uri.isEmpty || w.uri == uri)
+      .map((w) => w.toJson())
+      .toList();
+
+  /// 时间轴监听事件（uri 为空不过滤，最新在末尾）。
+  List<Map<String, Object?>> watchEvents(String uri) => _watchEvents
+      .where((e) => uri.isEmpty || (e['uri'] ?? '') == uri)
+      .toList();
+
+  /// 新增监听。返回 {ok, item} 或 {ok:false, error}。
+  Map<String, Object?> addWatch(Map<String, Object?> body) {
+    final uri = (body['uri'] ?? '').toString().trim();
+    final kind = (body['kind'] ?? 'expr').toString();
+    final expr = (body['expr'] ?? '').toString().trim();
+    final targetId = (body['targetId'] ?? '').toString().trim();
+    final lib = (body['lib'] ?? '').toString().trim();
+    final cond = (body['condition'] ?? '').toString().trim();
+    var bad = '';
+    if (uri.isEmpty) bad = '缺少 uri';
+    if (bad.isEmpty && kind != 'field' && kind != 'expr') {
+      bad = '监听类型只支持 field / expr';
+    }
+    if (bad.isEmpty && kind == 'field') {
+      if (targetId.isEmpty) bad = 'field 监听缺少实例 id';
+      if (bad.isEmpty && !watchFieldOk(expr)) bad = '字段名不合法：$expr';
+    }
+    if (bad.isEmpty && expr.isEmpty) bad = '表达式为空';
+    if (bad.isEmpty && expr.length > 2000) bad = '表达式过长（最多 2000 字）';
+    if (bad.isEmpty && cond.length > 2000) {
+      bad = '条件表达式过长（最多 2000 字）';
+    }
+    if (bad.isNotEmpty) return <String, Object?>{'ok': false, 'error': bad};
+    // 同一目标重复添加直接返回已有项（连点/重复点「监听」不产生重复轮询）。
+    for (final w in _watches) {
+      if (w.uri == uri &&
+          w.kind == kind &&
+          w.expr == expr &&
+          w.targetId == targetId &&
+          w.libUri == lib) {
+        return <String, Object?>{
+          'ok': true,
+          'item': w.toJson(),
+          'duplicated': true,
+        };
+      }
+    }
+    var label = (body['label'] ?? '').toString().trim();
+    if (label.isEmpty) label = kind == 'field' ? expr : 'expr: $expr';
+    if (label.length > 120) label = '${label.substring(0, 120)}…';
+    final w = _WatchState(
+      id: 'w${++_watchSeq}',
+      uri: uri,
+      kind: kind,
+      targetId: targetId,
+      expr: expr,
+      libUri: lib.isEmpty
+          ? 'package:flutter/src/widgets/binding.dart'
+          : lib,
+      label: label,
+      intervalMs: watchIntervalMs(body['intervalMs']),
+      condition: cond,
+      autoShot: body['autoShot'] != false,
+    );
+    _watches.add(w);
+    _ensureWatchTimer();
+    _broadcastWatches();
+    return <String, Object?>{'ok': true, 'item': w.toJson()};
+  }
+
+  bool removeWatch(String id) {
+    final before = _watches.length;
+    _watches.removeWhere((w) => w.id == id);
+    final hit = _watches.length != before;
+    if (hit) _broadcastWatches();
+    return hit;
+  }
+
+  bool pauseWatch(String id, bool paused) {
+    for (final w in _watches) {
+      if (w.id != id) continue;
+      w.paused = paused;
+      w.fails = 0;
+      if (paused) {
+        w.condPrev = false;
+      } else {
+        w.nextAt = DateTime.now();
+      }
+      _broadcastWatches();
+      return true;
+    }
+    return false;
+  }
+
+  void clearWatchEvents() {
+    _watchEvents.clear();
+    broadcast(<String, Object?>{'type': 'watchCleared'});
+  }
+
+  void _broadcastWatches() => broadcast(
+      <String, Object?>{'type': 'watchList', 'items': watchItems('')});
+
+  void _ensureWatchTimer() {
+    _watchTimer ??= Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) => unawaited(_watchTick()),
+    );
+  }
+
+  /// 逐个轮询已到期的监听（串行执行，避免同一会话上并发 eval 互相拖慢）。
+  Future<void> _watchTick() async {
+    if (_watchBusy || _watches.isEmpty) return;
+    final now = DateTime.now();
+    final due =
+        _watches.where((w) => !w.paused && !w.nextAt.isAfter(now)).toList();
+    if (due.isEmpty) return;
+    _watchBusy = true;
+    try {
+      for (final w in due) {
+        w.nextAt = DateTime.now().add(Duration(milliseconds: w.intervalMs));
+        await _watchPollOne(w);
+      }
+    } finally {
+      _watchBusy = false;
+    }
+  }
+
+  Future<void> _watchPollOne(_WatchState w) async {
+    final rpc = _watchRpcs[w.uri] ??= _SandboxRpc(w.uri);
+    try {
+      final res = w.kind == 'field'
+          ? await rpc.rawRpc('evaluate', <String, Object?>{
+              'isolateId': await rpc.isolateId(),
+              'targetId': w.targetId,
+              'expression': w.expr,
+            })
+          : await rpc.evalRefOn(w.libUri, w.expr);
+      final type = res['type']?.toString() ?? '';
+      if (type == '@Error' || type == 'Error') {
+        throw res['message']?.toString() ?? '表达式执行失败';
+      }
+      w.polls++;
+      final value = fmtWatchValue(res);
+      final old = w.lastValue;
+      final first = !w.hasValue;
+      w.hasValue = true;
+      w.lastValue = value;
+      if (!first && value != old) {
+        w.changes++;
+        _watchEmit(w, old: old, newValue: value);
+      }
+      // 条件只在开启「自动截图」时求值；false→true 的边沿触发一次截图。
+      if (w.autoShot && w.condition.isNotEmpty) {
+        final bool met;
+        try {
+          met = await _watchCond(rpc, w);
+        } catch (e) {
+          w.fails++;
+          w.lastError = '条件表达式错误：$e';
+          if (w.fails == 1 || w.fails % 10 == 0) {
+            _watchEmit(w, err: w.lastError);
+          }
+          w.condPrev = false;
+          if (w.fails >= 30) {
+            w.paused = true;
+            w.lastError = '${w.lastError}（连续失败 30 次，已自动暂停）';
+            _broadcastWatches();
+          } else {
+            broadcast(
+                <String, Object?>{'type': 'watchState', 'item': w.toJson()});
+          }
+          return;
+        }
+        if (met && !w.condPrev) {
+          final shot = await _watchShot(rpc);
+          w.shots++;
+          _watchEmit(w,
+              old: value, newValue: value, shot: shot, condMet: true);
+        }
+        w.condPrev = met;
+      }
+      w.fails = 0;
+      w.lastError = '';
+      broadcast(<String, Object?>{'type': 'watchState', 'item': w.toJson()});
+    } catch (e) {
+      w.fails++;
+      w.lastError = e.toString();
+      if (w.fails == 1 || w.fails % 10 == 0) _watchEmit(w, err: w.lastError);
+      if (w.fails >= 30) {
+        w.paused = true;
+        w.lastError = '${w.lastError}（连续失败 30 次，已自动暂停）';
+        _broadcastWatches();
+      } else {
+        broadcast(
+            <String, Object?>{'type': 'watchState', 'item': w.toJson()});
+      }
+      // 连接可能已失效：丢弃复用连接，下一轮重建。
+      final dead = _watchRpcs.remove(w.uri);
+      if (dead != null) unawaited(dead.close());
+    }
+  }
+
+  /// 条件表达式与监听同上下文求值（field：实例；expr：库）。
+  Future<bool> _watchCond(_SandboxRpc rpc, _WatchState w) async {
+    final res = w.kind == 'field'
+        ? await rpc.rawRpc('evaluate', <String, Object?>{
+            'isolateId': await rpc.isolateId(),
+            'targetId': w.targetId,
+            'expression': w.condition,
+          })
+        : await rpc.evalRefOn(w.libUri, w.condition);
+    final type = res['type']?.toString() ?? '';
+    if (type == '@Error' || type == 'Error') {
+      throw res['message']?.toString() ?? '条件表达式执行失败';
+    }
+    final v = res['valueAsString']?.toString();
+    if (v == 'true') return true;
+    if (v == 'false' || v == 'null') return false;
+    throw '条件表达式应返回 bool，实际：${v ?? type}';
+  }
+
+  /// 条件命中截图：落盘到场景 artifacts 目录（与失败截图同目录）。
+  Future<String?> _watchShot(_SandboxRpc rpc) async {
+    try {
+      final r = await rpc.rawRpc('_flutter.screenshot');
+      final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+      if (b64.isEmpty) return null;
+      final dir = Directory(_autoArtifactsDir);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final f =
+          'watch-${DateTime.now().millisecondsSinceEpoch}-${++_watchShotSeq}.png';
+      File('$_autoArtifactsDir/$f').writeAsBytesSync(base64Decode(b64));
+      return f;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 记一条监听事件（写时间轴 + WS 推送，服务端保留最近 500 条）。
+  void _watchEmit(
+    _WatchState w, {
+    String? old,
+    String? newValue,
+    String? shot,
+    bool condMet = false,
+    String? err,
+  }) {
+    final item = <String, Object?>{
+      'type': 'watch',
+      'id': '${w.id}-${++_watchSeq}',
+      'ms': DateTime.now().millisecondsSinceEpoch,
+      'uri': w.uri,
+      'watchId': w.id,
+      'kind': w.kind,
+      'label': w.label,
+      'expr': w.expr,
+      if (old != null) 'old': old,
+      if (newValue != null) 'new': newValue,
+      if (w.condition.isNotEmpty) 'condition': w.condition,
+      if (condMet) 'condMet': true,
+      if (shot != null) 'shot': shot,
+      if (err != null) 'error': err,
+      'changes': w.changes,
+      'shots': w.shots,
+    };
+    _watchEvents.add(item);
+    if (_watchEvents.length > 500) {
+      _watchEvents.removeRange(0, _watchEvents.length - 500);
+    }
+    broadcast(<String, Object?>{'type': 'watch', 'item': item});
+  }
+
   // -- 客户端与广播 ----------------------------------------------------------
 
   void addClient(WebSocket ws) {
@@ -3591,6 +3944,94 @@ class GuiState {
       }
     }
   }
+}
+
+/// Watch 轮询间隔（ms）：200–10000，缺省 500；过密 eval 会拖慢被调 app。
+int watchIntervalMs(Object? raw) {
+  final v = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '') ?? 500;
+  return v.clamp(200, 10000);
+}
+
+/// 字段监听只接受合法 Dart 标识符（含 _/$ 私有字段），避免拼进表达式出错。
+bool watchFieldOk(String name) =>
+    RegExp(r'^[A-Za-z_$][A-Za-z0-9_$]*$').hasMatch(name);
+
+/// evaluate 结果 → 单行展示值：优先 valueAsString；对象给 <类名#id尾>，
+/// 便于识别「同一字段换了个对象」这类变化。
+String fmtWatchValue(Map<String, Object?> res) {
+  final vs = res['valueAsString']?.toString();
+  if (vs != null && vs.isNotEmpty) {
+    if (vs.length > 200) return '${vs.substring(0, 200)}…';
+    return res['valueAsStringIsTruncated'] == true ? '$vs…' : vs;
+  }
+  final cls = (res['class'] as Map?)?['name']?.toString() ?? '';
+  final id = res['id']?.toString() ?? '';
+  final tail =
+      id.isEmpty ? '' : '#${id.length > 6 ? id.substring(id.length - 6) : id}';
+  if (cls.isNotEmpty) return '<$cls$tail>';
+  return res['type']?.toString() ?? '?';
+}
+
+/// 单条 Watch 监听：字段（实例上下文）或表达式（库上下文）。
+class _WatchState {
+  _WatchState({
+    required this.id,
+    required this.uri,
+    required this.kind,
+    required this.targetId,
+    required this.expr,
+    required this.libUri,
+    required this.label,
+    required this.intervalMs,
+    required this.condition,
+    required this.autoShot,
+  });
+
+  final String id;
+  final String uri;
+
+  /// field：targetId + expr（字段名）；expr：libUri + expr。
+  final String kind;
+  final String targetId;
+  final String expr;
+  final String libUri;
+  final String label;
+
+  int intervalMs;
+  String condition;
+  bool autoShot;
+
+  bool paused = false;
+  bool hasValue = false;
+  String lastValue = '';
+  bool condPrev = false;
+  int changes = 0;
+  int shots = 0;
+  int polls = 0;
+  int fails = 0;
+  String lastError = '';
+  DateTime nextAt = DateTime.now();
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'uri': uri,
+        'kind': kind,
+        'targetId': targetId,
+        'expr': expr,
+        'lib': libUri,
+        'label': label,
+        'intervalMs': intervalMs,
+        'condition': condition,
+        'autoShot': autoShot,
+        'paused': paused,
+        'hasValue': hasValue,
+        'lastValue': lastValue,
+        'changes': changes,
+        'shots': shots,
+        'polls': polls,
+        'fails': fails,
+        'lastError': lastError,
+      };
 }
 
 class _VmSession {
@@ -5755,6 +6196,28 @@ String _relativeTo(String p, String root, String os) {
   return p;
 }
 
+/// VM service JSON-RPC 的 error → 可读文案。
+/// 部分引擎（如鸿蒙 Flutter）没有 expression compilation service，evaluate 只返回
+/// 笼统的 Expression compilation error，真实原因在 data.details 里，不能丢弃。
+String vmServiceErrorText(Object? error) {
+  if (error is! Map) return error?.toString() ?? 'VM service 错误';
+  final message = error['message']?.toString() ?? 'VM service 错误';
+  final data = error['data'];
+  var details = '';
+  if (data is Map) {
+    details = data['details']?.toString() ?? '';
+  } else if (data != null) {
+    details = data.toString();
+  }
+  if (details.contains('No compilation service available')) {
+    return '该调试会话不支持表达式求值（VM 未提供编译服务，常见于鸿蒙 Flutter 引擎），'
+        '路由栈/实例字段/Watch/沙盒等依赖 eval 的功能不可用';
+  }
+  if (details.isEmpty || message.contains(details)) return message;
+  if (details.length > 300) details = '${details.substring(0, 300)}…';
+  return '$message（$details）';
+}
+
 /// 应用沙盒浏览器：通过 VM service evaluate 在 app 进程内执行 dart:io 代码，
 /// 零 app 端改动（debug 模式即可，release 无 VM service）。
 /// 每次请求新建临时连接，用完即断。
@@ -5793,10 +6256,8 @@ class _SandboxRpc {
         final id = parsed['id']?.toString();
         final completer = _pending.remove(id);
         if (completer == null) return;
-        if (parsed['error'] is Map) {
-          completer.completeError(
-            (parsed['error'] as Map)['message']?.toString() ?? 'VM service 错误',
-          );
+        if (parsed['error'] != null) {
+          completer.completeError(vmServiceErrorText(parsed['error']));
         } else {
           completer.complete(parsed['result']);
         }
@@ -7373,6 +7834,11 @@ const String guiHtml = r'''
   .tl-log.tl-e { border-left-color:#f85149; }
   .tl-exc { border-left-color:#f85149; }
   .tl-exc .tl-badge { background:#5c1a1a; color:#ffb4b4; }
+  .tl-watch .tl-badge { background:#33280f; color:#ffd479; }
+  .inwatch { border:1px solid var(--line); border-radius:6px; padding:8px; margin-top:8px; background:#0d1117; }
+  .inwatch input, .inwatch select { font-size:12px; }
+  .inwatch-list { margin-top:6px; }
+  .inwatch-list .wrow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; padding:3px 0; border-top:1px dashed var(--line); }
   .tl-detail { padding:6px 12px 10px 22px; background:#161b22; border-left:3px solid var(--line); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   .tl-detail a { color:#58a6ff; text-decoration:none; }
   .tl-detail a:hover { text-decoration:underline; }
@@ -7533,6 +7999,7 @@ const String guiHtml = r'''
           <label class="chk"><input type="checkbox" id="tl-t-net" checked onchange="tlRender()">网络</label>
           <label class="chk"><input type="checkbox" id="tl-t-log" checked onchange="tlRender()">日志</label>
           <label class="chk"><input type="checkbox" id="tl-t-exc" checked onchange="tlRender()">异常</label>
+          <label class="chk"><input type="checkbox" id="tl-t-watch" checked onchange="tlRender()">监听</label>
         </span>
       </div>
       <div class="fgroup" title="日志量很大：默认只看 Flutter 输出的信息级与设备日志的警告/错误">
@@ -7616,11 +8083,31 @@ const String guiHtml = r'''
       <button onclick="inLoadStores()" title="列出 app 端 XBUme.registerStore 注册的实例">注册表 Store</button>
       <input id="in-cls" placeholder="类名（如 CounterState / UserNotifier）" style="width:260px" onkeydown="if(event.key==='Enter')inFind()">
       <button class="primary" onclick="inFind()" title="按类名查找：先遍历 Element 树找 State，再堆扫描捞全部实例">查找实例</button>
-      <span id="in-stat" class="muted">选中会话 app 内的运行时实例（仅 debug 可用）</span>
+      <span id="in-stat" class="muted">选中会话 app 内的运行时实例（仅 debug 可 用）</span>
+    </div>
+    <div class="inwatch">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b style="font-size:12px">Watch 监听</b>
+        <input id="in-watch-expr" placeholder="表达式（如 DateTime.now().second）" style="width:280px" onkeydown="if(event.key==='Enter')inWatchExpr()">
+        <input id="in-watch-lib" placeholder="库 uri（可选，默认 binding.dart）" style="width:230px">
+        <select id="in-watch-ms">
+          <option value="200">200ms</option>
+          <option value="500" selected>500ms</option>
+          <option value="1000">1s</option>
+          <option value="2000">2s</option>
+        </select>
+        <button onclick="inWatchExpr()">监听表达式</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <input id="in-watch-cond" placeholder="条件表达式（true 时自动截图，可空）" style="width:300px">
+        <label style="font-size:12px;display:flex;align-items:center;gap:3px"><input type="checkbox" id="in-watch-shot" checked> 条件成立自动截图</label>
+        <span class="muted" style="font-size:12px">字段监听：在字段行点「监听」；条件与监听同上下文求值</span>
+      </div>
+      <div id="in-watch-list" class="inwatch-list"></div>
     </div>
     <div id="in-list" style="margin-top:8px"></div>
     <div id="in-tree" style="margin-top:8px"></div>
-    <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。</div>
+    <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。「Watch 监听」按间隔轮询字段/表达式，值变化写入时间轴；条件表达式成立时自动截图（落盘 scenarios/artifacts）。</div>
   </section>
   <section class="page" id="page-shot">
     <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
@@ -7780,6 +8267,10 @@ function connect() {
     else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); tlSchedule(); }
     else if (msg.type === 'tl') { tlMerge(msg.items || []); }
     else if (msg.type === 'tlCleared') { tlOrder = []; tlByKey = {}; tlExpanded = {}; tlRender(); }
+    else if (msg.type === 'watch') { watchEventAdd(msg.item); }
+    else if (msg.type === 'watchState') { inWatchApply(msg.item); }
+    else if (msg.type === 'watchList') { inWatches = msg.items || []; inWatchRender(); }
+    else if (msg.type === 'watchCleared') { watchEvents = []; if (tlOnTab()) tlRender(); }
   };
 }
 connect();
@@ -8840,6 +9331,7 @@ function clearLogs(){ logs = []; renderLogs(); if (tlOnTab()) tlSchedule(); }
 // -- 时间轴 Tab ------------------------------------------------------------
 // 合并四类数据：服务端推的路由/网络（tlOrder）+ 本地日志 logs + 异常 excItems。
 // 日志与异常不进服务端，避免与已有 WS 通道重复传输。
+var watchEvents = [];   // 监听事件（WS 推送 + 打开 Tab 时回填，服务端保留 500 条）
 var tlOrder = [], tlByKey = {}, tlPaused = false, tlDirtyTimer = null;
 var tlExpanded = {}, tlSubUri = '', tlNewCount = 0, tlKwTimer = null;
 // 按住鼠标（准备点击/拖选）时不重建时间轴 DOM：否则 mousedown 与 mouseup
@@ -8866,6 +9358,7 @@ function tlCb(id){ var el = document.getElementById(id); return !!(el && el.chec
 function tlShow(){
   tlRender();
   tlSubscribe();
+  inWatchBackfill();
 }
 
 function tlHide(){
@@ -8887,6 +9380,7 @@ function tlSubscribe(){
       tlOrder = []; tlByKey = {};
       tlMerge(d.items || []);
       tlRender();
+      inWatchBackfill();
     })
     .catch(function(e){ tlStat('同步失败：' + e); });
 }
@@ -8976,9 +9470,17 @@ function tlBuild(){
       evs.push({ t:'exc', id:'e' + it.id, ms: ms, item: it, count: it.count || 1, summary: it.summary || '' });
     });
   }
+  if (tlCb('tl-t-watch')) {
+    var wUri = tlUri();
+    watchEvents.forEach(function(e){
+      if (e.ms < cutoff) return;
+      if (wUri && e.uri !== wUri) return;
+      evs.push(e);
+    });
+  }
   var kw = (document.getElementById('tl-kw').value || '').trim().toLowerCase();
   if (kw) evs = evs.filter(function(e){ return tlHay(e).indexOf(kw) >= 0; });
-  var weight = { exc: 4, net: 3, route: 2, log: 1 };
+  var weight = { exc: 4, net: 3, watch: 2, route: 2, log: 1 };
   evs.sort(function(a, b){ return a.ms - b.ms || weight[b.t] - weight[a.t]; });
   return evs;
 }
@@ -8987,6 +9489,10 @@ function tlHay(e){
   if (e.t === 'route') return ((e.action || '') + ' ' + (e.name || '') + ' ' + (e.prev || '') + ' ' + (e.phase || '')).toLowerCase();
   if (e.t === 'net') return ((e.method || '') + ' ' + (e.url || '') + ' ' + (e.code || '') + ' ' + (e.status || '') + ' ' + (e.err || '')).toLowerCase();
   if (e.t === 'exc') return ((e.summary || '') + ' ' + ((e.item && (e.item.desc || e.item.widget || e.item.source)) || '')).toLowerCase();
+  if (e.t === 'watch') {
+    var w = e.w || {};
+    return ((w.label || '') + ' ' + (w.expr || '') + ' ' + (w.old || '') + ' ' + (w.new || '') + ' ' + (w.condition || '') + ' ' + (w.error || '')).toLowerCase();
+  }
   return ((e.msg || '') + ' ' + (e.tag || '') + ' ' + (e.app || '')).toLowerCase();
 }
 
@@ -8994,6 +9500,13 @@ function tlPlain(e){
   if (e.t === 'route') return (e.action || 'push') + ' ' + (e.name || '<unnamed>') + (e.prev ? ' <- ' + e.prev : '');
   if (e.t === 'net') return (e.method || '') + ' ' + (e.url || '') + (e.code ? ' ' + e.code : '') + (e.dur ? ' ' + e.dur + 'ms' : '') + (e.err ? ' ERR ' + e.err : '');
   if (e.t === 'exc') return '异常 ' + (e.summary || '') + (e.count > 1 ? ' x' + e.count : '');
+  if (e.t === 'watch') {
+    var w = e.w || {};
+    var head = '监听 ' + (w.label || w.expr || '');
+    if (w.error) return head + ' 错误 ' + w.error;
+    if (w.condMet) return head + ' 条件命中 ' + (w.new == null ? '' : w.new) + (w.shot ? ' [截图]' : '');
+    return head + ' ' + (w.old == null ? '—' : w.old) + ' -> ' + (w.new == null ? '—' : w.new);
+  }
   return '[' + (e.level || 'I') + '/' + (e.tag || '') + '] ' + (e.msg || '');
 }
 
@@ -9025,6 +9538,20 @@ function tlRowHtml(e){
     badge = '异常';
     sum = esc(e.summary || '(无摘要)');
     aux = e.count > 1 ? '×' + e.count : '';
+  } else if (e.t === 'watch') {
+    badge = '监听';
+    var w = e.w || {};
+    sum = esc(w.label || w.expr || '');
+    if (w.error) {
+      sum += ' <span class="bad">' + esc(String(w.error).substring(0, 90)) + '</span>';
+    } else if (w.condMet) {
+      sum += ' <span class="muted">条件命中，当前</span> <span style="color:#79c0ff">' + esc(w.new == null ? '' : String(w.new)) + '</span>';
+    } else {
+      sum += ' <span class="muted">' + esc(w.old == null ? '—' : String(w.old)) + '</span> → <span style="color:#79c0ff">' + esc(w.new == null ? '—' : String(w.new)) + '</span>';
+    }
+    if (w.shot) aux = '已截图';
+    else if (w.condition) aux = '条件 ' + esc(w.condition);
+    else aux = '#' + (w.changes || 0);
   } else {
     badge = '日志';
     var lv = e.level || 'I';
@@ -9056,6 +9583,14 @@ function tlDetailHtml(e){
     row('摘要', it.summary); row('相关 Widget', it.widget); row('来源', it.source); row('通道', it.channel);
     if (it.desc) rows.push('<div style="margin-top:4px">' + esc(String(it.desc).substring(0, 1200)) + '</div>');
     rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoExc(' + esc(String(it.id)) + ')">在异常 Tab 中定位该条</a></div>');
+  } else if (e.t === 'watch') {
+    var w = e.w || {};
+    row('类型', w.kind === 'field' ? '字段' : '表达式'); row('监听', w.label); row('表达式', w.expr);
+    row('旧值', w.old); row('新值', w.new); row('条件', w.condition);
+    row('条件命中', w.condMet ? '是' : ''); row('累计变化', w.changes); row('累计截图', w.shots);
+    row('错误', w.error);
+    if (w.shot) rows.push('<div style="margin-top:6px"><a href="/api/auto/artifact?f=' + encodeURIComponent(w.shot) + '" target="_blank">查看条件截图 ' + esc(w.shot) + '</a></div>');
+    if (w.kind === 'field') rows.push('<div style="margin-top:6px"><a href="javascript:void(0)" onclick="tlGoWatch(\'' + esc(w.watchId || '') + '\')">在实例 Tab 中定位该监听</a></div>');
   } else {
     var l = e._l || {};
     row('时间', l.ts || ''); row('来源', (l.source || '') + (l.device ? ' · ' + l.device : ''));
@@ -9117,9 +9652,12 @@ function tlToLatest(){
 }
 
 function tlClear(){
-  if (!confirm('清空时间轴里的路由/网络记录？\n（app 内记录、日志、异常都不受影响）')) return;
+  if (!confirm('清空时间轴里的路由/网络/监听记录？\n（app 内记录、日志、异常都不受影响）')) return;
   fetch('/api/timeline/clear', { method: 'POST' }).then(function(){
-    tlOrder = []; tlByKey = {}; tlExpanded = {}; tlRender();
+    tlOrder = []; tlByKey = {}; tlExpanded = {};
+    return fetch('/api/watch/clear', { method: 'POST' });
+  }).then(function(){
+    watchEvents = []; tlRender();
   }).catch(function(e){ alert('清空失败：' + e); });
 }
 
@@ -10595,7 +11133,11 @@ function inRefresh(){
   if (!inUri()) {
     document.getElementById('in-list').innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框）</span>';
     document.getElementById('in-tree').innerHTML = '';
+    inWatches = [];
+    inWatchRender();
+    return;
   }
+  inWatchRefresh();
 }
 function inApi(path){
   var uri = inUri();
@@ -10722,7 +11264,8 @@ function inNode(n, level, ownerId, path){
     head = (vtypeName && vtypeName !== 'null' ? '<span class="muted">' + esc(vtypeName) + '</span> ' : '')
       + '<span class="in-val" style="color:#79c0ff">' + esc(n.value) + '</span>'
       + (n.truncated ? '<span class="muted">（截断）</span>' : '')
-      + (canEdit ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inEdit(this, ' + nameAttr + ', \'' + vtype + '\', ' + ownerAttr + ')">编辑</a>' : '');
+      + (canEdit ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inEdit(this, ' + nameAttr + ', \'' + vtype + '\', ' + ownerAttr + ')">编辑</a>' : '')
+      + (n.name && ownerId && watchFieldOkJs(n.name) ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inWatchField(' + ownerAttr + ', ' + nameAttr + ')" title="按上方设定的间隔/条件监听该字段，变化写入时间轴">监听</a>' : '');
   } else if (kind === 'list' || kind === 'map') {
     head = '<span style="color:#d2a8ff">' + esc(n.cls || (kind === 'map' ? 'Map' : 'List')) + '</span>（' + esc(n.length || '?') + ' 项）';
   } else if (kind === 'circular') {
@@ -10734,7 +11277,8 @@ function inNode(n, level, ownerId, path){
     var primitive = type === 'int' || type === 'double' || type === 'bool' || type === 'String' || type === 'null';
     head = (type && type !== 'null' ? '<span class="muted">' + esc(type) + '</span> ' : '')
       + (n.value !== '' ? '<span class="in-val" style="color:#79c0ff">' + esc(n.value) + '</span>' : '<span class="muted">' + esc(n.cls || '?') + '</span>')
-      + (!primitive && n.id ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\', ' + nameAttr + ', ' + pathAttr + ')">展开</a>' : '');
+      + (!primitive && n.id ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inExpand(this, \'' + esc(n.id) + '\', ' + nameAttr + ', ' + pathAttr + ')">展开</a>' : '')
+      + (n.name && ownerId && watchFieldOkJs(n.name) ? ' <a href="javascript:void(0)" style="font-size:12px" onclick="inWatchField(' + ownerAttr + ', ' + nameAttr + ')" title="监听该字段的值（对象显示类名与 id 尾号），变化写入时间轴">监听</a>' : '');
   } else if (kind === 'opaque') {
     head = '<span class="muted">' + esc(n.cls || '（无法展示）') + '</span>';
   } else {
@@ -10799,6 +11343,142 @@ function inSave(el, name, vtype, ownerId){
       inShowId(inCurId, inCurName);
     })
     .catch(function(e){ inStat('写回失败：' + String(e)); });
+}
+// ── Watch 监听：实例字段 / eval 表达式变化写入时间轴，条件命中自动截图 ──
+var inWatches = [];
+function watchFieldOkJs(name){ return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name || ''); }
+function inWatchOpts(){
+  var shot = document.getElementById('in-watch-shot');
+  return {
+    lib: (document.getElementById('in-watch-lib').value || '').trim(),
+    condition: (document.getElementById('in-watch-cond').value || '').trim(),
+    autoShot: !!(shot && shot.checked),
+    intervalMs: parseInt(document.getElementById('in-watch-ms').value, 10) || 500
+  };
+}
+function inWatchAdd(body, okMsg){
+  if (!inUri()) { inStat('请先选择 VM'); return; }
+  var payload = Object.assign({ uri: inUri() }, inWatchOpts(), body);
+  inStat('添加监听…');
+  fetch('/api/watch/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { inStat('添加失败：' + (d.error || '')); return; }
+      inStat(d.duplicated ? '该监听已存在' : (okMsg || '已添加监听'));
+      if (d.item) { inWatchUpsert(d.item); inWatchRender(); }
+    })
+    .catch(function(e){ inStat('添加失败：' + String(e)); });
+}
+function inWatchExpr(){
+  var el = document.getElementById('in-watch-expr');
+  var expr = (el.value || '').trim();
+  if (!expr) { inStat('请输入表达式'); el.focus(); return; }
+  inWatchAdd({ kind:'expr', expr: expr }, '已添加表达式监听');
+}
+function inWatchField(ownerId, name){
+  if (!watchFieldOkJs(name)) { inStat('字段名不合法：' + name); return; }
+  inWatchAdd({ kind:'field', targetId: ownerId, expr: name, label: name }, '已监听字段 ' + name);
+}
+function inWatchUpsert(item){
+  if (!item || !item.id) return;
+  for (var i = 0; i < inWatches.length; i++) {
+    if (inWatches[i].id === item.id) { inWatches[i] = item; return; }
+  }
+  inWatches.push(item);
+}
+function inWatchApply(item){
+  if (!item || !item.id) return;
+  inWatchUpsert(item);
+  // 只更新行内状态文本：全量重渲染会打断滚动/定位高亮与按钮点击。
+  var row = document.querySelector('#in-watch-list .wrow[data-wid="' + item.id + '"]');
+  if (!row) return;
+  var stat = row.querySelector('.wstat');
+  if (stat) stat.textContent = '变化 ' + (item.changes || 0) + ' · 截图 ' + (item.shots || 0);
+  var st = row.querySelector('.wst');
+  if (st) st.innerHTML = inWatchStatus(item);
+}
+function inWatchStatus(w){
+  if (w.paused) return '<span class="bad">已暂停</span>';
+  if (w.lastError) return '<span class="bad">' + esc(String(w.lastError).substring(0, 90)) + '</span>';
+  if (!w.hasValue) return '<span class="muted">等待首次采样…</span>';
+  return '<span class="muted">当前 ' + esc(w.lastValue == null ? '' : String(w.lastValue)) + '</span>';
+}
+function inWatchRefresh(){
+  if (!inUri()) { inWatches = []; inWatchRender(); return; }
+  fetch('/api/watch/list?uri=' + encodeURIComponent(inUri()))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (!d.ok) return; inWatches = d.items || []; inWatchRender(); })
+    .catch(function(){});
+}
+function inWatchRender(){
+  var box = document.getElementById('in-watch-list');
+  if (!box) return;
+  var uri = inUri();
+  var items = inWatches.filter(function(w){ return !uri || w.uri === uri; });
+  if (!items.length) {
+    box.innerHTML = '<span class="muted" style="font-size:12px">暂无监听：在上方输入表达式，或在字段行点「监听」</span>';
+    return;
+  }
+  box.innerHTML = items.map(function(w){
+    var meta = esc(w.expr) + ' · ' + (w.intervalMs || 500) + 'ms';
+    if (w.condition) meta += ' · 条件 ' + esc(w.condition) + (w.autoShot === false ? '（不截图）' : '');
+    var stat = '<span class="wstat muted">变化 ' + (w.changes || 0) + ' · 截图 ' + (w.shots || 0) + '</span>';
+    var st = '<span class="wst">' + inWatchStatus(w) + '</span>';
+    return '<div class="wrow" data-wid="' + esc(w.id) + '">'
+      + '<span class="muted" style="font-size:12px;flex:none">' + (w.kind === 'field' ? '字段' : '表达式') + '</span>'
+      + '<b style="flex:none">' + esc(w.label || w.expr) + '</b>'
+      + '<span class="muted" style="font-size:12px">' + meta + '</span>'
+      + stat + st
+      + '<button style="flex:none" onclick="inWatchPause(\'' + esc(w.id) + '\', ' + (w.paused ? 'false' : 'true') + ')">' + (w.paused ? '恢复' : '暂停') + '</button>'
+      + '<button style="flex:none" onclick="inWatchRemove(\'' + esc(w.id) + '\')">删除</button>'
+      + '</div>';
+  }).join('');
+}
+function inWatchPause(id, paused){
+  fetch('/api/watch/pause?id=' + encodeURIComponent(id) + '&on=' + (paused ? '1' : '0'), { method:'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (!d.ok) inStat('操作失败：监听可能已被删除'); })
+    .catch(function(e){ inStat('操作失败：' + String(e)); });
+}
+function inWatchRemove(id){
+  fetch('/api/watch/remove?id=' + encodeURIComponent(id), { method:'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { inStat('删除失败：监听可能已不存在'); return; }
+      inWatches = inWatches.filter(function(w){ return w.id !== id; });
+      inWatchRender(); inStat('已删除监听');
+    })
+    .catch(function(e){ inStat('删除失败：' + String(e)); });
+}
+// 监听事件 → 时间轴（WS 实时推送 + 打开时间轴时回填服务端最近 500 条）。
+function watchEventAdd(item, silent){
+  if (!item || !item.id) return;
+  var key = 'watch:' + item.id;
+  for (var i = 0; i < watchEvents.length; i++) {
+    if (watchEvents[i].id === key) return;
+  }
+  watchEvents.push({ t:'watch', id:key, ms:item.ms || Date.now(), uri:item.uri || '', w:item });
+  if (watchEvents.length > 500) watchEvents.splice(0, watchEvents.length - 500);
+  if (!silent) tlSchedule();
+}
+function inWatchBackfill(){
+  var uri = tlUri();
+  if (!uri) return;
+  fetch('/api/watch/events?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) return;
+      (d.items || []).forEach(function(it){ watchEventAdd(it, true); });
+      if (tlOnTab()) tlRender();
+    })
+    .catch(function(){});
+}
+function tlGoWatch(watchId){
+  var tab = document.querySelector('.tab[data-tab="instances"]');
+  if (tab) tab.click();
+  locateWhenFound(function(){
+    return document.querySelector('#in-watch-list .wrow[data-wid="' + watchId + '"]');
+  }, '监听列表里没有该项（可能已被删除）');
 }
 loadIdeOrder();
 </script>
