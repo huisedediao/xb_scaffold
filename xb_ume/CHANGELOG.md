@@ -75,3 +75,4 @@
 - 手机端 ume 面板 Network 详情同步新增「发起位置」（完整过滤后调用栈，可选中复制）与「跳转发起位置」按钮，复用 `xb_ume:openSource` 事件通道打开电脑 IDE；若该请求来自旧版本（无发起位置字段）则显示「未记录」。
 - 守护脚本新增 `package:` 源引用解析：跳转请求中的 `package:pkg/path.dart` 由 daemon 借会话自身的 VM service（`getIsolate` 的 `file:///` 库反推项目根，再读该项目 `package_config.json`）映射为本机文件路径。升级到 0.3.0 后需重新执行 `dart run xb_ume:ide --install` 更新守护脚本，否则手机端 Network 跳转只能复制 `package:` 原文到剪贴板。
 - 异常 Tab 新增「AI 分析」（`POST /api/exc/analyze`）：把异常摘要/描述、相关 Widget、最多 12 帧调用栈、最多 5 个用户代码文件的源码片段、异常时路由栈与页面文本、前 30 秒网络请求、同一会话前后 15 秒 E/W 日志发给 OpenAI 兼容接口，输出「结论 / 定位 / 修复建议 / 需要补充」四段式归因；卡片内展示分析文本、依据统计与「复制分析」，结果在当前页面内存缓存（切 Tab / 新异常重渲染不丢）；AI 未配置、接口失败、异常记录不存在时在卡片内显示错误。异常记录新增 `wsUri`，分析时优先回连异常来源会话取上下文（异常来自非当前选中会话也有效）。
+- 修复手机端 ume 面板 Console / Network / Inspector 详情弹窗在桌面端偶发 `The Scrollbar's ScrollController has no ScrollPosition attached` 断言：三个面板统一改用 `XBUmeDetailScrollContent`，Scrollbar 与 SingleChildScrollView 共用同一个 controller，并补充 macOS 回归测试。

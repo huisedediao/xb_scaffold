@@ -5,6 +5,7 @@ import '../../core/xb_ume_controller.dart';
 import '../../core/xb_ume_notice_service.dart';
 import '../../core/xb_ume_plugin.dart';
 import '../../models/xb_ume_widget_node.dart';
+import '../../ui/xb_ume_detail_scroll_content.dart';
 
 class XBUmeInspectorPlugin extends XBUmePlugin {
   @override
@@ -313,16 +314,13 @@ class _InspectorPanelState extends State<_InspectorPanel> {
           title: const Text('Inspector Node Detail'),
           content: SizedBox(
             width: 760,
-            child: Scrollbar(
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  text,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    height: 1.45,
-                    color: Color(0xFF111827),
-                  ),
+            child: XBUmeDetailScrollContent(
+              child: SelectableText(
+                text,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.45,
+                  color: Color(0xFF111827),
                 ),
               ),
             ),

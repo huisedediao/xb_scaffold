@@ -7,6 +7,7 @@ import '../../core/xb_ume_controller.dart';
 import '../../core/xb_ume_notice_service.dart';
 import '../../core/xb_ume_plugin.dart';
 import '../../models/xb_ume_log_item.dart';
+import '../../ui/xb_ume_detail_scroll_content.dart';
 import '../../utils/xb_ume_time.dart';
 
 class XBUmeConsolePlugin extends XBUmePlugin {
@@ -219,16 +220,13 @@ class _ConsolePanelState extends State<_ConsolePanel> {
           title: const Text('Log Detail'),
           content: SizedBox(
             width: 720,
-            child: Scrollbar(
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  lines.join('\n'),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    height: 1.45,
-                    color: Color(0xFF111827),
-                  ),
+            child: XBUmeDetailScrollContent(
+              child: SelectableText(
+                lines.join('\n'),
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.45,
+                  color: Color(0xFF111827),
                 ),
               ),
             ),
