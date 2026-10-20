@@ -119,6 +119,9 @@ void main() {
     final records = binding.controller.network;
     expect(records.isNotEmpty, true);
     expect(records.last.statusCode, 200);
+    // 请求开始时捕获的发起位置应包含当前测试调用帧。
+    expect(records.last.initiator, isNotNull);
+    expect(records.last.initiatorStack, contains('xb_ume_test.dart'));
 
     binding.dispose();
   });

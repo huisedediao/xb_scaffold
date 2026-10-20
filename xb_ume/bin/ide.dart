@@ -1207,6 +1207,14 @@ class _Session {
   bool alive = true;
   int _nextId = 1;
 
+  /// JSON-RPC 请求等待表：daemon 平时只被动收事件，解析 package: 源引用时
+  /// 需要临时向该会话的 VM service 发 getVM / getIsolate。
+  final Map<String, Completer<Map<String, Object?>>> _pending =
+      <String, Completer<Map<String, Object?>>>{};
+
+  /// 包名 → 包根路径缓存（来自被调试项目的 package_config.json）。
+  Map<String, String>? _pkgRoots;
+
   /// 会话断开时完成（连接失败也会先走 _close），供 --uri 模式等待重连。
   final Completer<void> _closed = Completer<void>();
   Future<void> get closed => _closed.future;
@@ -1236,6 +1244,34 @@ class _Session {
     }
   }
 
+  /// 向该会话的 VM service 发 JSON-RPC 请求并等待结果；失败/超时返回 null。
+  Future<Map<String, Object?>?> _vmCall(
+    String method, [
+    Map<String, Object?>? params,
+  ]) async {
+    final socket = _socket;
+    if (socket == null) return null;
+    final id = '${_nextId++}';
+    final completer = Completer<Map<String, Object?>>();
+    _pending[id] = completer;
+    try {
+      socket.add(jsonEncode(<String, Object?>{
+        'jsonrpc': '2.0',
+        'id': id,
+        'method': method,
+        'params': params ?? const <String, Object?>{},
+      }));
+      final response =
+          await completer.future.timeout(const Duration(seconds: 3));
+      final result = response['result'];
+      return result is Map<String, Object?> ? result : null;
+    } catch (_) {
+      return null;
+    } finally {
+      _pending.remove(id);
+    }
+  }
+
   void _onData(dynamic message) {
     final String text;
     if (message is String) {
@@ -1252,6 +1288,15 @@ class _Session {
       return;
     }
     if (parsed is! Map<String, Object?>) return;
+    // JSON-RPC 响应（daemon 主动发起的 getVM / getIsolate 等）。
+    final responseId = parsed['id'];
+    if (responseId != null) {
+      final completer = _pending.remove('$responseId');
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(parsed);
+      }
+      return;
+    }
     // JSON-RPC 错误响应（如 streamListen 失败）便于排查。
     final error = parsed['error'];
     if (error != null) {
@@ -1313,12 +1358,80 @@ class _Session {
     }
     _seenSave();
     print('[xbume-ide] $_logTs 收到跳转请求 ($source): $file:$line:$column');
-    await openInIde(file: file, line: line, column: column, mode: ide);
+    final target = await _resolveSourceFile(file);
+    if (target != null && target != file) {
+      print('[xbume-ide] package 源引用已解析: $file → $target');
+    }
+    await openInIde(file: target, line: line, column: column, mode: ide);
+  }
+
+  /// 把 package: 源引用解析为本机文件路径（file:/dart: 等原样返回）。
+  ///
+  /// daemon 不知道被调试项目的路径，借用会话自身的 VM service：
+  /// getIsolate 的 file:/// 库（含 .dart_tool/flutter_build 注册文件）
+  /// 反推项目根，再读该项目的 package_config.json 做包名映射。
+  Future<String?> _resolveSourceFile(String? file) async {
+    if (file == null || file.isEmpty || !file.startsWith('package:')) {
+      return file;
+    }
+    final roots = await _packageRoots();
+    if (roots == null) return file;
+    final rest = file.substring('package:'.length);
+    final slash = rest.indexOf('/');
+    if (slash <= 0) return file;
+    final pkg = rest.substring(0, slash);
+    final rel = rest.substring(slash + 1);
+    final root = roots[pkg];
+    if (root == null) return file;
+    final path = '$root/lib/$rel';
+    return File(path).existsSync() ? path : file;
+  }
+
+  /// 解析并缓存当前会话所属项目的包根表；失败返回 null。
+  Future<Map<String, String>?> _packageRoots() async {
+    final cached = _pkgRoots;
+    if (cached != null) return cached;
+    try {
+      final vm = await _vmCall('getVM');
+      final isolates = vm?['isolates'];
+      if (isolates is! List) return null;
+      for (final iso in isolates) {
+        if (iso is! Map || iso['id'] == null) continue;
+        final info = await _vmCall('getIsolate', <String, Object?>{
+          'isolateId': '${iso['id']}',
+        });
+        final libraries = info?['libraries'];
+        if (libraries is! List) continue;
+        final fileUris = <String>[];
+        for (final lib in libraries) {
+          if (lib is! Map) continue;
+          final uri = lib['uri']?.toString();
+          if (uri != null && uri.startsWith('file:///')) fileUris.add(uri);
+        }
+        final projectRoot = _projectRootFor(fileUris);
+        if (projectRoot == null) continue;
+        final roots = _readPackageRoots(projectRoot);
+        if (roots != null) {
+          _pkgRoots = roots;
+          return roots;
+        }
+      }
+    } catch (e) {
+      print('[xbume-ide] 解析 package 源引用失败 ($source): $e');
+    }
+    return null;
   }
 
   void _close() {
     if (!alive) return;
     alive = false;
+    // 唤醒仍在等待 RPC 响应的调用，避免会话断开后挂到超时。
+    for (final completer in _pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('session closed'));
+      }
+    }
+    _pending.clear();
     try {
       _socket?.close();
     } catch (_) {
@@ -1655,6 +1768,77 @@ String _toFilePath(String uri) {
     // 非 URI 格式，原样返回。
   }
   return uri;
+}
+
+/// 从 isolate 的 file:/// 库 uri 提取 Flutter 项目根目录。
+/// 优先用 flutter_build 目录标记；退而用 /lib/ 前缀。
+String? _projectRootFor(List<String> fileUris) {
+  final paths = <String>[];
+  for (final uri in fileUris) {
+    try {
+      final parsed = Uri.parse(uri);
+      if (parsed.scheme != 'file') continue;
+      // Windows 统一为正斜杠，后续标记匹配与 File 均可直接使用。
+      paths.add(parsed.toFilePath().replaceAll('\\', '/'));
+    } catch (_) {
+      // 跳过非法 URI。
+    }
+  }
+  for (final path in paths) {
+    const marker = '/.dart_tool/flutter_build/';
+    final idx = path.indexOf(marker);
+    if (idx > 0) return path.substring(0, idx);
+  }
+  for (final path in paths) {
+    final idx = path.indexOf('/lib/');
+    if (idx > 0) return path.substring(0, idx);
+  }
+  return null;
+}
+
+/// 读取项目的 .dart_tool/package_config.json，返回 包名 → 包根路径。
+Map<String, String>? _readPackageRoots(String projectRoot) {
+  try {
+    final file = File('$projectRoot/.dart_tool/package_config.json');
+    if (!file.existsSync()) return null;
+    final parsed = jsonDecode(file.readAsStringSync());
+    if (parsed is! Map<String, Object?>) return null;
+    final packages = parsed['packages'];
+    if (packages is! List) return null;
+    final roots = <String, String>{};
+    for (final pkg in packages) {
+      if (pkg is! Map) continue;
+      final name = pkg['name']?.toString();
+      final rootUri = pkg['rootUri']?.toString();
+      if (name == null || rootUri == null) continue;
+      var root = rootUri.startsWith('file://')
+          ? _toFilePath(rootUri)
+          : _normalizeLocalPath('$projectRoot/.dart_tool/$rootUri');
+      root = root.replaceAll('\\', '/');
+      while (root.endsWith('/')) {
+        root = root.substring(0, root.length - 1);
+      }
+      roots[name] = root;
+    }
+    return roots;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 归一化本机路径（处理 ../ 与 ./，package_config 的相对 rootUri 用）。
+String _normalizeLocalPath(String p) {
+  final abs = p.startsWith('/');
+  final out = <String>[];
+  for (final seg in p.split('/')) {
+    if (seg.isEmpty || seg == '.') continue;
+    if (seg == '..') {
+      if (out.isNotEmpty) out.removeLast();
+      continue;
+    }
+    out.add(seg);
+  }
+  return (abs ? '/' : '') + out.join('/');
 }
 
 // ---------------------------------------------------------------------------

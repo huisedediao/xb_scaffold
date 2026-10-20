@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/xb_ume_controller.dart';
+import '../../core/xb_ume_ide_jump.dart';
 import '../../core/xb_ume_notice_service.dart';
 import '../../core/xb_ume_plugin.dart';
 import '../../models/xb_ume_network_item.dart';
@@ -207,6 +208,8 @@ class _NetworkPanelState extends State<_NetworkPanel> {
   }
 
   void _showDetail(BuildContext context, XBUmeNetworkItem item) {
+    final initiator = _firstInitiator(item);
+    final initiatorStack = item.initiatorStack?.trim();
     final text = <String>[
       'id: ${item.id}',
       'time: ${item.time.toIso8601String()}',
@@ -235,6 +238,14 @@ class _NetworkPanelState extends State<_NetworkPanel> {
         'stack:',
         xbUmePreview(item.stack),
       ],
+      '',
+      '发起位置:',
+      if (initiatorStack != null && initiatorStack.isNotEmpty)
+        initiatorStack
+      else if (item.initiator != null && item.initiator!.isNotEmpty)
+        item.initiator!
+      else
+        '未记录（该记录可能来自 0.3.0 之前的版本，或未捕获到用户代码帧）',
     ].join('\n');
 
     showDialog<void>(
@@ -259,6 +270,22 @@ class _NetworkPanelState extends State<_NetworkPanel> {
             ),
           ),
           actions: [
+            if (initiator != null)
+              TextButton.icon(
+                onPressed: () async {
+                  final sent = await XBUmeIdeJump.requestOpen(
+                    file: initiator.file,
+                    line: initiator.line,
+                    column: initiator.column,
+                  );
+                  if (!context.mounted) return;
+                  XBUmeNoticeService.instance.show(
+                    sent ? '已发送 IDE 打开请求，路径已复制' : '路径已复制到剪贴板',
+                  );
+                },
+                icon: const Icon(Icons.north_east, size: 16),
+                label: const Text('跳转发起位置'),
+              ),
             TextButton(
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: text));
@@ -276,4 +303,39 @@ class _NetworkPanelState extends State<_NetworkPanel> {
       },
     );
   }
+}
+
+/// 发起位置栈帧解析结果，如 `#2 Foo.bar (package:app/main.dart:153:35)`。
+class _InitiatorLocation {
+  const _InitiatorLocation({
+    required this.file,
+    required this.line,
+    required this.column,
+  });
+
+  final String file;
+  final int line;
+  final int? column;
+}
+
+final RegExp _initiatorFrameRe = RegExp(r'^#\d+\s+.*\((.+):(\d+):(\d+)\)$');
+
+/// 取首个可解析的发起位置栈帧；app 端已过滤基础设施帧，首帧即调用点。
+_InitiatorLocation? _firstInitiator(XBUmeNetworkItem item) {
+  final stack = item.initiatorStack;
+  final frames = stack == null || stack.isEmpty
+      ? <String>[if (item.initiator != null) item.initiator!]
+      : stack.split('\n');
+  for (final frame in frames) {
+    final match = _initiatorFrameRe.firstMatch(frame.trim());
+    if (match == null) continue;
+    final line = int.tryParse(match.group(2)!);
+    if (line == null) continue;
+    return _InitiatorLocation(
+      file: match.group(1)!,
+      line: line,
+      column: int.tryParse(match.group(3)!),
+    );
+  }
+  return null;
 }

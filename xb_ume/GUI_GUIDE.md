@@ -255,7 +255,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
    - **重发**：在**电脑上**按原方法/URL/请求头/请求体直接发起 HTTP 请求（不经手机），结果附在该条详情下方（状态码/响应头/响应体）；适合排查「换环境/换参数是否还报错」；
    - **清空**：清空 app 内 ume 的 Network 记录（与手机端面板的清空等效）；
 
-**请求发起位置**：app 端在请求开始时（`XBUmeNetworkReporter.begin`）捕获调用栈（Dio 场景使用 `RequestOptions.sourceStackTrace`——Dio 5 的 `onRequest` 在独立 Future 中执行，`StackTrace.current` 已丢失用户调用帧），过滤 `dart:` / Flutter / Dio / http / xb_ume / xb_network 等基础设施帧后保留最多 24 个用户代码帧，首帧即发起位置（如 `_requestByDio (package:xb_ume_example/main.dart:152:20)`）。详情顶部「发起位置」展示首帧与可跳转链接，`完整调用栈（N 帧）` 默认折叠；点「跳转」用 GUI 的 IDE 打开对应文件与行（与异常栈帧同一套 `/api/openide`）。旧版 app（xb_ume < 0.3.0）或无该字段的请求显示「未记录」。
+**请求发起位置**：app 端在请求开始时（`XBUmeNetworkReporter.begin`）捕获调用栈（Dio 场景使用 `RequestOptions.sourceStackTrace`——Dio 5 的 `onRequest` 在独立 Future 中执行，`StackTrace.current` 已丢失用户调用帧），过滤 `dart:` / Flutter / Dio / http / xb_ume / xb_network 等基础设施帧后保留最多 24 个用户代码帧，首帧即发起位置（如 `_requestByDio (package:xb_ume_example/main.dart:152:20)`）。详情顶部「发起位置」展示首帧与可跳转链接，`完整调用栈（N 帧）` 默认折叠；点「跳转」用 GUI 的 IDE 打开对应文件与行（与异常栈帧同一套 `/api/openide`）。旧版 app（xb_ume < 0.3.0）或无该字段的请求显示「未记录」。手机端 ume 面板的 Network 详情同样展示发起位置并提供「跳转发起位置」（走 `xb_ume:openSource` 通道，daemon 负责把 `package:` 解析为本机文件），需 daemon 同为 0.3.0+（重新安装守护脚本）。
 
 **原理**：通过 VM service 在 `package:xb_ume` core 库上下文读 `XBUme.controller.network`（同步 getter，零 app 端改动）；仅 debug 模式可用，app 未接入 xb_ume 时会提示错误。
 

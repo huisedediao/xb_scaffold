@@ -84,8 +84,11 @@ dart run xb_ume:ide --install
 2. 手机上点悬浮 UME 按钮，进入 **Locator** 模式；
 3. 点击目标组件，气泡展示组件链条；
 4. **点击行尾箭头按钮（↗）**，电脑 IDE 自动打开对应源码行列，同时路径已复制到剪贴板。
+5. 需要定位网络请求的发起代码时：打开 ume 面板 **Network** → 点任意请求 → 详情底部「发起位置」查看调用栈 → 点「跳转发起位置」。
 
 支持多台设备同时调试；App 重启自动重连，会话断开自动清理。
+
+**Network 发起位置**：网络请求详情里的「跳转发起位置」也走同一通道。发起位置栈帧通常是 `package:your_app/main.dart:153:35` 形式，daemon 会借调试会话自身的 VM service 反推项目根并读取 `package_config.json`，把 `package:` 映射为本机文件路径后再唤起 IDE；因此手机端 Network 跳转需要 daemon 与 app 同为 0.3.0+（升级后重新执行一次 `dart run xb_ume:ide --install`）。
 
 ## 五、配置 IDE 优先级
 

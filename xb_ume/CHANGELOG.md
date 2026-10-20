@@ -72,3 +72,5 @@
 
 - Network 详情新增「发起位置」：app 端在请求开始时捕获调用栈，过滤 `dart:` / Flutter / Dio / http / xb_ume / xb_network 等基础设施帧后保留最多 24 个用户代码帧，首帧即发起位置；GUI 展示首帧与「跳转」（复用异常栈帧的 IDE 打开链路），完整调用栈默认折叠；「复制全部」包含发起位置。
 - `XBUmeNetworkItem` 新增 `initiator` / `initiatorStack` 字段（`toJson` / `fromJson` / `copyWith` 兼容）；GUI 以 dynamic + try/catch 读取，app 端未升级（< 0.3.0）时降级为「未记录」，不影响其余字段。
+- 手机端 ume 面板 Network 详情同步新增「发起位置」（完整过滤后调用栈，可选中复制）与「跳转发起位置」按钮，复用 `xb_ume:openSource` 事件通道打开电脑 IDE；若该请求来自旧版本（无发起位置字段）则显示「未记录」。
+- 守护脚本新增 `package:` 源引用解析：跳转请求中的 `package:pkg/path.dart` 由 daemon 借会话自身的 VM service（`getIsolate` 的 `file:///` 库反推项目根，再读该项目 `package_config.json`）映射为本机文件路径。升级到 0.3.0 后需重新执行 `dart run xb_ume:ide --install` 更新守护脚本，否则手机端 Network 跳转只能复制 `package:` 原文到剪贴板。
