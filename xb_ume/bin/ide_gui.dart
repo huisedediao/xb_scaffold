@@ -12117,7 +12117,7 @@ function stRender(){
       + '<td><a href="javascript:void(0)" onclick="stDel(' + i + ')" class="bad">删除</a></td></tr>';
   });
   html += '</table>';
-  html += '<div style="margin-top:8px"><button onclick="stSave()">保存写入（写回手机）</button></div>';
+  html += '<div style="margin-top:8px"><button id="st-save-btn" onclick="stSave()">保存写入（写回手机）</button></div>';
   body.innerHTML = head + html;
   // 表头/信息行的 sticky top 依赖工具栏实际高度，渲染后实测写入，避免写死对不齐。
   requestAnimationFrame(function(){
@@ -12160,8 +12160,17 @@ function stReloadCache(){
     })
     .catch(function(e){ alert(String(e)); });
 }
+function stRestoreSaveBtn(){
+  var b = document.getElementById('st-save-btn');
+  if (b) { b.disabled = false; b.textContent = '保存写入（写回手机）'; }
+}
 function stSave(){
-  var uri = stUri(); if (!uri || !stFile) return;
+  var uri = stUri();
+  if (!uri) { alert('请先在页头右侧选择会话'); return; }
+  if (!stFile) { alert('请先选择要写入的存储文件'); return; }
+  // 大文件分块写入需要时间，按钮立即进入写入中状态，避免误以为没反应而重复点击。
+  var btn0 = document.getElementById('st-save-btn');
+  if (btn0) { btn0.disabled = true; btn0.textContent = '写入中…'; }
   var rows = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); });
   var xml;
   if (stFmt === 'ios') {
@@ -12204,35 +12213,36 @@ function stSave(){
   })
     .then(function(r){ return r.json(); })
     .then(function(d){
-      var btn = document.getElementById('st-body').querySelector('button');
+      stRestoreSaveBtn();
       if (d.error) { alert('写入失败：' + d.error); return; }
       stDirty = {};
       var live = d.live, msg, detail = '';
       if (d.liveError) {
-        msg = '✓ 已写入（缓存未刷新）';
-        detail = '文件已写入，但经 app 内 API 写回失败：' + d.liveError + '\n\n改动已落盘，重启 app 后生效。';
+        msg = '✓ 已写入文件，但经 app 内 API 写回失败';
+        detail = d.liveError + '\n\n改动已落盘，重启 app 后生效。';
       } else if (!live) {
-        msg = '✓ 已写入（需重启 app）';
+        msg = '✓ 已写入文件（需重启 app 生效）';
         detail = 'app 内没找到 SharedPreferences 实例（app 尚未读写过 preferences？），改动已落盘，重启 app 后生效。';
       } else {
         var n = live.applied || 0, fails = live.failed || [], skips = live.skipped || [];
         if (live.verified === false) {
-          msg = '✓ 已写入（校验未通过）';
-          detail = '已写入文件并经 app 内 API 写回 ' + n + ' 项，但读回值与预期不一致（平台层可能仍缓存）。请重启 app 确认。';
+          msg = '✓ 已写入文件，但校验未通过';
+          detail = '经 app 内 API 写回 ' + n + ' 项，但读回值与预期不一致（平台层可能仍缓存）。请重启 app 确认。';
         } else if (!fails.length && !skips.length) {
           msg = n > 0 ? '✓ 已写入并生效（' + n + ' 项）' : '✓ 已写入并刷新缓存';
         } else {
-          msg = '✓ 已写入（部分需重启）';
+          msg = '✓ 已写入文件（' + n + ' 项已生效，部分需重启 app）';
           detail = '经 app 内 API 写回 ' + n + ' 项'
             + (fails.length ? '，失败 ' + fails.length + ' 项：\n  ' + fails.slice(0, 5).join('\n  ') : '')
             + (skips.length ? '\n' + skips.length + ' 项不支持即时写入（无 flutter. 前缀或类型不支持）' : '')
             + '\n\n这些项已写入文件，重启 app 后生效。';
         }
       }
-      if (btn) { btn.textContent = msg; setTimeout(function(){ btn.textContent = '保存写入（写回手机）'; }, 2600); }
-      if (detail) alert(detail);
+      // 成功与失败都弹窗反馈；成功也附上文件与字节数，便于确认写的是哪份存储。
+      alert(msg + (detail ? '\n\n' + detail : '')
+        + '\n\n文件：' + stFile.split('/').pop() + '（' + (d.bytes || 0) + ' 字节）');
     })
-    .catch(function(e){ alert(String(e)); });
+    .catch(function(e){ stRestoreSaveBtn(); alert('写入失败：' + e); });
 }
 
 // -- 应用沙盒 Tab -----------------------------------------------------------

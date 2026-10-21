@@ -93,3 +93,4 @@
 - Storage 工具栏新增「刷新 app 缓存」（`/api/storage/reload`）：调用 app 内 `reload()`/`reloadCache()` 让插件重读存储，用于直写文件后手动刷新；提示里说明「若值仍是旧的说明平台层自己缓存了文件（Android/鸿蒙/iOS 都可能），需重启 app」。
 - 修复 iOS 会话 Storage 页报「无法获取 app 沙盒 HOME」：iOS 不注入 `HOME` 环境变量，改为为空时退回 `Directory.systemTemp` 的父目录（即沙盒根）。实测 iOS 模拟器会话可列出 `Library/Preferences`、写回沙盒 `/tmp` 下 200KB binary plist 并读回一致（分块 4 块 + rename）。
 - 新增 `sharedPrefsSetExpr` 单测 3 项（类型映射、`$`/引号/换行转义、无前缀与非法值返回 null），`flutter test --concurrency=1` 80 项全过。
+- Storage 保存反馈：点「保存写入（写回手机）」后按钮立即变为「写入中…」并禁用（分块写大文件期间可见进度、防重复点击），完成后**成功与失败都弹窗反馈**（原成功只改按钮文案 2.6 秒，容易被忽略）：成功提示「✓ 已写入并生效（N 项）」/「✓ 已写入并刷新缓存」，需重启或写回失败时给出具体原因与失败项；弹窗末尾统一附写入的文件名与字节数；未选会话/文件时点保存也会明确提示，不再静默返回。
