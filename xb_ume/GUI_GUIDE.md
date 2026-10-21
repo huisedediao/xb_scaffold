@@ -484,7 +484,45 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十七、卸载
+## 十七、命令行执行场景（CLI / CI）
+
+同一份场景 JSON 可以不开 GUI、不开浏览器，直接用命令行执行并产出报告，适合 CI 回归：
+
+```bash
+# 场景名（~/.xb_ume_ide/scenarios/<名>.json）或直接给文件路径
+# --uri 支持纯端口 / host:port / 完整 ws(s):// 地址
+dart run xb_ume:run login-remote --uri 65296 --report out/login.html
+
+# 全局 activate 后可用 `xb_ume run`：
+dart pub global activate --source path .
+xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --report out/login.html
+```
+
+常用参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--uri <v>` | VM service 地址：`65296` / `127.0.0.1:65296` / `ws://…/ws`，必填 |
+| `--report <out.html>` | 报告路径；不指定时写到 `~/.xb_ume_ide/scenarios/reports/run-<场景>-<时间>.html` |
+| `--continue-on-fail` | 失败后继续（默认失败即停，剩余步骤标 skip） |
+| `--shot-every-step` | 每步都截图（默认只截失败步） |
+| `--wait-after <ms>` | 步间稳定延迟（默认 700） |
+| `--shots-dir <dir>` | 额外把截图 PNG 落盘 |
+| `--json` | stdout 只输出一行 JSON（`ok/total/pass/fail/skip/report/results`） |
+| `--list` | 列出可用场景 |
+
+步骤语义与 GUI「自动化」Tab 一致（`tap` / `swipe` / `input` / `wait` / `back` / `navigate` / `assertVisible` / `assertRoute` / `assertInstance` / `eval` / `assertText` / `assertRequest`）；`assertLog` 依赖 GUI 的日志订阅上下文，CLI 下标为 skip 并在报告中注明。
+
+**报告**：自包含 HTML（截图以 base64 内嵌，单文件即可作为 CI artifact 打开）——顶部结论徽章、场景/会话/起止时间/命令、总数与通过/失败/跳过、逐步表格（类型、期望、状态、耗时、实际与错误）及每步截图；失败步骤红色标注。
+
+**退出码**（供 CI 判断）：`0` 全部通过（含 skip）、`1` 有失败步骤、`2` 参数/场景加载/连接错误。
+
+**注意**：
+- 不依赖 GUI 进程与浏览器，但仍需目标 app 处于 debug 且 VM service 可连（`flutter run` 会话有效）；
+- iOS 等 `_flutter.screenshot` 不可用的平台自动退回 inspector 截图，每步约多 0.5~1s；
+- 数据目录可用 `XB_UME_HOME` 覆盖（默认 `~/.xb_ume_ide`），CI 里建议显式指定 `--report` 到构建工作区。
+
+## 十八、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -492,7 +530,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十八、相关文档
+## 十九、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

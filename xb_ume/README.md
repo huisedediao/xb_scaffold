@@ -200,3 +200,18 @@ dart run xb_ume:ide --gui          # 推荐入口
 - **实例**：查看/修改 app 运行时内存对象——注册表 Store（`XBUme.registerStore`）、按类名查找（Element 树 + 堆扫描）、字段树展开、基础类型字段编辑写回（ChangeNotifier 自动 notifyListeners）。
 
 详细使用说明见 [GUI_GUIDE.md](GUI_GUIDE.md)。
+
+## 命令行执行场景（CLI / CI）
+
+同一份场景 JSON（GUI「自动化」Tab 保存）可以不开 GUI、不开浏览器在命令行执行，并产出含截图的 HTML 报告：
+
+```bash
+# 场景名（~/.xb_ume_ide/scenarios/<名>.json）或文件路径；--uri 支持纯端口/host:port/ws 地址
+dart run xb_ume:run login-remote --uri 65296 --report out/login.html
+
+# 全局安装后为 `xb_ume run`
+dart pub global activate --source path .
+xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --report out/login.html
+```
+
+报告为自包含 HTML（截图 base64 内嵌）；退出码 `0` 全过 / `1` 有失败 / `2` 参数或场景加载错误，`--json` 输出机器可读结果。步骤语义与 GUI 自动化一致，`assertLog` 在 CLI 下标 skip。参数与 CI 示例见 [GUI_GUIDE.md](GUI_GUIDE.md) 的「命令行执行场景」章节。
