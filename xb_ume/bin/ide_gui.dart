@@ -1209,7 +1209,51 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
-    // -- Storage（shared_prefs XML 直读直写，重启 app 后生效）----------------
+    // -- Storage 刷新 app 内缓存（shared_preferences reload）：改过文件后让
+    // app 重新读一次存储，不重启也能读到新值（平台层仍缓存时无效）----------
+    if (path == '/api/storage/reload') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rpc = _SandboxRpc(uri);
+      try {
+        final inst = await _findSharedPrefsInstance(rpc);
+        if (inst == null) {
+          throw 'app 内没有 SharedPreferences 实例（app 尚未读写过 preferences？）';
+        }
+        final ok = await _reloadSharedPrefs(rpc, inst);
+        if (!ok) {
+          throw '该实例没有 reload()/reloadCache()'
+              '（SharedPreferencesAsync 无缓存，无需刷新）';
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        final iso = await rpc.isolateId();
+        final r = await rpc.rawRpc('evaluate', {
+          'isolateId': iso,
+          'targetId': inst,
+          'expression': 'getKeys().length',
+        });
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'keys': int.tryParse(r['valueAsString']?.toString() ?? ''),
+        }));
+        await req.response.close();
+      } catch (e, st) {
+        stderr.writeln('[$path] $e\n$st');
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': e.toString()}));
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
+    // -- Storage（shared_prefs XML 直读直写；保存时可经 app 内 API 立即生效）--
     if (path == '/api/storage/list' || path == '/api/storage/read' || path == '/api/storage/write') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
@@ -1249,8 +1293,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           ext = '';
         } else if (os == 'ios') {
           // iOS：NSUserDefaults 落盘在沙盒 Library/Preferences/<bundleId>.plist。
-          home = (await rpc.evalString("Platform.environment['HOME'] ?? ''"))
-              .trim();
+          // 真机/模拟器上 Platform.environment['HOME'] 可能为空（iOS 不注入
+          // HOME），退回 Directory.systemTemp（<sandbox>/tmp）的父目录。
+          home = (await rpc.evalString(
+            "(() { final h = Platform.environment['HOME'] ?? ''; "
+            'if (h.isNotEmpty) return h; '
+            'return Directory.systemTemp.parent.path; })()',
+          )).trim();
           if (home.isEmpty) throw '无法获取 app 沙盒 HOME（iOS）';
           prefsDirs = <String>['$home/Library/Preferences'];
           ext = '.plist';
@@ -1336,10 +1385,24 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           await req.response.close();
           return;
         }
-        // write：POST body 为新存储文件全文（Android/鸿蒙 XML、iOS 为 XML plist）。
-        final xml = await _lenientUtf8.decoder.bind(req).join();
+        // write：body 为 JSON {xml, dirty}（新前端）；纯 XML 全文（旧前端）也兼容。
+        // 先写文件（临时文件 + 分块 + rename），再尝试经 app 内 SharedPreferences
+        // API 同步改动项——Dart 缓存与原生存储一起更新，保存后立即生效。
+        final raw = await _lenientUtf8.decoder.bind(req).join();
+        var xml = raw;
+        var dirty = <Map>[];
+        if (raw.trimLeft().startsWith('{')) {
+          final j = jsonDecode(raw);
+          if (j is Map) {
+            xml = (j['xml'] ?? '').toString();
+            final ds = j['dirty'];
+            if (ds is List) dirty = ds.whereType<Map>().toList();
+          }
+        }
+        if (xml.isEmpty) throw '写入内容为空';
+        List<int> bytes;
         if (os == 'ios') {
-          // XML plist → 本机 plutil 转 binary plist → 写回手机。
+          // XML plist → 本机 plutil 转 binary plist → 字节写回。
           final tmpXml = File(
             '${Directory.systemTemp.path}/xbume_pref_'
             '${DateTime.now().microsecondsSinceEpoch}.xml',
@@ -1353,23 +1416,30 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             if (pr.exitCode != 0) {
               throw 'plutil 转换失败（XML plist 可能非法）：${pr.stderr}';
             }
-            final csv = (await File(tmpBin).readAsBytes()).join(',');
-            await rpc.evalString(
-              "File('${_escPath(file)}')"
-              ".writeAsBytesSync(<int>[$csv])",
-            );
+            bytes = await File(tmpBin).readAsBytes();
           } finally {
             try { await tmpXml.delete(); } catch (_) {}
             try { await File(tmpBin).delete(); } catch (_) {}
           }
         } else {
-          await rpc.evalString(
-            "File('${_escPath(file)}').writeAsStringSync('${_escEvalString(xml)}'); "
-            "return 'ok'; ",
-          );
+          bytes = utf8.encode(xml);
+        }
+        await _writeAppFileBytes(rpc, file, bytes);
+        // 立即生效：经 app 内实例把改动项写回（找不到实例时 live=null）。
+        Map<String, Object?>? live;
+        Object? liveError;
+        try {
+          live = await _sharedPrefsLiveSync(rpc, dirty);
+        } catch (e) {
+          liveError = e.toString();
         }
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode({'ok': true}));
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'bytes': bytes.length,
+          'live': live,
+          'liveError': liveError,
+        }));
         await req.response.close();
       } catch (e, st) {
         stderr.writeln('[$path] $e\n$st');
@@ -4700,6 +4770,219 @@ Map<String, Object?>? parseFlutterError(Map data) {
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
 String _escPath(String p) =>
     p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+/// 把 Storage 页改动的一行转成 app 内 SharedPreferences 的写入表达式。
+/// 返回 null 表示该行不适合经 API 写回（key 无 flutter. 前缀、类型/值非法），
+/// 调用方会把它算进 skipped（文件已写，重启后生效）。
+/// 抽成纯函数便于单测：类型映射错了会静默写丢值。
+String? sharedPrefsSetExpr(Map row) {
+  final name = (row['name'] ?? '').toString();
+  if (!name.startsWith('flutter.')) return null;
+  final key = name.substring('flutter.'.length);
+  if (key.isEmpty) return null;
+  if (row['del'] == true) return "remove('${_escEvalString(key)}')";
+  final v = (row['value'] ?? '').toString();
+  final t = (row['type'] ?? 'string').toString();
+  final String fn;
+  final String lit;
+  switch (t) {
+    case 'boolean':
+    case 'bool':
+      if (v != 'true' && v != 'false') return null;
+      fn = 'setBool';
+      lit = v;
+    case 'int':
+    case 'long':
+      if (int.tryParse(v) == null) return null;
+      fn = 'setInt';
+      lit = v;
+    case 'float':
+    case 'double':
+    case 'real':
+      if (double.tryParse(v) == null) return null;
+      fn = 'setDouble';
+      lit = v;
+    case 'set':
+    case 'array':
+      final ms = v.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
+      fn = 'setStringList';
+      lit = "<String>[${ms.map((m) => "'${_escEvalString(m)}'").join(',')}]";
+    default:
+      fn = 'setString';
+      lit = "'${_escEvalString(v)}'";
+  }
+  return "$fn('${_escEvalString(key)}', $lit)";
+}
+
+/// 经 VM service 把字节写到 app 内文件：64KB 分块 writeAsBytesSync 到
+/// `<file>.xbume.tmp`，逐块校验长度，完成后同目录 rename 原子替换。
+/// 不把内容拼进单个 eval 字符串——XML 超长（实测 4.8MB）或含特殊字符时
+/// VM 会报「Expected one expression, but found additional input」。
+/// 先写临时文件再替换：中途失败不会把原文件写成半截。
+Future<void> _writeAppFileBytes(_SandboxRpc rpc, String path, List<int> bytes) async {
+  const chunk = 64 * 1024;
+  final tmp = '$path.xbume.tmp';
+  for (var off = 0; off < bytes.length || off == 0; off += chunk) {
+    final end = off + chunk < bytes.length ? off + chunk : bytes.length;
+    final csv = bytes.sublist(off, end).join(',');
+    final mode = off == 0 ? 'FileMode.write' : 'FileMode.append';
+    final got = (await rpc.evalString(
+      "(() { final f = File('${_escPath(tmp)}'); "
+      'f.writeAsBytesSync(<int>[$csv], mode: $mode); '
+      'return f.lengthSync().toString(); })()',
+    )).trim();
+    if (got != '$end') throw '写入不完整（第 $off 字节起：期望累计 $end，实际 $got）';
+  }
+  final r = (await rpc.evalString(
+    "(() { final t = File('${_escPath(tmp)}'); "
+    "try { t.renameSync('${_escPath(path)}'); return 'renamed'; } "
+    "catch (_) { File('${_escPath(path)}').writeAsBytesSync(t.readAsBytesSync()); "
+    "try { t.deleteSync(); } catch (_) {} return 'copied'; } })()",
+  )).trim();
+  if (r != 'renamed' && r != 'copied') throw '写回失败：$r';
+}
+
+/// 在 app 内定位 shared_preferences 的 Dart 实例（legacy SharedPreferences /
+/// SharedPreferencesWithCache / SharedPreferencesAsync 任一），返回实例 id。
+/// app 从未读写过 preferences（无实例）时返回 null。
+Future<String?> _findSharedPrefsInstance(_SandboxRpc rpc) async {
+  const names = <String>{
+    'SharedPreferences',
+    'SharedPreferencesWithCache',
+    'SharedPreferencesAsync',
+  };
+  final iso = await rpc.isolateId();
+  final cls = await rpc.rawRpc('getClassList', {'isolateId': iso});
+  for (final c in (cls['classes'] as List? ?? const <Object?>[])) {
+    if (c is! Map) continue;
+    final name = c['name']?.toString() ?? '';
+    if (!names.contains(name)) continue;
+    // 同名类可能来自别的库（如 app 自定义封装），只认 shared_preferences 包。
+    final lib = c['library'];
+    final uri = lib is Map ? (lib['uri']?.toString() ?? '') : '';
+    if (!uri.contains('shared_preferences')) continue;
+    final id = c['id']?.toString() ?? '';
+    if (id.isEmpty) continue;
+    try {
+      final set = await rpc.rawRpc('getInstances', {
+        'isolateId': iso,
+        'objectId': id,
+        'limit': 5,
+      });
+      for (final it in (set['instances'] as List? ?? const <Object?>[])) {
+        final iid = it is Map ? it['id']?.toString() : null;
+        if (iid != null && iid.isNotEmpty) return iid;
+      }
+    } catch (_) {
+      // 类已被回收/不可扫：继续看下一个候选。
+    }
+  }
+  return null;
+}
+
+/// 让 app 内 SharedPreferences 重新读一次存储（刷新 Dart 端缓存）。
+/// legacy 用 reload()，SharedPreferencesWithCache 用 reloadCache()；
+/// SharedPreferencesAsync 本身无缓存，两者都会失败。
+Future<bool> _reloadSharedPrefs(_SandboxRpc rpc, String instId) async {
+  final iso = await rpc.isolateId();
+  for (final expr in const <String>['reload()', 'reloadCache()']) {
+    try {
+      final r = await rpc.rawRpc('evaluate', {
+        'isolateId': iso,
+        'targetId': instId,
+        'expression': expr,
+      });
+      final t = r['type']?.toString() ?? '';
+      if (t != 'Error' && t != '@Error') return true;
+    } catch (_) {
+      // 方法不存在：试下一个。
+    }
+  }
+  return false;
+}
+
+/// 把用户改动的行经 app 内 SharedPreferences API 写回：同时更新 Dart 缓存与
+/// 原生存储（原生层还会 flush 落盘），保存后立即生效、无需重启 app。
+/// rows 项：{name, type, value} 或 {name, del: true}。
+/// 返回 null 表示 app 内没有可用实例（调用方提示重启生效）。
+Future<Map<String, Object?>?> _sharedPrefsLiveSync(
+  _SandboxRpc rpc,
+  List<Map> rows,
+) async {
+  final inst = await _findSharedPrefsInstance(rpc);
+  if (inst == null) return null;
+  final iso = await rpc.isolateId();
+  Future<Map<String, Object?>> ev(String expr) => rpc.rawRpc('evaluate', {
+        'isolateId': iso,
+        'targetId': inst,
+        'expression': expr,
+      });
+  // 先 reload：外部改过文件时把磁盘内容读进 Dart 缓存，避免随后 set 用旧缓存
+  // 覆盖。旧版插件无 reload 时跳过，set 仍然有效。
+  var reloaded = false;
+  try {
+    reloaded = await _reloadSharedPrefs(rpc, inst);
+  } catch (_) {
+    // ignored
+  }
+  if (reloaded) await Future<void>.delayed(const Duration(milliseconds: 250));
+  final failed = <String>[];
+  final skipped = <String>[];
+  var applied = 0;
+  String? verifyExpr;
+  String? verifyWant;
+  for (final row in rows) {
+    final expr = sharedPrefsSetExpr(row);
+    if (expr == null) {
+      skipped.add((row['name'] ?? '').toString());
+      continue;
+    }
+    try {
+      final r = await ev(expr);
+      final t = r['type']?.toString() ?? '';
+      if (t == 'Error' || t == '@Error') {
+        final msg = (r['message']?.toString() ?? '').split('\n').first;
+        failed.add('${row['name']}：$msg');
+        continue;
+      }
+      applied++;
+      if (verifyExpr == null && row['del'] != true) {
+        final name = (row['name'] ?? '').toString();
+        final key = name.substring('flutter.'.length);
+        final t2 = (row['type'] ?? 'string').toString();
+        if (t2 == 'string') {
+          verifyExpr = "getString('${_escEvalString(key)}')";
+          verifyWant = (row['value'] ?? '').toString();
+        } else if (t2 == 'int' || t2 == 'long') {
+          verifyExpr = "getInt('${_escEvalString(key)}')";
+          verifyWant = '${int.tryParse((row['value'] ?? '').toString())}';
+        } else if (t2 == 'boolean' || t2 == 'bool') {
+          verifyExpr = "getBool('${_escEvalString(key)}')";
+          verifyWant = (row['value'] ?? '').toString();
+        }
+      }
+    } catch (e) {
+      failed.add('${row['name']}：$e');
+    }
+  }
+  // 读回一项校验：能读回刚写的值才算「立即生效」。
+  bool? verified;
+  if (verifyExpr != null) {
+    try {
+      final r = await ev(verifyExpr);
+      verified = r['valueAsString']?.toString() == verifyWant;
+    } catch (_) {
+      // ignored
+    }
+  }
+  return <String, Object?>{
+    'applied': applied,
+    'failed': failed,
+    'skipped': skipped,
+    'reloaded': reloaded,
+    'verified': verified,
+  };
+}
 
 /// 「check that it really is our descendant」断言专用探针（framework.dart
 /// 上下文：可访问 Element._parent/_widget、InheritedElement._dependents 等私有
@@ -8906,10 +9189,11 @@ const String guiHtml = r'''
       <button onclick="stLoad()" title="重新读取选中的 shared_prefs 文件">刷新</button>
       <input id="st-kw" placeholder="关键字过滤" oninput="stRender()" style="width:180px">
       <button onclick="stAddRow()">新增</button>
+      <button onclick="stReloadCache()" title="调用 app 内 SharedPreferences.reload() 重读存储，让直写文件后也能立即读到（平台层仍缓存时无效）">刷新 app 缓存</button>
       <span class="muted">shared_preferences 存储（shared_prefs XML）</span>
     </div>
     <div id="st-body"><span class="muted">请先选择 VM</span></div>
-    <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android；经 VM service 写回手机）。修改/删除/新增后立即写入文件，但 shared_preferences 插件在 app 内有内存缓存——重启 app 后生效。</div>
+    <div class="muted" style="margin-top:6px">直接读写 app 的 shared_prefs XML 文件（Android / 鸿蒙 / iOS；经 VM service 写回手机）。保存时先写文件，再经 app 内 SharedPreferences API 把改动项写回（同时更新插件内存缓存与原生存储，立即生效）；app 内找不到实例或类型不支持时只写文件，需重启 app 生效。只想让 app 重读文件时用「刷新 app 缓存」。</div>
   </section>
   <section class="page" id="page-status">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -11705,7 +11989,7 @@ function nwClear(){
 }
 
 // -- Storage Tab（shared_prefs XML 直读直写）--------------------------------
-var stFiles = [], stXml = '', stRows = [], stFile = '', stFmt = 'android';
+var stFiles = [], stXml = '', stRows = [], stFile = '', stFmt = 'android', stDirty = {};
 function stActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'storage'; }
 function stUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
 function escXml(s){
@@ -11743,6 +12027,7 @@ function stLoad(){
     .then(function(d){
       if (d.error) { body.innerHTML = '<span class="bad">读取失败：' + esc(d.error) + '</span>'; return; }
       stXml = d.xml || '';
+      stDirty = {};
       stParse();
       stRender();
     })
@@ -11845,9 +12130,36 @@ function stRender(){
     for (var k = 0; k < ths.length; k++) ths[k].style.top = tTop + 'px';
   });
 }
-function stSet(i, k, v){ if (stRows[i]) stRows[i][k] = v; }
-function stDel(i){ stRows.splice(i, 1); stRender(); }
+function stSet(i, k, v){ if (stRows[i]) { stRows[i][k] = v; stMark(i); } }
+function stMark(i){
+  // 记录改动项：保存时经 app 内 API 写回（立即生效）；raw/rawios 不可编辑不算。
+  var r = stRows[i];
+  if (!r || r.type === 'raw' || r.type === 'rawios') return;
+  var n = (r.name || '').trim();
+  if (!n) return;
+  stDirty[n] = { name: n, type: r.type, value: r.value };
+}
+function stDel(i){
+  var r = stRows[i];
+  if (r && !r.isNew && (r.name || '').trim()) {
+    stDirty[r.name.trim()] = { name: r.name.trim(), del: true };
+  }
+  stRows.splice(i, 1);
+  stRender();
+}
 function stAddRow(){ stRows.push({ name: '', type: 'string', value: '', isNew: true }); stRender(); }
+function stReloadCache(){
+  var uri = stUri();
+  if (!uri) { alert('请先选择 VM（页头右侧会话下拉框）'); return; }
+  fetch('/api/storage/reload?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { alert('刷新缓存失败：' + d.error); return; }
+      alert('已让 app 重读 SharedPreferences 缓存' + (d.keys != null ? '（当前 ' + d.keys + ' 项）' : '')
+        + '。若值仍是旧的，说明平台层自己缓存了文件（Android/鸿蒙/iOS 都可能），需重启 app。');
+    })
+    .catch(function(e){ alert(String(e)); });
+}
 function stSave(){
   var uri = stUri(); if (!uri || !stFile) return;
   var rows = stRows.filter(function(r){ return r.type !== 'raw' && (r.name || '').trim(); });
@@ -11884,14 +12196,41 @@ function stSave(){
       ? '<?xml version="1.0" encoding="UTF-8"?>\n<preferences version="1.0">' + lines.join('') + '</preferences>'
       : "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" + lines.join('\n') + '\n</map>';
   }
+  var dirty = Object.keys(stDirty).map(function(k){ return stDirty[k]; });
   fetch('/api/storage/write?uri=' + encodeURIComponent(uri) + '&file=' + encodeURIComponent(stFile), {
-    method: 'POST', body: xml
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({xml: xml, dirty: dirty})
   })
     .then(function(r){ return r.json(); })
     .then(function(d){
       var btn = document.getElementById('st-body').querySelector('button');
       if (d.error) { alert('写入失败：' + d.error); return; }
-      if (btn) { btn.textContent = '✓ 已写入（重启 app 生效）'; setTimeout(function(){ btn.textContent = '保存写入（写回手机）'; }, 2000); }
+      stDirty = {};
+      var live = d.live, msg, detail = '';
+      if (d.liveError) {
+        msg = '✓ 已写入（缓存未刷新）';
+        detail = '文件已写入，但经 app 内 API 写回失败：' + d.liveError + '\n\n改动已落盘，重启 app 后生效。';
+      } else if (!live) {
+        msg = '✓ 已写入（需重启 app）';
+        detail = 'app 内没找到 SharedPreferences 实例（app 尚未读写过 preferences？），改动已落盘，重启 app 后生效。';
+      } else {
+        var n = live.applied || 0, fails = live.failed || [], skips = live.skipped || [];
+        if (live.verified === false) {
+          msg = '✓ 已写入（校验未通过）';
+          detail = '已写入文件并经 app 内 API 写回 ' + n + ' 项，但读回值与预期不一致（平台层可能仍缓存）。请重启 app 确认。';
+        } else if (!fails.length && !skips.length) {
+          msg = n > 0 ? '✓ 已写入并生效（' + n + ' 项）' : '✓ 已写入并刷新缓存';
+        } else {
+          msg = '✓ 已写入（部分需重启）';
+          detail = '经 app 内 API 写回 ' + n + ' 项'
+            + (fails.length ? '，失败 ' + fails.length + ' 项：\n  ' + fails.slice(0, 5).join('\n  ') : '')
+            + (skips.length ? '\n' + skips.length + ' 项不支持即时写入（无 flutter. 前缀或类型不支持）' : '')
+            + '\n\n这些项已写入文件，重启 app 后生效。';
+        }
+      }
+      if (btn) { btn.textContent = msg; setTimeout(function(){ btn.textContent = '保存写入（写回手机）'; }, 2600); }
+      if (detail) alert(detail);
     })
     .catch(function(e){ alert(String(e)); });
 }

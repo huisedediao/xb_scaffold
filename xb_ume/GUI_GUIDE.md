@@ -297,12 +297,13 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 **使用**：
 1. 顶部下拉选择 prefs 文件，点「刷新」重新读取；
 2. 表格中可编辑：值（boolean 用下拉；set 用逗号分隔成员）；已有条目的 **key 与类型不可修改**（key 改名易导致 app 端读写错位，类型由文件解析决定避免类型与值不匹配），仅「新增」行可填写 key 名与选择类型；点行尾「删除」移除该项；点「新增」添加空行；
-3. 点「**保存写入（写回手机）**」把整份 XML 写回手机；按钮短暂变为「✓ 已写入」；
+3. 点「**保存写入（写回手机）**」：先按平台格式重建整份文件写回，再把本次改动过的行经 app 内 SharedPreferences API 写回（立即生效）。按钮会短暂显示结果：「✓ 已写入并生效（N 项）」/「✓ 已写入并刷新缓存」/「✓ 已写入（需重启 app）」/「✓ 已写入（部分需重启）」，后者会弹窗列出失败项原因；
 4. 关键字过滤实时匹配 key/value，命中片段**绿色高亮**（过滤生效时 key/值以高亮文本展示，清空过滤后值恢复输入框编辑，key 始终为只读文本）；
+5. 「刷新 app 缓存」：让 app 内 SharedPreferences 调 `reload()`（WithCache 用 `reloadCache()`）重读存储。直写文件后想立即读到新值时用；若值与文件仍不一致，说明平台层（Android/鸿蒙/iOS）自己缓存了文件，需重启 app——此时请改用「保存写入」走 API 写回。
 
-**生效时机（重要）**：修改写入的是手机上的存储文件，但 shared_preferences 插件在 app 内有**内存缓存**——已加载过的值不会立刻变化，**重启 app 后生效**。
+**生效时机（重要）**：保存分两步——① 写回存储文件（保证整份内容与页面一致）；② 在 app 内找到 `SharedPreferences` 实例，把改动过的行经 `setString/setBool/setInt/setDouble/setStringList/remove` 写回，插件内存缓存与原生存储一起更新，**保存后立即生效、无需重启 app**（写回后会读回一项校验）。以下情况只写文件、需重启 app：key 没有 `flutter.` 前缀（原生自写 key，经 Dart API 写回会多加前缀）、值类型不支持/非法、app 内没有实例（app 尚未读写过 preferences）；`SharedPreferencesAsync` 本身无缓存，无需刷新。
 
-**原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 / iOS debug 会话可用。保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>` / iOS plist 经 plutil 转 binary 写回）。iOS 的 plist 复杂类型（dict/date/data）不支持编辑但保存时原样保留。
+**原理**：通过 VM service 在 app 进程内读 `/proc/self/cmdline` 取包名（Android）、探测平台对应存储路径并直读/覆写存储文件（零 app 端改动）；Android / 鸿蒙 / iOS debug 会话可用。写文件不把内容拼进 eval 表达式，而是 64KB 分块 `writeAsBytesSync` 到 `<文件>.xbume.tmp` 再 `rename` 原子替换（整份 XML 4MB+ 也不会触发 VM 表达式解析错误，中途失败也不破坏原文件）；保存时按平台格式重建整个文件（Android `<map>` / 鸿蒙 `<preferences>` / iOS plist 经 plutil 转 binary 写回）。iOS 的 plist 复杂类型（dict/date/data）不支持编辑但保存时原样保留；iOS 的 HOME 环境变量为空时用 `Directory.systemTemp` 的父目录（沙盒根）定位 `Library/Preferences`。
 
 ## 九、实例（Tab「实例」）
 

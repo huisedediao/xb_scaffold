@@ -465,4 +465,70 @@ short
       expect(sum, buffer.length);
     });
   });
+
+  group('sharedPrefsSetExpr', () {
+    test('string 类型：去 flutter. 前缀并转义美元符、引号、换行', () {
+      final expr = gui.sharedPrefsSetExpr(<String, Object?>{
+        'name': 'flutter.token',
+        'type': 'string',
+        'value': "a\$b'c\nd",
+      });
+      expect(expr, "setString('token', 'a\\\$b\\'c\\nd')");
+    });
+
+    test('boolean / int / long / double / set 映射到对应 set 方法', () {
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.flag', 'type': 'boolean', 'value': 'true',
+        }),
+        "setBool('flag', true)",
+      );
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.n', 'type': 'long', 'value': '42',
+        }),
+        "setInt('n', 42)",
+      );
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.r', 'type': 'real', 'value': '1.5',
+        }),
+        "setDouble('r', 1.5)",
+      );
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.ls', 'type': 'set', 'value': 'a, b',
+        }),
+        "setStringList('ls', <String>['a','b'])",
+      );
+    });
+
+    test('删除项用 remove()；无 flutter. 前缀或类型/值非法返回 null', () {
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.old', 'del': true,
+        }),
+        "remove('old')",
+      );
+      // 无前缀：原生自己写的 key，经 Dart API 写回会多加 flutter. 前缀，跳过。
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'rawKey', 'type': 'string', 'value': 'v',
+        }),
+        isNull,
+      );
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.n', 'type': 'int', 'value': 'abc',
+        }),
+        isNull,
+      );
+      expect(
+        gui.sharedPrefsSetExpr(<String, Object?>{
+          'name': 'flutter.b', 'type': 'boolean', 'value': '1',
+        }),
+        isNull,
+      );
+    });
+  });
 }
