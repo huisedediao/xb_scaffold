@@ -3667,10 +3667,20 @@ class GuiState {
     // 毫秒时间戳：日志增量过滤/assertLog 时间窗需要可比较的数值时刻
     entry['rcvMs'] = DateTime.now().millisecondsSinceEpoch;
     _buffer.add(entry);
-    if (_buffer.length > kMaxBufferLines) {
-      _buffer.removeRange(0, _buffer.length - kMaxBufferLines);
-    }
+    _trimLogBuffer(entry);
     _pending.add(entry);
+  }
+
+  /// 每个来源键（source|tag|device）的保留条数上限。
+  ///
+  /// 单个高频会话能在一两分钟内输出上千条，若全局缓冲只按部就班 FIFO，
+  /// 其他会话与设备日志会被整片挤出（实测 f_jlink 会话占满 5000 条，
+  /// 切到别的会话后 Flutter 输出为 0 条）。按来源分额后，每个来源都至少
+  /// 保留自己最近的一千条。
+  final Map<String, int> _srcCounts = <String, int>{};
+
+  void _trimLogBuffer(Map<String, Object?> added) {
+    trimLogBuffer(_buffer, _srcCounts, added);
   }
 
   void _flush() {
@@ -8440,6 +8450,66 @@ String _clock() {
       '${now.second.toString().padLeft(2, '0')}';
 }
 
+/// 每个日志来源键（source|tag|device）的保留条数上限。
+///
+/// 单个高频会话能在一两分钟内输出上千条，若全局缓冲只按 FIFO 淘汰，其他
+/// 会话与设备日志会被整片挤出（实测 f_jlink 会话占满 5000 条，切到别的会话
+/// 后 Flutter 输出为 0 条）。按来源分额后，每个来源都保留自己最近的一千条。
+const int kMaxLinesPerSource = 1000;
+
+String _logSrcKey(Map<String, Object?> e) =>
+    '${e['source'] ?? ''}|${e['tag'] ?? ''}|${e['device'] ?? ''}';
+
+/// 日志缓冲裁剪（顶层函数便于单测）。
+///
+/// 1) 单来源配额：同一 source|tag|device 超 [kMaxLinesPerSource] 条时，删该
+///    来源最旧的一条，避免单个高频会话挤掉其他会话的输出；
+/// 2) 总量上限：仍超 [kMaxBufferLines] 时，优先淘汰最旧的非 Flutter 行
+///    （设备日志洪流不应挤掉 Flutter 输出）。
+void trimLogBuffer(
+  List<Map<String, Object?>> buffer,
+  Map<String, int> srcCounts,
+  Map<String, Object?> added,
+) {
+  final key = _logSrcKey(added);
+  var n = (srcCounts[key] ?? 0) + 1;
+  if (n > kMaxLinesPerSource) {
+    final src = added['source'];
+    final tag = added['tag'];
+    final dev = added['device'];
+    final idx = buffer.indexWhere(
+        (e) => e['source'] == src && e['tag'] == tag && e['device'] == dev);
+    if (idx >= 0) {
+      buffer.removeAt(idx);
+      n--;
+    }
+  }
+  srcCounts[key] = n;
+
+  var over = buffer.length - kMaxBufferLines;
+  if (over <= 0) {
+    return;
+  }
+  var i = 0;
+  while (over > 0 && i < buffer.length) {
+    final src = buffer[i]['source']?.toString() ?? '';
+    if (!src.startsWith('flutter')) {
+      final k = _logSrcKey(buffer[i]);
+      srcCounts[k] = (srcCounts[k] ?? 1) - 1;
+      buffer.removeAt(i);
+      over--;
+    } else {
+      i++;
+    }
+  }
+  while (over > 0 && buffer.isNotEmpty) {
+    final k = _logSrcKey(buffer.first);
+    srcCounts[k] = (srcCounts[k] ?? 1) - 1;
+    buffer.removeAt(0);
+    over--;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 系统辅助
 // ---------------------------------------------------------------------------
@@ -8614,6 +8684,13 @@ const String guiHtml = r'''
   .vlv { display:flex; align-items:center; gap:2px; }
   .vlv.dim { opacity:.45; }
   .vlv.dim label { pointer-events:none; }
+  /* 日志工具栏：输入框自适应宽度；按钮组整体不换行，窄窗口时整组移到下一行，
+     不会出现「输入框变宽、后面的按钮被挤出去」 */
+  #f-kw { flex:1 1 220px; min-width:180px; max-width:380px; }
+  .lbtns { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+  /* 来源开关（设备日志 / Flutter 输出）只切显隐：不重建 DOM。
+     设备日志高频时一次重建几千行会让整个页面明显卡顿。 */
+  #logview.nodev .devline, #logview.noflutter .fline { display:none; }
   #exc-overlay { position:fixed; top:56px; right:16px; z-index:99; max-width:420px; background:#5c1a1a; color:#ffb4b4; border:1px solid #c0392b; border-radius:8px; padding:8px 12px; font-size:13px; cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.5); display:none; word-break:break-all; }
   .exccard { border:1px solid #5c2a2a; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:#140e0e; }
   .exccard .exchead { color:#ff9d9d; font-weight:600; word-break:break-all; }
@@ -8689,7 +8766,7 @@ const String guiHtml = r'''
     <div class="row">
       <div class="fgroup">
         <b class="gtitle">设备日志</b>
-        <label class="chk"><input type="checkbox" id="f-src-device" checked onchange="renderLogs();syncGroup()">启用</label>
+        <label class="chk"><input type="checkbox" id="f-src-device" checked onchange="logToggleSrc()">启用</label>
         <span class="gsep"></span>
         <span class="vlv" id="vlv">
           <label class="chk" title="Verbose：最详细的跟踪日志，量最大，一般排查用不到"><input type="checkbox" class="f-lv" value="V" checked onchange="renderLogs()">V·详细</label>
@@ -8701,17 +8778,19 @@ const String guiHtml = r'''
       </div>
       <div class="fgroup" title="Flutter 输出不受级别筛选影响；来源由页头右侧的会话下拉框选择">
         <b class="gtitle">Flutter 输出</b>
-        <label class="chk"><input type="checkbox" id="f-src-flutter" checked onchange="renderLogs()">启用</label>
+        <label class="chk"><input type="checkbox" id="f-src-flutter" checked onchange="logToggleSrc()">启用</label>
         <span class="gsep"></span>
         <span class="muted" style="font-size:12px">按页头会话选择</span>
       </div>
-      <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()" style="width:380px">
-      <button onclick="copyLogs(this)" title="复制当前显示（含过滤）的全部日志到剪贴板">复制</button>
-      <button onclick="logTop()" title="滚动到最早日志">到顶</button>
-      <button onclick="logBottom()" title="滚动到最新日志；到底后恢复自动跟随新日志">到底</button>
-      <button onclick="togglePause(this)">暂停</button>
-      <button onclick="clearLogs()">清屏</button>
-      <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
+      <input id="f-kw" placeholder="关键字过滤（空格分隔多个，任一命中即显示）" title="空格分隔多个关键字，日志包含任一关键字即保留" oninput="logKwInput()">
+      <span class="lbtns">
+        <button onclick="copyLogs(this)" title="复制当前显示（含过滤）的全部日志到剪贴板">复制</button>
+        <button onclick="logTop()" title="滚动到最早日志">到顶</button>
+        <button onclick="logBottom()" title="滚动到最新日志；到底后恢复自动跟随新日志">到底</button>
+        <button onclick="togglePause(this)">暂停</button>
+        <button onclick="clearLogs()">清屏</button>
+        <a href="/api/logs.txt" target="_blank"><button>导出</button></a>
+      </span>
     </div>
     <div id="logview"><span class="muted">暂无日志</span></div>
     <div class="muted" style="margin-top:6px">关键字过滤支持空格分隔多个，日志包含任一关键字即显示（实时生效，新日志到达时增量追加，不打断选中/复制；新行只在底部追加，往上翻不会被强制拉底，需回到底部跟随可点底部或再滚到底）。打印规则：未选 VM 也未选设备时不打印；选 VM 打印该会话的 Flutter 输出；选设备打印该设备的设备日志及属于该设备的 VM 输出；都选则两个源都打印（互不约束）。「设备日志」= 已连接设备的全量系统日志（logcat/hilog/iOS log）；「Flutter 输出」= 调试会话的 stdout/stderr。</div>
@@ -9049,7 +9128,7 @@ function connect() {
     var msg = JSON.parse(e.data);
     if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); if (tlOnTab()) tlSchedule(); }
     else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
-    else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); if (logs.length > 5000) logs = logs.slice(-5000); if (!paused) logFlushNew(); if (tlOnTab()) tlSchedule(); }
+    else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); trimLogs(); if (!paused) logFlushNew(); if (tlOnTab()) tlSchedule(); }
     else if (msg.type === 'cleared') { logs = []; renderLogs(); tlSchedule(); }
     else if (msg.type === 'exception') { excOnItem(msg.item); }
     else if (msg.type === 'exceptionsCleared') { excItems = []; excRender(); tlSchedule(); }
@@ -10203,6 +10282,44 @@ function refreshAll(){ refreshDevices(); refreshDaemon(); }
 function selectDevice(id){ selected = id; ws.send(JSON.stringify({type:'select', id: id})); renderLogs(); renderHdrDev(); if (tlOnTab()) tlRender(); }
 var osByPlatform = { android: 'android', ohos: 'ohos', 'ios-sim': 'ios', 'ios-real': 'ios' };
 var logSeq = 0, logCursor = 0, logDebounce = null, logLastKey = null;
+// 是否跟随最新日志（距底 <40px）：滚动时维护，来源开关据此决定是否贴底，
+// 避免点击时同步读 scrollHeight 强制 layout（几千行时一次 20ms+）。
+var logFollow = true;
+document.getElementById('logview').addEventListener('scroll', function(){
+  var v = this;
+  logFollow = v.scrollHeight - v.scrollTop - v.clientHeight < 40;
+});
+function trimLogs(){
+  // 与服务端一致：1) 按来源（source|tag|device）各留最近 1000 条；2) 总量再留
+  // 最近 5000 条，且优先丢最旧的非 Flutter 行。否则单个高频会话或设备日志
+  // 洪流会把其他会话刚到达的日志挤掉，表现为「切到某会话后勾了 Flutter
+  // 输出也没有日志」。
+  // 批量裁剪：超过 5500 才裁回 5000，避免每批 WS 消息都重建一次数组
+  if (logs.length <= 5500) return;
+  var counts = {}, kept = [];
+  for (var i = logs.length - 1; i >= 0; i--) {
+    var l = logs[i];
+    var k = (l.source || '') + '|' + (l.tag || '') + '|' + (l.device || '');
+    var c = counts[k] || 0;
+    if (c >= 1000) continue;
+    counts[k] = c + 1;
+    kept.push(l);
+  }
+  kept.reverse();
+  var drop = kept.length - 5000;
+  if (drop > 0) {
+    var out = [];
+    for (var j = 0; j < kept.length; j++) {
+      var l2 = kept[j];
+      var isF = l2.source && l2.source.indexOf('flutter') === 0;
+      if (drop > 0 && !isF) { drop--; continue; }
+      out.push(l2);
+    }
+    if (drop > 0) out = out.slice(drop);
+    kept = out;
+  }
+  logs = kept;
+}
 function logKws(){
   return document.getElementById('f-kw').value.trim().toLowerCase()
     .split(/\s+/).filter(function(s){ return s; });
@@ -10219,10 +10336,17 @@ function logParams() {
   var dev = null;
   if (selected) { devices.forEach(function(d){ if (d.id === selected) dev = d; }); }
   p.devOs = dev ? osByPlatform[dev.platform] : null;
-  // 过滤条件签名：条件没变时新日志可增量追加，条件变了才全量重建
-  p.key = JSON.stringify([p.wantDevice, p.wantFlutter, p.kws, p.vmFilter, p.selected, p.devOs,
+  // 过滤条件签名：条件没变时新日志可增量追加，条件变了才全量重建。
+  // 来源开关（设备日志/Flutter 输出）不进签名：它们只切 CSS 显隐（logToggleSrc），
+  // 否则每勾一次都要重建几千行 DOM，设备日志高频时明显卡顿。
+  p.key = JSON.stringify([p.kws, p.vmFilter, p.selected, p.devOs,
     Object.keys(p.lv).filter(function(k){ return p.lv[k]; }).sort()]);
   return p;
+}
+// 渲染用参数：设备行与 Flutter 行一律参与渲染，显隐交给 #logview 的 nodev/noflutter
+function logViewParams(p) {
+  return { wantDevice: true, wantFlutter: true, lv: p.lv, kws: p.kws,
+    vmFilter: p.vmFilter, selected: p.selected, devOs: p.devOs };
 }
 function logFilterOne(l, p) {
   var isFlutter = l.source && l.source.indexOf('flutter') === 0;
@@ -10259,28 +10383,112 @@ function logFilterOne(l, p) {
   }
   return true;
 }
+// 日志视图最多保留的 DOM 行数：hilog/logcat 可达数千行且持续追加，全量挂 DOM
+// 会让滚动、勾选来源开关、切 Tab 都变卡；更早的行仍可用「导出」查看。
+// 已关闭来源的隐藏行不占用可见行的名额（见 renderLogs 归并裁剪）。
+var kLogDomMax = 4000, kLogDomSlack = 200;
 function logLineHtml(l) {
   var t = l.ts || l.rcv || '';
   var src = l.source + (l.device ? '·' + l.device : '');
-  return '<div class="lv-' + (l.level || 'I') + '" data-seq="' + (l._seq || 0) + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
+  // fline/devline：来源开关只切 CSS 显隐，不重建 DOM
+  var cat = l.source && l.source.indexOf('flutter') === 0 ? ' fline' : ' devline';
+  return '<div class="lv-' + (l.level || 'I') + cat + '" data-seq="' + (l._seq || 0) + '"><span class="muted">' + esc(t) + '</span> <span class="src">[' + esc(src) + ']</span> <span class="tag">' + esc(l.app || vmApps[l.tag] || l.tag || '') + '</span> ' + esc(l.msg) + '</div>';
 }
-function renderLogs() {
+function renderLogs(keepSeq) {
   var view = document.getElementById('logview');
   var p = logParams();
+  var vp = logViewParams(p);
   // 仅当原本贴底时才跟随滚动：用户往上翻/选中文字时不会被强制拉底
   var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
-  var html = '';
+  logFollow = atBottom;
+  var rows = [];
+  // 分可见/隐藏两类收集：隐藏行（来源开关已关）不能挤掉用户正在看的行
+  var hideDev = !p.wantDevice, hideFl = !p.wantFlutter;
+  var vis = [], visSeq = [], hid = [], hidSeq = [];
   logs.forEach(function(l){
     if (l._seq === undefined) l._seq = ++logSeq;
-    if (!logFilterOne(l, p)) return;
-    html += logLineHtml(l);
+    if (!logFilterOne(l, vp)) return;
+    var isF = l.source && l.source.indexOf('flutter') === 0;
+    var s = logLineHtml(l);
+    if ((hideDev && !isF) || (hideFl && isF)) { hid.push(s); hidSeq.push(l._seq); }
+    else { vis.push(s); visSeq.push(l._seq); }
   });
-  view.innerHTML = html || (!vmFilter && !selected
+  // 定位场景（时间轴/异常跳日志）放宽上限，保证目标行一定渲染出来
+  var maxKeep = keepSeq ? kLogDomMax * 2 : kLogDomMax;
+  if (vis.length > maxKeep) { vis = vis.slice(-maxKeep); visSeq = visSeq.slice(-maxKeep); }
+  var room = maxKeep - vis.length;
+  if (hid.length > room) { hid = hid.slice(-room); hidSeq = hidSeq.slice(-room); }
+  // 归并回时间顺序
+  for (var a = 0, b = 0; a < vis.length || b < hid.length; ) {
+    if (b >= hid.length || (a < vis.length && visSeq[a] <= hidSeq[b])) {
+      rows.push(vis[a]); a++;
+    } else {
+      rows.push(hid[b]); b++;
+    }
+  }
+  if (rows.length > maxKeep) rows = rows.slice(-maxKeep);
+  view.innerHTML = rows.join('') || (!vmFilter && !selected
     ? '<span class="muted">未选择 VM 或设备，不显示日志（请在页头右侧选择）</span>'
     : '<span class="muted">暂无日志</span>');
+  logSyncSrcClass(view, p);
   logLastKey = p.key;
   logCursor = logs.length ? logs[logs.length - 1]._seq : 0;
   if (!paused && atBottom) view.scrollTop = view.scrollHeight;
+}
+function logSyncSrcClass(view, p) {
+  view.classList.toggle('nodev', !p.wantDevice);
+  view.classList.toggle('noflutter', !p.wantFlutter);
+}
+// 勾选/取消「设备日志」「Flutter 输出」：只切显隐 + 按需贴底，不重建 DOM
+function logToggleSrc() {
+  syncGroup();
+  var view = document.getElementById('logview');
+  var p = logParams();
+  // 边界：要打开的来源在 DOM 里已经被行数上限裁光了（但缓冲里还有），
+  // 重建一次补齐；正常情况只切 class，不重建。
+  if (logSrcMissing(view, p)) { renderLogs(); return; }
+  logSyncSrcClass(view, p);
+  // 贴底延到下一帧：点击时不同步读/写布局，避免几千行日志重排阻塞交互
+  if (logFollow) requestAnimationFrame(function(){ view.scrollTop = view.scrollHeight; });
+}
+function logSrcMissing(view, p) {
+  var needFl = p.wantFlutter && !view.querySelector('.fline');
+  var needDev = p.wantDevice && !view.querySelector('.devline');
+  if (!needFl && !needDev) return false;
+  // DOM 缺对应来源：扫一遍缓冲确认它确实有命中行（否则本来就不该显示）
+  var vp = logViewParams(p);
+  for (var i = logs.length - 1; i >= 0; i--) {
+    var l = logs[i];
+    if (!logFilterOne(l, vp)) continue;
+    var isF = l.source && l.source.indexOf('flutter') === 0;
+    if (isF && needFl) return true;
+    if (!isF && needDev) return true;
+  }
+  return false;
+}
+function logTrimDom(view, atBottom) {
+  // 超上限时从顶部删：已关闭来源（不可见）的行优先丢，用户正在看的可见行尽量保留。
+  // 批量删 + 只读一次高度差补偿：逐行读 offsetHeight 会每行强制一次同步布局。
+  if (view.children.length <= kLogDomMax + kLogDomSlack) return;
+  var rm = view.children.length - kLogDomMax, i, el, pick = [];
+  var hideDev = view.classList.contains('nodev');
+  var hideFl = view.classList.contains('noflutter');
+  if (hideDev || hideFl) {
+    for (i = 0; i < view.children.length && pick.length < rm; i++) {
+      el = view.children[i];
+      var c = el.classList;
+      if ((hideDev && c.contains('devline')) || (hideFl && c.contains('fline'))) pick.push(el);
+    }
+  }
+  var before = atBottom ? 0 : view.scrollHeight;
+  for (i = 0; i < pick.length; i++) pick[i].remove();
+  for (i = pick.length; i < rm; i++) {
+    el = view.firstElementChild;
+    if (!el) break;
+    el.remove();
+  }
+  if (atBottom) view.scrollTop = view.scrollHeight;
+  else if (before) view.scrollTop -= (before - view.scrollHeight);
 }
 function logFlushNew() {
   // 新日志到达：过滤条件未变且无截断缺口时只追加新命中行（DOM 不重建，
@@ -10289,16 +10497,22 @@ function logFlushNew() {
   var view = document.getElementById('logview');
   var p = logParams();
   if (p.key !== logLastKey || (logs.length && logs[0]._seq > logCursor)) { renderLogs(); return; }
+  var vp = logViewParams(p);
   var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  logFollow = atBottom;
+  // 从尾部找新增起点：只处理本批新行，不再每批都全量扫 5000 条
+  var start = logs.length - 1;
+  while (start >= 0 && logs[start]._seq > logCursor) start--;
   var html = '';
-  logs.forEach(function(l){
-    if (l._seq <= logCursor) return;
+  for (var i = start + 1; i < logs.length; i++) {
+    var l = logs[i];
     logCursor = l._seq;
-    if (logFilterOne(l, p)) html += logLineHtml(l);
-  });
+    if (logFilterOne(l, vp)) html += logLineHtml(l);
+  }
   if (!html) return;
   view.insertAdjacentHTML('beforeend', html);
   if (atBottom) view.scrollTop = view.scrollHeight;
+  logTrimDom(view, atBottom);
 }
 function togglePause(btn){ paused = !paused; btn.textContent = paused ? '继续' : '暂停'; if (!paused) renderLogs(); }
 function copyLogs(btn) {
@@ -10307,7 +10521,10 @@ function copyLogs(btn) {
   // 高频挤占，选中会话的行被挤出后重算结果会少于框中显示甚至为空。
   var view = document.getElementById('logview');
   var lines = [];
-  view.querySelectorAll('div[class^="lv-"]').forEach(function(d){ lines.push(d.innerText); });
+  view.querySelectorAll('div[class^="lv-"]').forEach(function(d){
+    if (!d.getClientRects().length) return; // 被来源开关隐藏的行不计入
+    lines.push(d.innerText);
+  });
   if (!lines.length) { btn.textContent = '无日志'; setTimeout(function(){ btn.textContent = '复制'; }, 1200); return; }
   var text = lines.join('\n');
   var done = function(){ btn.textContent = '已复制 ' + lines.length + ' 行'; setTimeout(function(){ btn.textContent = '复制'; }, 1500); };
@@ -10738,7 +10955,7 @@ function tlGoLogs(seq){
     if (!c.checked) { c.checked = true; changed = true; }
   });
   if (changed) syncGroup();
-  renderLogs(); // 无条件重建：即使日志 Tab 处于暂停，也把目标行渲染出来
+  renderLogs(seq); // 无条件重建：即使日志 Tab 处于暂停，也把目标行渲染出来
   locateWhenFound(function(){ return document.querySelector('#logview [data-seq="' + seq + '"]'); },
     '日志视图里没有该行（可能已被过滤，或超出 5000 条缓冲）');
 }

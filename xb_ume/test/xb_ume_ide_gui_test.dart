@@ -404,4 +404,65 @@ short
       expect(() => gui.dbParseJsonRows('{"a":1}'), throwsA(isA<String>()));
     });
   });
+
+  group('trimLogBuffer', () {
+    test('单来源超配额只淘汰该来源最旧的行', () {
+      final buffer = <Map<String, Object?>>[];
+      final counts = <String, int>{};
+      for (var i = 0; i < 1100; i++) {
+        final e = <String, Object?>{
+          'source': 'flutter',
+          'tag': 'port:1',
+          'msg': 'a$i',
+        };
+        buffer.add(e);
+        gui.trimLogBuffer(buffer, counts, e);
+      }
+      final other = <String, Object?>{
+        'source': 'flutter',
+        'tag': 'port:2',
+        'msg': 'b0',
+      };
+      buffer.add(other);
+      gui.trimLogBuffer(buffer, counts, other);
+
+      final busy = buffer.where((e) => e['tag'] == 'port:1').toList();
+      expect(busy, hasLength(gui.kMaxLinesPerSource));
+      expect(busy.first['msg'], 'a100');
+      expect(busy.last['msg'], 'a1099');
+      expect(buffer.where((e) => e['tag'] == 'port:2'), hasLength(1));
+      expect(counts['flutter|port:1|'], gui.kMaxLinesPerSource);
+    });
+
+    test('总量超限时优先淘汰最旧的非 Flutter 行', () {
+      final buffer = <Map<String, Object?>>[];
+      final counts = <String, int>{};
+      final fl = <String, Object?>{
+        'source': 'flutter',
+        'tag': 'port:1',
+        'msg': 'fl0',
+      };
+      buffer.add(fl);
+      gui.trimLogBuffer(buffer, counts, fl);
+      for (var i = 0; i < 5000; i++) {
+        final e = <String, Object?>{
+          'source': 'hilog',
+          'tag': 'h$i',
+          'device': 'dev1',
+          'msg': 'd$i',
+        };
+        buffer.add(e);
+        gui.trimLogBuffer(buffer, counts, e);
+      }
+
+      expect(buffer, hasLength(5000));
+      expect(buffer.any((e) => e['msg'] == 'fl0'), isTrue);
+      expect(buffer.any((e) => e['msg'] == 'd0'), isFalse);
+      expect(buffer.any((e) => e['msg'] == 'd4999'), isTrue);
+      // 计数与缓冲区一致（避免后续配额误判）
+      var sum = 0;
+      counts.forEach((_, v) => sum += v);
+      expect(sum, buffer.length);
+    });
+  });
 }
