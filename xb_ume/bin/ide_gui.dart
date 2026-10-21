@@ -8596,6 +8596,11 @@ const String guiHtml = r'''
   #st-toolbar { position:sticky; top:0; z-index:6; background:var(--bg); padding:10px 0 6px; border-bottom:1px solid var(--line); }
   .sthead { position:sticky; z-index:5; background:var(--bg); padding:3px 0; }
   .sttable th { position:sticky; z-index:4; background:var(--bg); }
+  #page-network { padding-top:0; }
+  #nw-toolbar { position:sticky; top:0; z-index:6; background:var(--bg); padding:16px 0 6px; border-bottom:1px solid var(--line); }
+  .nwhead { position:sticky; z-index:5; background:var(--bg); padding:11px 0 7px; }
+  .nwtable { margin-top:0; }
+  .nwtable th { position:sticky; z-index:4; background:var(--bg); }
   /* 行悬停高亮：标记鼠标当前所在行（匹配 td，不影响表头行） */
   .sbtable tr { transition: background .12s; }
   .sbtable tr:hover td { background:#182231; }
@@ -8807,13 +8812,13 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">通过 VM service 在 app 进程内读取 Navigator 路由栈（仅 debug 模式可用）；弹窗、BottomSheet 也是路由栈的一层；路由名取 settings.name，匿名 push 的页面显示 &lt;unnamed&gt;；嵌套 Navigator 分组展示。点击行内「跳转」会用配置的 IDE 打开该页面对应的源码文件（IDE 优先级与守护进程的 IDE 跳转一致，见 config.json 的 ideOrder）。行尾「操作」列可对路由执行 pop（仅栈顶，走转场）/ remove（直接出栈）；每个 Navigator 分组头部的输入框可 pushNamed 指定名字的路由（需 app 配置了 routes/onGenerateRoute，名字解析不出会明确报 UNKNOWN）。「泄漏检测」对本会话浏览过的页面 State 类做 GC 后堆扫描，不在栈中但堆上仍有实例的即疑似泄漏。</div>
   </section>
   <section class="page" id="page-network">
-    <div style="display:flex;align-items:center;gap:10px">
+    <div id="nw-toolbar" style="display:flex;align-items:center;gap:10px">
       <input id="nw-kw" placeholder="关键字过滤（URL/方法/状态）" oninput="nwRender()" style="width:260px">
       <button onclick="nwRefresh()" title="重新拉取 app 内 ume 已捕获的请求">刷新</button>
       <button onclick="nwClear()" title="清空 app 内 ume 的 Network 记录">清空</button>
       <span class="muted">选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源）</span>
     </div>
-    <div id="nw-body" style="margin-top:8px"><span class="muted">请先选择 VM</span></div>
+    <div id="nw-body"><span class="muted">请先选择 VM</span></div>
     <div class="muted" style="margin-top:6px">数据来自 app 内 xb_ume 的 Network 模块（需 app 接入 xb_ume 并配置 HttpOverrides/Dio 拦截）。点击行展开/收起详情（可同时展开多条，互不影响）；行内 cURL 复制到剪贴板；「重发」在电脑上直接按原方法/URL/请求头/请求体发起请求（不经过手机），结果附在该条详情下方。</div>
   </section>
   <section class="page" id="page-storage">
@@ -11141,8 +11146,8 @@ function nwRender(){
     return ((it.method || '') + ' ' + (it.url || '') + ' ' + (it.statusCode || '') + ' ' + (it.error || '')).toLowerCase().indexOf(kw) >= 0;
   });
   if (!rows.length) { body.innerHTML = '<span class="muted">' + (nwItems.length ? '无匹配请求' : '暂无请求（触发一次网络请求后点刷新）') + '</span>'; return; }
-  var html = '<div class="muted" style="margin:2px 0">共 ' + rows.length + ' 条</div>';
-  html += '<table class="sbtable"><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>操作</th></tr>';
+  var html = '<div class="muted nwhead">共 ' + rows.length + ' 条</div>';
+  html += '<table class="sbtable nwtable"><tr><th>时间</th><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>操作</th></tr>';
   rows.forEach(function(it, i){
     var code = parseInt(it.statusCode, 10);
     var codeHtml = isNaN(code) ? '<span class="muted">…</span>' : '<span style="color:' + nwStatusColor(it.status, code) + '">' + code + '</span>';
@@ -11162,6 +11167,17 @@ function nwRender(){
   });
   html += '</table>';
   body.innerHTML = html;
+  // 统计行/表头的 sticky top 依赖工具栏实际高度，渲染后立即实测写入（同步执行，
+  // 不加 rAF，否则重建 DOM 到下一帧之间表头无 top 不吸顶，重渲染时会闪一下）。
+  (function(){
+    var tb = document.getElementById('nw-toolbar');
+    var hd = body.querySelector('.nwhead');
+    var ths = body.querySelectorAll('.nwtable th');
+    if (!tb || !ths.length) return;
+    var hTop = tb.offsetHeight, tTop = hTop + (hd ? hd.offsetHeight : 0);
+    if (hd) hd.style.top = hTop + 'px';
+    for (var k = 0; k < ths.length; k++) ths[k].style.top = tTop + 'px';
+  })();
 }
 function nwDetailHtml(id, d){
   function kvTable(rows){
