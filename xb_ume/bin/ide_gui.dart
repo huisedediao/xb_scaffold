@@ -5917,6 +5917,7 @@ class _AiRound {
   List<Map<String, dynamic>> steps = [];
   List<_AutoStepResult> results = [];
   String? shot; // 轮前截图文件名
+  String ctxBrief = ''; // 本轮上下文摘要（路由/页面文本/网络/日志），供结束后 AI 总结取证
   String error = ''; // 非空 = 本轮异常（截图/AI 调用/解析失败），循环终止
   int retries = 0; // 本轮 AI 调用/解析失败的重试次数
   Map<String, Object?> toJson() => <String, Object?>{
@@ -5943,6 +5944,11 @@ class _AiRunState {
   DateTime startedAt = DateTime.now();
   DateTime? endedAt; // 运行结束时间（报告总耗时用）
   int logCursorMs = 0; // 增量日志游标（上一轮收集到的最后一条 rcvMs）
+  Map<String, Object?>? summary; // 结束后 AI 生成的总结（结构化 JSON）
+  bool summarizing = false; // 总结生成中（前端继续轮询，不提前收尾）
+  String summaryError = ''; // 总结未生成的原因（未配置/调用失败/解析失败）
+  int summaryMs = 0; // 总结耗时
+  String summaryModel = ''; // 生成总结的模型名
   Map<String, Object?> statusJson() => <String, Object?>{
         'running': running,
         'done': done,
@@ -5950,6 +5956,11 @@ class _AiRunState {
         'cur': cur,
         'rounds': rounds.map((r) => r.toJson()).toList(),
         'startedAt': startedAt.toIso8601String(),
+        'summarizing': summarizing,
+        'summary': summary,
+        'summaryError': summaryError,
+        'summaryMs': summaryMs,
+        'summaryModel': summaryModel,
       };
 }
 
@@ -5983,7 +5994,8 @@ const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员�
 4. 连续两轮界面无变化时必须换策略（换坐标/滑动/返回）。
 5. 目标已达成时返回 {"done":true,"think":"...","steps":[]}。
 6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。
-7. 消息里会附「结构化上下文」（路由栈/页面文本/网络请求/增量日志）：判断状态是否变化、请求是否发出、列表是否刷新、有无报错等数据层问题时，优先用这些证据与 assertText/assertRequest/assertLog 断言，截图只用于定位元素坐标。''';
+7. 消息里会附「结构化上下文」（路由栈/页面文本/网络请求/增量日志）：判断状态是否变化、请求是否发出、列表是否刷新、有无报错等数据层问题时，优先用这些证据与 assertText/assertRequest/assertLog 断言，截图只用于定位元素坐标。
+8. 如果目标包含重复次数、成功率或统计类要求（如「连续测 20 次」），每轮 think 必须写明当前进度与本次结果，例如「第 5/20 次：播放成功」，便于结束后按记录统计。''';
 
 /// 从 AI 回复提取首个平衡的 JSON 对象（容忍 ``` 围栏与前后杂文本）。
 Map<String, dynamic>? _aiParseReply(String s) {
@@ -6478,6 +6490,11 @@ Future<void> _aiLoop(String uri, String goal) async {
     ..runId = 'ai-${DateTime.now().millisecondsSinceEpoch}'
     ..cur = 0
     ..startedAt = DateTime.now()
+    ..summary = null
+    ..summarizing = false
+    ..summaryError = ''
+    ..summaryMs = 0
+    ..summaryModel = ''
     ..rounds = <_AiRound>[];
   _ai.logCursorMs = _ai.startedAt.millisecondsSinceEpoch;
   String? failB64; // 上一轮失败步骤截图（反馈给 AI 自适应，用后清空）
@@ -6522,6 +6539,13 @@ Future<void> _aiLoop(String uri, String goal) async {
         final (ls, nextCur) = _aiLogDelta(_ai.logCursorMs);
         _ai.logCursorMs = nextCur;
         logStr = ls;
+      }
+      // 留存本轮上下文（路由/文本/网络/日志）作事后总结的证据；只存摘要，
+      // 避免报告运行时内存无限增长。
+      r.ctxBrief = '$ctxStr'
+          '${ctx['log'] == true && logStr != '无' ? '增量日志：$logStr' : ''}';
+      if (r.ctxBrief.length > 1600) {
+        r.ctxBrief = '${r.ctxBrief.substring(0, 1600)}…';
       }
       // 3) 组消息：system + 目标 + 历史摘要 + 截图
       final hist = StringBuffer();
@@ -6661,15 +6685,288 @@ Future<void> _aiLoop(String uri, String goal) async {
     // 结束即落盘测试报告（自包含 HTML，截图 base64 内嵌），GUI 重启后
     // 仍可通过 /api/ai/report 下载当前运行Id对应的报告。
     if (_ai.rounds.isNotEmpty) {
-      try {
-        final dir = Directory('$_autoScenariosDir/reports');
-        if (!dir.existsSync()) dir.createSync(recursive: true);
-        File('${dir.path}/${_ai.runId}.html').writeAsStringSync(_aiReportHtml());
-      } catch (_) {
-        // 报告落盘失败不影响主流程（前端仍可现场生成）
-      }
+      // 先落盘基础报告（不含总结），保证总结调用失败/超时也能下载；
+      // 生成总结后重写为最终版（证明执行结果是否满足指令要求）。
+      _saveAiReport();
+      await _aiSummarize();
+      _saveAiReport();
     }
   }
+}
+
+/// 将当前运行报告落盘（失败不抛异常，不影响主流程）。
+void _saveAiReport() {
+  try {
+    final dir = Directory('$_autoScenariosDir/reports');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    File('${dir.path}/${_ai.runId}.html').writeAsStringSync(_aiReportHtml());
+  } catch (_) {
+    // 报告落盘失败不影响主流程（前端仍可现场生成）
+  }
+}
+
+/// 总结分析员的 system 提示词：逐条拆解指令、只依据记录、统计必须给依据。
+const String _aiSummarySystemPrompt = '''你是 Flutter UI 自动化测试的分析员。你会收到一条测试指令和一次自动化执行的完整记录，
+需要核对执行结果是否满足指令要求，并输出结构化总结。
+要求：
+1. 先从指令中拆出可核对的要求（操作步骤、次数、判定标准、要计算的指标等），requirements 逐条覆盖，不得遗漏。
+2. 只依据记录中的证据回答（每轮 think、步骤结果、路由/页面文本/网络/日志证据），禁止推测未发生的事。
+3. 统计类结论必须给出计数依据：先说明哪些轮/步骤/日志对应一次成功或失败，再算总数与比率（如成功率=成功次数/总次数）。
+4. 指令要求 N 次而记录不足 N 次时，必须明确指出「实际 N 次、未达标」，不得把未执行的次数算作成功或失败。
+5. 证据不足或无法从记录判断时，status 用 unknown 并在 evidence 说明缺什么；不要编造。
+6. 只输出一个 JSON 对象（不要代码围栏和多余文字），字段：
+{
+  "verdict": "一句话结论（含完成度/次数/成功率等关键数字）",
+  "requirements": [{"requirement": "指令要求原文或改写", "status": "met|partial|unmet|unknown", "evidence": "依据（轮次/步骤/日志/断言）"}],
+  "metrics": [{"name": "指标名", "value": "值", "basis": "计数依据（哪些轮/步骤）"}],
+  "summary": "多段文字：需求理解、实际执行结果、失败原因归类、改进建议",
+  "issues": ["问题或建议"],
+  "confidence": "high|medium|low"
+}'''; 
+
+/// 结束后的 AI 总结：把指令 + 逐轮记录交给模型，要求逐条覆盖指令。
+/// 最多 3 次调用（正常 1 次 + 失败重试 / 覆盖补全），失败不影响已落盘报告。
+Future<void> _aiSummarize() async {
+  final cfg = _aiConfig();
+  if (cfg['baseUrl']!.trim().isEmpty ||
+      cfg['apiKey']!.trim().isEmpty ||
+      cfg['model']!.trim().isEmpty) {
+    _ai.summaryError = 'AI 未配置（接口地址/密钥/模型），请在 AI 设置中填写';
+    return;
+  }
+  _ai
+    ..summarizing = true
+    ..summary = null
+    ..summaryError = ''
+    ..summaryModel = cfg['model']!;
+  final sw = Stopwatch()..start();
+  try {
+    final user = _aiRunBrief();
+    var extra = '';
+    for (var attempt = 0; attempt < 3; attempt++) {
+      // 总结最多等约 2 分钟（单次 45s + 总时长 100s 双上限）；超时后
+      // 保留已落盘的基础报告并展示原因，不让收尾无限期挂住页面。
+      if (sw.elapsed > const Duration(seconds: 100)) {
+        if (_ai.summaryError.isEmpty) {
+          _ai.summaryError = '总结生成超时（约 2 分钟），报告不含 AI 总结';
+        }
+        break;
+      }
+      if (attempt > 0) await Future.delayed(Duration(seconds: 2 * attempt));
+      try {
+        final reply = await _aiCall(<Map<String, Object?>>[
+          <String, Object?>{'role': 'system', 'content': _aiSummarySystemPrompt},
+          <String, Object?>{'role': 'user', 'content': '$user$extra'},
+        ]).timeout(const Duration(seconds: 45));
+        final obj = _aiParseReply(reply);
+        if (obj == null) {
+          _ai.summaryError = '总结回复不是合法 JSON';
+          continue;
+        }
+        final missing = aiSummaryMissingRequirements(obj, _ai.goal);
+        if (missing.isNotEmpty && attempt < 2) {
+          // 覆盖自检未过：把缺失要求告知模型重生成，避免总结漏掉指令中的数量/统计要求。
+          extra = '\n\n注意：上一次总结遗漏了指令中的这些要求：${missing.join('、')}。'
+              '请重新输出完整 JSON，requirements 必须逐条覆盖指令，不得遗漏。';
+          _ai.summaryError = '总结未覆盖指令要求：${missing.join('、')}';
+          continue;
+        }
+        final normalized = Map<String, Object?>.from(obj);
+        if (missing.isNotEmpty) {
+          normalized['coverageWarning'] =
+              '覆盖可能不全：指令要求 ${missing.join('、')} 未在总结中出现';
+        }
+        _ai
+          ..summary = normalized
+          ..summaryError = '';
+        return;
+      } catch (e) {
+        _ai.summaryError = '总结调用失败：${_oneLine(e)}';
+      }
+    }
+  } finally {
+    _ai.summaryMs = sw.elapsedMilliseconds;
+    _ai.summarizing = false;
+  }
+}
+
+/// 把当前运行压缩成总结输入（指令 + 概况 + 逐轮 think/步骤/证据），长度封顶。
+String _aiRunBrief() {
+  var steps = 0, pass = 0, fail = 0;
+  for (final r in _ai.rounds) {
+    for (final s in r.results) {
+      steps++;
+      if (s.status == 'pass') pass++;
+      if (s.status == 'fail') fail++;
+    }
+  }
+  final endedAt = _ai.endedAt ?? DateTime.now();
+  final dur = endedAt.difference(_ai.startedAt);
+  final lastErr = _ai.rounds.isEmpty ? '' : _ai.rounds.last.error;
+  final endReason = _ai.done
+      ? 'AI 判定 done（目标完成）'
+      : (_ai.stopReq
+          ? '手动停止'
+          : (lastErr.isNotEmpty
+              ? '异常终止：${_aiBriefLine(lastErr, 120)}'
+              : '未完成（原因未知）'));
+  final b = StringBuffer()
+    ..writeln('【测试指令】')
+    ..writeln(_ai.goal)
+    ..writeln()
+    ..writeln('【运行概况】')
+    ..writeln('结束方式：$endReason')
+    ..writeln('轮数：${_ai.rounds.length}，步骤：$steps（pass $pass / fail $fail），'
+        '总耗时：${dur.inSeconds}s')
+    ..writeln()
+    ..writeln('【逐轮记录】');
+  for (final r in _ai.rounds) {
+    b.writeln('轮 ${r.round + 1}：think=${_aiBriefLine(r.think, 200)}');
+    if (r.retries > 0) b.writeln('  AI 调用重试：${r.retries} 次');
+    if (r.error.isNotEmpty) b.writeln('  轮级错误：${_aiBriefLine(r.error, 150)}');
+    for (final s in r.results) {
+      final parts = <String>['  - ${s.type} ${s.status}'];
+      if (s.expect.isNotEmpty) parts.add('期望=${_aiBriefLine(s.expect, 80)}');
+      if (s.actual.isNotEmpty) parts.add('实际=${_aiBriefLine(s.actual, 120)}');
+      if (s.error.isNotEmpty) parts.add('错误=${_aiBriefLine(s.error, 120)}');
+      b.writeln(parts.join('；'));
+    }
+    if (r.ctxBrief.isNotEmpty) {
+      b.writeln('  证据：${_aiBriefLine(r.ctxBrief, 500)}');
+    }
+  }
+  var text = b.toString();
+  const maxBrief = 24000;
+  if (text.length > maxBrief) {
+    text = '${text.substring(0, maxBrief)}\n…（记录过长已截断，以上为前 $maxBrief 字）';
+  }
+  return text;
+}
+
+/// 单行化并限长（总结输入/报告问题清单用）。
+String _aiBriefLine(String s, int max) {
+  final t = _oneLine(s).trim();
+  return t.length <= max ? t : '${t.substring(0, max)}…';
+}
+
+/// 覆盖自检：指令中的数字要求（如「20 次」）必须出现在总结的要求/指标里。
+List<String> aiSummaryMissingRequirements(
+    Map<String, dynamic> summary, String goal) {
+  final nums = RegExp(r'\d+').allMatches(goal).map((m) => m.group(0)!).toSet();
+  if (nums.isEmpty) return <String>[];
+  final reqs = summary['requirements'] is List
+      ? summary['requirements'] as List
+      : const <Object?>[];
+  final mets = summary['metrics'] is List
+      ? summary['metrics'] as List
+      : const <Object?>[];
+  final text = '${jsonEncode(reqs)} ${jsonEncode(mets)}';
+  return nums.where((n) => !text.contains(n)).toList();
+}
+
+String _aiSummaryStatusLabel(String s) => const <String, String>{
+      'met': '✅ 满足',
+      'partial': '⚠️ 部分满足',
+      'unmet': '❌ 未满足',
+      'unknown': '❔ 无法判断',
+    }[s] ??
+    (s.isEmpty ? '—' : s);
+
+String _aiSummaryStatusColor(String s) => const <String, String>{
+      'met': '#2e7d32',
+      'partial': '#b26a00',
+      'unmet': '#c62828',
+      'unknown': '#666',
+    }[s] ?? '#666';
+
+/// 渲染「AI 总结」区块（报告用纯函数，便于单测）。
+/// 基础报告（未开始生成、无错误、无总结）返回空串，避免出现无意义的空区块。
+String buildAiSummaryHtml(
+  Map<String, Object?>? summary, {
+  bool summarizing = false,
+  String error = '',
+  int ms = 0,
+  String model = '',
+}) {
+  if (summary == null && error.isEmpty && !summarizing) return '';
+  const bd =
+      'padding:4px 8px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top';
+  final b = StringBuffer('<h3>AI 总结</h3>');
+  if (summarizing) {
+    b.write('<div style="font-size:13px;color:#666">正在生成 AI 总结…</div>');
+    return b.toString();
+  }
+  if (summary == null) {
+    b.write('<div style="font-size:13px;color:#b26a00">未生成 AI 总结：'
+        '${_htmlEsc(error)}</div>');
+    return b.toString();
+  }
+  final verdict = (summary['verdict'] ?? '').toString();
+  if (verdict.isNotEmpty) {
+    b.write('<div style="font-size:14px;font-weight:600;margin:4px 0 8px">'
+        '${_htmlEsc(verdict)}</div>');
+  }
+  final metrics = summary['metrics'];
+  if (metrics is List && metrics.isNotEmpty) {
+    b.write('<table style="border-collapse:collapse;font-size:13px;margin:8px 0">'
+        '<tr><th style="$bd">指标</th><th style="$bd">值</th>'
+        '<th style="$bd">计数依据</th></tr>');
+    for (final m in metrics) {
+      if (m is! Map) continue;
+      b.write('<tr><td style="$bd">${_htmlEsc((m['name'] ?? '').toString())}</td>'
+          '<td style="$bd"><b>${_htmlEsc((m['value'] ?? '').toString())}</b></td>'
+          '<td style="$bd">${_htmlEsc((m['basis'] ?? '').toString())}</td></tr>');
+    }
+    b.write('</table>');
+  }
+  final reqs = summary['requirements'];
+  if (reqs is List && reqs.isNotEmpty) {
+    b.write('<div style="font-size:13px;margin-top:8px"><b>需求覆盖</b></div>'
+        '<table style="border-collapse:collapse;font-size:13px;margin:4px 0">'
+        '<tr><th style="$bd">你的要求</th><th style="$bd">判定</th>'
+        '<th style="$bd">依据</th></tr>');
+    for (final q in reqs) {
+      if (q is! Map) continue;
+      final st = (q['status'] ?? '').toString();
+      b.write('<tr><td style="$bd">'
+          '${_htmlEsc((q['requirement'] ?? '').toString())}</td>'
+          '<td style="$bd;color:${_aiSummaryStatusColor(st)}">'
+          '${_htmlEsc(_aiSummaryStatusLabel(st))}</td>'
+          '<td style="$bd">${_htmlEsc((q['evidence'] ?? '').toString())}</td></tr>');
+    }
+    b.write('</table>');
+  }
+  final text = (summary['summary'] ?? '').toString();
+  if (text.isNotEmpty) {
+    b.write('<div style="white-space:pre-wrap;font-size:13px;margin:8px 0">'
+        '${_htmlEsc(text)}</div>');
+  }
+  final issues = summary['issues'];
+  if (issues is List && issues.isNotEmpty) {
+    b.write('<div style="font-size:13px;margin-top:8px"><b>问题与建议</b></div>'
+        '<ul style="margin:4px 0;padding-left:20px;font-size:13px">');
+    for (final s in issues) {
+      b.write('<li>${_htmlEsc(s.toString())}</li>');
+    }
+    b.write('</ul>');
+  }
+  final warn = (summary['coverageWarning'] ?? '').toString();
+  if (warn.isNotEmpty) {
+    b.write('<div style="font-size:12px;color:#b26a00">${_htmlEsc(warn)}</div>');
+  }
+  final conf = (summary['confidence'] ?? '').toString();
+  final confLabel =
+      const <String, String>{'high': '高', 'medium': '中', 'low': '低'}[conf] ?? conf;
+  final info = <String>[
+    if (model.isNotEmpty) '模型 $model',
+    if (ms > 0) '耗时 ${(ms / 1000).toStringAsFixed(1)}s',
+    if (confLabel.isNotEmpty) '把握度 $confLabel',
+  ].join(' · ');
+  if (info.isNotEmpty) {
+    b.write('<div style="font-size:12px;color:#666;margin-top:6px">'
+        '生成信息：${_htmlEsc(info)}</div>');
+  }
+  return b.toString();
 }
 
 /// HTML 文本转义（AI 报告生成用）。
@@ -6715,6 +7012,13 @@ String _aiReportHtml() {
     verdict = '❓ 未完成';
   }
   // 问题清单：轮级错误 / AI 重试 / 步骤级 fail，聚合为平铺列表
+  final summaryHtml = buildAiSummaryHtml(
+    _ai.summary,
+    summarizing: _ai.summarizing,
+    error: _ai.summaryError,
+    ms: _ai.summaryMs,
+    model: _ai.summaryModel,
+  );
   final problems = <String>[];
   for (final r in _ai.rounds) {
     if (r.error.isNotEmpty) problems.add('轮 ${r.round + 1}：${r.error}');
@@ -6789,6 +7093,7 @@ String _aiReportHtml() {
       '<tr><td style="$bd">规模</td><td style="$bd">${_ai.rounds.length} 轮 · $steps 步'
       '（pass $pass / fail $fail）</td></tr>'
       '</table>'
+      '$summaryHtml'
       '<h3>遇到的问题</h3>'
       '<ul style="margin:4px 0;padding-left:20px;font-size:13px">\n'
       '${problems.map((p) => '<li>${_htmlEsc(p)}</li>').join('\n')}\n'
@@ -10289,21 +10594,85 @@ function aiPoll(){
     for (var i = rounds.length - 1; i >= 0; i--) { if (rounds[i].error) { lastErr = rounds[i].error; break; } }
     prog.textContent = j.running
       ? ('AI 执行中：第 ' + (j.cur + 1) + ' 轮 · ' + (rounds[j.cur] && rounds[j.cur].think ? String(rounds[j.cur].think).substring(0, 60) : '思考中…'))
-      : (rounds.length ? ('结束：' + rounds.length + ' 轮' + (j.done ? ' · AI 判定目标完成' : (lastErr ? ' · ' + lastErr : ''))) : '');
-    if (!j.running && aiTimer) {
+      : (j.summarizing
+          ? ('执行结束：' + rounds.length + ' 轮 · 正在生成 AI 总结…')
+          : (rounds.length ? ('结束：' + rounds.length + ' 轮' + (j.done ? ' · AI 判定目标完成' : (lastErr ? ' · ' + lastErr : ''))) : ''));
+    // 总结生成期间继续轮询（summarizing=true），完成后才收尾显示保存/导出按钮。
+    if (!j.running && !j.summarizing && aiTimer) {
       clearInterval(aiTimer); aiTimer = null;
       if (rounds.length) {
         document.getElementById('ai-save-btn').style.display = '';
         document.getElementById('ai-report-btn').style.display = '';
       }
     }
-    aiRenderReport(rounds);
+    aiRenderReport(j);
+    // 页面刷新/切回自动化页时若执行或总结仍在进行，恢复轮询。
+    if ((j.running || j.summarizing) && !aiTimer) aiTimer = setInterval(aiPoll, 800);
   });
 }
-function aiRenderReport(rounds){
+
+// AI 总结卡片：总体结论/指标/需求覆盖/正文/问题与建议；无总结且无错误时不占位。
+function aiSummaryHtml(j){
+  if (j.summarizing) {
+    return '<div style="border:1px solid var(--line);margin-bottom:6px;padding:6px">'
+      + '<b style="font-size:12px">AI 总结</b>'
+      + '<div style="font-size:12px;color:#8aa0b4;margin-top:4px">正在生成 AI 总结（逐条核对指令要求）…</div></div>';
+  }
+  var s = j.summary;
+  if (!s) {
+    return j.summaryError
+      ? '<div style="border:1px solid var(--line);margin-bottom:6px;padding:6px"><b style="font-size:12px">AI 总结</b>'
+        + '<div style="font-size:12px;color:#e6b800;margin-top:4px">未生成：' + esc(j.summaryError) + '</div></div>'
+      : '';
+  }
+  var bd2 = 'padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top';
+  var h = '<div style="border:1px solid var(--line);margin-bottom:6px;padding:6px">'
+    + '<b style="font-size:12px">AI 总结</b>';
+  if (s.verdict) h += '<div style="font-size:12px;font-weight:600;margin:4px 0">' + esc(s.verdict) + '</div>';
+  if ((s.metrics || []).length) {
+    h += '<table style="border-collapse:collapse;width:100%;font-size:12px;margin:4px 0">'
+      + '<tr><th style="' + bd2 + ';text-align:left">指标</th><th style="' + bd2 + ';text-align:left">值</th>'
+      + '<th style="' + bd2 + ';text-align:left">计数依据</th></tr>';
+    s.metrics.forEach(function(m){
+      h += '<tr><td style="' + bd2 + '">' + esc(m.name || '') + '</td>'
+        + '<td style="' + bd2 + '"><b>' + esc(m.value || '') + '</b></td>'
+        + '<td style="' + bd2 + '">' + esc(m.basis || '') + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  if ((s.requirements || []).length) {
+    var lbl = { met: '✅ 满足', partial: '⚠️ 部分满足', unmet: '❌ 未满足', unknown: '❔ 无法判断' };
+    var col = { met: '#4caf50', partial: '#e6b800', unmet: '#ef5350', unknown: '#8aa0b4' };
+    h += '<div style="font-size:12px;margin-top:6px"><b>需求覆盖</b></div>'
+      + '<table style="border-collapse:collapse;width:100%;font-size:12px;margin:4px 0">'
+      + '<tr><th style="' + bd2 + ';text-align:left">你的要求</th><th style="' + bd2 + ';text-align:left">判定</th>'
+      + '<th style="' + bd2 + ';text-align:left">依据</th></tr>';
+    s.requirements.forEach(function(q){
+      h += '<tr><td style="' + bd2 + '">' + esc(q.requirement || '') + '</td>'
+        + '<td style="' + bd2 + ';color:' + (col[q.status] || '#8aa0b4') + '">' + esc(lbl[q.status] || q.status || '—') + '</td>'
+        + '<td style="' + bd2 + '">' + esc(q.evidence || '') + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  if (s.summary) h += '<div style="font-size:12px;white-space:pre-wrap;margin:6px 0">' + esc(s.summary) + '</div>';
+  if ((s.issues || []).length) {
+    h += '<div style="font-size:12px;margin-top:6px"><b>问题与建议</b></div><ul style="margin:4px 0;padding-left:18px;font-size:12px">';
+    s.issues.forEach(function(x){ h += '<li>' + esc(x) + '</li>'; });
+    h += '</ul>';
+  }
+  if (s.coverageWarning) h += '<div style="font-size:12px;color:#e6b800">' + esc(s.coverageWarning) + '</div>';
+  var info = [];
+  if (j.summaryModel) info.push('模型 ' + j.summaryModel);
+  if (j.summaryMs) info.push('耗时 ' + (j.summaryMs / 1000).toFixed(1) + 's');
+  if (s.confidence) info.push('把握度 ' + ({ high: '高', medium: '中', low: '低' }[s.confidence] || s.confidence));
+  if (info.length) h += '<div style="font-size:11px;color:#8aa0b4;margin-top:4px">生成信息：' + esc(info.join(' · ')) + '</div>';
+  return h + '</div>';
+}
+function aiRenderReport(j){
+  var rounds = (j && j.rounds) || [];
   var el = document.getElementById('ai-report');
   var bd = 'padding:3px 6px;border-bottom:1px solid var(--line)';
-  var html = '';
+  var html = aiSummaryHtml(j || {});
   (rounds || []).forEach(function(r){
     html += '<div style="border:1px solid var(--line);margin-bottom:6px;padding:6px">'
       + '<div style="display:flex;gap:8px;align-items:flex-start">'
