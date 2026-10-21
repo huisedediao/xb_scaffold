@@ -55,6 +55,7 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
 | Tab 截图 | 实时截图 + 遥控/录制 | 开启「遥控」后单击截图=Tap、按住拖拽=Swipe，输入框回车=Input；操作自动记为场景步骤，可保存/载入/回放，详见下文「截图遥控与录制」 |
 | Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
+| Tab 对比 | 多设备并排对比 | 同一场景在两个调试会话（如 macOS + iOS 模拟器）上并行执行，逐步骤并排状态/实际/耗时与截图，并对照两侧网络请求差异，详见下文「多设备并排对比」 |
 
 ## 三、功能详细使用说明
 
@@ -431,7 +432,26 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；接口请求失败/超时/回复无法解析为 JSON/未给出有效步骤时自动重试（每轮最多重试 3 次，退避 2s/4s/6s，轮卡片显示重试次数），重试期间仍可手动停止；重试耗尽才终止任务并显示原因；AI 接口的可达性取决于你本机网络（内网 网关或公网 API 均可）。
 
-## 十四、异常（Tab「异常」）
+## 十四、多设备并排对比（Tab「对比」）
+
+**用途**：把同一个场景 JSON 在两台设备（两个调试会话）上并行执行，逐步并排展示 状态 / 期望 vs 实际 / 耗时 / 截图，并对运行窗口内的网络请求做两侧差异对照——用来验证「同一功能在不同平台（Android / iOS / macOS / 鸿蒙）表现是否一致」。
+
+**前提**：页头已发现至少 2 个调试会话（仅 debug）；场景来自「自动化」Tab 已保存的场景（对比页只选场景，不直接编辑步骤）。
+
+**使用**：
+
+1. Tab「对比」→ 场景下拉选一个已保存场景（列表与「自动化」Tab 同源）；
+2. A / B 各选一个调试会话（同一个会话会被拒绝：`A / B 不能是同一个会话`）；
+3. 勾选项：「每步截图」（默认开，用于左右并排对照）、「失败继续」（默认开）；
+4. 「▶ 并排运行」：两侧并行执行同一组步骤，页面每 800ms 轮询刷新；任一侧失败/异常不影响另一侧；执行中「■ 停止」在当前步骤结束后对两侧同时生效，余下步骤标 skip；
+5. 结果：顶部汇总（A/B 各自 pass/fail 数与步骤耗时之和、不一致步数、总用时）；每个步骤一张卡片，左右两列为 A/B 的状态、耗时、期望、实际、错误与截图（点击看原图）；有差异的步骤行尾标「差异：状态 / 实际值 / 错误 / 耗时（差值 ≥ 200ms）」，勾「只看差异」只显示这些步骤；
+6. 页面底部「网络请求对比」：取两侧会话在运行窗口（开始/结束各放宽 2 秒）内的网络请求，按「方法 + URL」聚合，逐行给出两侧次数 / 状态码 / 总耗时，并标「仅 A 有 / 仅 B 有 / 一致」（需 app 接入 Network 模块，未接入时显示「两侧都没有网络请求」）。
+
+**截图说明**：优先用 `_flutter.screenshot`；iOS 等平台该扩展返回 `Could not capture image screenshot.` 时自动退回 `ext.flutter.inspector.screenshot`——对 inspector 根渲染对象 `toImage`（纯 Dart 渲染路径，原分辨率，不含系统状态栏），因此 iOS 模拟器/真机也能拿到对比截图（每步约多 0.5~1s）。
+
+**产物与限制**：截图落在 `~/.xb_ume_ide/scenarios/artifacts/cmp-<时间戳>-{a,b}-step<N>.png`，与「自动化」共用 artifact 下载接口；同一时间只允许一个场景或对比任务在跑（已有任务时返回 409）；两侧会话互不干扰（各自独立的步骤结果与错误）；鸿蒙 Flutter 会话不支持 eval 类步骤。
+
+## 十五、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -449,7 +469,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十五、常见问题
+## 十六、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -464,7 +484,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十六、卸载
+## 十七、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -472,7 +492,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十七、相关文档
+## 十八、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

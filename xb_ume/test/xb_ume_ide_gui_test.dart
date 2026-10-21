@@ -331,6 +331,23 @@ short
     });
   });
 
+  group('inspectorRootId', () {
+    test('兼容 JSON 与 Dart Map toString 两种 result', () {
+      expect(gui.inspectorRootId('{"valueId":"inspector-3"}'), 'inspector-3');
+      expect(
+        gui.inspectorRootId(
+            '{description: [root], type: _ElementDiagnosticableTreeNode, '
+            'valueId: inspector-7, summaryTree: true}'),
+        'inspector-7',
+      );
+    });
+
+    test('无法解析时退回 root', () {
+      expect(gui.inspectorRootId(''), 'root');
+      expect(gui.inspectorRootId('{description: [root]}'), 'root');
+    });
+  });
+
   group('dbCacheId', () {
     test('稳定且区分会话/路径/大小/时间', () {
       final a = gui.dbCacheId('ws://x/ws', '/a.db', 10, 100);

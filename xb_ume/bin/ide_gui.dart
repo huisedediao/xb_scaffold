@@ -2042,10 +2042,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/auto/run' && req.method == 'POST') {
-      if (_auto.running) {
+      if (_auto.running || _compare.running) {
         req.response.statusCode = HttpStatus.conflict;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '已有场景在执行'}));
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': _auto.running ? '已有场景在执行' : '对比任务在执行中，请稍后再试',
+        }));
         await req.response.close();
         return;
       }
@@ -2096,6 +2099,94 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/auto/stop' && req.method == 'POST') {
       _auto.stopReq = true;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    // ── 多设备并排对比：同一场景在两个会话上并行执行 ──────────────────────
+    if (path == '/api/compare/run' && req.method == 'POST') {
+      if (_compare.running || _auto.running) {
+        req.response.statusCode = HttpStatus.conflict;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': _compare.running ? '已有对比任务在执行' : '场景正在执行，稍后再试',
+        }));
+        await req.response.close();
+        return;
+      }
+      Map<String, dynamic> j = <String, dynamic>{};
+      try {
+        final body = await utf8.decoder.bind(req).join();
+        if (body.isNotEmpty) j = jsonDecode(body) as Map<String, dynamic>;
+      } catch (_) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
+        await req.response.close();
+        return;
+      }
+      final uriA = (j['uriA'] ?? '').toString().trim();
+      final uriB = (j['uriB'] ?? '').toString().trim();
+      final labelA = (j['labelA'] ?? uriA).toString();
+      final labelB = (j['labelB'] ?? uriB).toString();
+      final name = (j['name'] ?? '').toString();
+      List steps = j['steps'] is List ? j['steps'] as List : <Object?>[];
+      if (steps.isEmpty && name.isNotEmpty) {
+        final file = _autoScenarioFile(name);
+        if (file == null || !file.existsSync()) {
+          req.response.statusCode = HttpStatus.badRequest;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
+          await req.response.close();
+          return;
+        }
+        steps = jsonDecode(file.readAsStringSync()) as List;
+      }
+      String? bad;
+      if (uriA.isEmpty || uriB.isEmpty) bad = '需要选择两个会话（A / B）';
+      if (bad == null && uriA == uriB) bad = 'A / B 不能是同一个会话';
+      if (bad == null && steps.isEmpty) bad = '场景为空';
+      if (bad == null && steps.length > 500) bad = '步骤过多（最多 500 步）';
+      if (bad != null) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
+        await req.response.close();
+        return;
+      }
+      unawaited(_compareRunSteps(
+        uriA: uriA,
+        uriB: uriB,
+        labelA: labelA,
+        labelB: labelB,
+        name: name,
+        steps: steps,
+        continueOnFail: (j['continueOnFail'] ?? true) == true,
+        shotEveryStep: (j['shotEveryStep'] ?? true) == true,
+      ));
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(
+          <String, Object?>{'ok': true, 'total': steps.length}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/compare/status') {
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+          jsonEncode(<String, Object?>{'ok': true}..addAll(_compare.statusJson())));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/compare/stop' && req.method == 'POST') {
+      _compare.stopReq = true;
+      final a = _compare.a;
+      final b = _compare.b;
+      if (a != null) a.stopReq = true;
+      if (b != null) b.stopReq = true;
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
@@ -2153,11 +2244,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/auto/artifact') {
       final f = req.uri.queryParameters['f'] ?? '';
-      // 文件名防穿越：只允许 run-/ai- 步骤截图与 watch-<ts>-<n>.png 监听截图
+      // 文件名防穿越：只允许 run-/ai-/cmp- 步骤截图与 watch-<ts>-<n>.png 监听截图
       if (f.isEmpty ||
           f.contains('/') ||
           f.contains('\\') ||
           (!RegExp(r'^(?:run|ai)-\d+-(?:step\d+|r\d+)\.png$').hasMatch(f) &&
+              !RegExp(r'^cmp-\d+-[ab]-step\d+\.png$').hasMatch(f) &&
               !RegExp(r'^watch-\d+-\d+\.png$').hasMatch(f))) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
@@ -4885,6 +4977,57 @@ class _AutoRunState {
 
 final _auto = _AutoRunState();
 
+/// 对比运行的一侧（一个会话）：独立步骤结果，互不干扰。
+class _CompareSide {
+  _CompareSide({
+    required this.uri,
+    required this.label,
+    required this.shotPrefix,
+  });
+
+  final String uri;
+  String label;
+  final String shotPrefix; // 截图文件名前缀：cmp-<ts>-a / cmp-<ts>-b
+  final List<_AutoStepResult> results = [];
+  bool stopReq = false;
+  bool done = false;
+  String error = ''; // 侧级错误（如会话不可用）
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'uri': uri,
+        'label': label,
+        'done': done,
+        'error': error,
+        'results': results.map((r) => r.toJson()).toList(),
+      };
+}
+
+/// 多设备并排对比：同一组步骤在两个会话上并行执行，各自独立的步骤结果。
+class _CompareRunState {
+  bool running = false;
+  bool stopReq = false;
+  String name = '';
+  String runId = '';
+  DateTime startedAt = DateTime.now();
+  DateTime? finishedAt;
+  bool shotEveryStep = true;
+  _CompareSide? a;
+  _CompareSide? b;
+
+  Map<String, Object?> statusJson() => <String, Object?>{
+        'running': running,
+        'name': name,
+        'runId': runId,
+        'startedAt': startedAt.toIso8601String(),
+        'finishedAt': finishedAt?.toIso8601String(),
+        'shotEveryStep': shotEveryStep,
+        'a': a?.toJson(),
+        'b': b?.toJson(),
+      };
+}
+
+final _compare = _CompareRunState();
+
 String get _autoScenariosDir => '$_home/.xb_ume_ide/scenarios';
 String get _autoArtifactsDir => '$_home/.xb_ume_ide/scenarios/artifacts';
 
@@ -4900,12 +5043,59 @@ File? _autoScenarioFile(String name) {
   return File('$_autoScenariosDir/$n.json');
 }
 
-/// 步骤截图（失败/报告用）：返回文件名，截图失败返回 null。
+/// 从 inspector 根节点树结果里取根 id（如 inspector-0）。
+/// result 是 JSON 或 Dart Map 的 toString（新版/旧版 VM 不一致），两种都兼容。
+String inspectorRootId(String raw) {
+  try {
+    final v = (jsonDecode(raw) as Map)['valueId']?.toString() ?? '';
+    if (v.isNotEmpty) return v;
+  } catch (_) {}
+  final m = RegExp(r'valueId:\s*([A-Za-z0-9_-]+)').firstMatch(raw);
+  return m?.group(1) ?? 'root';
+}
+
+/// 兜底截图：对 inspector 根节点做 toImage（纯 Dart 渲染路径，跨平台）。
+/// iOS 等平台的 _flutter.screenshot 会报 Could not capture image screenshot。
+Future<String> _inspectorShot(_SandboxRpc rpc) async {
+  final isoId = await rpc.isolateId();
+  const group = 'xb_shot';
+  try {
+    final tree = await rpc
+        .rawRpc('ext.flutter.inspector.getRootWidgetSummaryTree', <String, Object?>{
+      'isolateId': isoId,
+      'objectGroup': group,
+    });
+    final shot = await rpc
+        .rawRpc('ext.flutter.inspector.screenshot', <String, Object?>{
+      'isolateId': isoId,
+      // 根渲染对象即 RenderView，尺寸已是物理像素；1.0 即原分辨率。
+      'id': inspectorRootId('${tree['result'] ?? ''}'),
+      'width': '10000',
+      'height': '10000',
+      'maxPixelRatio': '1.0',
+      'debugPaint': 'false',
+    });
+    return (shot['result'] ?? '').toString();
+  } finally {
+    try {
+      await rpc.rawRpc('ext.flutter.inspector.disposeGroup', <String, Object?>{
+        'isolateId': isoId,
+        'objectGroup': group,
+      });
+    } catch (_) {}
+  }
+}
+
 Future<String?> _autoShot(String uri, String runId, int index) async {
   final rpc = _SandboxRpc(uri);
   try {
-    final r = await rpc.rawRpc('_flutter.screenshot');
-    final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+    // 步骤截图（失败/报告用）：_flutter.screenshot 不可用时退回 inspector toImage。
+    var b64 = '';
+    try {
+      final r = await rpc.rawRpc('_flutter.screenshot');
+      b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+    } catch (_) {}
+    if (b64.isEmpty) b64 = await _inspectorShot(rpc);
     if (b64.isEmpty) return null;
     final dir = Directory(_autoArtifactsDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -5266,6 +5456,100 @@ Future<void> _autoRunSteps(String uri, String name, List steps,
     if (waitAfter > 0) await Future.delayed(Duration(milliseconds: waitAfter));
   }
   _auto.running = false;
+}
+
+/// 对比模式一侧的执行：与 _autoRunSteps 同语义，但结果写入本侧、
+/// 每一步都可截图（默认开，用于两测截图并排），失败必截图。
+Future<void> _compareRunSide(
+  _CompareSide side,
+  List steps, {
+  required bool continueOnFail,
+  required bool shotEveryStep,
+}) async {
+  for (final raw in steps) {
+    final st = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+    final type = (st['type'] ?? '?').toString();
+    final r = _AutoStepResult(
+        side.results.length,
+        type,
+        (st['expect'] ??
+                (st['type'] == 'assertVisible'
+                    ? '可见 ${st['widget'] ?? ''}'
+                    : ''))
+            .toString());
+    side.results.add(r);
+    if (side.stopReq || _compare.stopReq) {
+      r
+        ..status = 'skip'
+        ..error = '用户停止';
+      continue;
+    }
+    final sw = Stopwatch()..start();
+    try {
+      final (actual, err) = await _autoExecStep(side.uri, st);
+      r.ms = sw.elapsedMilliseconds;
+      r.actual = actual;
+      if (err.isNotEmpty) {
+        r
+          ..status = 'fail'
+          ..error = err;
+        r.shot = await _autoShot(side.uri, side.shotPrefix, r.index);
+        if (!continueOnFail) {
+          side.stopReq = true;
+          continue;
+        }
+      } else {
+        r.status = 'pass';
+        if (shotEveryStep) {
+          r.shot = await _autoShot(side.uri, side.shotPrefix, r.index);
+        }
+      }
+    } catch (e) {
+      r.ms = sw.elapsedMilliseconds;
+      r
+        ..status = 'fail'
+        ..error = '$e';
+    }
+    final waitAfter = (st['waitAfter'] as num?)?.toInt() ?? 700;
+    if (waitAfter > 0) await Future.delayed(Duration(milliseconds: waitAfter));
+  }
+  side.done = true;
+}
+
+/// 并行跑两侧：任一侧异常不影响另一侧（各自内部已兜底）。
+Future<void> _compareRunSteps({
+  required String uriA,
+  required String uriB,
+  required String labelA,
+  required String labelB,
+  required String name,
+  required List steps,
+  bool continueOnFail = true,
+  bool shotEveryStep = true,
+}) async {
+  final runId = 'cmp-${DateTime.now().millisecondsSinceEpoch}';
+  _compare
+    ..running = true
+    ..stopReq = false
+    ..name = name
+    ..runId = runId
+    ..startedAt = DateTime.now()
+    ..finishedAt = null
+    ..shotEveryStep = shotEveryStep
+    ..a = _CompareSide(uri: uriA, label: labelA, shotPrefix: '$runId-a')
+    ..b = _CompareSide(uri: uriB, label: labelB, shotPrefix: '$runId-b');
+  try {
+    await Future.wait(<Future<void>>[
+      _compareRunSide(_compare.a!, steps,
+          continueOnFail: continueOnFail, shotEveryStep: shotEveryStep),
+      _compareRunSide(_compare.b!, steps,
+          continueOnFail: continueOnFail, shotEveryStep: shotEveryStep),
+    ]);
+  } finally {
+    _compare
+      ..running = false
+      ..finishedAt = DateTime.now();
+  }
 }
 
 // ── P11 AI 驱动：自然语言目标 → 截图→AI→步骤→执行 循环 ─────────────────
@@ -8224,7 +8508,9 @@ const String guiHtml = r'''
   body { background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; height:100vh; display:flex; flex-direction:column; }
   header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); }
   header h1 { font-size:15px; font-weight:600; color:var(--acc); margin-right:12px; }
-  .tab { padding:6px 14px; border:1px solid var(--line); border-radius:6px; cursor:pointer; color:var(--dim); }
+  .tab { padding:6px 14px; border:1px solid var(--line); border-radius:6px; cursor:pointer; color:var(--dim); white-space:nowrap; flex:0 0 auto; }
+  /* Tab 多时横向滚动，避免被 flex 压窄后中文竖排换行 */
+  .tabs { display:flex; align-items:center; gap:8px; flex:1; min-width:0; overflow-x:auto; scrollbar-width:thin; }
   .tab.active { color:var(--acc); border-color:var(--acc); }
   .ide-list { list-style:none; margin:10px 0 0; padding:0; }
   .ide-list li { display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; background:var(--bg2,#161b22); }
@@ -8354,22 +8640,25 @@ const String guiHtml = r'''
 <body>
 <header>
   <h1>xb_ume 工具箱</h1>
-  <div class="tab active" data-tab="daemon">守护进程</div>
-  <div class="tab" data-tab="logs">日志</div>
-  <div class="tab" data-tab="timeline">时间轴</div>
-  <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
-  <div class="tab" data-tab="sandbox">应用沙盒</div>
-  <div class="tab" data-tab="db">数据库</div>
-  <div class="tab" data-tab="routes">路由栈</div>
-  <div class="tab" data-tab="network">Network</div>
-  <div class="tab" data-tab="storage">Storage</div>
-  <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
-  <div class="tab" data-tab="status" style="display:none">状态</div>
-  <div class="tab" data-tab="instances">实例</div>
-  <div class="tab" data-tab="shot">截图</div>
-  <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
-  <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
-  <div class="tab" data-tab="auto">自动化</div>
+  <div class="tabs">
+    <div class="tab active" data-tab="daemon">守护进程</div>
+    <div class="tab" data-tab="logs">日志</div>
+    <div class="tab" data-tab="timeline">时间轴</div>
+    <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
+    <div class="tab" data-tab="sandbox">应用沙盒</div>
+    <div class="tab" data-tab="db">数据库</div>
+    <div class="tab" data-tab="routes">路由栈</div>
+    <div class="tab" data-tab="network">Network</div>
+    <div class="tab" data-tab="storage">Storage</div>
+    <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
+    <div class="tab" data-tab="status" style="display:none">状态</div>
+    <div class="tab" data-tab="instances">实例</div>
+    <div class="tab" data-tab="shot">截图</div>
+    <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
+    <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
+    <div class="tab" data-tab="auto">自动化</div>
+    <div class="tab" data-tab="compare">对比</div>
+  </div>
   <div id="hdr-right">
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
@@ -8705,6 +8994,31 @@ const String guiHtml = r'''
     <div style="margin-top:6px"><span id="ai-prog" class="muted"></span></div>
     <div id="ai-report" style="margin-top:6px;max-height:45vh;overflow:auto"></div>
   </section>
+  <section class="page" id="page-compare">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>场景</span>
+      <select id="cmp-sel" style="min-width:180px"><option value="">— 选择场景 —</option></select>
+      <button onclick="cmpLoad()">刷新</button>
+      <span style="margin-left:6px">A</span><select id="cmp-a" style="min-width:190px"></select>
+      <span>B</span><select id="cmp-b" style="min-width:190px"></select>
+      <label style="font-size:12px"><input type="checkbox" id="cmp-shot" checked> 每步截图</label>
+      <label style="font-size:12px"><input type="checkbox" id="cmp-cont" checked> 失败继续</label>
+      <button class="primary" onclick="cmpRun()">▶ 并排运行</button>
+      <button onclick="cmpStop()">■ 停止</button>
+    </div>
+    <div class="muted" style="margin-top:4px;font-size:12px">选一个已保存场景，在两个调试会话上<b>并行</b>执行同一组步骤：逐步对比状态/实际值/耗时，截图并排，网络请求按运行时间窗口对比（A/B 需为不同会话）。</div>
+    <div style="margin-top:6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span id="cmp-prog" class="muted"></span>
+      <label id="cmp-onlydiff-wrap" style="display:none;font-size:12px"><input type="checkbox" id="cmp-onlydiff" onchange="cmpRender()"> 只看差异</label>
+    </div>
+    <div id="cmp-summary" style="margin-top:6px"></div>
+    <div id="cmp-body" style="margin-top:6px"></div>
+    <div id="cmp-net-wrap" style="margin-top:12px;display:none">
+      <b style="font-size:13px">网络请求对比</b>
+      <span class="muted" style="font-size:12px">（两侧运行窗口内的请求）</span>
+      <div id="cmp-net" style="margin-top:4px"></div>
+    </div>
+  </section>
 </main>
 <script>
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -8762,6 +9076,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') { shRefresh(); shScnRefresh(); shRecStat(); }
     else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
+    else if (t.dataset.tab === 'compare') cmpLoad();
     else if (t.dataset.tab === 'wtree') wtLoad();
     else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
   };
@@ -9659,6 +9974,217 @@ function aiSaveScenario(){
     .then(function(j){ if (j.ok) { alert('已保存 ' + j.steps + ' 步，可回放'); auLoad(); } else alert(j.error || '保存失败'); })
     .catch(function(e){ alert('保存请求失败: ' + e); });
 }
+
+// -- 多设备并排对比 --------------------------------------------------------
+var cmpState = null, cmpTimer = null, cmpNet = { a: [], b: [] };
+function cmpActive(){ var t = document.querySelector('.tab.active'); return t && t.dataset.tab === 'compare'; }
+function cmpSelText(id){
+  var el = document.getElementById(id);
+  return el && el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].textContent : '';
+}
+function cmpFillSessions(){
+  var a = document.getElementById('cmp-a'), b = document.getElementById('cmp-b');
+  if (!a || !b) return;
+  var srcs = Object.keys(vmUriBySource || {});
+  // 与页头会话下拉一致：显示「应用包名 · 会话来源」，无包名时只显示来源。
+  var opts = srcs.map(function(s){ return { v: vmUriBySource[s], l: (vmApps[s] ? vmApps[s] + ' · ' : '') + s }; });
+  var html = opts.length
+    ? opts.map(function(o){ return '<option value="' + esc(o.v) + '">' + esc(o.l) + '</option>'; }).join('')
+    : '<option value="">（无可用会话）</option>';
+  // 文本未变不重建，避免 5s 轮询打断正在展开的下拉。
+  if (a.innerHTML !== html) a.innerHTML = html;
+  if (b.innerHTML !== html) b.innerHTML = html;
+  var vals = opts.map(function(o){ return o.v; });
+  var pa = a.value, pb = b.value;
+  if (vals.indexOf(pa) < 0) pa = vals[0] || '';
+  if (vals.indexOf(pb) < 0 || pb === pa) pb = vals[1] || vals[0] || '';
+  a.value = pa; b.value = pb;
+}
+function cmpLoad(){
+  cmpFillSessions();
+  fetch('/api/auto/list').then(function(r){ return r.json(); }).then(function(j){
+    var sel = document.getElementById('cmp-sel');
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— 选择场景 —</option>' + (j.items || []).map(function(s){
+      return '<option value="' + esc(s.name) + '">' + esc(s.name) + '（' + s.steps + ' 步）</option>';
+    }).join('');
+    if (cur) sel.value = cur;
+  }).catch(function(){});
+  cmpPoll(); // 页面重载后恢复上一次运行的结果
+}
+function cmpRun(){
+  var name = document.getElementById('cmp-sel').value;
+  if (!name) { alert('请先选择场景'); return; }
+  var uriA = document.getElementById('cmp-a').value;
+  var uriB = document.getElementById('cmp-b').value;
+  if (!uriA || !uriB) { alert('请选择两个会话（页头右侧拉框需已发现调试会话）'); return; }
+  if (uriA === uriB) { alert('A / B 不能是同一个会话'); return; }
+  cmpNet = { a: [], b: [] };
+  document.getElementById('cmp-net-wrap').style.display = 'none';
+  document.getElementById('cmp-prog').textContent = '启动中…';
+  fetch('/api/compare/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+    name: name, uriA: uriA, uriB: uriB, labelA: cmpSelText('cmp-a'), labelB: cmpSelText('cmp-b'),
+    continueOnFail: document.getElementById('cmp-cont').checked,
+    shotEveryStep: document.getElementById('cmp-shot').checked
+  })})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { document.getElementById('cmp-prog').textContent = '启动失败：' + d.error; return; }
+      clearTimeout(cmpTimer); cmpPoll();
+    })
+    .catch(function(e){ document.getElementById('cmp-prog').textContent = '启动失败：' + e; });
+}
+function cmpStop(){ fetch('/api/compare/stop', {method:'POST'}).catch(function(){}); }
+function cmpPoll(){
+  fetch('/api/compare/status').then(function(r){ return r.json(); }).then(function(d){
+    cmpState = d;
+    cmpRender();
+    clearTimeout(cmpTimer);
+    if (d.running) { cmpTimer = setTimeout(cmpPoll, 800); }
+    else if (d.runId) { cmpNetLoad(); }
+  }).catch(function(){});
+}
+function cmpStatusHtml(st){
+  if (!st) return '<span class="muted">—</span>';
+  var cls = st === 'pass' ? 'ok' : (st === 'fail' ? 'bad' : 'muted');
+  return '<span class="' + cls + '">' + esc(st) + '</span>';
+}
+// 两侧步骤差异：状态/实际值/错误/耗时（阈值 200ms）。
+function cmpDiffs(ra, rb){
+  var ds = [];
+  if (!ra || !rb) { ds.push('缺失'); return ds; }
+  if (ra.status !== rb.status) ds.push('状态');
+  if ((ra.actual || '') !== (rb.actual || '')) ds.push('实际值');
+  if ((ra.error || '') !== (rb.error || '')) ds.push('错误');
+  if (Math.abs((ra.ms || 0) - (rb.ms || 0)) >= 200) ds.push('耗时');
+  return ds;
+}
+function cmpSideHtml(side, r){
+  var label = side ? esc(side.label || side.uri || '') : '';
+  var body = '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px">'
+    + '<b>' + label + '</b>' + cmpStatusHtml(r && r.status)
+    + (r && r.ms ? '<span class="muted">' + r.ms + 'ms</span>' : '')
+    + (r && r.expect ? '<span class="muted">期望：' + esc(String(r.expect).slice(0, 80)) + '</span>' : '') + '</div>';
+  if (r && r.actual) body += '<div style="font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:2px">' + esc(String(r.actual).slice(0, 600)) + '</div>';
+  if (r && r.error) body += '<div class="bad" style="font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;margin-top:2px">' + esc(r.error) + '</div>';
+  if (r && r.shot) {
+    var u = '/api/auto/artifact?f=' + encodeURIComponent(r.shot);
+    body += '<div style="margin-top:4px"><img src="' + u + '" style="max-width:100%;max-height:200px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in" title="点击查看原图" onclick="window.open(\'' + u + '\')"></div>';
+  }
+  return body;
+}
+function cmpRender(){
+  var d = cmpState;
+  var bodyEl = document.getElementById('cmp-body'), sumEl = document.getElementById('cmp-summary');
+  var onlyEl = document.getElementById('cmp-onlydiff-wrap');
+  if (!d || !d.runId) {
+    sumEl.innerHTML = ''; bodyEl.innerHTML = '<span class="muted">还没有对比结果：选场景与 A/B 会话后点「并排运行」</span>';
+    if (onlyEl) onlyEl.style.display = 'none';
+    return;
+  }
+  var A = d.a || {}, B = d.b || {};
+  var ra = A.results || [], rb = B.results || [];
+  var n = Math.max(ra.length, rb.length);
+  var passA = 0, failA = 0, passB = 0, failB = 0, diffSteps = 0, msA = 0, msB = 0;
+  var cards = '';
+  for (var i = 0; i < n; i++) {
+    var x = ra[i], y = rb[i];
+    if (x) { msA += x.ms || 0; if (x.status === 'pass') passA++; else if (x.status === 'fail') failA++; }
+    if (y) { msB += y.ms || 0; if (y.status === 'pass') passB++; else if (y.status === 'fail') failB++; }
+    var ds = cmpDiffs(x, y);
+    if (ds.length) diffSteps++;
+    var stepLabel = (x && x.type) || (y && y.type) || '?';
+    var dsHtml = ds.length
+      ? '<span class="bad" style="margin-left:auto;font-size:12px">差异：' + ds.join(' / ') + '</span>'
+      : '<span class="ok" style="margin-left:auto;font-size:12px">一致</span>';
+    cards += '<div class="cmpcard" data-diff="' + (ds.length ? '1' : '0') + '" style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">'
+      + '<div style="display:flex;align-items:center;gap:10px;padding:5px 10px;background:#0d1117;border-bottom:1px solid var(--line);font-size:13px">'
+      + '<b>#' + (i + 1) + '</b><span>' + esc(stepLabel) + '</span>' + dsHtml + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)">'
+      + '<div style="background:var(--bg);padding:6px 10px">' + cmpSideHtml(A, x) + '</div>'
+      + '<div style="background:var(--bg);padding:6px 10px">' + cmpSideHtml(B, y) + '</div>'
+      + '</div></div>';
+  }
+  var dur = d.startedAt ? ((d.finishedAt ? Date.parse(d.finishedAt) : Date.now()) - Date.parse(d.startedAt)) : 0;
+  sumEl.innerHTML = '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px">'
+    + '<span><b>A</b> ' + esc(A.label || '') + '：<span class="ok">' + passA + ' pass</span>' + (failA ? ' / <span class="bad">' + failA + ' fail</span>' : '') + ' · ' + (msA / 1000).toFixed(1) + 's</span>'
+    + '<span><b>B</b> ' + esc(B.label || '') + '：<span class="ok">' + passB + ' pass</span>' + (failB ? ' / <span class="bad">' + failB + ' fail</span>' : '') + ' · ' + (msB / 1000).toFixed(1) + 's</span>'
+    + '<span class="' + (diffSteps ? 'bad' : 'ok') + '">' + (diffSteps ? '不一致 ' + diffSteps + ' 步' : '✓ 两侧完全一致') + '</span>'
+    + '<span class="muted">共 ' + n + ' 步 · 用时 ' + (dur / 1000).toFixed(1) + 's' + (d.name ? ' · 场景 ' + esc(d.name) : '') + '</span>'
+    + '</div>';
+  document.getElementById('cmp-prog').textContent = d.running ? '运行中…' : '已完成';
+  if (onlyEl) onlyEl.style.display = n ? '' : 'none';
+  var html = cards || '<span class="muted">无步骤</span>';
+  bodyEl.innerHTML = html;
+  if (document.getElementById('cmp-onlydiff').checked) cmpApplyOnlyDiff();
+}
+function cmpApplyOnlyDiff(){
+  var only = document.getElementById('cmp-onlydiff').checked;
+  document.querySelectorAll('#cmp-body .cmpcard').forEach(function(el){
+    el.style.display = (!only || el.dataset.diff === '1') ? '' : 'none';
+  });
+}
+function cmpKey(it){ return (it.method || '') + ' ' + (it.url || ''); }
+function cmpAgg(items){
+  var m = {};
+  (items || []).forEach(function(it){
+    var k = cmpKey(it);
+    var g = m[k] || (m[k] = { n: 0, codes: {}, ms: 0, err: '' });
+    g.n++;
+    if (it.statusCode) g.codes[it.statusCode] = 1;
+    var ms = parseInt(it.durationMs, 10); if (!isNaN(ms)) g.ms += ms;
+    if (it.error) g.err = it.error;
+  });
+  return m;
+}
+function cmpCodes(g){
+  if (!g) return '—';
+  var ks = Object.keys(g.codes);
+  return ks.length ? ks.join('/') : (g.err ? 'ERR' : '…');
+}
+function cmpNetLoad(){
+  if (!cmpState || !cmpState.runId) return;
+  var s = Date.parse(cmpState.startedAt) - 2000;
+  var e = cmpState.finishedAt ? Date.parse(cmpState.finishedAt) + 2000 : Date.now();
+  var aUri = (cmpState.a || {}).uri, bUri = (cmpState.b || {}).uri;
+  if (!aUri || !bUri) return;
+  function grab(uri){
+    return fetch('/api/network?uri=' + encodeURIComponent(uri))
+      .then(function(r){ return r.json(); })
+      .then(function(d){ return (d.items || []).filter(function(it){ var t = Date.parse(it.time); return isNaN(t) || (t >= s && t <= e); }); })
+      .catch(function(){ return []; });
+  }
+  Promise.all([grab(aUri), grab(bUri)]).then(function(res){
+    cmpNet = { a: res[0], b: res[1] };
+    cmpRenderNet();
+  });
+}
+function cmpRenderNet(){
+  var wrap = document.getElementById('cmp-net-wrap');
+  wrap.style.display = '';
+  var ga = cmpAgg(cmpNet.a), gb = cmpAgg(cmpNet.b);
+  var keys = {};
+  Object.keys(ga).forEach(function(k){ keys[k] = 1; });
+  Object.keys(gb).forEach(function(k){ keys[k] = 1; });
+  var list = Object.keys(keys);
+  if (!list.length) { document.getElementById('cmp-net').innerHTML = '<span class="muted">运行窗口内两侧都没有网络请求</span>'; return; }
+  var rows = '', diff = 0;
+  list.sort().forEach(function(k){
+    var x = ga[k], y = gb[k];
+    var concl;
+    if (!y) { concl = '<span class="bad">仅 A 有</span>'; diff++; }
+    else if (!x) { concl = '<span class="bad">仅 B 有</span>'; diff++; }
+    else if (cmpCodes(x) !== cmpCodes(y)) { concl = '<span style="color:#d29922">状态码不同</span>'; diff++; }
+    else if (x.n !== y.n) { concl = '<span style="color:#d29922">次数不同</span>'; diff++; }
+    else { concl = '<span class="ok">一致</span>'; }
+    rows += '<tr><td style="font-family:monospace">' + esc(k) + '</td>'
+      + '<td>' + (x ? x.n : '—') + '</td><td>' + cmpCodes(x) + '</td><td>' + (x ? x.ms + 'ms' : '—') + '</td>'
+      + '<td>' + (y ? y.n : '—') + '</td><td>' + cmpCodes(y) + '</td><td>' + (y ? y.ms + 'ms' : '—') + '</td>'
+      + '<td>' + concl + '</td></tr>';
+  });
+  document.getElementById('cmp-net').innerHTML = '<div class="muted" style="margin:2px 0;font-size:12px">A ' + cmpNet.a.length + ' 条 / B ' + cmpNet.b.length + ' 条，差异 ' + diff + ' 项</div>'
+    + '<table class="sbtable"><tr><th>方法 URL</th><th>A 次数</th><th>A 状态</th><th>A 耗时</th><th>B 次数</th><th>B 状态</th><th>B 耗时</th><th>结论</th></tr>' + rows + '</table>';
+}
 function renderHdrDev() {
   var html = '<option value="">未选择设备</option>';
   devices.forEach(function(d){
@@ -10263,6 +10789,8 @@ function refreshDaemon(){
         html += '<option value="' + esc(v) + '">' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
+      // 对比页的 A/B 会话下拉与页头同源（名称同显包名），已激活时同步刷新。
+      if (typeof cmpActive === 'function' && cmpActive()) cmpFillSessions();
       // 保持用户选择：会话瞬断（休眠唤醒/热重启/ws 断链）不立即回退，
       // 缺失时按实例指纹（fp，端口无关）每轮尝试找回同一会话（含掉选后
       // 自愈与刷新页面后恢复）；连续 3 个周期仍缺失才回退显示为未选择，
