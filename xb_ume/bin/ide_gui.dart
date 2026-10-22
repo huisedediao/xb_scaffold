@@ -27,6 +27,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
@@ -39,6 +40,11 @@ const String kConfigName = 'config.json';
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
+
+/// 当前 GUI 的访问令牌与端口。
+/// Cookie 名按端口区分（浏览器 Cookie 不区分端口，多实例会互相覆盖）。
+String _guiToken = '';
+int _guiPort = 0;
 
 /// 容错 UTF-8 解码：logcat 输出、外部 HTTP 响应可能含非法字节序列，
 /// 默认 utf8.decoder 遇到会抛 FormatException——且流回调里的异常
@@ -54,6 +60,156 @@ List<Map<String, Object?>> _guiLogBuffer = const [];
 
 final String _home =
     Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
+
+// ---------------------------------------------------------------------------
+// 安全工具（纯字符串/Uri，便于单测；部署时随 ide_gui.dart 单文件走）
+// ---------------------------------------------------------------------------
+
+/// 请求体统一上限（24MB）：先按 Content-Length 拒，chunked 由读取端兜底。
+const int kGuiBodyLimitBytes = 24 << 20;
+
+/// 生成一次性 GUI 访问令牌（32 字节随机，base64url 无填充）。
+String generateGuiToken() {
+  final rnd = Random.secure();
+  final bytes = List<int>.generate(32, (_) => rnd.nextInt(256));
+  return base64Url.encode(bytes).replaceAll('=', '');
+}
+
+/// Host 是否为本机 GUI（允许 127.0.0.1 / localhost / [::1]，可带端口）。
+///
+/// DNS rebinding 会把 Host 变成攻击者域名，这里直接拒绝；端口必须与
+/// 当前 GUI 一致（不带端口的形式也放行，兼容代理剥离端口的场景）。
+bool isLocalGuiHost(String? host, int port) {
+  if (host == null) return false;
+  final h = host.trim().toLowerCase();
+  if (h.isEmpty) return false;
+  const hosts = <String>['127.0.0.1', 'localhost', '[::1]', '::1'];
+  for (final base in hosts) {
+    if (h == base || h == '$base:$port') return true;
+  }
+  return false;
+}
+
+/// Origin 是否允许。null/空表示非浏览器客户端（如本地脚本），
+/// 由令牌校验兜底；浏览器一定带 Origin，跨站页面会被拒绝。
+bool isAllowedGuiOrigin(String? origin, int port) {
+  if (origin == null || origin.trim().isEmpty) return true;
+  final u = Uri.tryParse(origin.trim());
+  if (u == null || u.host.isEmpty) return false;
+  if (u.scheme != 'http' && u.scheme != 'https') return false;
+  final host = u.host.toLowerCase();
+  if (host != '127.0.0.1' && host != 'localhost' && host != '::1') {
+    return false;
+  }
+  return u.port == port;
+}
+
+/// 定长比较，避免令牌逐字符比较的时序差异。
+bool constantTimeEquals(String a, String b) {
+  final x = utf8.encode(a);
+  final y = utf8.encode(b);
+  var diff = x.length ^ y.length;
+  final n = x.length > y.length ? x.length : y.length;
+  for (var i = 0; i < n; i++) {
+    final xv = i < x.length ? x[i] : 0;
+    final yv = i < y.length ? y[i] : 0;
+    diff |= xv ^ yv;
+  }
+  return diff == 0;
+}
+
+/// 任意文本嵌入 VM evaluate 表达式字符串字面量的转义。
+/// 注意 $ 是 Dart 字符串插值符，必须一并转义。
+String escapeEvalString(String s) => s
+    .replaceAll(r'\', r'\\')
+    .replaceAll(r'$', r'\$')
+    .replaceAll("'", r"\'")
+    .replaceAll('\n', r'\n')
+    .replaceAll('\r', r'\r')
+    .replaceAll('\t', r'\t');
+
+/// 路径同样是 evaluate 里的字符串字面量，直接复用完整转义。
+String escapeEvalPath(String p) => escapeEvalString(p);
+
+final RegExp _vmTokenPattern = RegExp(
+  r'((?:https?|wss?)://(?:127\.0\.0\.1|localhost|\[::1\]):\d+/)([A-Za-z0-9_\-]{16,})(?=[/\s]|$)',
+  caseSensitive: false,
+);
+
+/// 把 VM service URL 里的 auth token 打码（日志缓冲/导出用）。
+/// 只匹配带端口的本机 URL，避免误伤普通文件路径。
+String maskVmTokens(String text) =>
+    text.replaceAllMapped(_vmTokenPattern, (m) => '${m[1]}***');
+
+/// 重放时一旦 scheme/host/port 变化，原始请求里的凭据头必须剥离。
+const Set<String> sensitiveReplayHeaders = <String>{
+  'authorization',
+  'cookie',
+  'proxy-authorization',
+  'host',
+  'origin',
+  'referer',
+  'x-api-key',
+  'x-auth-token',
+  'x-xsrf-token',
+};
+
+/// 重放的新旧 URL 是否跨 host（scheme/host/port 任一不同）。
+/// 解析失败按“跨 host”处理，宁可多剥离凭据头。
+bool replayCrossHost(String original, String next) {
+  final a = Uri.tryParse(original);
+  final b = Uri.tryParse(next);
+  if (a == null || b == null) return true;
+  if (a.scheme.toLowerCase() != b.scheme.toLowerCase()) return true;
+  if (a.host.toLowerCase() != b.host.toLowerCase()) return true;
+  if (a.port != b.port) return true;
+  return false;
+}
+
+/// 跨 host 重放时，按“原请求里的敏感值”剥离未改动的凭据头。
+/// 用户把值改成了目标环境的新 token 时保留（值不再匹配）。
+Map<String, String> stripReplayHeaders(
+  Map<String, String> headers,
+  Iterable<String> originalSensitiveValues,
+) {
+  final values = originalSensitiveValues.where((v) => v.isNotEmpty).toSet();
+  headers.removeWhere(
+    (k, v) =>
+        sensitiveReplayHeaders.contains(k.toLowerCase()) && values.contains(v),
+  );
+  return headers;
+}
+
+/// 把一次性访问令牌写入 0600 文件，供本地脚本/CLI 调用受保护接口。
+/// Windows 没有 POSIX 权限，跳过 chmod（用户目录 ACL 由系统兜底）。
+void _writeGuiTokenFile() {
+  if (_guiToken.isEmpty) return;
+  try {
+    final dir = Directory('$_home/.xb_ume_ide');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    if (!Platform.isWindows) {
+      try {
+        Process.runSync('chmod', <String>['700', dir.path]);
+      } catch (_) {}
+    }
+    final f = File('${dir.path}/gui.token');
+    f.writeAsStringSync('$_guiToken\n');
+    if (!Platform.isWindows) {
+      try {
+        Process.runSync('chmod', <String>['600', f.path]);
+      } catch (_) {}
+    }
+  } catch (_) {
+    // 令牌文件只服务本地脚本，写失败不影响 GUI 自身用 Cookie 访问。
+  }
+}
+
+/// 测试专用：注入访问令牌与端口。真实启动时由随机令牌 + 实际监听端口
+/// 覆盖这两个值；测试用内存 HttpServer 直接驱动 handleRequest 时调用。
+void setGuiAuthForTest(String token, int port) {
+  _guiToken = token;
+  _guiPort = port;
+}
 
 Future<void> main(List<String> args) async {
   // 兜底：任何流回调/事件循环里的未捕获异常只记日志，不杀进程。
@@ -84,6 +240,10 @@ Future<void> _mainImpl(List<String> args) async {
     return;
   }
   print('[xbume-gui] GUI 服务已启动: http://127.0.0.1:$port （Ctrl-C 退出）');
+  _guiPort = port;
+  _guiToken = generateGuiToken();
+  _writeGuiTokenFile();
+  print('[xbume-gui] 本地脚本访问令牌: $_home/.xb_ume_ide/gui.token');
   _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree', trace: false);
   await openBrowser(port);
   final state = GuiState();
@@ -132,17 +292,58 @@ Future<void> _mainImpl(List<String> args) async {
 Future<void> handleRequest(GuiState state, HttpRequest req) async {
   final path = req.uri.path;
   try {
+    // 统一安全响应头：禁止被任意网页 iframe 嵌入（点击劫持）。
+    if (!WebSocketTransformer.isUpgradeRequest(req)) {
+      req.response.headers.set('X-Frame-Options', 'DENY');
+      req.response.headers.set('X-Content-Type-Options', 'nosniff');
+      req.response.headers.set(
+        'Content-Security-Policy',
+        "frame-ancestors 'none'",
+      );
+      req.response.headers.set('Referrer-Policy', 'no-referrer');
+    }
+    // Host/Origin 第一层拦截：DNS rebinding 与跨站页面在这里就被拒绝。
+    if (!isLocalGuiHost(req.headers.host, _guiPort)) {
+      await _rejectRequest(req, HttpStatus.forbidden, 'Host 不被允许');
+      return;
+    }
+    final origin = req.headers.value('origin');
+    if (!isAllowedGuiOrigin(origin, _guiPort)) {
+      await _rejectRequest(req, HttpStatus.forbidden, 'Origin 不被允许');
+      return;
+    }
+    // Content-Length 可提前判断；chunked 由 _readBodyText 的累计上限兜底。
+    if ((req.method == 'POST' || req.method == 'PUT') &&
+        req.contentLength > kGuiBodyLimitBytes) {
+      await _rejectRequest(
+        req,
+        HttpStatus.requestEntityTooLarge,
+        '请求体超过 24MB 上限',
+      );
+      return;
+    }
     if (path == '/ping') {
       req.response.write('xbume-gui');
       await req.response.close();
       return;
     }
     if (path == '/') {
-      // 页面禁缓存：GUI 迭代频繁，避免浏览器磁盘缓存拿到旧版 HTML/JS
+      // 页面禁缓存：GUI 迭代频繁，避免浏览器磁盘缓存拿到旧版 HTML/JS。
+      // 根页面负责签发 Cookie；其余路径（含 /view、/ws、/api/*）一律校验令牌。
+      req.response.cookies.add(
+        Cookie('xbume_gui_$_guiPort', _guiToken)
+          ..httpOnly = true
+          ..sameSite = SameSite.strict
+          ..path = '/',
+      );
       req.response.headers.set('Cache-Control', 'no-store');
       req.response.headers.contentType = ContentType.html;
-      req.response.write(guiHtml);
+      req.response.write(guiHtml.replaceAll('__XBUME_TOKEN__', _guiToken));
       await req.response.close();
+      return;
+    }
+    if (!_isGuiAuthorized(req)) {
+      await _rejectRequest(req, HttpStatus.forbidden, '未授权：请从 GUI 页面访问');
       return;
     }
     if (path == '/view' || path == '/tail') {
@@ -201,7 +402,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/clientlog' && req.method == 'POST') {
       // 前端事件上报（会话选择链路排障）：{tag,msg} → vm_sel.log
       try {
-        final body = await utf8.decoder.bind(req).join();
+        final body = await _readBodyText(req);
         final j = body.isEmpty ? null : jsonDecode(body);
         if (j is Map && j['msg'] != null) {
           _vmSelLog('web', '${j['tag'] ?? ''} ${j['msg']}');
@@ -226,8 +427,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/ideorder' && req.method == 'GET') {
-      // 进入「守护进程」页时调用：扫描已安装 IDE，新装的自动追加到配置
-      // 末尾并写回（只追加，不删已卸载的，daemon 唤起时自会跳过）。
+      // 进入「守护进程」页时调用：只扫描/合并不落盘（GET 无副作用）。
+      // 前端收到 added/removed 后再用 POST 保存；只追加，不删已卸载的，
+      // daemon 唤起时自会跳过。
       try {
         final installed = await scanInstalledIdes();
         final merged = readGuiIdeOrderList();
@@ -258,9 +460,6 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (removed.isNotEmpty) {
           merged.removeWhere((ide) => removed.contains(ide));
         }
-        if (added.isNotEmpty || removed.isNotEmpty) {
-          await writeGuiIdeOrder(merged);
-        }
         req.response.headers.contentType = ContentType.json;
         req.response.write(
           jsonEncode(<String, Object?>{
@@ -284,8 +483,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       try {
         // HttpRequest 是 Stream<Uint8List>，与 Utf8Decoder（List<int>）
         // 泛型不兼容，先收集字节再容错解码。
-        final bodyBytes = await req.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
-        final body = _lenientUtf8.decode(bodyBytes);
+        final body = await _readBodyText(req, lenient: true);
         final decoded = jsonDecode(body);
         final raw = decoded is Map ? decoded['ideOrder'] : null;
         final order = (raw is List ? raw : <Object?>[])
@@ -327,9 +525,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       for (final entry in state.buffer) {
         final ts = entry['ts'];
         final time = (ts is String && ts.isNotEmpty) ? ts : entry['rcv'];
+        // 导出前二次打码：避免 VM service token 随日志外泄。
+        final msg = maskVmTokens('${entry['msg']}');
         req.response.write(
           '$time [${entry['source']}] '
-          '${entry['level']}/${entry['app'] ?? entry['tag']}: ${entry['msg']}\n',
+          '${entry['level']}/${entry['app'] ?? entry['tag']}: $msg\n',
         );
       }
       await req.response.close();
@@ -529,7 +729,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               ".renderViewElement; if (root == null) return 'NO_ROOT'; "
               "var n = 0; void walk(Element e) { "
               "final s = e is StatefulElement ? e.state : null; "
-              "if (s != null && s.runtimeType.toString() == '$cls') { n++; } "
+              "if (s != null && s.runtimeType.toString() == '${_escEvalString(cls)}') { n++; } "
               "e.visitChildren(walk); } root.visitChildren(walk); "
               "return n.toString(); })()";
           final r = await rpc.evalStringOn(
@@ -1007,6 +1207,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // clear/replay 有副作用，只允许 POST：避免 <img>/跨站表单直接触发。
+      if ((path == '/api/network/clear' || path == '/api/network/replay') &&
+          req.method != 'POST') {
+        req.response.statusCode = HttpStatus.methodNotAllowed;
+        req.response.headers.set('Allow', 'POST');
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': '该接口仅支持 POST'}));
+        await req.response.close();
+        return;
+      }
       Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
         req.response.statusCode = code;
         req.response.headers.contentType = ContentType.json;
@@ -1086,7 +1296,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final raw = await evalNet(
             "$jsHelpers"
             "XBUmeNetworkItem? e; "
-            "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
+            "for (final it in XBUme.controller.network) { if (it.id == '${_escEvalString(id)}') { e = it; break; } } "
             "if (e == null) return 'NOT_FOUND'; "
             "String kv(Map<String, dynamic>? m) => m == null ? '' : "
             "m.entries.map((en) => en.key + '\u0003' + en.value.toString()).join('\u0004'); "
@@ -1134,17 +1344,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           return;
         }
         // replay：GUI 端直接按原 method/url/headers/body 发起 HTTP 请求。
-        // 先拿 method 与 url（列表里没带，单独 eval）。
-        // POST JSON body 可覆盖 url/headers/body（详情页「编辑重放」）；
-        // GET query（原「重发」）不含 body，保持原样。
+        // 仅接受 POST（GET 重放会被 <img>/跨站表单触发）；body 可覆盖
+        // url/headers/body；URL 跨 host 时剥离原请求的凭据头。
         Map<String, Object?>? edit;
         if (req.method == 'POST') {
-          final raw = await utf8.decoder.bind(req).join();
+          final raw = await _readBodyText(req);
           if (raw.isNotEmpty) edit = jsonDecode(raw) as Map<String, Object?>;
         }
         final mu = await evalNet(
           "XBUmeNetworkItem? e; "
-          "for (final it in XBUme.controller.network) { if (it.id == '$id') { e = it; break; } } "
+          "for (final it in XBUme.controller.network) { if (it.id == '${_escEvalString(id)}') { e = it; break; } } "
           "if (e == null) return 'NOT_FOUND'; "
           "return e.method + '\u0001' + e.url; ",
         );
@@ -1160,13 +1369,37 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         };
         var body = (item?['requestBody'] as String? ?? '');
         if (edit != null) {
-          final eu = edit['url']?.toString() ?? '';
-          if (eu.isNotEmpty) url = eu;
+          final eu = edit['url']?.toString().trim() ?? '';
           final eh = edit['headers'];
+          final crossHost = eu.isNotEmpty && eu != url && replayCrossHost(url, eu);
+          if (eu.isNotEmpty && eu != url) {
+            final next = Uri.tryParse(eu);
+            if (next == null || !next.hasScheme || next.host.isEmpty) {
+              throw 'URL 不合法：$eu';
+            }
+            url = eu;
+          }
           if (eh is Map) {
             headers = {
               for (final e in eh.entries) e.key.toString(): e.value?.toString() ?? '',
             };
+            if (crossHost) {
+              // 编辑重放时前端会把原 headers 预填回表单；跨 host 下值没改的
+              // 凭据头仍按“原样外发”处理，这里按原值匹配后剥离。用户改成
+              // 新值（例如目标环境的 token）则保留。
+              final originalSensitiveValues =
+                  (item?['requestHeaders'] as List? ?? <Object?>[])
+                      .whereType<Map>()
+                      .where((h) => sensitiveReplayHeaders
+                          .contains((h['k'] ?? '').toString().toLowerCase()))
+                      .map((h) => (h['v'] ?? '').toString())
+                      .toList();
+              stripReplayHeaders(headers, originalSensitiveValues);
+            }
+          } else if (crossHost) {
+            headers.removeWhere(
+              (k, _) => sensitiveReplayHeaders.contains(k.toLowerCase()),
+            );
           }
           final eb = edit['body'];
           if (eb != null) body = eb.toString();
@@ -1388,7 +1621,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         // write：body 为 JSON {xml, dirty}（新前端）；纯 XML 全文（旧前端）也兼容。
         // 先写文件（临时文件 + 分块 + rename），再尝试经 app 内 SharedPreferences
         // API 同步改动项——Dart 缓存与原生存储一起更新，保存后立即生效。
-        final raw = await _lenientUtf8.decoder.bind(req).join();
+        final raw = await _readBodyText(req, lenient: true);
         var xml = raw;
         var dirty = <Map>[];
         if (raw.trimLeft().startsWith('{')) {
@@ -1727,7 +1960,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       Map<String, Object?> body;
       try {
-        final raw = await utf8.decoder.bind(req).join();
+        final raw = await _readBodyText(req);
         body = (raw.isEmpty
             ? <String, Object?>{}
             : jsonDecode(raw) as Map<String, Object?>);
@@ -2089,7 +2322,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/auto/save' && req.method == 'POST') {
-      final body = await utf8.decoder.bind(req).join();
+      final body = await _readBodyText(req);
       try {
         final j = jsonDecode(body) as Map<String, dynamic>;
         final file = _autoScenarioFile((j['name'] ?? '').toString());
@@ -2125,7 +2358,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final uri = req.uri.queryParameters['uri'] ?? '';
       String name = req.uri.queryParameters['name'] ?? '';
       List steps;
-      final body = await utf8.decoder.bind(req).join();
+      final body = await _readBodyText(req);
       try {
         if (body.isNotEmpty) {
           final j = jsonDecode(body);
@@ -2188,7 +2421,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       Map<String, dynamic> j = <String, dynamic>{};
       try {
-        final body = await utf8.decoder.bind(req).join();
+        final body = await _readBodyText(req);
         if (body.isNotEmpty) j = jsonDecode(body) as Map<String, dynamic>;
       } catch (_) {
         req.response.statusCode = HttpStatus.badRequest;
@@ -2267,7 +2500,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/remote/op' && req.method == 'POST') {
       Map<String, dynamic> body = <String, dynamic>{};
       try {
-        final raw = await utf8.decoder.bind(req).join();
+        final raw = await _readBodyText(req);
         if (raw.isNotEmpty) body = jsonDecode(raw) as Map<String, dynamic>;
       } catch (_) {
         req.response.statusCode = HttpStatus.badRequest;
@@ -2340,7 +2573,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/ai/config') {
       if (req.method == 'POST') {
         try {
-          final body = await utf8.decoder.bind(req).join();
+          final body = await _readBodyText(req);
           final j = jsonDecode(body) as Map<String, dynamic>;
           final old = _aiConfig();
           final key = (j['apiKey'] ?? '').toString().trim();
@@ -2485,7 +2718,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/ai/save' && req.method == 'POST') {
       try {
-        final body = await utf8.decoder.bind(req).join();
+        final body = await _readBodyText(req);
         final j = jsonDecode(body) as Map<String, dynamic>;
         final file = _autoScenarioFile((j['name'] ?? '').toString());
         if (file == null) {
@@ -2545,7 +2778,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/exc/analyze' && req.method == 'POST') {
       Map<String, Object?> body = <String, Object?>{};
       try {
-        final raw = await utf8.decoder.bind(req).join();
+        final raw = await _readBodyText(req);
         if (raw.isNotEmpty) {
           body = jsonDecode(raw) as Map<String, Object?>;
         }
@@ -2601,7 +2834,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       var uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
         try {
-          final raw = await utf8.decoder.bind(req).join();
+          final raw = await _readBodyText(req);
           if (raw.isNotEmpty) {
             final body = jsonDecode(raw);
             if (body is Map) uri = body['uri']?.toString() ?? '';
@@ -2664,7 +2897,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/watch/add' && req.method == 'POST') {
       Map<String, dynamic> body = <String, dynamic>{};
       try {
-        final raw = await utf8.decoder.bind(req).join();
+        final raw = await _readBodyText(req);
         if (raw.isNotEmpty) body = jsonDecode(raw) as Map<String, dynamic>;
       } catch (_) {
         req.response.statusCode = HttpStatus.badRequest;
@@ -2816,7 +3049,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               ".renderViewElement; if (root == null) return null; "
               "final out = <Object>[]; void walk(Element e) { "
               "final s = e is StatefulElement ? e.state : null; "
-              "if (s != null && s.runtimeType.toString() == '$cls') { out.add(s); } "
+              "if (s != null && s.runtimeType.toString() == '${_escEvalString(cls)}') { out.add(s); } "
               "e.visitChildren(walk); } root.visitChildren(walk); return out; })()";
           final listRef = await rpc.evalRefOn(
             'package:flutter/src/widgets/navigator.dart',
@@ -3012,7 +3245,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       Map<String, Object?> body = <String, Object?>{};
       if (req.method == 'POST') {
         try {
-          final raw = await utf8.decoder.bind(req).join();
+          final raw = await _readBodyText(req);
           if (raw.isNotEmpty) {
             body = (jsonDecode(raw) as Map).cast<String, Object?>();
           }
@@ -3301,6 +3534,14 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     req.response.statusCode = HttpStatus.notFound;
     await req.response.close();
+  } on _PayloadTooLargeException {
+    print('[xbume-gui] 请求体过大 $path');
+    try {
+      req.response.statusCode = HttpStatus.requestEntityTooLarge;
+      await req.response.close();
+    } catch (_) {
+      // ignored
+    }
   } catch (e) {
     print('[xbume-gui] 请求处理异常 $path: $e');
     try {
@@ -3310,6 +3551,66 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       // ignored
     }
   }
+}
+
+/// GUI 访问令牌校验：Cookie（页面自动携带）/ X-XBUME-Token（fetch 包装器）
+/// / query token（WS 与命令行脚本）三选一。
+bool _isGuiAuthorized(HttpRequest req) {
+  if (_guiToken.isEmpty) return false;
+  String? supplied;
+  try {
+    for (final c in req.cookies) {
+      if (c.name == 'xbume_gui_$_guiPort') {
+        supplied = c.value;
+        break;
+      }
+    }
+  } catch (_) {}
+  supplied ??= req.headers.value('x-xbume-token');
+  supplied ??= req.uri.queryParameters['token'];
+  if (supplied == null || supplied.isEmpty) return false;
+  return constantTimeEquals(supplied, _guiToken);
+}
+
+Future<void> _rejectRequest(
+  HttpRequest req,
+  int status,
+  String message,
+) async {
+  try {
+    req.response.statusCode = status;
+    req.response.headers.contentType = ContentType.json;
+    req.response.write(
+      jsonEncode(<String, Object?>{'ok': false, 'error': message}),
+    );
+    await req.response.close();
+  } catch (_) {
+    // 连接可能已被对端关闭。
+  }
+}
+
+/// 带累计上限的请求体读取：Content-Length 提前拒，chunked 在流式累计
+/// 超限时中止，避免大 body 把 GUI 进程内存打满。
+Future<String> _readBodyText(
+  HttpRequest req, {
+  int maxBytes = kGuiBodyLimitBytes,
+  bool lenient = false,
+}) async {
+  if (req.contentLength > maxBytes) throw const _PayloadTooLargeException();
+  final bytes = <int>[];
+  var total = 0;
+  await for (final chunk in req) {
+    total += chunk.length;
+    if (total > maxBytes) throw const _PayloadTooLargeException();
+    bytes.addAll(chunk);
+  }
+  return lenient
+      ? _lenientUtf8.decode(bytes)
+      : utf8.decode(bytes, allowMalformed: true);
+}
+
+class _PayloadTooLargeException implements Exception {
+  const _PayloadTooLargeException();
 }
 
 // ---------------------------------------------------------------------------
@@ -3736,6 +4037,9 @@ class GuiState {
     entry['rcv'] = _clock();
     // 毫秒时间戳：日志增量过滤/assertLog 时间窗需要可比较的数值时刻
     entry['rcvMs'] = DateTime.now().millisecondsSinceEpoch;
+    // flutter run 会把 VM service URL（含 auth token）打到 stdout，入缓冲前打码。
+    final msg = entry['msg'];
+    if (msg != null) entry['msg'] = maskVmTokens(msg.toString());
     _buffer.add(entry);
     _trimLogBuffer(entry);
     _pending.add(entry);
@@ -4768,8 +5072,8 @@ Map<String, Object?>? parseFlutterError(Map data) {
 }
 
 /// 路径嵌入 evaluate 表达式的转义（app 端普通字符串）。
-String _escPath(String p) =>
-    p.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+/// 与文本转义共用实现：漏掉 $ 会被 Dart 当成字符串插值执行。
+String _escPath(String p) => escapeEvalPath(p);
 
 /// 把 Storage 页改动的一行转成 app 内 SharedPreferences 的写入表达式。
 /// 返回 null 表示该行不适合经 API 写回（key 无 flutter. 前缀、类型/值非法），
@@ -5146,13 +5450,7 @@ int _utf8CompleteBoundary(List<int> b) {
 
 /// 任意文本嵌入 evaluate 表达式字符串字面量的转义（XML 写回等）。
 /// 注意 $ 是 Dart 字符串插值符，必须一并转义。
-String _escEvalString(String s) => s
-    .replaceAll(r'\', r'\\')
-    .replaceAll(r'$', r'\$')
-    .replaceAll("'", r"\'")
-    .replaceAll('\n', r'\n')
-    .replaceAll('\r', r'\r')
-    .replaceAll('\t', r'\t');
+String _escEvalString(String s) => escapeEvalString(s);
 
 // ── P10 自动化路径：场景执行引擎 ──
 
@@ -9159,6 +9457,7 @@ const String guiHtml = r'''
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<meta name="xbume-token" content="__XBUME_TOKEN__">
 <title>xb_ume 工具箱</title>
 <style>
   :root { --bg:#0b0f14; --panel:#131a23; --line:#223041; --fg:#dbe6f0; --dim:#8aa0b4; --acc:#00e5ff; }
@@ -9694,6 +9993,21 @@ const String guiHtml = r'''
   </section>
 </main>
 <script>
+var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).content || '';
+// 同源 fetch 统一带令牌：Cookie 之外的双保险（SameSite=Strict 已挡跨站）。
+(function(){
+  if (!window.fetch) return;
+  var nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    init = init || {};
+    try {
+      var h = new Headers(init.headers || {});
+      if (XBUME_TOKEN) h.set('X-XBUME-Token', XBUME_TOKEN);
+      init.headers = h;
+    } catch (e) {}
+    return nativeFetch(input, init);
+  };
+})();
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
 var fpBySource = {}, vmMiss = 0; // 会话指纹映射与瞬断容忍计数
 // 所选会话指纹持久化：localStorage 存 fp，刷新/重开浏览器后自动选回同一会话；
@@ -9710,7 +10024,7 @@ var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放�
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
 function connect() {
-  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws = new WebSocket('ws://' + location.host + '/ws?token=' + encodeURIComponent(XBUME_TOKEN));
   ws.onopen = function(){ document.getElementById('wsdot').classList.add('on'); };
   ws.onclose = function(){ document.getElementById('wsdot').classList.remove('on'); setTimeout(connect, 1500); };
   ws.onmessage = function(e){
@@ -12293,7 +12607,7 @@ function nwCurl(id, a){
 function nwReplay(id, a){
   var uri = nwUri(); if (!uri) return;
   var old = a.textContent; a.textContent = '发送中…';
-  fetch('/api/network/replay?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id))
+  fetch('/api/network/replay?uri=' + encodeURIComponent(uri) + '&id=' + encodeURIComponent(id), {method: 'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       a.textContent = old;
@@ -12351,7 +12665,7 @@ function nwDoReplay(id, a){
 function nwClear(){
   var uri = nwUri(); if (!uri) return;
   if (!confirm('清空 app 内 ume 的 Network 记录？')) return;
-  fetch('/api/network/clear?uri=' + encodeURIComponent(uri))
+  fetch('/api/network/clear?uri=' + encodeURIComponent(uri), {method: 'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){ if (d.error) { alert(d.error); return; } nwItems = []; nwDetails = {}; nwOpen = {}; nwReplays = {}; nwRender(); })
     .catch(function(e){ alert(String(e)); });
@@ -13168,6 +13482,10 @@ function loadIdeOrder(){
     if (d.added && d.added.length) tips.push('检测到新安装的 IDE，已追加到末尾：' + d.added.join(', '));
     if (d.removed && d.removed.length) tips.push('已移除重复的等价别名：' + d.removed.join(', '));
     if (tips.length) document.getElementById('ide-order-tip').textContent = tips.join('；');
+    // GET 只扫描不落盘；有新增/去重时由页面显式 POST 保存（保持原自动追加语义）。
+    if ((d.added && d.added.length) || (d.removed && d.removed.length)) {
+      fetch('/api/ideorder', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ideOrder: ideOrder})}).catch(function(){});
+    }
   }).catch(function(){});
 }
 function renderIdeOrder(){

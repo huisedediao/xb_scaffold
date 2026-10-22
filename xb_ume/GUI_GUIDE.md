@@ -36,6 +36,14 @@ dart %USERPROFILE%\.xb_ume_ide\ide_gui.dart   # Windows
 - **单实例**：已有 GUI 在跑时，再次启动只会新开一个浏览器页面，不会出现多个实例；
 - 服务进程窗口保持开启即页面可用，关闭窗口（或 Ctrl-C）即退出 GUI。
 
+### 本地访问令牌
+
+GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 DNS rebinding 访问本机调试接口。启动时会生成一次性访问令牌：
+
+- **浏览器页面**：打开根页面时自动下发 `HttpOnly + SameSite=Strict` Cookie，页面内 `fetch` 与 WebSocket 自动携带，无需手工处理；GUI 重启后刷新页面即可。
+- **本地脚本 / CLI**：读取 `~/.xb_ume_ide/gui.token`（macOS/Linux 权限 `600`），请求头带 `X-XBUME-Token: <token>`；WebSocket 也可用 `ws://127.0.0.1:<端口>/ws?token=<token>`。
+- 令牌每次启动都会更新，请勿写入共享脚本或提交到仓库。
+
 ## 二、界面总览
 
 页面为暗色主题。页头左侧为 Tab，右侧为**全局设备选择器与 VM 会话状态**（不随 Tab 切换，任何页面都能选设备）；右上角圆点为 WebSocket 连接状态（绿色 = 页面与服务端通信正常）：
@@ -283,7 +291,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 4. 行尾或详情顶部可操作：
    - **复制全部**：把该请求展开详情的全部内容复制为纯文本（概要行含时间/状态码/耗时，加发起位置、Query、请求头、请求体、响应头、响应体、错误堆栈，以及重发响应（如有）；空节省略）；
    - **cURL**：把该请求复制为 curl 命令（含方法/URL/请求头/请求体）到剪贴板；
-   - **重发**：在**电脑上**按原方法/URL/请求头/请求体直接发起 HTTP 请求（不经手机），结果附在该条详情下方（状态码/响应头/响应体）；适合排查「换环境/换参数是否还报错」；
+   - **重发**：在**电脑上**按原方法/URL/请求头/请求体直接发起 HTTP 请求（不经手机），结果附在该条详情下方（状态码/响应头/响应体）；适合排查「换环境/换参数是否还报错」；跨 host 重放时会自动剥离原请求的 `Authorization` / `Cookie` 等凭据头，避免把原环境令牌发到新地址（在编辑表单里改成新值则保留）；
    - **清空**：清空 app 内 ume 的 Network 记录（与手机端面板的清空等效）；
 
 **请求发起位置**：app 端在请求开始时（`XBUmeNetworkReporter.begin`）捕获调用栈（Dio 场景使用 `RequestOptions.sourceStackTrace`——Dio 5 的 `onRequest` 在独立 Future 中执行，`StackTrace.current` 已丢失用户调用帧），过滤 `dart:` / Flutter / Dio / http / xb_ume / xb_network 等基础设施帧后保留最多 24 个用户代码帧，首帧即发起位置（如 `_requestByDio (package:xb_ume_example/main.dart:152:20)`）。详情顶部「发起位置」展示首帧与可跳转链接，`完整调用栈（N 帧）` 默认折叠；点「跳转」用 GUI 的 IDE 打开对应文件与行（与异常栈帧同一套 `/api/openide`）。旧版 app（xb_ume < 0.3.0）或无该字段的请求显示「未记录」。手机端 ume 面板的 Network 详情同样展示发起位置并提供「跳转发起位置」（走 `xb_ume:openSource` 通道，daemon 负责把 `package:` 解析为本机文件），需 daemon 同为 0.3.0+（重新安装守护脚本）。
