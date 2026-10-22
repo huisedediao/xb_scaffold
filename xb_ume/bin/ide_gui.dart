@@ -9851,6 +9851,7 @@ const String guiHtml = r'''
             <option value="5">每 5 秒</option>
           </select>
           <button onclick="shSave()">下载 PNG</button>
+          <button onclick="shCopy()" title="把当前显示的画面复制到剪贴板">复制图片</button>
           <label style="font-size:12px" title="开启后单击截图=Tap、按住拖拽=Swipe；开始录制会自动开启"><input type="checkbox" id="sh-remote" onchange="shRemote(this.checked)"> 遥控</label>
           <span id="sh-meta" class="muted"></span>
         </div>
@@ -10274,6 +10275,7 @@ function excOpenIde(file, line, el){
 }
 // -- 截图 Tab：实时截图 + 遥控（Tap/Swipe/Input）+ 录制/回放 ------------
 var shTimer = null;      // 自动刷新定时器
+var shCopyTimer = null;  // 复制结果提示的还原定时器
 var shRefSoon = null;    // 操作后的去抖刷新
 var shDrag = null;       // 当前拖拽（pointerId/起点/时间/物理起点）
 var shOpQ = Promise.resolve(); // 串行化遥控请求，避免 pointer 事件交叉
@@ -10337,6 +10339,65 @@ function shSave(){
   a.href = '/api/screenshot?uri=' + encodeURIComponent(uri) + '&t=' + Date.now();
   a.download = 'xbume-shot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
   a.click();
+}
+function shCopyMsg(msg, ok){
+  var meta = document.getElementById('sh-meta');
+  if (!meta) { shSetOp(msg, ok ? 'ok' : 'err'); return; }
+  var img = document.getElementById('sh-img');
+  var base = (img && img.naturalWidth)
+    ? img.naturalWidth + '×' + img.naturalHeight + ' 物理像素 · 点击/拖拽映射' : '';
+  meta.textContent = msg;
+  meta.style.color = ok ? '#4caf50' : '#ef5350';
+  if (shCopyTimer) clearTimeout(shCopyTimer);
+  shCopyTimer = setTimeout(function(){
+    meta.textContent = base;
+    meta.style.color = '';
+  }, 2200);
+}
+function shCopy(){
+  var img = document.getElementById('sh-img');
+  if (!img || !img.naturalWidth || !img.naturalHeight) {
+    shCopyMsg('暂无截图可复制，请先刷新截图', false);
+    return;
+  }
+  if (!navigator.clipboard || !navigator.clipboard.write || !window.ClipboardItem) {
+    shCopyMsg('当前浏览器不支持复制图片，请使用「下载 PNG」', false);
+    return;
+  }
+  // 从当前显示的画面取像素，避免重新请求 /api/screenshot 又截一帧新的。
+  var canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  var ctx = canvas.getContext('2d');
+  if (!ctx) { shCopyMsg('复制失败：无法读取截图', false); return; }
+  var dataUrl;
+  try {
+    ctx.drawImage(img, 0, 0);
+    dataUrl = canvas.toDataURL('image/png');
+  } catch (e) {
+    shCopyMsg('复制失败：' + (e && e.message ? e.message : e), false);
+    return;
+  }
+  var blob;
+  try {
+    var bin = atob(dataUrl.substring(dataUrl.indexOf(',') + 1));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    blob = new Blob([bytes], {type: 'image/png'});
+  } catch (e) {
+    shCopyMsg('复制失败：' + (e && e.message ? e.message : e), false);
+    return;
+  }
+  try {
+    var item = new ClipboardItem({'image/png': blob});
+    navigator.clipboard.write([item]).then(function(){
+      shCopyMsg('已复制到剪贴板', true);
+    }, function(e){
+      shCopyMsg('复制失败：' + (e && e.message ? e.message : e), false);
+    });
+  } catch (e) {
+    shCopyMsg('复制失败：' + (e && e.message ? e.message : e), false);
+  }
 }
 function shSetOp(s, cls){
   var el = document.getElementById('sh-op'); if (!el) return;

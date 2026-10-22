@@ -98,3 +98,4 @@
 - 电脑端 GUI 安全加固：启动时生成随机访问令牌（写入 `~/.xb_ume_ide/gui.token`，POSIX 权限 0600），根页面下发 `HttpOnly + SameSite=Strict` Cookie；页面 `fetch` 自动带 `X-XBUME-Token`，WebSocket 带 `?token=`；校验 `Host` / `Origin`，拒绝 DNS rebinding 与跨站页面（`/ping` 豁免以保留单实例检测）。
 - GUI 请求体统一 24MB 上限（Content-Length 提前 413，chunked 累计兜底）；`/api/network/clear|replay` 仅允许 POST；跨 host 重放按原值剥离 `Authorization` / `Cookie` 等凭据头；日志入缓冲与导出时把 VM service URL token 打码。
 - evaluate 字符串统一转义 `\`、`$`、`'` 与换行（路径/类名/请求 id），修复 query 参数拼接注入；`/api/ideorder` GET 改为只读扫描，新增/去重由前端显式 POST 保存。
+- 截图工具栏「下载 PNG」后新增「复制图片」：把当前显示的画面（不重新截图）经浏览器 Clipboard API 复制为 PNG 到系统剪贴板；浏览器不支持时提示改用「下载 PNG」。
