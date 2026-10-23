@@ -404,7 +404,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **指标与来源**：
 
-- **CPU（Dart 主 isolate）**：调用 VM service `getCpuSamples`，在近 N 秒窗口内按「忙时样本数 × 采样周期 ÷ 窗口时长」估算，Idle 样本不计入（`GC New` / `GC Old` 标签单独计入 GC 样本数）；只反映 Dart 主 isolate，不含 raster/IO 线程，适合判断业务代码是否把 UI 线程跑满。
+- **CPU（Dart 主 isolate）**：调用 VM service `getCpuSamples`，在近 N 秒窗口内按「忙时样本数 × 采样周期 ÷ 窗口时长」估算，Idle 样本不计入（`GC New` / `GC Old` 标签单独计入 GC 样本数）；只反映 Dart 主 isolate，不含 raster/IO 线程，适合判断业务代码是否把 UI 线程跑满。部分平台的 `flutter run` 启动引擎时没开采样器（实测 OHOS 走 `aa start` 不带引擎参数，`getCpuSamples` 报 `Profiler is disabled`），debug 构建下本页会自动执行 `setFlag('profiler', true)` 后重试（首次采集自动生效，卡片副标题短暂显示「已开启采样」）；product 构建无法运行时开启，会提示不可用。
 - **Dart 堆内存**：`getMemoryUsage` 的 `heapUsage` / `heapCapacity`，卡片副标题同时显示堆占用率与堆外内存（`externalUsage`）。
 - **进程内存**：`getProcessMemoryUsage`，展示进程总内存与按顶层分桶（Dart、Flutter、Android 等）的构成；部分平台（如 macOS）只回一个 Dart VM 分桶，表格用「其他」行补齐差额，保证分项之和等于总数；平台或旧 VM 不支持时仅隐藏该项，不影响 CPU/堆指标。
 - **峰值**：本次页面会话内 CPU、堆、进程内存的最高值，点「清空」归零。

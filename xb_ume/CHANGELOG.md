@@ -99,4 +99,4 @@
 - GUI 请求体统一 24MB 上限（Content-Length 提前 413，chunked 累计兜底）；`/api/network/clear|replay` 仅允许 POST；跨 host 重放按原值剥离 `Authorization` / `Cookie` 等凭据头；日志入缓冲与导出时把 VM service URL token 打码。
 - evaluate 字符串统一转义 `\`、`$`、`'` 与换行（路径/类名/请求 id），修复 query 参数拼接注入；`/api/ideorder` GET 改为只读扫描，新增/去重由前端显式 POST 保存。
 - 截图工具栏「下载 PNG」后新增「复制图片」：把当前显示的画面（不重新截图）经浏览器 Clipboard API 复制为 PNG 到系统剪贴板；浏览器不支持时提示改用「下载 PNG」。
-- 新增「性能」Tab（当前调试会话 CPU/内存实时监控）：`getCpuSamples` 按采样窗口估算 Dart 主 isolate CPU 占用率（Idle 不计入，只反映 UI 线程）、`getMemoryUsage` 展示 Dart 堆/堆容量/堆外内存、`getProcessMemoryUsage` 展示进程总内存与顶层分桶构成；含 CPU/内存双曲线、会话内峰值、可调采集间隔（1/2/5 秒，采样窗口上限 2 秒）、暂停/继续/清空/触发 GC；仅在页面激活时采集，离开或暂停即停止，切换会话自动清空重采；新增 `GET /api/perf`，单个指标失败不影响其余指标。
+- 新增「性能」Tab（当前调试会话 CPU/内存实时监控）：`getCpuSamples` 按采样窗口估算 Dart 主 isolate CPU 占用率（Idle 不计入，只反映 UI 线程）、`getMemoryUsage` 展示 Dart 堆/堆容量/堆外内存、`getProcessMemoryUsage` 展示进程总内存与顶层分桶构成；含 CPU/内存双曲线、会话内峰值、可调采集间隔（1/2/5 秒，采样窗口上限 2 秒）、暂停/继续/清空/触发 GC；仅在页面激活时采集，离开或暂停即停止，切换会话自动清空重采；新增 `GET /api/perf`，单个指标失败不影响其余指标；OHOS 等启动引擎时未开采样器的调试会话（`aa start` 不带 `--enable-dart-profiling`，`getCpuSamples` 报 `Profiler is disabled`）首次采集会自动 `setFlag('profiler', true)` 后重试，无需重启 app。

@@ -2138,18 +2138,38 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           payload['processError'] = e.toString();
         }
         // CPU：取 VM 单调时钟窗口内的采样数 × 采样周期作为忙时占比。
+        // 部分平台的 flutter run 不给引擎传 --enable-dart-profiling（实测 OHOS
+        // 用 `aa start` 启动，不带引擎参数），此时 getCpuSamples 报
+        // 「Profiler is disabled」。debug 构建可在运行时用 setFlag 打开采样后
+        // 重试一次；product 构建会被拒，保持只读失败提示。
         try {
           final now = await rpc.rawRpc('getVMTimelineMicros');
           final nowUs = (now['timestamp'] as num?)?.toInt() ?? 0;
           if (nowUs <= 0) throw '无法读取 VM 单调时钟';
-          final samples = await rpc.rawRpc('getCpuSamples', {
-            'isolateId': iso,
-            'timeOriginMicros': nowUs - windowUs,
-            'timeExtentMicros': windowUs,
-          });
+          Map<String, Object?> window() => <String, Object?>{
+                'isolateId': iso,
+                'timeOriginMicros': nowUs - windowUs,
+                'timeExtentMicros': windowUs,
+              };
+          Map<String, Object?> samples;
+          try {
+            samples = await rpc.rawRpc('getCpuSamples', window());
+          } catch (e) {
+            if (!e.toString().contains('Profiler is disabled')) rethrow;
+            try {
+              await rpc.rawRpc('setFlag',
+                  <String, Object?>{'name': 'profiler', 'value': 'true'});
+            } catch (e2) {
+              throw '该构建未开启 CPU 采样（运行时开启失败：$e2）';
+            }
+            payload['cpuAutoEnabled'] = true;
+            samples = await rpc.rawRpc('getCpuSamples', window());
+          }
           payload['cpu'] = perfCpuFromSamples(samples);
         } catch (e) {
-          payload['cpuError'] = e.toString();
+          final err = e.toString();
+          payload['cpuError'] =
+              err.contains('Profiler is disabled') ? '该构建未开启 CPU 采样，无法获取 CPU' : err;
         }
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(payload));
@@ -12400,7 +12420,8 @@ function pfApply(d, ms){
   }
   if (d.cpu) {
     pfSetText('pf-cpu-sub', '采样 ' + d.cpu.busy + '/' + d.cpu.samples + ' · GC 样本 ' + d.cpu.gc +
-      ' · 窗口 ' + Math.round((d.cpu.extentUs || 0) / 1000) + ' ms');
+      ' · 窗口 ' + Math.round((d.cpu.extentUs || 0) / 1000) + ' ms' +
+      (d.cpuAutoEnabled ? ' · 已开启采样' : ''));
   } else {
     pfSetText('pf-cpu-sub', d.cpuError ? ('不可用：' + d.cpuError) : '—');
   }
