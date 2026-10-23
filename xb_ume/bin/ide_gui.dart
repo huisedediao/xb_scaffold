@@ -358,6 +358,28 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       state.addClient(ws);
       return;
     }
+    if (path == '/api/version') {
+      // 部署自检：GUI 是单文件部署（~/.xb_ume_ide/ide_gui.dart），出现
+      // 「改了没生效」时先确认浏览器连到的是哪个脚本、哪个进程。
+      final scriptPath = Platform.script.toFilePath();
+      final f = File(scriptPath);
+      final stat = f.existsSync() ? f.statSync() : null;
+      final src = f.existsSync() ? f.readAsStringSync() : '';
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'script': scriptPath,
+        'mtime': stat?.modified.toIso8601String(),
+        'size': stat?.size,
+        'pid': pid,
+        'port': _guiPort,
+        'features': <String>[
+          if (src.contains('fileUriToLocalPath')) 'windows-path',
+          if (src.contains('_guiWindowsVscodeAppClis')) 'windows-ide',
+        ],
+      }));
+      await req.response.close();
+      return;
+    }
     if (path == '/api/daemon') {
       final status = await queryDaemonStatus();
       // 合并 GUI 侧解析的应用包名（daemon 只知道 uri/source，不知道应用名）。
@@ -1063,6 +1085,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
 
       final rpc = _SandboxRpc(uri);
       final sw = Stopwatch()..start();
+      // 诊断中间值提到 try 外：失败日志要能区分「项目根找错」「包根没读到」
+      // 与「库确实不在本机」，否则只能看到一句笼统的未解析。
+      String? projectRoot;
+      var fileUris = const <String>[];
+      var lastLibUri = '';
+      var scanned = 0;
+      var framework = 0;
       try {
         // 第 1 步：收集该路由子树的候选 widget（浅→深；单行 IIFE）。
         // 只从该路由自己的 ModalRoute.subtreeContext 往下扫，不再用
@@ -1116,13 +1145,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
 
         // 第 2 步：从 isolate 的 file:/// 库提取项目根，预加载包路径表。
         final iso = await rpc.rawRpc('getIsolate', {'isolateId': isoId});
-        final fileUris = ((iso['libraries'] as List? ?? <Object?>[])
+        fileUris = ((iso['libraries'] as List? ?? <Object?>[])
                 .whereType<Map>()
                 .map((l) => l['uri']?.toString() ?? '')
                 .where((u) => u.startsWith('file:///'))
                 .toList())
             .cast<String>();
-        final projectRoot = projectRootForLibraries(fileUris);
+        projectRoot = projectRootForLibraries(fileUris);
         if (projectRoot != null) {
           _pkgRootsFor(projectRoot);
         }
@@ -1134,8 +1163,6 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         });
         final elements =
             (listObj['elements'] as List? ?? <Object?>[]).whereType<Map>();
-        var scanned = 0;
-        var framework = 0;
         for (final el in elements) {
           if (scanned >= 250) break;
           scanned++;
@@ -1155,6 +1182,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           }
           final libUri =
               ((classObj['library'] as Map?)?['uri'] ?? '').toString();
+          lastLibUri = libUri;
           if (libUri.startsWith('dart:') ||
               libUri.startsWith('package:flutter/')) {
             framework++;
@@ -1179,13 +1207,26 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           await req.response.close();
           return;
         }
-        throw scanned == 0
-            ? '未找到该路由的页面元素（路由可能尚未构建完成）'
-            : '无法定位：${scanned - framework} 个用户类均未解析到本机文件（依赖包可能不在本机）';
+        if (scanned == 0) {
+          throw '未找到该路由的页面元素（路由可能尚未构建完成）';
+        }
+        if (projectRoot == null) {
+          throw '无法定位：未能从 VM 的库列表推断项目根（release 包或纯 AOT 调试不支持）';
+        }
+        if ((_pkgRootsCache[projectRoot]?.length ?? 0) == 0) {
+          throw '无法定位：$projectRoot 下没有读到 .dart_tool/package_config.json（确认该目录执行过 flutter pub get）';
+        }
+        throw '无法定位：扫描 $scanned 个候选类（其中框架类 $framework 个），均未解析到本机文件（最近一个：$lastLibUri）';
       } catch (e, st) {
         stderr.writeln('[routelocate] $e\n$st');
         _routeDebugLog('routelocate',
-            'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}');
+            'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}'
+            ' root=${projectRoot ?? '-'}'
+            ' cfg=${projectRoot != null && File('$projectRoot/.dart_tool/package_config.json').existsSync()}'
+            ' pkg=${projectRoot == null ? 0 : (_pkgRootsCache[projectRoot]?.length ?? 0)}'
+            ' libs=${fileUris.length}'
+            ' lastLib=${lastLibUri.isEmpty ? '-' : lastLibUri}'
+            ' scanned=$scanned fw=$framework');
         await fail(e);
       } finally {
         await rpc.close();
@@ -12828,7 +12869,9 @@ function rtRefresh(){
 function rtRender(d){
   var navs = d.navigators || [];
   if (!navs.length) return '<span class="muted">未找到 Navigator（应用可能尚未完成首帧构建）</span>';
-  var html = '';
+  // 定位失败原因单独一行展示：只看 — 与 \ 无法判断是换目录没重新
+  // pub get、还是调试的机器上没有这份源码。
+  var html = '<div id="rt-locdiag" class="muted" style="font-size:12px;margin:2px 0"></div>';
   navs.forEach(function(nav){
     var routes = nav.routes || [];
     html += '<div style="margin:8px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>Navigator #' + (nav.index + 1) + '</b> <span class="muted">（' + routes.length + ' 个路由）</span>'
@@ -12889,7 +12932,14 @@ function rtResolve(nav, i){
     .then(function(d){
       var cell = document.getElementById('rtf-' + nav + '-' + i);
       if (!cell) return;
-      if (d.error || !d.file) { cell.innerHTML = '<span class="muted" title="' + esc(rtLocErr(d.error)) + '">—</span>'; var re = document.getElementById('rti-' + nav + '-' + i); if (re) re.innerHTML = '<span class="muted">\\</span>'; return; }
+      if (d.error || !d.file) {
+        cell.innerHTML = '<span class="muted" title="' + esc(rtLocErr(d.error)) + '">—</span>';
+        var re = document.getElementById('rti-' + nav + '-' + i);
+        if (re) re.innerHTML = '<span class="muted">\\</span>';
+        var diag = document.getElementById('rt-locdiag');
+        if (diag) diag.textContent = '定位失败：' + rtLocErr(d.error);
+        return;
+      }
       var fileName = d.file.split('/').pop();
       var pos = fileName + (d.line ? ':' + d.line : '');
       cell.innerHTML = '<span title="' + esc(d.file + (d.className ? '（' + d.className + '）' : '')) + '">' + esc(pos) + '</span>';
