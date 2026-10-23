@@ -82,7 +82,7 @@ final String _home =
 void _printUsage() {
   print('''
 用法:
-  dart run xb_ume:ide --install [--ide-order "qodercn,cursor,code"] [--ide ...]  安装并启动守护进程（macOS/Windows）
+  dart run xb_ume:ide --install [--ide-order "..."] [--ide ...] [--no-gui]  安装并重启守护进程与 GUI
   dart run xb_ume:ide --configure [--ide-order "..."] [--show]                   查看/修改 IDE 优先级
   dart run xb_ume:ide --uninstall                                卸载
   dart run xb_ume:ide --daemon [--ide ...]                       前台运行守护进程
@@ -214,6 +214,10 @@ Future<void> install(List<String> args) async {
     orderArg: _argValue(args, '--ide-order'),
     ideArg: ide,
   );
+  // 新副本已就位：把正在跑的 GUI 一并换掉，否则页面仍由旧进程提供旧代码。
+  if (!args.contains('--no-gui')) {
+    await _restartGui(installDir.path, dartBin);
+  }
   print('[xbume-ide] 安装完成，守护进程已启动。');
   print('  注册: $detailPath');
   print('  脚本 : $deployedScript');
@@ -316,6 +320,106 @@ Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
     } else {
       print('[xbume-ide] 桌面快捷方式创建失败: ${result.stderr}');
     }
+  }
+}
+
+/// GUI 默认起始端口（与 ide_gui.dart 的 kGuiPortBase 保持一致）。
+const int _kGuiPortBase = 46129;
+
+/// 命令行里的 dart 可执行文件（排除 xxx.dart 里的「dart」后缀误判）。
+final RegExp _dartExecutablePattern =
+    RegExp(r'(^|[/\\\s"])dart(\.exe)?(["\s]|$)', caseSensitive: false);
+
+/// 命令行是否指向 GUI 脚本（同时含 dart 可执行文件与 ide_gui.dart）。
+/// install 自身与 daemon 的命令行都不含该脚本名，可安全用于结束旧 GUI。
+bool isGuiProcessCommandLine(String cmdline) =>
+    cmdline.contains('ide_gui.dart') &&
+    _dartExecutablePattern.hasMatch(cmdline);
+
+/// 结束本机正在运行的 GUI（按命令行精确匹配，不碰 daemon 与其他 dart 进程）。
+Future<void> _killGuiProcesses() async {
+  try {
+    if (Platform.isWindows) {
+      // 只查 dart.exe：PowerShell 自身命令行也带匹配串，不能扫全表。
+      const ps = "Get-CimInstance Win32_Process -Filter \"Name='dart.exe'\" | "
+          "Where-Object { \$_.CommandLine -like '*ide_gui.dart*' } | "
+          "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
+      await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
+    } else {
+      final pgrep = await Process.run('pgrep', <String>['-f', r'ide_gui\.dart']);
+      for (final line in pgrep.stdout.toString().split('\n')) {
+        final other = int.tryParse(line.trim());
+        if (other == null || other == pid) continue;
+        // 严格复核命令行，避免误伤编辑器、grep 等同样带脚本名的进程。
+        final ps = await Process.run(
+          'ps',
+          <String>['-p', '$other', '-o', 'command='],
+        );
+        if (!isGuiProcessCommandLine(ps.stdout.toString())) continue;
+        await Process.run('kill', <String>['-9', '$other']);
+      }
+    }
+  } catch (_) {
+    // 结束旧 GUI 失败不阻塞安装；新进程启动时会走单实例语义。
+  }
+}
+
+/// 探测某端口是否已有 GUI 在应答（/ping 返回 xbume-gui 指纹）。
+Future<bool> _pingGuiPort(int port) async {
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(milliseconds: 400);
+  try {
+    final req = await client.getUrl(Uri.parse('http://127.0.0.1:$port/ping'));
+    final res = await req.close();
+    final body = await res.transform(utf8.decoder).join();
+    return body.contains('xbume-gui');
+  } catch (_) {
+    return false;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<bool> _anyGuiAlive() async {
+  for (var p = _kGuiPortBase; p < _kGuiPortBase + 10; p++) {
+    if (await _pingGuiPort(p)) return true;
+  }
+  return false;
+}
+
+/// 重启 GUI：停旧实例 → 等端口释放 → detached 启动新副本。
+Future<void> _restartGui(String installDir, String dartBin) async {
+  final sep = Platform.pathSeparator;
+  final script = '$installDir${sep}ide_gui.dart';
+  if (!File(script).existsSync()) {
+    print('[xbume-ide] 未找到 $script，跳过 GUI 重启。');
+    return;
+  }
+  await _killGuiProcesses();
+  // 必须确认旧实例真的不响应了再拉起：否则新进程探测到旧实例后
+  // 只会打开浏览器就退出，页面仍是旧代码。
+  for (var attempt = 0; attempt < 15; attempt++) {
+    if (!await _anyGuiAlive()) break;
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  try {
+    if (Platform.isWindows) {
+      // dart.exe 是控制台程序，走 cmd start /min 避免弹出一个黑窗。
+      await Process.start(
+        'cmd',
+        <String>['/c', 'start', '', '/min', dartBin, script],
+        mode: ProcessStartMode.detached,
+      );
+    } else {
+      await Process.start(
+        dartBin,
+        <String>[script],
+        mode: ProcessStartMode.detached,
+      );
+    }
+    print('[xbume-ide] GUI 已重启（浏览器页面会自动打开）。');
+  } catch (e) {
+    print('[xbume-ide] GUI 重启失败（可双击桌面图标手动启动）: $e');
   }
 }
 
