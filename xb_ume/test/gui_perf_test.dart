@@ -43,6 +43,33 @@ void main() {
     });
   });
 
+  group('perfExtensionData', () {
+    test('unwraps data map', () {
+      final r = gui.perfExtensionData(<String, Object?>{
+        'type': 'ExtensionData',
+        'data': <String, Object?>{'supported': true, 'cpuPercent': 12.5},
+      });
+      expect(r?['cpuPercent'], 12.5);
+    });
+
+    test('decodes data json string', () {
+      final r = gui.perfExtensionData(<String, Object?>{
+        'data': '{"supported":true,"cpuPercent":3.2}',
+      });
+      expect(r?['supported'], true);
+      expect(r?['cpuPercent'], 3.2);
+    });
+
+    test('accepts direct payload and rejects unknown shapes', () {
+      expect(
+          gui.perfExtensionData(<String, Object?>{'supported': false})
+              ?['supported'],
+          false);
+      expect(gui.perfExtensionData(<String, Object?>{'type': 'Sentinel'}), isNull);
+      expect(gui.perfExtensionData('oops'), isNull);
+    });
+  });
+
   group('perfProcessMemory', () {
     test('flattens root children sorted by size', () {
       final r = gui.perfProcessMemory(<String, Object?>{

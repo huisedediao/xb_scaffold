@@ -1,0 +1,43 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:xb_ume/src/core/xb_process_stats.dart';
+import 'package:xb_ume/src/core/xb_process_stats_platform_io.dart';
+
+/// 桌面/真机（dart:io）下的进程级采样：验证 CPU 时间单调增长、
+/// 内存字段有值、第二次采样能算出百分比。仅在 macOS/Linux 测试机上跑。
+void main() {
+  test('readProcessUsage 读取到 CPU 时间与内存', () {
+    final a = readProcessUsage();
+    expect(a, isNotNull);
+    final cpu0 = a!.cpuNs;
+    expect(cpu0, isNotNull);
+    expect(a.rss, greaterThan(0));
+
+    final sw = Stopwatch()..start();
+    var x = 0;
+    while (sw.elapsedMilliseconds < 300) {
+      for (var i = 0; i < 20000; i++) {
+        x += i & 7;
+      }
+    }
+    final b = readProcessUsage()!;
+    expect(b.cpuNs!, greaterThan(cpu0!));
+    // macOS 用 proc_pid_rusage 取 footprint；Linux 无此口径，允许为空。
+    if (a.footprint != null) expect(b.footprint, greaterThan(0));
+  });
+
+  test('XBUmeProcessStats.sample 第二次调用给出 cpuPercent', () {
+    XBUmeProcessStats.sample();
+    final sw = Stopwatch()..start();
+    var x = 0;
+    while (sw.elapsedMilliseconds < 200) {
+      for (var i = 0; i < 20000; i++) {
+        x += i & 7;
+      }
+    }
+    final s = XBUmeProcessStats.sample();
+    expect(s['supported'], isTrue);
+    expect(s['cpuPercent'], isA<num>());
+    expect((s['cpuPercent'] as num) >= 0, isTrue);
+    expect((s['windowMs'] as num) > 0, isTrue);
+  });
+}

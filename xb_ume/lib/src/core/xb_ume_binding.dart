@@ -16,6 +16,7 @@ import '../plugins/network/xb_ume_network_plugin.dart';
 import '../plugins/performance/xb_ume_performance_plugin.dart';
 import '../plugins/route/xb_ume_route_plugin.dart';
 import '../plugins/storage/xb_ume_storage_plugin.dart';
+import 'xb_process_stats.dart';
 import 'xb_ume_controller.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_route_observer.dart';
@@ -49,6 +50,8 @@ class XBUmeBinding {
     _instance = binding;
     binding._installGlobalHooks();
     binding._registerDefaultPlugins();
+    // debug/profile 下向 GUI 暴露进程级 CPU/内存（ext.xbume.processStats）。
+    XBUmeProcessStats.install();
     for (final plugin in extraPlugins) {
       controller.registerPlugin(plugin);
     }

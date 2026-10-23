@@ -2171,6 +2171,17 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           payload['cpuError'] =
               err.contains('Profiler is disabled') ? '该构建未开启 CPU 采样，无法获取 CPU' : err;
         }
+        // 进程级 CPU / footprint（与 Xcode 调试导航器同口径）：由 app 端
+        // xb_ume 注册的 ext.xbume.processStats 提供；旧版 SDK 未注册时静默
+        // 跳过，前端继续用上面的 isolate 采样值。
+        try {
+          final ext = await rpc.rawRpc(
+              'ext.xbume.processStats', <String, Object?>{'isolateId': iso});
+          final stats = perfExtensionData(ext);
+          if (stats != null && stats['supported'] == true) {
+            payload['processStats'] = stats;
+          }
+        } catch (_) {}
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(payload));
         await req.response.close();
@@ -8210,6 +8221,28 @@ Map<String, Object?> perfCpuFromSamples(Map<String, Object?> samples) {
   };
 }
 
+/// 解析 VM service 对 `ext.*` 服务扩展的响应：多数版本会包一层 `data`
+/// （对象或 JSON 字符串），少数直接返回扩展内容。无法识别时返回 null。
+Map<String, Object?>? perfExtensionData(Object? result) {
+  if (result is! Map) return null;
+  final data = result['data'];
+  if (data == null) {
+    final direct = result.cast<String, Object?>();
+    return direct.containsKey('cpuPercent') || direct.containsKey('supported')
+        ? direct
+        : null;
+  }
+  Object? parsed = data;
+  if (parsed is String) {
+    try {
+      parsed = jsonDecode(parsed);
+    } catch (_) {
+      return null;
+    }
+  }
+  return parsed is Map ? parsed.cast<String, Object?>() : null;
+}
+
 /// 把 `getProcessMemoryUsage` 的 root 树压平成前端可直接渲染的顶层分桶。
 /// size 为 retain 后的字节数；root.size 即进程总内存，个别平台可能为 -1。
 Map<String, Object?> perfProcessMemory(Map<String, Object?> result) {
@@ -10121,7 +10154,7 @@ const String guiHtml = r'''
       <span id="pf-stat" class="muted">请先在页头右侧选择调试会话</span>
     </div>
     <div class="pf-grid" style="margin-bottom:12px">
-      <div class="pf-card"><div class="k">CPU（Dart 主 isolate）</div><div class="v" id="pf-cpu">—</div><div class="s" id="pf-cpu-sub">—</div></div>
+      <div class="pf-card"><div class="k" id="pf-cpu-k">CPU（Dart 主 isolate）</div><div class="v" id="pf-cpu">—</div><div class="s" id="pf-cpu-sub">—</div></div>
       <div class="pf-card"><div class="k">Dart 堆内存</div><div class="v" id="pf-heap">—</div><div class="s" id="pf-heap-sub">—</div></div>
       <div class="pf-card"><div class="k">进程内存</div><div class="v" id="pf-rss">—</div><div class="s" id="pf-rss-sub">—</div></div>
       <div class="pf-card"><div class="k">本次会话峰值</div><div class="v" id="pf-peak">—</div><div class="s" id="pf-peak-sub">—</div></div>
@@ -10143,7 +10176,7 @@ const String guiHtml = r'''
       <div class="hd"><b>进程内存构成</b><span id="pf-proc-stat"></span></div>
       <div id="pf-proc"><span class="muted">暂无数据</span></div>
     </div>
-    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate，不含 raster 线程）、<code>getMemoryUsage</code>（Dart 堆与堆外内存）、<code>getProcessMemoryUsage</code>（进程内存构成，部分平台可能不支持）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
+    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：CPU 优先用 app 端服务扩展 <code>ext.xbume.processStats</code>（<code>getrusage</code> / <code>/proc</code> 读整进程 user+sys CPU 时间，含全部线程，与 Xcode 调试导航器同口径，多核可超 100%），旧版 SDK 未注册时回退 VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate，不含 raster 线程）；堆来自 <code>getMemoryUsage</code>（Dart 堆与堆外内存）、进程内存来自 <code>getProcessMemoryUsage</code>（进程内存构成，部分平台可能不支持），iOS/macOS 另附 <code>phys_footprint</code>（Xcode 内存口径）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
   </section>
   <section class="page" id="page-wtree">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -12375,6 +12408,7 @@ function pfClear(){
   pfRenderCharts();
   ['pf-cpu','pf-cpu-sub','pf-heap','pf-heap-sub','pf-rss','pf-rss-sub','pf-peak','pf-peak-sub','pf-cpu-last','pf-mem-last'].forEach(function(id){ pfSetText(id, '—'); });
   pfSetText('pf-cpu-last', ''); pfSetText('pf-mem-last', '');
+  pfSetText('pf-cpu-k', 'CPU（Dart 主 isolate）');
   pfSetText('pf-proc-stat', '');
   var proc = document.getElementById('pf-proc');
   if (proc) proc.innerHTML = '<span class="muted">暂无数据</span>';
@@ -12406,7 +12440,11 @@ function pfPush(arr, v){
   while (arr.length > pfMaxPts) arr.shift();
 }
 function pfApply(d, ms){
-  var cpu = (d.cpu && typeof d.cpu.percent === 'number') ? d.cpu.percent : null;
+  var isoCpu = (d.cpu && typeof d.cpu.percent === 'number') ? d.cpu.percent : null;
+  var pstat = d.processStats || null;
+  var procCpu = (pstat && typeof pstat.cpuPercent === 'number') ? pstat.cpuPercent : null;
+  // 整进程 CPU（Xcode 调试导航器同口径）优先；app 端未注册扩展时回退到 isolate 采样。
+  var cpu = procCpu != null ? procCpu : isoCpu;
   var heap = d.heap || null;
   var proc = (d.process && d.process.rss) ? d.process : null;
   var rss = proc ? proc.rss : null;
@@ -12418,7 +12456,14 @@ function pfApply(d, ms){
     cpuEl.textContent = cpu == null ? '—' : cpu.toFixed(1) + '%';
     cpuEl.style.color = cpu == null ? '' : (cpu >= 80 ? '#ef5350' : (cpu >= 50 ? '#f5c451' : '#46d68c'));
   }
-  if (d.cpu) {
+  pfSetText('pf-cpu-k', procCpu != null ? 'CPU（整进程 · Xcode 口径）' : 'CPU（Dart 主 isolate）');
+  if (procCpu != null) {
+    var sub = ['整进程'];
+    if (pstat.windowMs) sub.push('窗口 ' + pstat.windowMs + ' ms');
+    if (isoCpu != null) sub.push('Dart isolate ' + isoCpu.toFixed(1) + '%');
+    else if (d.cpuError) sub.push('isolate 采样不可用');
+    pfSetText('pf-cpu-sub', sub.join(' · '));
+  } else if (d.cpu) {
     pfSetText('pf-cpu-sub', '采样 ' + d.cpu.busy + '/' + d.cpu.samples + ' · GC 样本 ' + d.cpu.gc +
       ' · 窗口 ' + Math.round((d.cpu.extentUs || 0) / 1000) + ' ms' +
       (d.cpuAutoEnabled ? ' · 已开启采样' : ''));
@@ -12437,7 +12482,12 @@ function pfApply(d, ms){
     pfSetText('pf-rss', pfMB(rss));
     // 首个采样时进程常驻内存可能尚未涨起来（会小于 Dart 堆），占比按 0–100% 截断。
     var share = heap && rss > 0 ? Math.min(100, Math.max(0, heap.used * 100 / rss)) : null;
-    pfSetText('pf-rss-sub', share == null ? (proc.description || '') : ('Dart 堆占进程 ' + share.toFixed(0) + '%'));
+    var bits = [];
+    if (share != null) bits.push('Dart 堆占进程 ' + share.toFixed(0) + '%');
+    else if (proc.description) bits.push(proc.description);
+    // footprint 与 Xcode 内存 gauge 同口径，便于逐项对照。
+    if (pstat && pstat.footprint) bits.push('footprint ' + pfMB(pstat.footprint) + '（Xcode 口径）');
+    pfSetText('pf-rss-sub', bits.length ? bits.join(' · ') : '—');
   } else {
     pfSetText('pf-rss', '—');
     pfSetText('pf-rss-sub', d.processError ? ('不可用：' + d.processError) : '该平台不支持进程内存');
