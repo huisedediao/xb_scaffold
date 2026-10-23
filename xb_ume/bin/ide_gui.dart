@@ -10156,7 +10156,7 @@ const String guiHtml = r'''
     <div class="pf-grid" style="margin-bottom:12px">
       <div class="pf-card"><div class="k" id="pf-cpu-k">CPU（Dart 主 isolate）</div><div class="v" id="pf-cpu">—</div><div class="s" id="pf-cpu-sub">—</div></div>
       <div class="pf-card"><div class="k">Dart 堆内存</div><div class="v" id="pf-heap">—</div><div class="s" id="pf-heap-sub">—</div></div>
-      <div class="pf-card"><div class="k">进程内存</div><div class="v" id="pf-rss">—</div><div class="s" id="pf-rss-sub">—</div></div>
+      <div class="pf-card"><div class="k" id="pf-rss-k">进程内存</div><div class="v" id="pf-rss">—</div><div class="s" id="pf-rss-sub">—</div></div>
       <div class="pf-card"><div class="k">本次会话峰值</div><div class="v" id="pf-peak">—</div><div class="s" id="pf-peak-sub">—</div></div>
     </div>
     <div class="pf-charts">
@@ -10173,10 +10173,10 @@ const String guiHtml = r'''
       </div>
     </div>
     <div class="pf-chart" style="margin-top:12px">
-      <div class="hd"><b>进程内存构成</b><span id="pf-proc-stat"></span></div>
+      <div class="hd"><b id="pf-proc-k">进程内存构成</b><span id="pf-proc-stat"></span></div>
       <div id="pf-proc"><span class="muted">暂无数据</span></div>
     </div>
-    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：CPU 优先用 app 端服务扩展 <code>ext.xbume.processStats</code>（<code>getrusage</code> / <code>/proc</code> 读整进程 user+sys CPU 时间，含全部线程，与 Xcode 调试导航器同口径，多核可超 100%），旧版 SDK 未注册时回退 VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate，不含 raster 线程）；堆来自 <code>getMemoryUsage</code>（Dart 堆与堆外内存）、进程内存来自 <code>getProcessMemoryUsage</code>（进程内存构成，部分平台可能不支持），iOS/macOS 另附 <code>phys_footprint</code>（Xcode 内存口径）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
+    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：CPU 优先用 app 端服务扩展 <code>ext.xbume.processStats</code>（<code>getrusage</code> / <code>/proc</code> 读整进程 user+sys CPU 时间，含全部线程）；iOS/macOS 按 Xcode 调试导航器口径（单核占满 100%，多核可超 100%），Android / OHOS 按 Android Studio / DevEco Profiler 口径（以全部核心容量合计为 100%）。旧版 SDK 未注册扩展时回退 VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate）。进程内存：Android / OHOS 取 <code>/proc/self/smaps</code> 的 PSS（与 Android Studio 的 Total、DevEco Memory 泳道的 PSS 同源；分类按 dumpsys App Summary / DevEco 内存类型拆分；GPU memtrack 显存在 app 内不可读，可能与官方差一个 GL/Graph 值），iOS/macOS 取 <code>phys_footprint</code>（Xcode 内存 gauge 口径）；都不可用时回退 <code>getProcessMemoryUsage</code>。堆来自 <code>getMemoryUsage</code>（Dart 堆与堆外内存）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
   </section>
   <section class="page" id="page-wtree">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -12409,6 +12409,8 @@ function pfClear(){
   ['pf-cpu','pf-cpu-sub','pf-heap','pf-heap-sub','pf-rss','pf-rss-sub','pf-peak','pf-peak-sub','pf-cpu-last','pf-mem-last'].forEach(function(id){ pfSetText(id, '—'); });
   pfSetText('pf-cpu-last', ''); pfSetText('pf-mem-last', '');
   pfSetText('pf-cpu-k', 'CPU（Dart 主 isolate）');
+  pfSetText('pf-rss-k', '进程内存');
+  pfSetText('pf-proc-k', '进程内存构成');
   pfSetText('pf-proc-stat', '');
   var proc = document.getElementById('pf-proc');
   if (proc) proc.innerHTML = '<span class="muted">暂无数据</span>';
@@ -12439,26 +12441,55 @@ function pfPush(arr, v){
   arr.push(v == null ? null : v);
   while (arr.length > pfMaxPts) arr.shift();
 }
+// 官方口径标签：CPU 按平台切换（Xcode 单核 100% / Studio、DevEco 全核 100%），
+// 进程内存优先 PSS（Android/OHOS）或 footprint（iOS/macOS）。
+function pfCpuLabel(plat, scope){
+  if (scope === 'total') {
+    if (plat === 'android') return 'CPU（整进程 · Android Studio 口径）';
+    if (plat === 'ohos') return 'CPU（整进程 · DevEco 口径）';
+    return 'CPU（整进程 · 全核容量）';
+  }
+  if (plat === 'ios' || plat === 'macos') return 'CPU（整进程 · Xcode 口径）';
+  return 'CPU（整进程）';
+}
+function pfMemLabel(plat, pss, fp){
+  if (pss) {
+    if (plat === 'ohos') return '进程内存（PSS · DevEco 口径）';
+    if (plat === 'android') return '进程内存（PSS · Android Studio 口径）';
+    return '进程内存（PSS）';
+  }
+  if (fp) return '进程内存（footprint · Xcode 口径）';
+  return '进程内存';
+}
 function pfApply(d, ms){
   var isoCpu = (d.cpu && typeof d.cpu.percent === 'number') ? d.cpu.percent : null;
   var pstat = d.processStats || null;
+  var plat = (pstat && pstat.platform) ? String(pstat.platform) : '';
+  var scope = (pstat && pstat.cpuScope) ? String(pstat.cpuScope) : 'core';
+  var cores = (pstat && typeof pstat.cpuCores === 'number') ? pstat.cpuCores : null;
   var procCpu = (pstat && typeof pstat.cpuPercent === 'number') ? pstat.cpuPercent : null;
-  // 整进程 CPU（Xcode 调试导航器同口径）优先；app 端未注册扩展时回退到 isolate 采样。
+  // 整进程 CPU 优先（iOS/macOS 同 Xcode，Android/OHOS 同 Studio/DevEco）；
+  // app 端未注册扩展时回退到 isolate 采样。
   var cpu = procCpu != null ? procCpu : isoCpu;
   var heap = d.heap || null;
   var proc = (d.process && d.process.rss) ? d.process : null;
   var rss = proc ? proc.rss : null;
+  // 进程内存取官方口径：Android/OHOS 的 PSS、iOS/macOS 的 footprint，回退 RSS。
+  var pss = (pstat && typeof pstat.pss === 'number' && pstat.pss > 0) ? pstat.pss : null;
+  var fp = (pstat && pstat.footprint) ? pstat.footprint : null;
+  var memVal = pss || fp || rss;
   var heapMb = heap ? heap.used / 1048576 : null;
-  var rssMb = rss ? rss / 1048576 : null;
+  var memMb = memVal ? memVal / 1048576 : null;
 
   var cpuEl = document.getElementById('pf-cpu');
   if (cpuEl) {
     cpuEl.textContent = cpu == null ? '—' : cpu.toFixed(1) + '%';
     cpuEl.style.color = cpu == null ? '' : (cpu >= 80 ? '#ef5350' : (cpu >= 50 ? '#f5c451' : '#46d68c'));
   }
-  pfSetText('pf-cpu-k', procCpu != null ? 'CPU（整进程 · Xcode 口径）' : 'CPU（Dart 主 isolate）');
+  pfSetText('pf-cpu-k', procCpu != null ? pfCpuLabel(plat, scope) : 'CPU（Dart 主 isolate）');
   if (procCpu != null) {
     var sub = ['整进程'];
+    if (scope === 'total') sub.push('全核容量' + (cores ? '（' + cores + ' 核）' : ''));
     if (pstat.windowMs) sub.push('窗口 ' + pstat.windowMs + ' ms');
     if (isoCpu != null) sub.push('Dart isolate ' + isoCpu.toFixed(1) + '%');
     else if (d.cpuError) sub.push('isolate 采样不可用');
@@ -12478,15 +12509,15 @@ function pfApply(d, ms){
     pfSetText('pf-heap', '—');
     pfSetText('pf-heap-sub', d.heapError ? ('不可用：' + d.heapError) : '—');
   }
-  if (rss) {
-    pfSetText('pf-rss', pfMB(rss));
-    // 首个采样时进程常驻内存可能尚未涨起来（会小于 Dart 堆），占比按 0–100% 截断。
-    var share = heap && rss > 0 ? Math.min(100, Math.max(0, heap.used * 100 / rss)) : null;
+  pfSetText('pf-rss-k', pfMemLabel(plat, pss, fp));
+  if (memVal) {
+    pfSetText('pf-rss', pfMB(memVal));
+    // 首个采样时进程内存可能尚未涨起来（会小于 Dart 堆），占比按 0–100% 截断。
+    var share = heap && memVal > 0 ? Math.min(100, Math.max(0, heap.used * 100 / memVal)) : null;
     var bits = [];
     if (share != null) bits.push('Dart 堆占进程 ' + share.toFixed(0) + '%');
-    else if (proc.description) bits.push(proc.description);
-    // footprint 与 Xcode 内存 gauge 同口径，便于逐项对照。
-    if (pstat && pstat.footprint) bits.push('footprint ' + pfMB(pstat.footprint) + '（Xcode 口径）');
+    if (rss && memVal !== rss) bits.push('RSS ' + pfMB(rss));
+    else if (!rss && proc && proc.description) bits.push(proc.description);
     pfSetText('pf-rss-sub', bits.length ? bits.join(' · ') : '—');
   } else {
     pfSetText('pf-rss', '—');
@@ -12495,20 +12526,20 @@ function pfApply(d, ms){
 
   if (cpu != null) pfPeak.cpu = Math.max(pfPeak.cpu == null ? -1 : pfPeak.cpu, cpu);
   if (heapMb != null) pfPeak.heap = Math.max(pfPeak.heap == null ? -1 : pfPeak.heap, heapMb);
-  if (rssMb != null) pfPeak.proc = Math.max(pfPeak.proc == null ? -1 : pfPeak.proc, rssMb);
+  if (memMb != null) pfPeak.proc = Math.max(pfPeak.proc == null ? -1 : pfPeak.proc, memMb);
   pfSetText('pf-peak', pfPeak.cpu == null ? '—' : pfPeak.cpu.toFixed(1) + '% CPU');
   pfSetText('pf-peak-sub', '堆 ' + (pfPeak.heap == null ? '—' : pfPeak.heap.toFixed(1) + ' MB') +
     ' · 进程 ' + (pfPeak.proc == null ? '—' : pfPeak.proc.toFixed(1) + ' MB'));
 
   pfPush(pfHist.cpu, cpu);
   pfPush(pfHist.heap, heapMb);
-  pfPush(pfHist.proc, rssMb);
+  pfPush(pfHist.proc, memMb);
   pfRenderCharts();
-  pfRenderProc(d, proc);
+  pfRenderProc(d, proc, pstat, memVal);
 
   pfSetText('pf-cpu-last', cpu == null ? '' : ('当前 ' + cpu.toFixed(1) + '%'));
   pfSetText('pf-mem-last', (heapMb == null ? '' : '堆 ' + heapMb.toFixed(1) + ' MB') +
-    (rssMb == null ? '' : ' · 进程 ' + rssMb.toFixed(1) + ' MB'));
+    (memMb == null ? '' : ' · 进程 ' + memMb.toFixed(1) + ' MB'));
 
   var info = [];
   if (d.vm && d.vm.os) info.push(d.vm.os);
@@ -12516,19 +12547,48 @@ function pfApply(d, ms){
   pfStat('已更新 ' + new Date(d.ts || Date.now()).toLocaleTimeString() + ' · 采集 ' + Math.round(ms) + ' ms' +
     (info.length ? ' · ' + info.join(' · ') : ''));
 }
-function pfRenderProc(d, proc){
+function pfRenderProc(d, proc, pstat, memVal){
   var el = document.getElementById('pf-proc');
   var stat = document.getElementById('pf-proc-stat');
   if (!el) return;
+  var pss = (pstat && typeof pstat.pss === 'number' && pstat.pss > 0) ? pstat.pss : null;
+  var items = (pstat && pstat.pssItems && typeof pstat.pssItems === 'object') ? pstat.pssItems : null;
+  // 标题标明这部分统计的口径，避免与上方进程内存卡片（PSS/footprint）混读。
+  pfSetText('pf-proc-k', pss ? '进程内存构成（PSS）' : '进程内存构成（RSS）');
+  // Android/OHOS：按官方分类展示 PSS 构成（各行之和 = PSS 总量）。
+  if (pss) {
+    var tool = (pstat.platform === 'ohos') ? 'DevEco' : (pstat.platform === 'android' ? 'Android Studio' : '');
+    if (stat) stat.textContent = '总 PSS ' + pfMB(pss) + (tool ? '（' + tool + ' 口径）' : '');
+    var keys = items ? Object.keys(items).filter(function(k){ return items[k] > 0; }) : [];
+    keys.sort(function(a, b){ return items[b] - items[a]; });
+    if (!keys.length) {
+      el.innerHTML = '<span class="muted">该设备仅能读取 PSS 总量，暂无分类</span>';
+      return;
+    }
+    var total = memVal || pss;
+    var pssRows = keys.map(function(k){
+      var pct = total > 0 ? Math.min(100, Math.max(1, Math.round(items[k] * 100 / total))) : 0;
+      return '<tr><td style="width:140px">' + esc(k) + '</td>' +
+        '<td class="muted" style="font-size:11px"></td>' +
+        '<td style="width:90px;text-align:right;white-space:nowrap">' + pfMB(items[k]) + '</td>' +
+        '<td style="width:140px"><div class="bar"><i style="width:' + pct + '%"></i></div></td></tr>';
+    });
+    el.innerHTML = '<table class="pf-memtable">' + pssRows.join('') + '</table>';
+    return;
+  }
   if (!proc) {
+    pfSetText('pf-proc-k', '进程内存构成');
     if (stat) stat.textContent = d.processError ? ('不可用：' + d.processError) : '';
-    el.innerHTML = '<span class="muted">' + (d.processError ? '该调试会话不支持 getProcessMemoryUsage' : '暂无数据') + '</span>';
+    // 有 PSS/footprint 但 VM 不给分项时，说明只能读到总量而不是“不支持进程内存”。
+    el.innerHTML = '<span class="muted">' + (memVal
+      ? '该设备仅能读取进程总内存，暂无分项'
+      : (d.processError ? '该调试会话不支持 getProcessMemoryUsage' : '暂无数据')) + '</span>';
     return;
   }
   if (stat) stat.textContent = '总 ' + pfMB(proc.rss) + (proc.name ? '（' + proc.name + '）' : '');
-  var items = proc.items || [];
-  if (!items.length) { el.innerHTML = '<span class="muted">暂无分项数据</span>'; return; }
-  var rows = items.map(function(it){
+  var list = proc.items || [];
+  if (!list.length) { el.innerHTML = '<span class="muted">暂无分项数据</span>'; return; }
+  var rows = list.map(function(it){
     var pct = proc.rss > 0 ? Math.min(100, Math.max(1, Math.round(it.size * 100 / proc.rss))) : 0;
     return '<tr><td style="width:140px">' + esc(it.name || '—') + '</td>' +
       '<td class="muted" style="font-size:11px;max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(it.description || '').replace(/"/g, '&quot;') + '">' + esc(it.description || '') + '</td>' +

@@ -62,7 +62,7 @@ GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
 | Tab 截图 | 实时截图 + 遥控/录制 | 开启「遥控」后单击截图=Tap、按住拖拽=Swipe，输入框回车=Input；操作自动记为场景步骤，可保存/载入/回放，详见下文「截图遥控与录制」 |
-| Tab 性能 | CPU/内存实时监控 | 针对当前调试会话展示 Dart 主 isolate CPU 占用率、Dart 堆/堆外内存、进程内存构成与双曲线，可暂停/清空/触发 GC，仅在页面激活时采集，详见下文「性能监控」 |
+| Tab 性能 | CPU/内存实时监控 | 针对当前调试会话展示整进程 CPU 占用率（按各平台官方工具口径）、Dart 堆/堆外内存、进程内存（PSS / footprint）构成与双曲线，可暂停/清空/触发 GC，仅在页面激活时采集，详见下文「性能监控」 |
 | Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
 | Tab 对比 | 多设备并排对比 | 同一场景在两个调试会话（如 macOS + iOS 模拟器）上并行执行，逐步骤并排状态/实际/耗时与截图，并对照两侧网络请求差异，详见下文「多设备并排对比」 |
 
@@ -404,10 +404,10 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **指标与来源**：
 
-- **CPU（整进程 · Xcode 口径，优先）**：app 端 xb_ume 注册服务扩展 `ext.xbume.processStats`，iOS/macOS 用 `getrusage(RUSAGE_SELF)`、Android/OHOS 读 `/proc/self/stat` 取进程（含 UI、光栅、IO、平台等全部线程）累计 user+sys CPU 时间，除以两次采集之间的墙钟增量——单核满载 100%，多核并行可超 100%，与 Xcode 调试导航器 CPU gauge、活动监视器口径一致；卡片副标题同时显示本次窗口与 Dart isolate 值，便于交叉验证。iOS/macOS 额外用 `proc_pid_rusage` 读 `phys_footprint`（Xcode 内存 gauge 口径），显示在「进程内存」副标题；旧版 SDK（未注册扩展）或 release 构建自动回退到下面的 isolate 采样，卡片标题会相应变化。
+- **CPU（整进程，优先）**：app 端 xb_ume 注册服务扩展 `ext.xbume.processStats`：iOS/macOS 用 `getrusage(RUSAGE_SELF)`、Android/OHOS 读 `/proc/self/stat`，取进程（含 UI、光栅、IO、平台等全部线程）累计 user+sys CPU 时间 ÷ 两次采集的墙钟增量。百分比口径随官方工具切换：iOS/macOS 按 Xcode 调试导航器（单核满载 100%，多核可超 100%，标题「Xcode 口径」）；Android 按 Android Studio CPU Profiler、OHOS 按 DevEco Profiler（以**全部核心容量合计**为 100%，标题「Android Studio 口径 / DevEco 口径」，副标题标出核数，如 8 核下单线程满载约 12.5%）。卡片副标题同时保留本次窗口与 Dart isolate 值，便于交叉验证；旧版 SDK（未注册扩展）或 release 构建自动回退到下面的 isolate 采样，标题会相应变化。
 - **CPU（Dart 主 isolate，回退）**：调用 VM service `getCpuSamples`，在近 N 秒窗口内按「忙时样本数 × 采样周期 ÷ 窗口时长」估算，Idle 样本不计入（`GC New` / `GC Old` 标签单独计入 GC 样本数）；只反映 Dart 主 isolate，不含 raster/IO 线程，适合判断业务代码是否把 UI 线程跑满。部分平台的 `flutter run` 启动引擎时没开采样器（实测 OHOS 走 `aa start` 不带引擎参数，`getCpuSamples` 报 `Profiler is disabled`），debug 构建下本页会自动执行 `setFlag('profiler', true)` 后重试（首次采集自动生效，卡片副标题短暂显示「已开启采样」）；product 构建无法运行时开启，会提示不可用。
 - **Dart 堆内存**：`getMemoryUsage` 的 `heapUsage` / `heapCapacity`，卡片副标题同时显示堆占用率与堆外内存（`externalUsage`）。
-- **进程内存**：`getProcessMemoryUsage`，展示进程总内存与按顶层分桶（Dart、Flutter、Android 等）的构成；部分平台（如 macOS）只回一个 Dart VM 分桶，表格用「其他」行补齐差额，保证分项之和等于总数；平台或旧 VM 不支持时仅隐藏该项，不影响 CPU/堆指标。iOS/macOS 副标题还会附 `footprint`（`phys_footprint`，Xcode 内存口径，绝对值与 RSS 不同，对比 Xcode 时看这一项）。
+- **进程内存（官方口径）**：Android/OHOS 取 `/proc/self/smaps` 的 PSS（共享页按进程数分摊），与 Android Studio Memory Profiler 的 Total、DevEco Memory 泳道的 PSS 同源；构成表按官方分类拆分——Android 用 `dumpsys meminfo` 的 App Summary 口径（Java / Native / Code / Stack / Graphics / Private Other / System，按私有页公式计算、System 为 PSS 扣除私有页的余量，各行之和恒等于 PSS 总量），OHOS 用 DevEco 内存类型（Native Heap / ArkTS Heap / Stack / GL·Graph / .so / .ttf / .hap / Dev / AnonPage Other / FilePage Other）。iOS/macOS 主数字取 `proc_pid_rusage` 的 `phys_footprint`（Xcode 内存 gauge 口径），RSS 放在副标题。`/proc` 受限时退回 `smaps_rollup`（只有总量），再不行回退 `getProcessMemoryUsage`（进程总内存与顶层分桶，表格用「其他」补齐差额）；GPU memtrack 显存在 app 内不可读，Android 的 Graphics 仅为 smaps 可见部分、OHOS 总量不含 GL/Graph，数值可能略低于官方工具。
 - **峰值**：本次页面会话内 CPU、堆、进程内存的最高值，点「清空」归零。
 
 **操作**：

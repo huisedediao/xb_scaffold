@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:ffi';
 import 'dart:io';
 
+import 'xb_process_stats_smaps.dart';
 import 'xb_process_stats_types.dart';
 
 typedef _GetRusageNative = Int32 Function(Int32, Pointer<Void>);
@@ -85,7 +86,14 @@ XBUmeProcessUsage? _appleUsage() {
   }
   rss ??= _currentRss();
   if (cpuNs == null && rss == null) return null;
-  return XBUmeProcessUsage(cpuNs: cpuNs, rss: rss, footprint: footprint);
+  return XBUmeProcessUsage(
+    cpuNs: cpuNs,
+    rss: rss,
+    footprint: footprint,
+    cpuCores: Platform.numberOfProcessors,
+    cpuScope: 'core',
+    platform: Platform.operatingSystem,
+  );
 }
 
 void _initApple() {
@@ -119,8 +127,11 @@ void _initApple() {
 }
 
 /// Android / OHOS / Linux：/proc/self/stat 的 utime+stime（USER_HZ 固定 100），
-/// /proc/self/statm 的常驻页数换算 RSS；无 footprint 口径。
+/// /proc/self/statm 的常驻页数换算 RSS，/proc/self/smaps 汇总 PSS 及其分类。
+/// CPU 口径按官方工具区分：Android Studio / DevEco Profiler 用「占全部核心
+/// 容量」的百分比，Linux 桌面（top）用「单核 100%」。
 XBUmeProcessUsage? _procUsage() {
+  final os = Platform.operatingSystem;
   int? cpuNs;
   try {
     final stat = File('/proc/self/stat').readAsStringSync();
@@ -146,8 +157,65 @@ XBUmeProcessUsage? _procUsage() {
     if (pages != null && pages > 0) rss = pages * 4096;
   } catch (_) {}
   rss ??= _currentRss();
-  if (cpuNs == null && rss == null) return null;
-  return XBUmeProcessUsage(cpuNs: cpuNs, rss: rss);
+  final pss = _readPss(os == 'ohos');
+  if (cpuNs == null && rss == null && pss == null) return null;
+  return XBUmeProcessUsage(
+    cpuNs: cpuNs,
+    rss: rss,
+    pss: pss?.$1,
+    pssItems: pss?.$2,
+    cpuCores: Platform.numberOfProcessors,
+    cpuScope: (os == 'android' || os == 'ohos') ? 'total' : 'core',
+    platform: os,
+  );
+}
+
+/// 读取 PSS 总量与官方分类。优先整份 smaps（分类所需）；权限受限时退回
+/// smaps_rollup（只有总量）。HarmonyOS 对 /proc 有额外限制，读不到时返回 null，
+/// 前端自动降级到 RSS。
+///
+/// 解析整份 smaps 是 O(映射数) 的字符串处理，属于主 isolate 开销，因此缓存
+/// 3 秒：PSS 变化慢，内存曲线仍然连续，CPU 百分比不受影响。
+int _pssAtMs = 0;
+int? _pssTotal;
+Map<String, int>? _pssItems;
+bool _pssMissing = false;
+
+(int, Map<String, int>?)? _readPss(bool ohos) {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  if (now - _pssAtMs < 3000) {
+    if (_pssTotal != null) return (_pssTotal!, _pssItems);
+    if (_pssMissing) return null;
+  }
+  _pssAtMs = now;
+  _pssTotal = null;
+  _pssItems = null;
+  _pssMissing = false;
+  try {
+    final entries = parseSmapsEntries(File('/proc/self/smaps').readAsStringSync());
+    final breakdown =
+        ohos ? ohosPssBreakdown(entries) : androidPssBreakdown(entries);
+    if (breakdown != null && breakdown.total > 0) {
+      _pssTotal = breakdown.total;
+      _pssItems = breakdown.items;
+      return (breakdown.total, breakdown.items);
+    }
+  } catch (_) {}
+  try {
+    final text = File('/proc/self/smaps_rollup').readAsStringSync();
+    for (final line in text.split('\n')) {
+      // smaps_rollup 的字段行在不同内核上可能缩进，也可能顶格。
+      final field = line.trimLeft();
+      if (!field.startsWith('Pss:')) continue;
+      final kb = int.tryParse(field.substring(4).trim().split(RegExp(r'\s+')).first);
+      if (kb != null && kb > 0) {
+        _pssTotal = kb * 1024;
+        return (_pssTotal!, null);
+      }
+    }
+  } catch (_) {}
+  _pssMissing = true;
+  return null;
 }
 
 int? _currentRss() {

@@ -23,6 +23,10 @@ void main() {
     expect(b.cpuNs!, greaterThan(cpu0!));
     // macOS 用 proc_pid_rusage 取 footprint；Linux 无此口径，允许为空。
     if (a.footprint != null) expect(b.footprint, greaterThan(0));
+    // 桌面平台按 Xcode/top 口径（单核 100%），且有核数可供换算。
+    expect(a.cpuScope, 'core');
+    expect(a.cpuCores, greaterThan(0));
+    expect(a.platform, isNotEmpty);
   });
 
   test('XBUmeProcessStats.sample 第二次调用给出 cpuPercent', () {
@@ -39,5 +43,7 @@ void main() {
     expect(s['cpuPercent'], isA<num>());
     expect((s['cpuPercent'] as num) >= 0, isTrue);
     expect((s['windowMs'] as num) > 0, isTrue);
+    expect(s['cpuScope'], anyOf('core', 'total'));
+    expect(s['platform'], isNotEmpty);
   });
 }
