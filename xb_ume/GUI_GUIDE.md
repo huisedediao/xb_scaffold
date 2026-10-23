@@ -62,6 +62,7 @@ GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 
 | Tab Network | 网络请求查看 | 查看选中会话 app 内 xb_ume Network 模块捕获的请求（与手机端面板同源），支持过滤/详情/复制 cURL/重发/清空，详见下文「Network」 |
 | Tab Storage | shared_preferences 读写 | 读写 app 的 shared_preferences 存储文件（Android shared_prefs XML / 鸿蒙 preferences / iOS plist），key/值可编辑、删除、新增，写回手机，详见下文「Storage」 |
 | Tab 截图 | 实时截图 + 遥控/录制 | 开启「遥控」后单击截图=Tap、按住拖拽=Swipe，输入框回车=Input；操作自动记为场景步骤，可保存/载入/回放，详见下文「截图遥控与录制」 |
+| Tab 性能 | CPU/内存实时监控 | 针对当前调试会话展示 Dart 主 isolate CPU 占用率、Dart 堆/堆外内存、进程内存构成与双曲线，可暂停/清空/触发 GC，仅在页面激活时采集，详见下文「性能监控」 |
 | Tab 自动化 | 场景自动化回归 | JSON 场景（tap/input/swipe/断言…）在选中会话上一键重放，逐步报告 + 失败截图；另支持 AI 驱动（自然语言目标→截图→AI 决策→执行循环，详见下文「自动化路径」） |
 | Tab 对比 | 多设备并排对比 | 同一场景在两个调试会话（如 macOS + iOS 模拟器）上并行执行，逐步骤并排状态/实际/耗时与截图，并对照两侧网络请求差异，详见下文「多设备并排对比」 |
 
@@ -397,7 +398,27 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：遥控端点 `POST /api/remote/op` 只放行 `tap/swipe/input`（不允许 eval/navigate 等通用步骤），单次输入上限 5000 字；它不占用场景执行状态，回放仍由 `/api/auto/run` 串行执行。input 文本会按原文写入场景 JSON，含密码等敏感信息时请注意。macOS 桌面 app 被浏览器完全遮挡时系统可能冻结帧调度，截图会停在最后一帧；录制/回放时把 app 窗口露出来（左右分屏即可）。示例 app 首页的「Login Demo」可用于验收：录制「点 Login Demo → 点账号 → 输入 → 点密码 → 输入 → 点登录」，保存后回放应得到「登录成功：<账号>」。
 
-## 十三、自动化路径（Tab「自动化」）
+## 十三、性能监控（Tab「性能」）
+
+**前提**：页头选中 VM 会话；仅 debug 模式可用。页面只监控**当前选中会话**，切换会话会自动清空曲线并从新会话重新采集；离开本页或点「暂停」停止采集，避免持续占用调试通道。
+
+**指标与来源**：
+
+- **CPU（Dart 主 isolate）**：调用 VM service `getCpuSamples`，在近 N 秒窗口内按「忙时样本数 × 采样周期 ÷ 窗口时长」估算，Idle 样本不计入（`GC New` / `GC Old` 标签单独计入 GC 样本数）；只反映 Dart 主 isolate，不含 raster/IO 线程，适合判断业务代码是否把 UI 线程跑满。
+- **Dart 堆内存**：`getMemoryUsage` 的 `heapUsage` / `heapCapacity`，卡片副标题同时显示堆占用率与堆外内存（`externalUsage`）。
+- **进程内存**：`getProcessMemoryUsage`，展示进程总内存与按顶层分桶（Dart、Flutter、Android 等）的构成；部分平台（如 macOS）只回一个 Dart VM 分桶，表格用「其他」行补齐差额，保证分项之和等于总数；平台或旧 VM 不支持时仅隐藏该项，不影响 CPU/堆指标。
+- **峰值**：本次页面会话内 CPU、堆、进程内存的最高值，点「清空」归零。
+
+**操作**：
+
+1. 「每 1/2/5 秒」控制采集间隔（采样窗口取 `min(间隔, 2 秒)`，限制 `getCpuSamples` 单次返回的样本量）；
+2. 「刷新」立即采集一次（暂停状态下也可用）；「暂停/继续」控制自动采集；
+3. 「清空」只清空曲线与峰值，不修改 app；
+4. 「触发 GC」复用 `_collectAllGarbage` 触发 app 主 isolate 全量 GC，随后立即重新采集，可用于观察 GC 后堆回落。
+
+**说明**：CPU 百分比是采样估算值，首次进入或窗口内样本不足时可能偏低；设备侧调试通道繁忙时采集耗时会变长，状态栏会显示本次采集耗时。曲线最多保留 90 个采样点，按采集顺序滚动。
+
+## 十四、自动化路径（Tab「自动化」）
 
 **前提**：页头选中 VM 会话；仅 debug 模式可用。场景存电脑端 `~/.xb_ume_ide/scenarios/*.json`（与 app 零侵入，全部通过 VM service eval 驱动）。
 
@@ -445,7 +466,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **说明**：AI 只能返回白名单内的步骤类型（tap/swipe/input/wait/back/assertVisible/assertInstance/assertText/assertRequest/assertLog/eval，eval 提示慎用）；接口请求失败/超时/回复无法解析为 JSON/未给出有效步骤时自动重试（每轮最多重试 3 次，退避 2s/4s/6s，轮卡片显示重试次数），重试期间仍可手动停止；重试耗尽才终止任务并显示原因；AI 接口的可达性取决于你本机网络（内网 网关或公网 API 均可）。
 
-## 十四、多设备并排对比（Tab「对比」）
+## 十五、多设备并排对比（Tab「对比」）
 
 **用途**：把同一个场景 JSON 在两台设备（两个调试会话）上并行执行，逐步并排展示 状态 / 期望 vs 实际 / 耗时 / 截图，并对运行窗口内的网络请求做两侧差异对照——用来验证「同一功能在不同平台（Android / iOS / macOS / 鸿蒙）表现是否一致」。
 
@@ -464,7 +485,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **产物与限制**：截图落在 `~/.xb_ume_ide/scenarios/artifacts/cmp-<时间戳>-{a,b}-step<N>.png`，与「自动化」共用 artifact 下载接口；同一时间只允许一个场景或对比任务在跑（已有任务时返回 409）；两侧会话互不干扰（各自独立的步骤结果与错误）；鸿蒙 Flutter 会话不支持 eval 类步骤。
 
-## 十五、异常（Tab「异常」）
+## 十六、异常（Tab「异常」）
 
 **实时捕获调试会话的异常，App 零接入**：debug 模式下 Flutter 框架自动把异常经 VM service Extension 流上报（`Flutter.Error` 结构化事件，无需 app 做任何事）；GUI 同时解析会话输出流中的未捕获异常块（引擎 `Unhandled Exception:` 与 xb_scaffold `XBErrorHandler catch error:` 两种格式）。10 秒窗口内连续相同的异常自动合并计数（×N）。
 
@@ -482,7 +503,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 
 **注意（DDS 死锁防护）**：GUI 退出时会主动关闭各会话的流订阅连接（SIGTERM/Ctrl-C 均已处理）——持有流订阅的连接被硬切断（如 `kill -9`、进程崩溃）会让该会话的 DDS 死锁，此后对所有工具（包括 DevTools）无响应，只能重启 `flutter run` 会话。
 
-## 十六、常见问题
+## 十七、常见问题
 
 | 现象 | 处理 |
 |---|---|
@@ -497,7 +518,7 @@ VM→设备的归属判定（仅「只选设备」时用于筛选 VM 输出）�
 | Network/Storage/路由栈等 Tab 一直转圈或提示「VM service 响应超时」 | 会话已断开（app 退出或 `flutter run` 停止）；重新选择页头右侧的有效会话即可。另外：用 nohup/后台脚本方式启动 `flutter run` 可能使本机 DDS 无响应（stdin EOF），从真实终端或 IDE 启动调试即可恢复 |
 | 重启/被杀 GUI 后某个 `flutter run` 会话对所有客户端无响应（DevTools 也连不上） | GUI 非优雅退出（`kill -9` 或崩溃）时持有流订阅的连接被硬切断，可能触发 DDS 死锁；重启该 `flutter run` 会话即可恢复。新版 GUI 退出时已主动关闭连接规避（`kill -9` 仍无法避免） |
 
-## 十七、命令行执行场景（CLI / CI）
+## 十八、命令行执行场景（CLI / CI）
 
 同一份场景 JSON 可以不开 GUI、不开浏览器，直接用命令行执行并产出报告，适合 CI 回归：
 
@@ -535,7 +556,7 @@ xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --repor
 - iOS 等 `_flutter.screenshot` 不可用的平台自动退回 inspector 截图，每步约多 0.5~1s；
 - 数据目录可用 `XB_UME_HOME` 覆盖（默认 `~/.xb_ume_ide`），CI 里建议显式指定 `--report` 到构建工作区。
 
-## 十八、卸载
+## 十九、卸载
 
 ```bash
 dart run xb_ume:ide --uninstall
@@ -543,7 +564,7 @@ dart run xb_ume:ide --uninstall
 
 会停止守护进程、删除整个 `~/.xb_ume_ide/` 目录（含 GUI 脚本、启动器与配置）。
 
-## 十九、相关文档
+## 二十、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 包总体说明：[README.md](README.md)

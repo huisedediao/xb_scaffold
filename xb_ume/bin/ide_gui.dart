@@ -2089,6 +2089,83 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
+    // ── 性能指标：Dart 堆/外部内存、进程内存构成、isolate CPU 采样 ──
+    if (path == '/api/perf' && req.method == 'GET') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (uri.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      // 采样窗口：前端按刷新间隔传入，限制在 0.5–5 秒，避免一次拉回过多样本。
+      final windowMs =
+          (int.tryParse(req.uri.queryParameters['windowMs'] ?? '') ?? 2000)
+              .clamp(500, 5000)
+              .toInt();
+      final windowUs = windowMs * 1000;
+      final rpc = _SandboxRpc(uri);
+      try {
+        final iso = await rpc.isolateId();
+        final vm = rpc.vm ?? const <String, Object?>{};
+        final isolates = vm['isolates'];
+        final payload = <String, Object?>{
+          'ok': true,
+          'ts': DateTime.now().millisecondsSinceEpoch,
+          'windowMs': windowMs,
+          'vm': <String, Object?>{
+            'name': vm['name']?.toString() ?? '',
+            'os': vm['operatingSystem']?.toString() ?? '',
+            'version': vm['version']?.toString() ?? '',
+            'isolates': isolates is List ? isolates.length : 0,
+          },
+        };
+        // Dart 堆内存（heapUsage/heapCapacity）与堆外内存。
+        try {
+          final mem = await rpc.rawRpc('getMemoryUsage', {'isolateId': iso});
+          payload['heap'] = <String, Object?>{
+            'used': (mem['heapUsage'] as num?)?.toInt() ?? 0,
+            'capacity': (mem['heapCapacity'] as num?)?.toInt() ?? 0,
+            'external': (mem['externalUsage'] as num?)?.toInt() ?? 0,
+          };
+        } catch (e) {
+          payload['heapError'] = e.toString();
+        }
+        // 进程内存构成（部分平台/VM 版本不支持，失败不影响其余指标）。
+        try {
+          final proc = await rpc.rawRpc('getProcessMemoryUsage');
+          payload['process'] = perfProcessMemory(proc);
+        } catch (e) {
+          payload['processError'] = e.toString();
+        }
+        // CPU：取 VM 单调时钟窗口内的采样数 × 采样周期作为忙时占比。
+        try {
+          final now = await rpc.rawRpc('getVMTimelineMicros');
+          final nowUs = (now['timestamp'] as num?)?.toInt() ?? 0;
+          if (nowUs <= 0) throw '无法读取 VM 单调时钟';
+          final samples = await rpc.rawRpc('getCpuSamples', {
+            'isolateId': iso,
+            'timeOriginMicros': nowUs - windowUs,
+            'timeExtentMicros': windowUs,
+          });
+          payload['cpu'] = perfCpuFromSamples(samples);
+        } catch (e) {
+          payload['cpuError'] = e.toString();
+        }
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(payload));
+        await req.response.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(
+          jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
+        );
+        await req.response.close();
+      } finally {
+        await rpc.close();
+      }
+      return;
+    }
     // ── 实时截图：_flutter.screenshot 返回 base64 PNG（DDS 转发，debug 可用）──
     if (path == '/api/screenshot') {
       final uri = req.uri.queryParameters['uri'] ?? '';
@@ -7846,6 +7923,11 @@ class _SandboxRpc {
   final Map<String, Completer<Object?>> _pending = {};
   String? _isolateId;
 
+  /// 最近一次 getVM 的结果（`_resolveTarget` 时缓存，供性能面板读 VM 信息）。
+  Map<String, Object?>? _vm;
+
+  Map<String, Object?>? get vm => _vm;
+
   /// 已解析的库 id 缓存（uri → Library id，每连接有效）。
   final Map<String, String> _libIds = {};
 
@@ -7944,6 +8026,7 @@ class _SandboxRpc {
     await _ensureConnected();
     if (_isolateId != null) return;
     final vm = await _rpc('getVM');
+    _vm = vm;
     final isolates = vm['isolates'];
     final isolateId = isolates is List && isolates.isNotEmpty
         ? (isolates.first as Map)['id']?.toString()
@@ -8066,6 +8149,90 @@ class _SandboxRpc {
     }
     _socket = null;
   }
+}
+
+/// 解析 `getCpuSamples` 响应，估算 isolate 在采样窗口内的 CPU 占用率。
+/// 每个样本代表一个采样周期（默认 1ms）；Idle 样本表示线程在等消息，
+/// 不计入忙时，其余（Dart/GC/Native/VM）均视为线程实际执行。
+/// GC 标签在 VM 侧分为 `GC New` / `GC Old` / `GC Idle`，按前缀匹配。
+Map<String, Object?> perfCpuFromSamples(Map<String, Object?> samples) {
+  final rawPeriod = (samples['samplePeriod'] as num?)?.toInt() ?? 0;
+  final periodUs = rawPeriod > 0 ? rawPeriod : 0;
+  final extentUs = (samples['timeExtentMicros'] as num?)?.toInt() ?? 0;
+  final list = samples['samples'];
+  var total = 0;
+  var idle = 0;
+  var gc = 0;
+  if (list is List) {
+    for (final item in list) {
+      if (item is! Map) continue;
+      total++;
+      final tag = (item['vmTag'] ?? '').toString().toLowerCase();
+      if (tag == 'idle') {
+        idle++;
+      } else if (tag.startsWith('gc')) {
+        gc++;
+      }
+    }
+  }
+  final busy = total - idle;
+  final pct = (extentUs <= 0 || periodUs <= 0)
+      ? 0.0
+      : busy * periodUs * 100.0 / extentUs;
+  return <String, Object?>{
+    'percent': double.parse(pct.clamp(0.0, 100.0).toStringAsFixed(1)),
+    'samples': total,
+    'busy': busy,
+    'idle': idle,
+    'gc': gc,
+    'periodUs': periodUs,
+    'extentUs': extentUs,
+  };
+}
+
+/// 把 `getProcessMemoryUsage` 的 root 树压平成前端可直接渲染的顶层分桶。
+/// size 为 retain 后的字节数；root.size 即进程总内存，个别平台可能为 -1。
+Map<String, Object?> perfProcessMemory(Map<String, Object?> result) {
+  final root = result['root'];
+  if (root is! Map) return <String, Object?>{'error': '进程内存不可用'};
+  int sizeOf(Object? item) =>
+      item is Map ? ((item['size'] as num?)?.toInt() ?? 0) : 0;
+  final total = sizeOf(root);
+  final items = <Map<String, Object?>>[];
+  final children = root['children'];
+  if (children is List) {
+    for (final child in children) {
+      if (child is! Map) continue;
+      final size = sizeOf(child);
+      if (size <= 0) continue;
+      items.add(<String, Object?>{
+        'name': child['name']?.toString() ?? '',
+        'description': child['description']?.toString() ?? '',
+        'size': size,
+      });
+    }
+  }
+  items.sort((a, b) => (b['size'] as int).compareTo(a['size'] as int));
+  final shown = items.take(12).toList();
+  if (total > 0) {
+    // 部分平台只回一个「Dart VM」分桶，行合计会明显小于总常驻内存；
+    // 补一行差额，避免表格与总数看起来对不上（例如 macOS 只细分 Dart VM）。
+    final listed = shown.fold<int>(0, (sum, e) => sum + (e['size'] as int));
+    final rest = total - listed;
+    if (rest > 0) {
+      shown.add(<String, Object?>{
+        'name': '其他',
+        'description': '总常驻内存中未细分到上述子项的部分',
+        'size': rest,
+      });
+    }
+  }
+  return <String, Object?>{
+    'rss': total > 0 ? total : null,
+    'name': root['name']?.toString() ?? '',
+    'description': root['description']?.toString() ?? '',
+    'items': shown,
+  };
 }
 
 /// 生成单个 tar 文件条目的 512 字节 USTAR header；路径超长返回 null。
@@ -9604,6 +9771,25 @@ const String guiHtml = r'''
   .shstatus { margin-top:8px; font-size:12px; color:#8aa0b4; white-space:pre-wrap; }
   .shstatus .err { color:#ef5350; }
   .shstatus .ok { color:#4caf50; }
+  /* 性能 Tab：指标卡片 + 双曲线 + 进程内存构成 */
+  .pf-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+  .pf-card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; }
+  .pf-card .k { color:var(--dim); font-size:12px; }
+  .pf-card .v { font-size:22px; font-weight:600; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .pf-card .s { color:var(--dim); font-size:11px; margin-top:2px; line-height:1.4; }
+  .pf-charts { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:900px) { .pf-charts { grid-template-columns:1fr; } }
+  .pf-chart { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px 6px; }
+  .pf-chart .hd { display:flex; align-items:center; gap:12px; color:var(--dim); font-size:12px; margin-bottom:4px; flex-wrap:wrap; }
+  .pf-chart .hd b { color:var(--fg); font-size:13px; }
+  .pf-chart canvas { display:block; width:100%; height:150px; }
+  .pf-legend span { margin-left:10px; white-space:nowrap; }
+  .pf-legend i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; }
+  .pf-memtable { font-size:12px; }
+  .pf-memtable td { padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .pf-memtable tr:last-child td { border-bottom:none; }
+  .pf-memtable .bar { height:6px; background:#1d2735; border-radius:3px; overflow:hidden; }
+  .pf-memtable .bar i { display:block; height:6px; background:var(--acc); }
 </style>
 </head>
 <body>
@@ -9623,6 +9809,7 @@ const String guiHtml = r'''
     <div class="tab" data-tab="status" style="display:none">状态</div>
     <div class="tab" data-tab="instances">实例</div>
     <div class="tab" data-tab="shot">截图</div>
+    <div class="tab" data-tab="perf">性能</div>
     <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
     <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
     <div class="tab" data-tab="auto">自动化</div>
@@ -9899,6 +10086,45 @@ const String guiHtml = r'''
       </div>
     </div>
   </section>
+  <section class="page" id="page-perf">
+    <div class="row">
+      <b>实时性能</b>
+      <select id="pf-interval" onchange="pfSetInterval(this.value)" title="采集间隔；采样窗口 = min(间隔, 2 秒)">
+        <option value="1000">每 1 秒</option>
+        <option value="2000" selected>每 2 秒</option>
+        <option value="5000">每 5 秒</option>
+      </select>
+      <button class="primary" onclick="pfPoll(true)" title="立即采集一次">刷新</button>
+      <button id="pf-live-btn" onclick="pfToggleLive()">暂停</button>
+      <button onclick="pfClear()" title="清空曲线与峰值统计（不清 app 内部数据）">清空</button>
+      <button onclick="pfGc()" title="_collectAllGarbage：触发 app 主 isolate 全量 GC，然后重新采集">触发 GC</button>
+      <span id="pf-stat" class="muted">请先在页头右侧选择调试会话</span>
+    </div>
+    <div class="pf-grid" style="margin-bottom:12px">
+      <div class="pf-card"><div class="k">CPU（Dart 主 isolate）</div><div class="v" id="pf-cpu">—</div><div class="s" id="pf-cpu-sub">—</div></div>
+      <div class="pf-card"><div class="k">Dart 堆内存</div><div class="v" id="pf-heap">—</div><div class="s" id="pf-heap-sub">—</div></div>
+      <div class="pf-card"><div class="k">进程内存</div><div class="v" id="pf-rss">—</div><div class="s" id="pf-rss-sub">—</div></div>
+      <div class="pf-card"><div class="k">本次会话峰值</div><div class="v" id="pf-peak">—</div><div class="s" id="pf-peak-sub">—</div></div>
+    </div>
+    <div class="pf-charts">
+      <div class="pf-chart">
+        <div class="hd"><b>CPU 占用</b><span>近 90 个采样点</span><span id="pf-cpu-last" style="margin-left:auto"></span></div>
+        <canvas id="pf-cpu-cv"></canvas>
+      </div>
+      <div class="pf-chart">
+        <div class="hd"><b>内存</b>
+          <span class="pf-legend"><span><i style="background:#00e5ff"></i>Dart 堆</span><span><i style="background:#f0b429"></i>进程内存</span></span>
+          <span id="pf-mem-last" style="margin-left:auto"></span>
+        </div>
+        <canvas id="pf-mem-cv"></canvas>
+      </div>
+    </div>
+    <div class="pf-chart" style="margin-top:12px">
+      <div class="hd"><b>进程内存构成</b><span id="pf-proc-stat"></span></div>
+      <div id="pf-proc"><span class="muted">暂无数据</span></div>
+    </div>
+    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate，不含 raster 线程）、<code>getMemoryUsage</code>（Dart 堆与堆外内存）、<code>getProcessMemoryUsage</code>（进程内存构成，部分平台可能不支持）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
+  </section>
   <section class="page" id="page-wtree">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <button class="primary" onclick="wtLoad()">刷新树 + 截图</button>
@@ -10049,6 +10275,7 @@ document.querySelectorAll('.tab').forEach(function(t){
   t.onclick = function(){
     var prevTab = document.querySelector('.tab.active');
     if (prevTab && prevTab.dataset.tab === 'timeline' && t.dataset.tab !== 'timeline') tlHide();
+    if (prevTab && prevTab.dataset.tab === 'perf' && t.dataset.tab !== 'perf') pfStop();
     document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('active'); });
     document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
     t.classList.add('active');
@@ -10063,6 +10290,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     else if (t.dataset.tab === 'status') cnScan();
     else if (t.dataset.tab === 'instances') inRefresh();
     else if (t.dataset.tab === 'shot') { shRefresh(); shScnRefresh(); shRecStat(); }
+    else if (t.dataset.tab === 'perf') pfShow();
     else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
     else if (t.dataset.tab === 'compare') cmpLoad();
     else if (t.dataset.tab === 'wtree') wtLoad();
@@ -12070,7 +12298,7 @@ function refreshDaemon(){
         }
       }
       if (vmFilter !== prevVmFilter) {
-        renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh();
+        renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); pfOnVmChange();
       }
       sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
@@ -12085,6 +12313,266 @@ function setVmFilter(v){
   vmFilter = v; saveVmFp(fpBySource[v] || '');
   clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
   sbPath = null; dbReset(); renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); tlResub();
+  pfOnVmChange();
+}
+
+// -- 性能 Tab：当前调试会话的 CPU / 内存实时监控 --------------------------
+var pfTimer = null, pfLive = true, pfBusy = false, pfInterval = 2000;
+var pfMaxPts = 90;
+var pfHist = { cpu: [], heap: [], proc: [] }; // 曲线数据：CPU % / Dart 堆 MB / 进程内存 MB
+var pfPeak = { cpu: null, heap: null, proc: null };
+function pfActive(){ var t = document.querySelector('.tab.active'); return !!t && t.dataset.tab === 'perf'; }
+function pfUri(){ return vmFilter ? (vmUriBySource[vmFilter] || '') : ''; }
+function pfSetText(id, txt){ var el = document.getElementById(id); if (el) el.textContent = txt; }
+function pfStat(msg, bad){ var el = document.getElementById('pf-stat'); if (!el) return; el.textContent = msg || ''; el.className = bad ? 'bad' : 'muted'; }
+function pfMB(n){
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function pfSetInterval(v){
+  pfInterval = parseInt(v, 10) || 2000;
+  if (pfActive() && pfLive) { pfStart(); pfPoll(true); }
+}
+function pfBtn(){ var b = document.getElementById('pf-live-btn'); if (b) b.textContent = pfLive ? '暂停' : '继续'; }
+function pfStart(){ pfStop(); if (pfLive) pfTimer = setInterval(function(){ pfPoll(); }, pfInterval); }
+function pfStop(){ if (pfTimer) { clearInterval(pfTimer); pfTimer = null; } }
+function pfToggleLive(){
+  pfLive = !pfLive; pfBtn();
+  if (pfLive) { pfStart(); pfPoll(true); } else { pfStop(); pfStat('已暂停采集'); }
+}
+function pfShow(){
+  pfBtn();
+  pfRenderCharts();
+  if (!pfUri()) { pfStop(); pfStat('请先在页头右侧选择调试会话'); return; }
+  if (!pfLive) { pfStat('已暂停采集'); return; }
+  pfStart();
+  pfPoll(true);
+}
+function pfClear(){
+  pfHist = { cpu: [], heap: [], proc: [] };
+  pfPeak = { cpu: null, heap: null, proc: null };
+  pfRenderCharts();
+  ['pf-cpu','pf-cpu-sub','pf-heap','pf-heap-sub','pf-rss','pf-rss-sub','pf-peak','pf-peak-sub','pf-cpu-last','pf-mem-last'].forEach(function(id){ pfSetText(id, '—'); });
+  pfSetText('pf-cpu-last', ''); pfSetText('pf-mem-last', '');
+  pfSetText('pf-proc-stat', '');
+  var proc = document.getElementById('pf-proc');
+  if (proc) proc.innerHTML = '<span class="muted">暂无数据</span>';
+  var cpu = document.getElementById('pf-cpu'); if (cpu) cpu.style.color = '';
+}
+function pfReset(){ pfStop(); pfClear(); pfStat('请先在页头右侧选择调试会话'); }
+function pfOnVmChange(){ pfReset(); if (pfActive()) pfShow(); }
+function pfPoll(force){
+  if (!pfActive() || pfBusy || (!pfLive && !force)) return;
+  if (document.hidden) return;
+  var uri = pfUri();
+  if (!uri) { pfStop(); pfStat('请先在页头右侧选择调试会话'); return; }
+  pfBusy = true;
+  var t0 = Date.now();
+  // 采样窗口不超过 2 秒：getCpuSamples 会返回窗口内全部样本（含栈），
+  // 窗口过大会让响应体积和 JSON 解析耗时暴涨。
+  var win = Math.min(pfInterval, 2000);
+  fetch('/api/perf?uri=' + encodeURIComponent(uri) + '&windowMs=' + win)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      pfBusy = false;
+      if (!d || !d.ok) { pfStat('采集失败：' + ((d && d.error) || '未知错误'), true); return; }
+      pfApply(d, Date.now() - t0);
+    })
+    .catch(function(e){ pfBusy = false; pfStat('采集失败：' + e, true); });
+}
+function pfPush(arr, v){
+  arr.push(v == null ? null : v);
+  while (arr.length > pfMaxPts) arr.shift();
+}
+function pfApply(d, ms){
+  var cpu = (d.cpu && typeof d.cpu.percent === 'number') ? d.cpu.percent : null;
+  var heap = d.heap || null;
+  var proc = (d.process && d.process.rss) ? d.process : null;
+  var rss = proc ? proc.rss : null;
+  var heapMb = heap ? heap.used / 1048576 : null;
+  var rssMb = rss ? rss / 1048576 : null;
+
+  var cpuEl = document.getElementById('pf-cpu');
+  if (cpuEl) {
+    cpuEl.textContent = cpu == null ? '—' : cpu.toFixed(1) + '%';
+    cpuEl.style.color = cpu == null ? '' : (cpu >= 80 ? '#ef5350' : (cpu >= 50 ? '#f5c451' : '#46d68c'));
+  }
+  if (d.cpu) {
+    pfSetText('pf-cpu-sub', '采样 ' + d.cpu.busy + '/' + d.cpu.samples + ' · GC 样本 ' + d.cpu.gc +
+      ' · 窗口 ' + Math.round((d.cpu.extentUs || 0) / 1000) + ' ms');
+  } else {
+    pfSetText('pf-cpu-sub', d.cpuError ? ('不可用：' + d.cpuError) : '—');
+  }
+  if (heap) {
+    pfSetText('pf-heap', pfMB(heap.used));
+    var hp = heap.capacity > 0 ? Math.min(100, Math.max(0, heap.used * 100 / heap.capacity)) : 0;
+    pfSetText('pf-heap-sub', '容量 ' + pfMB(heap.capacity) + ' · 占用 ' + hp.toFixed(0) + '% · 堆外 ' + pfMB(heap.external));
+  } else {
+    pfSetText('pf-heap', '—');
+    pfSetText('pf-heap-sub', d.heapError ? ('不可用：' + d.heapError) : '—');
+  }
+  if (rss) {
+    pfSetText('pf-rss', pfMB(rss));
+    // 首个采样时进程常驻内存可能尚未涨起来（会小于 Dart 堆），占比按 0–100% 截断。
+    var share = heap && rss > 0 ? Math.min(100, Math.max(0, heap.used * 100 / rss)) : null;
+    pfSetText('pf-rss-sub', share == null ? (proc.description || '') : ('Dart 堆占进程 ' + share.toFixed(0) + '%'));
+  } else {
+    pfSetText('pf-rss', '—');
+    pfSetText('pf-rss-sub', d.processError ? ('不可用：' + d.processError) : '该平台不支持进程内存');
+  }
+
+  if (cpu != null) pfPeak.cpu = Math.max(pfPeak.cpu == null ? -1 : pfPeak.cpu, cpu);
+  if (heapMb != null) pfPeak.heap = Math.max(pfPeak.heap == null ? -1 : pfPeak.heap, heapMb);
+  if (rssMb != null) pfPeak.proc = Math.max(pfPeak.proc == null ? -1 : pfPeak.proc, rssMb);
+  pfSetText('pf-peak', pfPeak.cpu == null ? '—' : pfPeak.cpu.toFixed(1) + '% CPU');
+  pfSetText('pf-peak-sub', '堆 ' + (pfPeak.heap == null ? '—' : pfPeak.heap.toFixed(1) + ' MB') +
+    ' · 进程 ' + (pfPeak.proc == null ? '—' : pfPeak.proc.toFixed(1) + ' MB'));
+
+  pfPush(pfHist.cpu, cpu);
+  pfPush(pfHist.heap, heapMb);
+  pfPush(pfHist.proc, rssMb);
+  pfRenderCharts();
+  pfRenderProc(d, proc);
+
+  pfSetText('pf-cpu-last', cpu == null ? '' : ('当前 ' + cpu.toFixed(1) + '%'));
+  pfSetText('pf-mem-last', (heapMb == null ? '' : '堆 ' + heapMb.toFixed(1) + ' MB') +
+    (rssMb == null ? '' : ' · 进程 ' + rssMb.toFixed(1) + ' MB'));
+
+  var info = [];
+  if (d.vm && d.vm.os) info.push(d.vm.os);
+  if (d.vm && d.vm.isolates > 1) info.push(d.vm.isolates + ' isolates');
+  pfStat('已更新 ' + new Date(d.ts || Date.now()).toLocaleTimeString() + ' · 采集 ' + Math.round(ms) + ' ms' +
+    (info.length ? ' · ' + info.join(' · ') : ''));
+}
+function pfRenderProc(d, proc){
+  var el = document.getElementById('pf-proc');
+  var stat = document.getElementById('pf-proc-stat');
+  if (!el) return;
+  if (!proc) {
+    if (stat) stat.textContent = d.processError ? ('不可用：' + d.processError) : '';
+    el.innerHTML = '<span class="muted">' + (d.processError ? '该调试会话不支持 getProcessMemoryUsage' : '暂无数据') + '</span>';
+    return;
+  }
+  if (stat) stat.textContent = '总 ' + pfMB(proc.rss) + (proc.name ? '（' + proc.name + '）' : '');
+  var items = proc.items || [];
+  if (!items.length) { el.innerHTML = '<span class="muted">暂无分项数据</span>'; return; }
+  var rows = items.map(function(it){
+    var pct = proc.rss > 0 ? Math.min(100, Math.max(1, Math.round(it.size * 100 / proc.rss))) : 0;
+    return '<tr><td style="width:140px">' + esc(it.name || '—') + '</td>' +
+      '<td class="muted" style="font-size:11px;max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(it.description || '').replace(/"/g, '&quot;') + '">' + esc(it.description || '') + '</td>' +
+      '<td style="width:90px;text-align:right;white-space:nowrap">' + pfMB(it.size) + '</td>' +
+      '<td style="width:140px"><div class="bar"><i style="width:' + pct + '%"></i></div></td></tr>';
+  });
+  el.innerHTML = '<table class="pf-memtable">' + rows.join('') + '</table>';
+}
+function pfCv(id){
+  var cv = document.getElementById(id);
+  if (!cv) return null;
+  var dpr = window.devicePixelRatio || 1;
+  var w = cv.clientWidth || 0;
+  var h = cv.clientHeight || 150;
+  if (!w) return null;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+  }
+  var ctx = cv.getContext('2d');
+  if (!ctx) return null;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx: ctx, w: w, h: h };
+}
+function pfNice(v){
+  if (!(v > 0)) return 1;
+  var p = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+  var n = v / p;
+  var m = n <= 1 ? 1 : (n <= 2 ? 2 : (n <= 5 ? 5 : 10));
+  return m * p;
+}
+function pfAxis(v){
+  if (v === 0) return '0';
+  if (v >= 10) return String(Math.round(v));
+  if (v >= 1) return String(Math.round(v * 10) / 10);
+  return String(Math.round(v * 100) / 100);
+}
+function pfRenderCharts(){
+  pfChart('pf-cpu-cv', [{ v: pfHist.cpu, color: '#00e5ff', fill: 'rgba(0,229,255,.12)' }], 100, true);
+  pfChart('pf-mem-cv', [
+    { v: pfHist.heap, color: '#00e5ff', fill: 'rgba(0,229,255,.10)' },
+    { v: pfHist.proc, color: '#f0b429', fill: 'rgba(240,180,41,.08)' }
+  ], 0, false);
+}
+function pfChart(id, series, maxY, fixedMax){
+  var c = pfCv(id);
+  if (!c) return;
+  var ctx = c.ctx, w = c.w, h = c.h;
+  var L = 36, R = 6, T = 6, B = 14;
+  var iw = Math.max(10, w - L - R), ih = Math.max(10, h - T - B);
+  var n = pfMaxPts;
+  if (!fixedMax) {
+    var m = 0;
+    series.forEach(function(s){ s.v.forEach(function(v){ if (v != null && v > m) m = v; }); });
+    maxY = pfNice(m > 0 ? m * 1.12 : 1);
+  }
+  ctx.strokeStyle = '#223041';
+  ctx.fillStyle = '#8aa0b4';
+  ctx.lineWidth = 1;
+  ctx.font = '10px -apple-system, "Segoe UI", sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (var g = 0; g <= 4; g++) {
+    var y = T + ih - ih * g / 4;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + iw, y); ctx.stroke();
+    ctx.fillText(pfAxis(maxY * g / 4), L - 5, y);
+  }
+  series.forEach(function(s){
+    var start = n - s.v.length;
+    var pts = [];
+    for (var i = 0; i < s.v.length; i++) {
+      var v = s.v[i];
+      if (v == null) { pts.push(null); continue; }
+      pts.push({ x: L + iw * (start + i) / (n - 1), y: T + ih - ih * Math.min(v, maxY) / maxY });
+    }
+    if (s.fill) {
+      var seg = [];
+      var flush = function(){
+        if (seg.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(seg[0].x, T + ih);
+          seg.forEach(function(p){ ctx.lineTo(p.x, p.y); });
+          ctx.lineTo(seg[seg.length - 1].x, T + ih);
+          ctx.closePath();
+          ctx.fillStyle = s.fill;
+          ctx.fill();
+        }
+        seg = [];
+      };
+      pts.forEach(function(p){ if (p == null) flush(); else seg.push(p); });
+      flush();
+    }
+    ctx.beginPath();
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.5;
+    var started = false;
+    pts.forEach(function(p){
+      if (p == null) { started = false; return; }
+      if (!started) { ctx.moveTo(p.x, p.y); started = true; } else { ctx.lineTo(p.x, p.y); }
+    });
+    ctx.stroke();
+  });
+}
+function pfGc(){
+  var uri = pfUri();
+  if (!uri) { pfStat('请先在页头右侧选择调试会话', true); return; }
+  pfStat('触发 GC 中…');
+  fetch('/api/runtime/op?uri=' + encodeURIComponent(uri) + '&op=gc', { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d && d.ok) { pfStat('GC 已触发 ✓'); pfPoll(true); }
+      else { pfStat('GC 失败：' + ((d && d.error) || '未知错误'), true); }
+    })
+    .catch(function(e){ pfStat('GC 失败：' + e, true); });
 }
 
 // -- 路由栈 Tab -------------------------------------------------------------
