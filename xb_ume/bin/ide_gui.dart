@@ -1122,7 +1122,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                 .where((u) => u.startsWith('file:///'))
                 .toList())
             .cast<String>();
-        final projectRoot = _projectRootFor(fileUris);
+        final projectRoot = projectRootForLibraries(fileUris);
         if (projectRoot != null) {
           _pkgRootsFor(projectRoot);
         }
@@ -4935,7 +4935,7 @@ class _VmSession {
             .where((u) => u.startsWith('file:///'))
             .toList()
             .cast<String>();
-        final projectRoot = _projectRootFor(fileUris);
+        final projectRoot = projectRootForLibraries(fileUris);
         if (projectRoot != null) {
           _pkgRootsFor(projectRoot);
         }
@@ -5167,12 +5167,13 @@ Map<String, Object?>? parseFlutterError(Map data) {
   // 相关 widget 行内嵌 file:/// 位置（如 KeyedSubtree:file:///...dart:109:13），
   // 提取出来供「跳转」。
   if (widget != null) {
-    final m = RegExp(r'file://(/.+?):(\d+):(\d+)\s*$').firstMatch(widget);
-    if (m != null) {
-      final f = File(m.group(1)!);
+    final m = RegExp(r'(file:///.+):(\d+):(\d+)\s*$').firstMatch(widget);
+    final path = m == null ? null : fileUriToLocalPath(m.group(1)!);
+    if (path != null) {
+      final f = File(path);
       if (f.existsSync()) {
-        rec['widgetFile'] = m.group(1);
-        rec['widgetLine'] = int.parse(m.group(2)!);
+        rec['widgetFile'] = path;
+        rec['widgetLine'] = int.parse(m!.group(2)!);
       }
     }
   }
@@ -8678,12 +8679,7 @@ Future<List<String>> scanInstalledIdes() async {
     if (ide == 'androidStudio') {
       ok = _guiAndroidStudioBinaries().any((bin) => File(bin).existsSync());
     } else {
-      ok = await _guiHasCommand(ide);
-      if (!ok && Platform.isMacOS) {
-        ok = (_guiMacosVscodeAppClis[ide] ?? const <String>[]).any(
-          (p) => File(p).existsSync(),
-        );
-      }
+      ok = await _resolveGuiIdeCli(ide) != null;
     }
     if (ok) installed.add(ide);
   }
@@ -8809,6 +8805,57 @@ const Map<String, List<String>> _guiMacosVscodeAppClis = <String, List<String>>{
     '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
   ],
 };
+
+/// Windows 上未加入 PATH 时按 app 内置 CLI 兜底（与 daemon 的
+/// _vscodeLikeAppClis 同一份路径表；发行渠道多，未逐一实测）。
+Map<String, List<String>> get _guiWindowsVscodeAppClis {
+  if (!Platform.isWindows) return const <String, List<String>>{};
+  final lad = Platform.environment['LOCALAPPDATA'];
+  if (lad == null) return const <String, List<String>>{};
+  String user(String app) => '$lad\\Programs\\$app\\resources\\app\\bin';
+  String system(String app) => 'C:\\Program Files\\$app\\resources\\app\\bin';
+  return <String, List<String>>{
+    'qoder-cn': <String>[
+      '${user('Qoder CN')}\\qoder-cn.cmd',
+      '${user('Qoder')}\\qoder-cn.cmd',
+      '${system('Qoder CN')}\\qoder-cn.cmd',
+    ],
+    'qodercn': <String>[
+      '${user('Qoder CN')}\\qodercn.cmd',
+      '${user('Qoder')}\\qodercn.cmd',
+      '${system('Qoder CN')}\\qodercn.cmd',
+    ],
+    'cursor': <String>[
+      '${user('Cursor')}\\cursor.cmd',
+      '${system('Cursor')}\\cursor.cmd',
+    ],
+    'trae': <String>[
+      '${user('Trae')}\\trae.cmd',
+      '${user('Trae CN')}\\trae.cmd',
+      '${system('Trae')}\\trae.cmd',
+    ],
+    'windsurf': <String>[
+      '${user('Windsurf')}\\windsurf.cmd',
+      '${system('Windsurf')}\\windsurf.cmd',
+    ],
+    'code': <String>[
+      '$lad\\Programs\\Microsoft VS Code\\bin\\code.cmd',
+      'C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd',
+    ],
+  };
+}
+
+/// 解析 IDE 的 CLI 路径：PATH 优先，未加入 PATH 时回退 app 内置 CLI。
+Future<String?> _resolveGuiIdeCli(String ide) async {
+  if (await _guiHasCommand(ide)) return ide;
+  for (final p in <String>[
+    ...(_guiMacosVscodeAppClis[ide] ?? const <String>[]),
+    ...(_guiWindowsVscodeAppClis[ide] ?? const <String>[]),
+  ]) {
+    if (File(p).existsSync()) return p;
+  }
+  return null;
+}
 
 List<String> _guiAndroidStudioBinaries() {
   if (Platform.isMacOS) {
@@ -8938,18 +8985,8 @@ Future<String?> _guiLaunchIde(String path, int line) async {
       }
       continue;
     }
-    // vscode-like：CLI 名即 ide 名（qodercn/code/...）。
-    String? cli;
-    if (await _guiHasCommand(ide)) {
-      cli = ide;
-    } else if (Platform.isMacOS) {
-      for (final p in _guiMacosVscodeAppClis[ide] ?? const <String>[]) {
-        if (File(p).existsSync()) {
-          cli = p;
-          break;
-        }
-      }
-    }
+    // vscode-like：PATH 优先，未加 PATH 时按 app 内置 CLI 兜底。
+    final cli = await _resolveGuiIdeCli(ide);
     if (cli == null) continue;
     if (await _guiRunChecked(cli, <String>[
       ...(_guiIdeCliSubcommands[ide] ?? const <String>[]),
@@ -8976,19 +9013,55 @@ Future<String?> _guiLaunchIde(String path, int line) async {
 /// 包名 → 包根路径缓存（来自项目 .dart_tool/package_config.json）。
 final Map<String, Map<String, String>> _pkgRootsCache = <String, Map<String, String>>{};
 
-/// 从 isolate 的 file:/// 库 uri 提取 Flutter 项目根目录。
-String? _projectRootFor(List<String> fileUris) {
-  for (final uri in fileUris) {
-    const marker = '/.dart_tool/flutter_build/';
-    final idx = uri.indexOf(marker);
-    // 注意截取起点是 'file://'（7 字符），保留第三个斜杠作路径根。
-    if (idx > 0) return uri.substring('file://'.length, idx);
+/// file: URI → 本机路径；非 file URI 或非法编码返回 null。
+/// 百分号编码会解码；Windows 盘符按字符串还原（'/C:/x' → 'C:/x'），
+/// 不依赖运行平台，便于在任意系统上单测。
+String? fileUriToLocalPath(String uri) {
+  final parsed = Uri.tryParse(uri);
+  if (parsed == null || parsed.scheme != 'file') return null;
+  final host = parsed.host;
+  if (host.isNotEmpty && host != 'localhost') return null;
+  final String decoded;
+  try {
+    decoded = Uri.decodeComponent(parsed.path);
+  } catch (_) {
+    return null;
   }
+  if (decoded.isEmpty) return null;
+  final winPath = RegExp(r'^/[A-Za-z]:/').hasMatch(decoded);
+  return (winPath ? decoded.substring(1) : decoded).replaceAll('\\', '/');
+}
+
+/// 从 isolate 的 file:/// 库 uri 推断 Flutter 项目根目录。
+///
+/// 不能只取“第一个 file:// 库”：isolate 的库列表里混着 pub-cache 三方包，
+/// 按 URI 排序常排在 app 之前（Windows 路径同样如此）。这里收集所有候选根，
+/// 优先返回真正带 `.dart_tool/package_config.json` 的那个；都读不到时
+/// 退而选非 pub-cache 目录，避免把三方包当成项目根。
+String? projectRootForLibraries(List<String> fileUris) {
+  final candidates = <String>{};
   for (final uri in fileUris) {
-    final idx = uri.indexOf('/lib/');
-    if (idx > 'file://'.length) return uri.substring('file://'.length, idx);
+    final path = fileUriToLocalPath(uri);
+    if (path == null) continue;
+    for (final marker in const <String>['/.dart_tool/', '/lib/']) {
+      final idx = path.indexOf(marker);
+      if (idx > 0) candidates.add(path.substring(0, idx));
+    }
   }
-  return null;
+  String? firstNonCache;
+  for (final root in candidates) {
+    if (File('$root/.dart_tool/package_config.json').existsSync()) return root;
+    if (firstNonCache == null && !_looksLikePubCache(root)) {
+      firstNonCache = root;
+    }
+  }
+  return firstNonCache ?? (candidates.isEmpty ? null : candidates.first);
+}
+
+/// 是否 pub-cache 下的包目录（三方包不是项目根）。
+bool _looksLikePubCache(String path) {
+  final lower = path.replaceAll('\\', '/').toLowerCase();
+  return lower.contains('/.pub-cache/') || lower.contains('/pub/cache/');
 }
 
 /// 读取项目的 .dart_tool/package_config.json，返回 包名 → 包根路径。
@@ -9008,12 +9081,8 @@ Map<String, String>? _pkgRootsFor(String projectRoot) {
       final name = pkg['name']?.toString();
       final rootUri = pkg['rootUri']?.toString();
       if (name == null || rootUri == null) continue;
-      var root = rootUri.startsWith('file://')
-          ? rootUri.substring('file://'.length) // 'file:///a' → '/a'
-          : _normalizeLocalPath('$projectRoot/.dart_tool/$rootUri');
-      while (root.endsWith('/')) {
-        root = root.substring(0, root.length - 1);
-      }
+      final root = packageRootPath(rootUri, projectRoot);
+      if (root == null) continue;
       roots[name] = root;
     }
     _pkgRootsCache[projectRoot] = roots;
@@ -9023,11 +9092,27 @@ Map<String, String>? _pkgRootsFor(String projectRoot) {
   }
 }
 
+/// package_config.json 的单条 rootUri → 本机包根路径（统一正斜杠）。
+/// 绝对 file: URI（pub-cache）与相对路径（path 依赖）都支持。
+String? packageRootPath(String rootUri, String projectRoot) {
+  final root = rootUri.startsWith('file:')
+      ? fileUriToLocalPath(rootUri)
+      : _normalizeLocalPath('$projectRoot/.dart_tool/$rootUri');
+  if (root == null || root.isEmpty) return null;
+  var trimmed = root;
+  // 去掉结尾斜杠，但保留 Windows 盘符根（C:/）。
+  while (trimmed.length > 3 && trimmed.endsWith('/')) {
+    trimmed = trimmed.substring(0, trimmed.length - 1);
+  }
+  return trimmed;
+}
+
 /// 归一化本机路径（处理 ../ 与 ./，package_config 的相对 rootUri 用）。
 String _normalizeLocalPath(String p) {
-  final abs = p.startsWith('/');
+  final path = p.replaceAll('\\', '/');
+  final abs = path.startsWith('/');
   final out = <String>[];
-  for (final seg in p.split('/')) {
+  for (final seg in path.split('/')) {
     if (seg.isEmpty || seg == '.') continue;
     if (seg == '..') {
       if (out.isNotEmpty) out.removeLast();
@@ -9041,10 +9126,13 @@ String _normalizeLocalPath(String p) {
 /// 把库 uri 解析为本机存在的源文件路径；找不到返回 null。
 /// package:<pkg>/<p> → <pkgRoot>/lib/<p>；file:/// 直接映射。
 String? _resolveLibraryFile(String uri) {
-  String candidate;
-  if (uri.startsWith('file:///')) {
-    candidate = uri.substring('file:///'.length);
-  } else if (uri.startsWith('package:')) {
+  if (uri.startsWith('file:')) {
+    final path = fileUriToLocalPath(uri);
+    if (path == null) return null;
+    final f = File(path);
+    return f.existsSync() ? f.path : null;
+  }
+  if (uri.startsWith('package:')) {
     final rest = uri.substring('package:'.length);
     final slash = rest.indexOf('/');
     if (slash <= 0) return null;
@@ -9058,12 +9146,8 @@ String? _resolveLibraryFile(String uri) {
         if (f.existsSync()) return f.path;
       }
     }
-    return null;
-  } else {
-    return null;
   }
-  final f = File(candidate);
-  return f.existsSync() ? f.path : null;
+  return null;
 }
 
 /// 在源文件中找类/mixin/enum 声明行（1-based）；找不到返回 1。
