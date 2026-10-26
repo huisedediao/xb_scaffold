@@ -1,0 +1,1 @@
+(function(){var s=document.getElementById("vmsel");var t=document.querySelector(".tab.active");return JSON.stringify({vm:s?s.value:null,tab:t?t.dataset.tab:null,body:(document.getElementById("rt-body")||{}).innerText||""});})()

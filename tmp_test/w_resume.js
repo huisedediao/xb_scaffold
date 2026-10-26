@@ -1,0 +1,1 @@
+(function(){var row=document.querySelector("#in-watch-list .wrow");var b=row?row.querySelector("button"):null;if(b)b.click();return b?b.textContent:"no-btn";})()

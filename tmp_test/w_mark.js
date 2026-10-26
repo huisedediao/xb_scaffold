@@ -1,0 +1,1 @@
+(function(){var r=document.querySelector("#in-watch-list .wrow");if(!r)return "no-row";r.setAttribute("data-marker","keep");return (r.innerText||"").slice(0,160);})()

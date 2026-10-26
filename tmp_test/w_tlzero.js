@@ -1,0 +1,1 @@
+(function(){return JSON.stringify({watchRows:document.querySelectorAll("#tl-body .tl-watch").length,total:(document.getElementById("tl-stat")||{}).textContent});})()

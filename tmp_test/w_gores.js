@@ -1,0 +1,1 @@
+(function(){var t=document.querySelector(".tab.active");return JSON.stringify({tab:t?t.getAttribute("data-tab"):null,flash:document.querySelectorAll("#in-watch-list .wrow.locate-flash").length,rows:document.querySelectorAll("#in-watch-list .wrow").length,stat:(document.getElementById("in-stat")||{}).textContent});})()

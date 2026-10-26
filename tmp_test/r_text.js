@@ -1,0 +1,1 @@
+(function(){var b=document.getElementById("rt-body");return (b?b.textContent:"").slice(0,300);})()

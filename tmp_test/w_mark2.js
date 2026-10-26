@@ -1,0 +1,1 @@
+(function(){var r=document.querySelector("#in-watch-list .wrow");return JSON.stringify({marker:r?r.getAttribute("data-marker"):null,text:r?(r.innerText||"").slice(0,160):"",rows:document.querySelectorAll("#in-watch-list .wrow").length});})()

@@ -1,0 +1,1 @@
+(function(){return (document.getElementById("in-watch-list").innerText||"").slice(0,300);})()

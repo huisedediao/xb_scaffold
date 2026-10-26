@@ -1,0 +1,1 @@
+JSON.stringify({href: location.href, ready: document.readyState, hasBtn: !!document.querySelector('#sh-rec-btn'), tabs: Array.prototype.map.call(document.querySelectorAll('.tab'), function(t){ return t.dataset.tab + ':' + t.className; }), html: document.body.innerHTML.length})

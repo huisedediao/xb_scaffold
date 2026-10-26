@@ -1,0 +1,1 @@
+(function(){var t=document.querySelector(".tab[data-tab=routes]"); if(t) t.click(); return "clicked";})()

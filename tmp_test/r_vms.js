@@ -1,0 +1,1 @@
+(function(){var s=document.getElementById("vmsel");return Array.prototype.map.call(s.options,function(o){return o.value+" | "+o.textContent}).join(" ;; ");})()

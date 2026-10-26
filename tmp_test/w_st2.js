@@ -1,0 +1,1 @@
+(function(){document.querySelector(".tab[data-tab=\"instances\"]").click();setTimeout(function(){document.querySelector("#page-instances button[onclick=\"inLoadStores()\"]").click();},400);return "store";})()

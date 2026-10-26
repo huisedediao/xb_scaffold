@@ -1,0 +1,1 @@
+(function(){var r=document.querySelector("#in-watch-list .wrow");if(!r)return "no-row";var bs=r.querySelectorAll("button");bs[1].click();return "deleted";})()

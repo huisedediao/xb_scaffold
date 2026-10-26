@@ -1,0 +1,1 @@
+(function(){return (document.getElementById("in-tree").innerText||"").slice(0,160);})()

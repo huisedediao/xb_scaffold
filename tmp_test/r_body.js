@@ -1,0 +1,1 @@
+(function(){var b=document.getElementById("rt-body");return JSON.stringify({tab:(document.querySelector(".tab.active")||{}).dataset.tab,text:(b?b.innerText:"").slice(0,300)});})()

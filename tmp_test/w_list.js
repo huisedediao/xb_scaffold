@@ -1,0 +1,1 @@
+(function(){var l=document.getElementById("in-list");return (l.innerText||"").slice(0,300);})()

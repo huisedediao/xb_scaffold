@@ -1,0 +1,1 @@
+var s=document.getElementById("vmsel"); s? Array.prototype.map.call(s.options,function(o){return o.value+"|"+o.textContent}).join(" ;; ") : "no-select";

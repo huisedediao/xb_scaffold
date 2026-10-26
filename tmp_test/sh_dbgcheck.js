@@ -1,0 +1,1 @@
+JSON.stringify({err: window.__err || null, sh: (window.__dbgFrame ? typeof window.__dbgFrame.contentWindow.shRefresh : "noframe"), ws: (window.__dbgFrame ? typeof window.__dbgFrame.contentWindow.ws : "noframe")})
