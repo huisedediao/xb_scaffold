@@ -2,8 +2,8 @@
 //
 // 步骤语义与 GUI「自动化」Tab 保持一致（表达式同源复制自 bin/ide_gui.dart）：
 //   tap / swipe / input / wait / back / navigate / assertVisible / assertRoute /
-//   assertInstance / eval / assertText / assertRequest；assertLog 依赖 GUI 的
-//   日志订阅上下文，CLI 下标为 skip。
+//   assertInstance / eval / assertText / assertRequest / assertLog；
+//   P3 复合与设备步骤见 steps.dart（waitFor/retry/if/observe/scrollUntil 等）。
 //
 // 供 `dart run xb_ume:run` 在无 GUI、无浏览器的命令行 / CI 环境执行场景。
 library;
@@ -11,7 +11,14 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import '../device/bridge.dart';
+import '../device/registry.dart';
+import 'expressions.dart';
+import 'gestures.dart';
+import 'inject.dart';
 import 'vm_client.dart';
+
+part 'steps.dart';
 
 /// 单步执行结果。
 class ScenarioStepResult {
@@ -74,20 +81,6 @@ String _escEvalString(String s) => s
 /// 异常导致 up 未发时，_hitTests 残留会让后续 tap 撞断言永久卡死。
 int _nextPointer() => DateTime.now().microsecondsSinceEpoch & 0x3fffffff;
 
-/// tap：GestureBinding.handlePointerEvent down+up 同点（binding.dart 上下文）。
-String _tapExpr(String x, String y, {bool phys = false, int pointer = 0}) {
-  final pos = phys
-      ? 'final pos = Offset($x, $y) / WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; '
-      : 'final pos = Offset($x, $y); ';
-  return '(() { $pos'
-      'final pe = PointerDownEvent(pointer: $pointer, position: pos); '
-      'try { GestureBinding.instance.handlePointerEvent(pe); } catch (e) { '
-      'GestureBinding.instance.handlePointerEvent(PointerUpEvent(pointer: $pointer, position: pos)); '
-      "return 'ERR:' + e.toString(); } "
-      'GestureBinding.instance.handlePointerEvent(PointerUpEvent(pointer: $pointer, position: pos)); '
-      "return 'OK'; })()";
-}
-
 /// input：直接调当前焦点 client 的 updateEditingValue（需先 tap 输入框）。
 String _inputExpr(String text) =>
     '(() { final c = TextInput._instance._currentConnection; '
@@ -114,19 +107,6 @@ String _assertVisibleExpr(String type) {
 }
 
 /// 路由栈快照（navigator.dart 上下文）：路由名逗号拼接。
-const String _routesExpr =
-    "(() { final root = WidgetsBinding.instance.renderViewElement; "
-    "if (root == null) return 'NO_ROOT'; "
-    'final navs = <NavigatorState>[]; '
-    'void walk(Element e) { final w = e.widget; '
-    'if (w is Navigator && e is StatefulElement && e.state is NavigatorState) '
-    '{ navs.add(e.state as NavigatorState); } e.visitChildren(walk); } '
-    'root.visitChildren(walk); '
-    "if (navs.isEmpty) return 'NO_NAV'; "
-    'final out = StringBuffer(); '
-    'for (final h in navs[0]._history) { out.write(h.route.settings.name); '
-    'out.write(String.fromCharCode(44)); } return out.toString(); })()';
-
 /// 当前可见页面文本（跳过 offstage 保活子树），以 \u0002 分隔。
 String _pageTextExpr({int limit = 200}) =>
     '(() { final root = WidgetsBinding.instance.renderViewElement; '
@@ -152,7 +132,9 @@ class ScenarioRunner {
     this.shotsDir,
     this.shotPrefix = 'run',
     this.onStep,
-  });
+    this.shouldStop,
+    DeviceRegistry? devices,
+  }) : _devices = devices;
 
   final VmClient vm;
   final bool continueOnFail;
@@ -164,12 +146,25 @@ class ScenarioRunner {
   /// 每步结束回调（CLI 打印进度、进度条等）。
   final void Function(ScenarioStepResult r)? onStep;
 
+  /// 外部停止信号（MCP 的 xbume_scenario_stop）：每步开始前检查，
+  /// 命中后剩余步骤标 skip，已执行结果保留。
+  final bool Function()? shouldStop;
+
+  /// 设备后端（P3 设备类步骤用）；未注入时按 auto 懒构建。
+  DeviceRegistry? _devices;
+
+  DeviceRegistry get devices => _devices ??= DeviceRegistry.fromSpec('auto');
+
+  /// observe 步骤要求附截图时暂存于此，由 [run] 挂到步骤结果上。
+  String? _pendingShotB64;
+
   /// 顺序执行场景步骤；失败默认停止（剩余标 skip），continueOnFail 时继续。
   Future<ScenarioRunReport> run(
       String name, List<Map<String, dynamic>> steps) async {
     final started = DateTime.now();
     final results = <ScenarioStepResult>[];
     var halted = false;
+    var stopped = false;
     for (var i = 0; i < steps.length; i++) {
       final st = steps[i];
       final type = (st['type'] ?? '?').toString();
@@ -178,10 +173,14 @@ class ScenarioRunner {
           .toString();
       final r = ScenarioStepResult(i, type, expect, st);
       results.add(r);
+      if (!halted && shouldStop?.call() == true) {
+        stopped = true;
+        halted = true;
+      }
       if (halted) {
         r
           ..status = 'skip'
-          ..error = '前序步骤失败，未执行';
+          ..error = stopped ? '场景已被停止' : '前序步骤失败，未执行';
         onStep?.call(r);
         continue;
       }
@@ -189,6 +188,10 @@ class ScenarioRunner {
       try {
         final (actual, err, skip) = await _exec(st);
         r.actual = actual;
+        if (_pendingShotB64 != null) {
+          r.shotB64 = _pendingShotB64;
+          _pendingShotB64 = null;
+        }
         if (skip) {
           r
             ..status = 'skip'
@@ -253,16 +256,20 @@ class ScenarioRunner {
         final x = (st['x'] as num?)?.toDouble();
         final y = (st['y'] as num?)?.toDouble();
         if (x == null || y == null) return ('', 'tap 需要 x/y 数值坐标', false);
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart',
-            _tapExpr(x.toString(), y.toString(),
-                phys: (st['phys'] ?? false) == true,
-                pointer: _nextPointer()));
+        final s = await evalInject(
+            vm,
+            kLibBinding,
+            tapExpr(x.toString(), y.toString(),
+                phys: (st['phys'] ?? false) == true, pointer: _nextPointer()));
         return (
           s,
           s == 'OK'
               ? ''
-              : (s.startsWith('ERR:') ? 'tap 派发异常: ${s.substring(4)}' : 'tap 注入异常: $s'),
+              : (s.startsWith('ERR:')
+                  ? 'tap 派发异常: ${s.substring(4)}'
+                  : s == 'BUSY'
+                      ? busyHint
+                      : 'tap 注入异常: $s'),
           false
         );
       case 'swipe':
@@ -285,8 +292,7 @@ class ScenarioRunner {
         await Future.delayed(Duration(milliseconds: ms.clamp(0, 60000)));
         return ('waited $ms ms', '', false);
       case 'back':
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/navigator.dart', _routesExpr);
+        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
         if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈', false);
         final names = s.split(',').where((e) => e.isNotEmpty).toList();
         if (names.length <= 1) {
@@ -315,8 +321,7 @@ class ScenarioRunner {
         );
       case 'assertRoute':
         final name = (st['name'] ?? '').toString();
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/navigator.dart', _routesExpr);
+        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
         if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈', false);
         final names = s.split(',').where((e) => e.isNotEmpty).toList();
         final top = names.isEmpty ? '' : names.last;
@@ -366,18 +371,40 @@ class ScenarioRunner {
         );
       case 'assertRequest':
         return await _assertRequest(st);
+      case 'waitFor':
+        return await _waitForStep(st);
+      case 'retry':
+        return await _retryStep(st);
+      case 'if':
+        return await _ifStep(st);
+      case 'observe':
+        return await _observeStep(st);
+      case 'scrollUntil':
+        return await _scrollUntilStep(st);
+      case 'install':
+        return await _installStep(st);
+      case 'uninstall':
+        return await _uninstallStep(st);
+      case 'launchApp':
+        return await _launchAppStep(st);
+      case 'pressKey':
+        return await _pressKeyStep(st);
+      case 'nativeTap':
+        return await _nativeTapStep(st);
+      case 'assertNoCrash':
+        return await _assertNoCrashStep(st);
+      case 'record':
+        // 不抱侥幸：录屏涉及设备端进程生命周期，未实测前不提供假实现。
+        return ('', 'record 步骤尚未实现（需真机验证 adb/simctl 录屏）；请用系统录屏', false);
       case 'assertLog':
-        return (
-          '',
-          'CLI 无日志订阅上下文（需 GUI 的日志缓冲），该步跳过',
-          true
-        );
+        return ('', 'CLI 无日志订阅上下文（需 GUI 的日志缓冲），该步跳过', true);
       default:
         return (
           '',
           '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/'
               'assertVisible/assertRoute/assertInstance/assertText/'
-              'assertRequest/eval）',
+              'assertRequest/eval/waitFor/retry/if/observe/scrollUntil/'
+              'install/uninstall/launchApp/pressKey/nativeTap/assertNoCrash）',
           false
         );
     }
@@ -391,79 +418,22 @@ class ScenarioRunner {
     if (x1 == null || y1 == null || x2 == null || y2 == null) {
       return ('', 'swipe 需要 x1/y1/x2/y2', false);
     }
-    final ms = (st['ms'] as num?)?.toInt() ?? 300;
-    const seg = 8;
-    final moveMs = (ms / seg).round().clamp(16, 200);
-    final phys = (st['phys'] ?? false) == true;
-    String px(double v) => phys ? '($v / d)' : v.toString();
-    final pid = _nextPointer();
-    final tsBase = DateTime.now().microsecondsSinceEpoch;
-    const ctx = 'package:flutter/src/widgets/binding.dart';
-    String downReply;
-    try {
-      downReply = await vm.evalStringOn(ctx,
-          '(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; '
-          'try { GestureBinding.instance.handlePointerEvent('
-          'PointerDownEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}), timeStamp: Duration(microseconds: $tsBase))); } catch (e) { '
-          'GestureBinding.instance.handlePointerEvent('
-          'PointerUpEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}))); '
-          "return 'ERR:' + e.toString(); } return 'OK'; })()");
-    } catch (e) {
-      return ('', 'swipe down 注入失败: $e', false);
-    }
-    if (downReply != 'OK') {
-      return (
-        '',
-        'swipe down 异常: ${downReply.startsWith('ERR:') ? downReply.substring(4) : downReply}',
-        false
-      );
-    }
-    var pmx = x1;
-    var pmy = y1;
-    for (var i = 1; i <= seg; i++) {
-      final t = i / seg;
-      final mx = x1 + (x2 - x1) * t;
-      final my = y1 + (y2 - y1) * t;
-      final tsUs = tsBase + (ms * 1000 * t).round();
-      await vm.evalStringOn(ctx,
-          '(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; '
-          'GestureBinding.instance.handlePointerEvent('
-          'PointerMoveEvent(pointer: $pid, position: Offset(${px(mx)}, ${px(my)}), '
-          'delta: Offset(${px(mx)} - ${px(pmx)}, ${px(my)} - ${px(pmy)}), '
-          "timeStamp: Duration(microseconds: $tsUs))); return 'OK'; })()");
-      pmx = mx;
-      pmy = my;
-      await Future.delayed(Duration(milliseconds: moveMs));
-    }
-    await vm.evalStringOn(ctx,
-        '(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; '
-        'GestureBinding.instance.handlePointerEvent('
-        'PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}), timeStamp: Duration(microseconds: ${tsBase + ms * 1000}))); return \'OK\'; })()');
-    return ('swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})', '', false);
+    // 与 MCP 共用一份实现：相位守卫 / 指针 id / timeStamp 细节只维护一处。
+    final (actual, err) = await swipeSequence(
+      vm,
+      x1: x1,
+      y1: y1,
+      x2: x2,
+      y2: y2,
+      durationMs: (st['ms'] as num?)?.toInt() ?? 300,
+      phys: (st['phys'] ?? false) == true,
+    );
+    return (actual, err, false);
   }
 
   /// 路由操作（pop / pushNamed），与 GUI /api/routeop 同一套 eval。
-  Future<String> _routeOp(String op, {String name = ''}) async {
-    const walk = 'final root = WidgetsBinding.instance.renderViewElement; '
-        "if (root == null) return 'NO_ROOT'; "
-        'final navigators = <NavigatorState>[]; '
-        'void walk(Element e) { final w = e.widget; '
-        'if (w is Navigator && e is StatefulElement && e.state is NavigatorState) '
-        '{ navigators.add(e.state as NavigatorState); } e.visitChildren(walk); } '
-        'root.visitChildren(walk); ';
-    final expr = op == 'pop'
-        ? '(() { $walk'
-            "if (navigators.isEmpty) return 'NO_NAV'; "
-            'final h = navigators[0]._history; if (h.length <= 1) return \'LAST_ROUTE\'; '
-            "navigators[0].pop(); return 'OK'; })()"
-        : '(() { $walk'
-            "if (navigators.isEmpty) return 'NO_NAV'; "
-            'if (navigators[0].widget.onGenerateRoute == null) return \'NO_ROUTE_TABLE\'; '
-            "try { final r = navigators[0]._routeNamed('${_escEvalString(name)}', arguments: null); "
-            "if (r == null) return 'UNKNOWN'; navigators[0].push(r); return 'OK'; "
-            "} catch (e) { return 'ERR:' + e.runtimeType.toString(); } })()";
-    return vm.evalStringOn('package:flutter/src/widgets/navigator.dart', expr);
-  }
+  Future<String> _routeOp(String op, {String name = ''}) =>
+      evalInject(vm, kLibNavigator, routeOpExpr(op, name: name));
 
   /// 堆/树上实例计数（getClassList + getInstances）。
   Future<int> _instanceCount(String cls) async {
@@ -496,8 +466,8 @@ class ScenarioRunner {
     final raw = await vm.evalStringOn(
       'package:xb_ume/src/core/xb_ume.dart',
       '(() { final n = XBUme.controller.network; $cutoffExpr'
-      "return n$filterExpr.map((e) => [e.method, e.url, "
-      "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
+          "return n$filterExpr.map((e) => [e.method, e.url, "
+          "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
     );
     final items = <Map<String, String>>[];
     for (final line in raw.split('\u0002')) {
@@ -534,8 +504,9 @@ class ScenarioRunner {
             e['url']!.contains(url) &&
             (method.isEmpty || e['method']!.toUpperCase() == method))
         .toList();
-    final desc =
-        matched.map((e) => '${e['method']} ${e['url']} ${e['statusCode']}').join(' · ');
+    final desc = matched
+        .map((e) => '${e['method']} ${e['url']} ${e['statusCode']}')
+        .join(' · ');
     if (neg) {
       return (
         matched.isEmpty ? '无匹配（符合预期）' : desc,
@@ -628,7 +599,8 @@ String buildScenarioReportHtml(
     }
     sb.write('</td></tr>');
     if (s.shotB64 != null && s.shotB64!.isNotEmpty) {
-      sb.write('<tr><td colspan="6"><img class="shot" alt="step ${s.index + 1} 截图" '
+      sb.write(
+          '<tr><td colspan="6"><img class="shot" alt="step ${s.index + 1} 截图" '
           'src="data:image/png;base64,${s.shotB64}"></td></tr>');
     }
   }

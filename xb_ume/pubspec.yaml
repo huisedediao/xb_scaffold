@@ -1,6 +1,6 @@
 name: xb_ume
 description: Pure Flutter in-app debug toolkit inspired by flutter_ume, including console, route, performance, network, inspector, device and storage panels.
-version: 0.3.0
+version: 0.4.0
 homepage: https://github.com/huisedediao/xb_scaffold/tree/main/xb_ume
 repository: https://github.com/huisedediao/xb_scaffold/tree/main/xb_ume
 issue_tracker: https://github.com/huisedediao/xb_scaffold/issues
@@ -17,6 +17,8 @@ environment:
 executables:
   # 全局 activate 后可用 `xb_ume run <场景> --uri <端口>`（bin/run.dart）。
   xb_ume: run
+  # 全局 activate 后可用 `xb_ume_mcp`（bin/mcp.dart）作为 MCP 服务。
+  xb_ume_mcp: mcp
 
 dependencies:
   flutter:

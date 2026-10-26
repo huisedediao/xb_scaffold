@@ -98,6 +98,15 @@
 - 前端：结束后显示「⬇ 导出报告」按钮（window.open 下载）；aiStart 时隐藏
 - 验证（example macOS 会话）：deepseek-flash 真实调用 3 轮 5 步全 pass → 报告结论 ✅、3 张截图内嵌、端点 200+attachment；故障 mock（前 2 次无效回复）retries=2 → 报告问题清单含「轮 1：AI 调用重试 2 次」、逐轮明细重试标注；analyze 无 issue
 
+## P17 MCP 双向集成（xb_ume 作为 MCP Server）`[x]`
+- 出口：`bin/mcp.dart` 独立进程，手写 JSON-RPC 2.0（零第三方依赖；声明 2025-06-18、兼容回显 2024-11-05 / 2025-03-26），stdio 换行分隔与 Streamable HTTP（POST /mcp 单条 JSON、GET 405、Host + token 双校验、只绑 127.0.0.1）双传输
+- 工具默认 20 个（core 14 + diagnose 3 + run-safe 3）；act / device-write 有副作用需 `--tool-groups` 显式开启；inspect / ai / ide 为空预留组（帮助与文档如实标注，不假装支持）
+- 设备后端可插拔：自研 adb / hdc / simctl / idevice + 可选 mobile-mcp 适配器（npx @mobilenext/mobile-mcp --listen 46150，不进 auto）；8 项能力显式声明，不支持返回 unsupported；DeviceRegistry 单实例同时供 MCP 工具与场景服务
+- 场景 DSL 扩展：waitFor / retry / if / observe / scrollUntil + install / uninstall / launchApp / pressKey / nativeTap / assertNoCrash；条件 6 种（visible / text / route / request / expr，省略 kind 自动推断）
+- AI 元素候选：截图外附 ref / 类型 / 文本 / 逻辑像素 bounds / 源码 文件:行，新增 tapRef 步骤（参数名 expectType，规避 JSON 重复键覆盖）；会话发现抽取为公共模块供 daemon 与 MCP 共用
+- GUI：守护进程 Tab 新增「MCP 服务」卡片（探测 46140..46149 的 HTTP initialize + tools/list 计工具数，或按进程命令行识别 stdio；token 仅在点「复制 MCP 配置」时按需下发），首屏立即探测、复制的配置文本不被 15s 轮询覆盖
+- 验证：MCP HTTP 实测 serverVersion 0.4.0 / tools=20 / 无 token 401；浏览器实测卡片「运行中 · HTTP 46140 · 20 个工具」、复制出带 X-XBUME-Token 的 HTTP 配置、跨 18s 轮询不丢、点刷新恢复摘要、console 零报错；`flutter test` 224 项全过、`dart analyze bin lib` 无 issue
+
 ## 进度记录
 - 2026-10-14 P1 完成（探针 852KB PNG → /api/screenshot + 截图 Tab，自动刷新 + 下载；真机 1260×2720 PNG）
 - 2026-10-14 P2 完成（reassemble/_collectAllGarbage 探针定论 → /api/runtime/op + 守护 Tab 按钮，真机双 op 通过；热重启不可行已文档说明）
@@ -123,3 +132,4 @@
 - 2026-10-17 P16 完成（AI 驱动测试报告：结束后自动落盘自包含 HTML（结论/问题清单/统计/逐轮明细+截图内嵌），/api/ai/report 下载端点 + 前端「⬇ 导出报告」按钮；deepseek-flash 真实调用成功路径 + 故障 mock 重试路径双验证全过）
 - 2026-10-19 会话选择保持 v2（掉选自愈 + localStorage 指纹持久化：回退不清指纹、每轮按 fp 自动找回，页面刷新/重开浏览器自动选回；node 状态机单测 10 断言 + 浏览器端到端全过）
 - 2026-10-19 会话选择排障日志：`~/.xb_ume_ide/logs/vm_sel.log`（2MB 轮转）记录 daemon 会话增减（source|fp 集合差异，仅变化时记）与前端上报（页面加载恢复指纹/用户选择/指纹找回/缺失计数/回退/前后台切换/daemon 断连恢复，POST /api/clientlog）；验证：GUI 重启后页面自动恢复指纹 + 会话变化日志 + 上报链路落盘全通
+- 2026-10-26 P17 完成（MCP 双向集成：MCP Server 双传输 + 默认 20 工具 + 设备后端可插拔 + 场景 DSL 复合/设备步骤 + AI 元素候选与 tapRef + GUI MCP 服务卡片；MCP_GUIDE.md 新建，README/GUI_GUIDE/CHANGELOG（转降序）与版本 0.4.0 同步；验证 HTTP tools=20/401 兜底 + 浏览器卡片与复制配置全过 + flutter test 224 项）

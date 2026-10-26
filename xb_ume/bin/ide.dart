@@ -30,6 +30,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'src/session/discovery.dart';
+
 /// App 端 XBUmeIdeJump.eventId，双端约定一致。
 const String kEventKind = 'xb_ume:openSource';
 
@@ -1118,26 +1120,28 @@ Future<void> _poll(String ide) async {
   if (_polling) return;
   _polling = true;
   try {
-    final discovered = await _discoverLocalVmServices();
+    final discovered = await discoverLocalVmServices(
+      knownFingerprints: _knownFingerprints,
+    );
 
     // 接入新会话。
-    for (final entry in discovered.entries) {
-      if (_sessions.containsKey(entry.key)) {
+    for (final s in discovered) {
+      if (_sessions.containsKey(s.wsUrl)) {
         continue;
       }
       final session = _Session(
-        entry.key,
-        entry.value.$1,
+        s.wsUrl,
+        s.source,
         ide,
-        fingerprint: entry.value.$2,
+        fingerprint: s.fingerprint,
       );
-      _sessions[entry.key] = session;
+      _sessions[s.wsUrl] = session;
       await session.connect();
       if (session.alive) {
         // 只有接成功才记指纹；失败从会话表移除，下一轮重试。
-        _knownFingerprints.add(entry.value.$2);
+        _knownFingerprints.add(s.fingerprint);
       } else {
-        _sessions.remove(entry.key);
+        _sessions.remove(s.wsUrl);
       }
     }
     // 清理已断开会话。
@@ -1153,143 +1157,10 @@ Future<void> _poll(String ide) async {
 }
 
 // ---------------------------------------------------------------------------
-// VM service 自动发现：扫描本机回环监听端口并探测 VM service 特征。
-//
-// flutter run / IDE 运行按钮启动的调试会话，其 VM service 总会以某种形式
-// 在本机回环地址上可达：flutter 工具进程（dart）建立的主机端监听代理、
-// adb forward / hdc fport 产生的监听端口、或桌面端 VM service 直接监听。
-// 对每个监听端口请求 GET /getVM，返回 {"result":{"type":"VM",...}}
-// 即判定为 VM service（DevTools 返回 HTML，adb/hdc 服务无此响应）。
-// 以 isolates id 组合作为实例指纹，避免同一实例经多端口重复接入。
+// VM service 自动发现实现已抽到 src/session/discovery.dart（daemon 与 MCP
+// server 共用）：discoverLocalVmServices / probeVmService /
+// forwardedPortsByDevice / loopbackListeningPorts。
 // ---------------------------------------------------------------------------
-
-Future<Map<String, (String, String)>> _discoverLocalVmServices() async {
-  final ports = await _loopbackListeningPorts();
-  final devices = await _forwardedPortsByDevice();
-  final fingerprints = <int, String>{};
-  await Future.wait(ports.map((port) async {
-    final fingerprint = await _probeVmServiceFingerprint(port);
-    if (fingerprint != null) fingerprints[port] = fingerprint;
-  }));
-  // 同一实例可能同时经多个端口可达（flutter 工具的本机代理端口 +
-  // adb/hdc 转发端口），按指纹去重；优先选有设备转发映射的端口，
-  // 使多设备/多应用场景下会话来源可读（如 hdc:SERIAL#port:xxx）。
-  final byFingerprint = <String, List<int>>{};
-  fingerprints.forEach((port, fingerprint) {
-    byFingerprint.putIfAbsent(fingerprint, () => <int>[]).add(port);
-  });
-  final found = <String, (String, String)>{};
-  for (final entry in byFingerprint.entries) {
-    if (_knownFingerprints.contains(entry.key)) continue;
-    final candidates = entry.value.toList()
-      ..sort((a, b) {
-        final da = devices.containsKey(a);
-        final db = devices.containsKey(b);
-        if (da != db) return da ? -1 : 1;
-        return a.compareTo(b);
-      });
-    final port = candidates.first;
-    final device = devices[port];
-    found['ws://127.0.0.1:$port/ws'] = (
-      device == null ? 'port:$port' : '$device#port:$port',
-      entry.key,
-    );
-  }
-  return found;
-}
-
-/// 通过 adb/hdc 端口转发表把本机转发端口映射到设备标识。
-Future<Map<int, String>> _forwardedPortsByDevice() async {
-  final result = <int, String>{};
-  // adb forward --list："<serial> tcp:<local> tcp:<remote>"
-  final adb = await _runText('adb', <String>['forward', '--list']);
-  for (final line in adb.trim().split('\n')) {
-    final m = RegExp(r'^(\S+)\s+tcp:(\d+)\s+').firstMatch(line.trim());
-    if (m != null) {
-      result[int.parse(m.group(2)!)] = 'adb:${m.group(1)}';
-    }
-  }
-  // hdc -t <target> fport ls：每行含 "tcp:<local> tcp:<remote>"
-  final targets = await _runText('hdc', <String>['list', 'targets']);
-  for (final target in targets.trim().split('\n')) {
-    final t = target.trim();
-    if (t.isEmpty || t.contains('[') || t.contains('error')) continue;
-    final ls = await _runText('hdc', <String>['-t', t, 'fport', 'ls']);
-    for (final line in ls.split('\n')) {
-      final m = RegExp(r'tcp:(\d+)\s+tcp:\d+').firstMatch(line);
-      if (m != null) {
-        result.putIfAbsent(int.parse(m.group(1)!), () => 'hdc:$t');
-      }
-    }
-  }
-  return result;
-}
-
-/// 列出本机回环地址上的 TCP 监听端口。
-Future<List<int>> _loopbackListeningPorts() async {
-  final ports = <int>{};
-  final String output;
-  if (Platform.isWindows) {
-    // Windows 无 lsof，用自带的 netstat：TCP 127.0.0.1:PORT ... LISTENING pid。
-    output = await _runText('netstat', const <String>['-ano']);
-  } else {
-    output = await _runText(
-      'lsof',
-      const <String>['-nP', '-iTCP', '-sTCP:LISTEN'],
-    );
-  }
-  final pattern = RegExp(r'(?:127\.0\.0\.1|\*|\[::1\]):(\d+)\s');
-  for (final line in output.split('\n')) {
-    if (Platform.isWindows && !line.contains('LISTENING')) {
-      continue;
-    }
-    final match = pattern.firstMatch(line);
-    if (match != null) {
-      ports.add(int.parse(match.group(1)!));
-    }
-  }
-  return ports.toList()..sort();
-}
-
-/// 探测端口是否为 VM service；命中时返回实例指纹（isolates id 组合）。
-Future<String?> _probeVmServiceFingerprint(int port) async {
-  HttpClient? client;
-  try {
-    client = HttpClient()
-      ..connectionTimeout = const Duration(milliseconds: 800);
-    final request = await client
-        .getUrl(Uri.parse('http://127.0.0.1:$port/getVM'))
-        .timeout(const Duration(seconds: 2));
-    final response =
-        await request.close().timeout(const Duration(seconds: 2));
-    if (response.statusCode != 200) {
-      return null;
-    }
-    final body = await response
-        .transform(utf8.decoder)
-        .join()
-        .timeout(const Duration(seconds: 2));
-    final parsed = jsonDecode(body);
-    if (parsed is! Map<String, Object?>) {
-      return null;
-    }
-    final result = parsed['result'];
-    if (result is! Map<String, Object?> || result['type'] != 'VM') {
-      return null;
-    }
-    final isolates = result['isolates'];
-    if (isolates is List && isolates.isNotEmpty) {
-      return isolates
-          .map((e) => e is Map<String, Object?> ? '${e['id']}' : '')
-          .join('|');
-    }
-    return 'vm:${result['name']}';
-  } catch (_) {
-    return null;
-  } finally {
-    client?.close(force: true);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // VM service 客户端（手写 JSON-RPC over WebSocket）
@@ -1974,72 +1845,4 @@ Future<bool> _runChecked(String command, List<String> args) async {
   } catch (_) {
     return false;
   }
-}
-
-Future<String> _runText(String command, List<String> args) async {
-  try {
-    final result = await Process.run(
-      command,
-      args,
-      // launchd / 注册表自启时 PATH 只有系统默认目录，
-      // adb（Android SDK / brew）、hdc（DevEco SDK）不在其中，需拼接。
-      environment: <String, String>{'PATH': _augmentedToolPath()},
-    );
-    return '${result.stdout}';
-  } catch (_) {
-    return '';
-  }
-}
-
-/// 拼接开发工具常见安装目录到系统 PATH。
-String _augmentedToolPath() {
-  final dirs = <String>[
-    if (!Platform.isWindows) '/opt/homebrew/bin',
-    if (!Platform.isWindows) '/usr/local/bin',
-  ];
-  final home = Platform.environment['USERPROFILE'] ??
-      Platform.environment['HOME'] ??
-      '';
-  final androidHome = Platform.environment['ANDROID_HOME'];
-  if (Platform.isWindows) {
-    final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
-    dirs.addAll(<String>[
-      if (androidHome != null) '$androidHome\\platform-tools',
-      if (localAppData.isNotEmpty)
-        '$localAppData\\Android\\Sdk\\platform-tools',
-    ]);
-    final sdkRoot = Directory(r'C:\Program Files\Huawei\DevEco Studio\sdk');
-    if (sdkRoot.existsSync()) {
-      try {
-        for (final entry in sdkRoot.listSync()) {
-          final toolchain = Directory('${entry.path}\\openharmony\\toolchains');
-          if (toolchain.existsSync()) dirs.add(toolchain.path);
-        }
-      } catch (_) {
-        // ignored
-      }
-    }
-  } else {
-    dirs.addAll(<String>[
-      if (androidHome != null) '$androidHome/platform-tools',
-      '$home/Library/Android/sdk/platform-tools',
-      '$home/Android/Sdk/platform-tools',
-    ]);
-    final sdkRoot = Directory('/Applications/DevEco-Studio.app/Contents/sdk');
-    if (sdkRoot.existsSync()) {
-      try {
-        for (final entry in sdkRoot.listSync()) {
-          final toolchain = Directory('${entry.path}/openharmony/toolchains');
-          if (toolchain.existsSync()) dirs.add(toolchain.path);
-        }
-      } catch (_) {
-        // ignored
-      }
-    }
-  }
-  final current = Platform.environment['PATH'] ?? '';
-  return <String>[
-    ...dirs.where((d) => d.isNotEmpty),
-    current,
-  ].join(Platform.isWindows ? ';' : ':');
 }

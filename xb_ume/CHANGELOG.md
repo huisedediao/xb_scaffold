@@ -1,72 +1,16 @@
-## 0.1.0
+## 0.4.0
 
-- Initial release.
-- Pure Flutter UME-like debugging toolkit.
-- Includes core panel host and plugins:
-  - Console
-  - Route timeline
-  - Performance timeline
-  - Network (generic + Dio + http)
-  - Inspector
-  - Device info
-  - Storage inspector
-- Includes persistence support and a runnable example.
-
-## 0.1.1
-
-- optimized.
-
-## 0.1.2
-
--  优化 locator 定位精度
-
-## 0.1.3
-
--  优化 locator 层级展示
-
-## 0.1.4
-
-- locator 选中组件新增宽高标注：气泡内新增 size 行展示组件真实宽高（逻辑像素），高亮框边缘新增 W/H 青色标签，组件超出屏幕时仍显示真实值；不影响现有边框、间距标注与拖拽功能。
-
-## 0.1.5
-
-- 调试会话来源标签增强：自动发现时经 `adb forward --list` / `hdc fport ls` 把本机转发端口映射到设备号，会话标签由 `port:端口` 升级为 `adb:设备号#port:端口`（无转发表时保持 `port:端口`），多台手机 / 同一手机多个 app 同时调试时可读可区分。
-- 新增电脑端 GUI 工具箱（`bin/ide_gui.dart`，本机 Web GUI、零新增依赖）：`--install` 时随守护脚本一并部署，并在系统常用位置创建桌面入口（macOS 应用程序文件夹 `xb_ume 工具箱.app` 可从 Launchpad/Spotlight 启动，无写权限时装到 `~/Applications`；Windows 桌面快捷方式），另有启动器与 `dart run xb_ume:ide --gui` 命令入口；三个 Tab——设备管理（adb/hdc/Xcode 模拟器/idevice_id 发现与选择）、守护进程（状态查询经互斥端口 status 协议、一键重启、IDE 优先级展示）、日志（选中设备的全量设备日志 + 全部调试会话 stdout/stderr 实时展示，支持来源/级别/关键字过滤、暂停、清屏、导出）；`--uninstall` 一并移除桌面入口。
-- 守护进程增加单实例接管锁：新实例启动时自动停止旧实例（命令行匹配 + 回环端口互斥双保险），只保留最新实例，避免多实例重复消费事件导致一次点击唤起多个 IDE；`--uninstall` 现在会停止所有 daemon 实例后再清理文件。
-- 修复 Windows 下 Android Studio 已安装但检测不到的问题：`_hasAndroidStudio` 原先仅对 macOS 检查二进制路径，现按平台路径（含 `%LOCALAPPDATA%\Programs\Android Studio`）与命令名统一检测；同时修复文档示例中不存在的 `XBUme.app` API，新增 IDE 跳转使用指南 `IDE_JUMP_GUIDE.md`。
-
-## 0.1.6
-
-- 修复 GUI 临时连接泄漏：`/api/sandbox/read`（监听页 50ms~2s 轮询）、`/api/screenshot`（自动刷新）、`/api/wtree`、`/api/wtree/pick`、`/api/sandbox/delete`、`/api/sandbox/upload`、`/api/runtime/op` 七处未关闭 `_SandboxRpc`，长时间使用会累积 WebSocket 与文件描述符（对端 app 进程内同样被占用）；关闭流程统一加超时，避免握手挂住阻塞 HTTP 响应。
-- 修复 GUI 轮询重入：设备轮询加互斥，设备日志进程启动期间占位去重，避免慢设备下重复启动 logcat/hilog 并遗留孤儿进程。
-- 修复 VM 会话失效不恢复：建连失败或连接断开后按轮询周期自动重建（原实现会永久失效到 GUI 重启），握手增加 5s 超时。
-- 修复实例字段写回字符串转义：值中的 `$`、换行、制表符改用 `_escEvalString`，并校验字段名，避免写回失败或写错值。
-- 路由操作新增 `_debugLocked` 保护：App 正在转场时返回 `BUSY`，避免与自身导航竞争触发 Navigator 断言。
-- GUI 退出新增 SIGHUP 处理（关闭终端窗口也会先断开 VM 会话，降低 DDS 死锁风险）。
-- 守护进程：修复实例指纹去重集合从未写入导致跨轮去重失效；`--uri` 模式断线后自动重连（原实现永久挂起）；事件年龄过滤兼容手机与本机时钟偏差；停止旧实例时优先用状态 pid 精确停止，并以 `ps` 严格校验命令行，避免误伤其他调试进程。
-- 修复 Widget 树输出缺段时的 `RangeError`。
-
-## 0.1.8
-
-- 路由栈名称列新增 XBVM：`/api/routeinfo` 除了 State / ChangeNotifier，还会静态解析页面的 XBVM 子类（`extends XBPage<HomeVM>` 泛型实参、`generateVM` 返回类型或构造调用、State 字段、`vmOf/vmWatch/Provider.of/Consumer` 等泛型实参，沿 extends 链验证 XBVM / XBPageVM 体系）；表格列改为「Widget / State / VM / Notifier」，VM 名可点击跳到「实例」Tab 扫描堆上实例。
-- 隐藏「状态」Tab（ChangeNotifier 聚合面板），代码保留，恢复时去掉页头 tab 的 `display:none` 即可。
-
-## 0.1.7
-
-- 修复路由栈 Tab 可能诱发的 App 端 framework 断言（`InheritedElement.notifyClients` 的 `check that it really is our descendant`，多发生在 `UnmanagedRestorationScope` 重建时）：`/api/routelocate` 原先用 `ModalRoute.of(e)` 遍历整棵 Element 树来收集目标路由的候选 Widget，而 `ModalRoute.of` 会给每个 Element 注册 `_ModalScopeStatus` 依赖——相当于让全树的 `didChangeDependencies` 在每次路由状态变化（isCurrent/canPop）时都被触发，可能诱导业务代码在构建/转场期间执行导航或重建，进而触发 framework 断言。现改为只从目标路由自己的 `ModalRoute.subtreeContext` 向下遍历页面子树，不再注册任何 InheritedWidget 依赖，同时避免 250 候选上限把深页面的用户 Widget 截掉。
-- 新增路由调试日志 `~/.xb_ume_ide/logs/route_debug.log`（超 2MB 轮转）：记录路由栈读取、路由定位、路由操作的端口/耗时/结果；当 App 端框架异常或未捕获异常到达时，自动追加最近 25 条路由操作快照，便于复现「切到路由栈 Tab 后操作手机出现异常」时直接对齐电脑端操作与手机端异常的时间线。
-- 上述 `check that it really is our descendant` 断言到达后，额外在 App 内只读跑一次依赖一致性探针，把「仍登记在 InheritedElement._dependents 里、但祖先链已回不到该 InheritedElement」的元素以 `[deps]` 写入 `route_debug.log`（继承点/失效 dependent/生命周期/祖先链，最多 8 对），用于确认断言是哪一对依赖失效导致。
-
-## 0.2.0
-
-- GUI 新增「时间轴」Tab：把路由、网络、日志、异常四类调试事件按时间合并为一条流，用来对齐「一次操作前后 app 内先后发生了什么」。
-  - 数据来源：路由 / 网络仅在时间轴 Tab 激活时由服务端每 1.5s 经 VM service eval 增量拉取（`XBUme.controller.routes` / `XBUme.controller.network`），经 WebSocket 只推送新增或状态变化的条目；日志 / 异常复用页面已实时接收的数据在前端本地合并，不重复传输。
-  - 过滤与操作：时间范围（1/5/30 分钟/全部，默认 5 分钟）、事件类型（路由/网络/日志/异常分别开关）、日志级别（Flutter I / W·E / D·V）、空格分隔多关键字、暂停/恢复、一键回到最新、清空、复制当前视图。
-  - 展示：按时间升序合并（同一毫秒权重 异常 > 网络 > 路由 > 日志），行内为时间、类型徽标、摘要与状态；点击行展开详情——路由含前后路由与 phase，网络含方法/URL/状态码/耗时与错误，异常含摘要/相关 Widget/栈帧，日志含来源/tag/完整消息，详情内可跳转到对应 Tab 查看完整内容。
-  - 暂停时底部浮条提示有新事件，点击恢复并跳到底部；清空只清 GUI 视图里的路由/网络副本（不动 app 内记录），并以时间下限阻止旧记录回填；同一会话切走再切回保留已合并的历史。
-  - 详情内的跳转链接会定位到目标 Tab 的具体位置：滚动到对应行/卡片并闪烁高亮；Network 自动展开该条请求，日志定位时自动放开挡住目标行的过滤；路由事件定位到当前栈中同名路由（已 pop 时给出提示）。
-  - 修复时间轴实时刷新时点击偶发无效（需点两次才跳转）：按住鼠标期间推迟合帧重渲染，避免 mousedown 与 mouseup 之间的行被替换导致 click 丢失。
-  - 日志与异常使用本机接收/捕获时间，路由与网络使用 app 端事件时间；手机与本机时钟偏差大时跨源排序可能有偏差（页面说明文案已注明）。
+- 新增 MCP 服务 `dart run xb_ume:mcp`（`bin/mcp.dart` + `bin/src/mcp/*`，零新增依赖）：JSON-RPC 2.0 手写协议层，stdio（换行分隔，客户端拉起）与 Streamable HTTP（仅绑 127.0.0.1，默认 46140，token 校验 + Host 校验）双传输；默认 20 个工具（core 14 + diagnose 3 + run-safe 3），`act` / `device-write` 等有副作用的组必须显式 `--tool-groups` 开启；`--uri` 可手工指定会话，省略时自动扫描本机 VM service。
+- MCP 核心工具：会话发现/选定、截图（image content）、按类型/Key/文本/Semantics 找组件（回 `ref` + 逻辑像素 bounds + 源码位置）、点击（ref / by+value / 坐标三选一）、焦点输入框写文本、滑动、路由 push/pop 与路由栈、网络记录、app 日志、场景运行/查询/停止/报告；场景运行异步返回 runId，同一时间只允许一个实例。
+- 新增设备类 MCP 工具与可插拔后端（`bin/src/device/*`）：adb / hdc / simctl / idevice 自研实现 + `mobile-mcp` 可选适配器（需 Node/npx，**不**进入 auto，必须显式 `--device-backend` 才启用，首次调用可能 `npx -y @mobilenext/mobile-mcp@latest` 拉包）；能力显式声明（install/uninstall/launch/terminate/pressKey/tapNative/crashList/crashGet），后端不支持时返回 `unsupported: true` 与原因而不是假装成功；`xbume_app_launch(via: flutter-run)` 直接跑 `flutter run` 并把新会话设为当前（macOS 桌面无 adb 时走该分支）。
+- 新增场景 DSL 复合与设备步骤（`bin/src/scenario/steps.dart`，part 方式共用 runner 的注入守卫）：`waitFor` / `retry` / `if` / `observe` / `scrollUntil`，以及 `install` / `uninstall` / `launchApp` / `pressKey` / `nativeTap` / `assertNoCrash`；条件统一支持 `visible` / `text` / `route` / `request` / `expr`，省略 `kind` 时按字段自动推断；`record` 与 `assertLog` 不做假实现，分别显式报错与标 skip。
+- AI 驱动循环新增「元素候选」上下文：单次 eval 采集当前屏可点/有文字元素（ref、类型、文本、逻辑像素 bounds、业务源码 `文件:行`），剔除 Material Icons 等私有区字形、按文本优先去重、上限 50 条；新增 `tapRef` 步骤按 `ref` 反查 bounds 中心注入点击，并用 `expectType` 校验界面是否已变化（不匹配时提示改用坐标或重新决策）。
+- 修复 `tapRef` 步骤被丢弃的问题：步骤 JSON 里候选类型与步骤类型同名 `type` 会互相覆盖（jsonDecode 后者胜），入参改名为 `expectType` 并在提示词中明确禁止重写 `type`。
+- GUI「守护进程」Tab 新增「MCP 服务」卡片：只读探测本机 MCP（HTTP 模式扫 46140-46149 并握手 `initialize` + `tools/list` 拿工具数；stdio 模式按进程命令行识别），展示运行状态/端口/工具数/协议版本，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 自动带 `X-XBUME-TOKEN`，凭据只在点复制时经 `/api/mcp?token=1` 下发）。
+- 会话发现逻辑抽到 `bin/src/session/discovery.dart`，daemon 与 MCP 服务共用一份实现（含增强 PATH 与 adb/hdc 转发来源映射）。
+- 新增 [MCP_GUIDE.md](MCP_GUIDE.md)：工具清单与参数、Qoder/Cursor/Claude Code 配置、五个典型 prompt、场景 DSL 全表、后端能力矩阵、安全模型、排障与已知缺口；README 新增「MCP 接入」章节与总览行，GUI_GUIDE 补守护进程页的 MCP 卡片说明。
+- CHANGELOG 改为降序（最新在最上），与仓库其他包一致。
+- 新增 `test/mcp_protocol_test.dart`、`test/device_parse_test.dart`、`test/scenario_steps_test.dart`、`test/mobile_mcp_test.dart`；`flutter test` 184 项全过。
 
 ## 0.3.0
 
@@ -101,3 +45,73 @@
 - 截图工具栏「下载 PNG」后新增「复制图片」：把当前显示的画面（不重新截图）经浏览器 Clipboard API 复制为 PNG 到系统剪贴板；浏览器不支持时提示改用「下载 PNG」。
 - 新增「性能」Tab（当前调试会话 CPU/内存实时监控）：`getCpuSamples` 按采样窗口估算 Dart 主 isolate CPU 占用率（Idle 不计入，只反映 UI 线程）、`getMemoryUsage` 展示 Dart 堆/堆容量/堆外内存、`getProcessMemoryUsage` 展示进程总内存与顶层分桶构成；含 CPU/内存双曲线、会话内峰值、可调采集间隔（1/2/5 秒，采样窗口上限 2 秒）、暂停/继续/清空/触发 GC；仅在页面激活时采集，离开或暂停即停止，切换会话自动清空重采；新增 `GET /api/perf`，单个指标失败不影响其余指标；OHOS 等启动引擎时未开采样器的调试会话（`aa start` 不带 `--enable-dart-profiling`，`getCpuSamples` 报 `Profiler is disabled`）首次采集会自动 `setFlag('profiler', true)` 后重试，无需重启 app。app 端 xb_ume 另注册 `ext.xbume.processStats`（iOS/macOS 用 `getrusage` 取进程 user+sys CPU 时间，Android/OHOS 读 `/proc/self/stat`），CPU 卡片优先显示「整进程 · Xcode 口径」（全部线程、多核可超 100%，副标题保留 Dart isolate 值），进程内存副标题补充 `phys_footprint`（Xcode 内存口径）；旧版 SDK 未注册扩展时自动回退到 isolate 采样，无需配置。
 - 性能页 Android / 鸿蒙指标对齐官方工具：CPU 百分比按官方口径换算——Android 按 Android Studio CPU Profiler、OHOS 按 DevEco Profiler 以「全部核心容量」为 100%（副标题标出核数，8 核下单线程满载约 12.5%），iOS/macOS 仍按 Xcode 单核 100%；进程内存改取 `/proc/self/smaps` 的 PSS（与 Android Studio Memory Profiler 的 Total、DevEco Memory 泳道同源），构成表按官方分类拆分：Android 照 `dumpsys meminfo` App Summary 的私有页公式算 Java / Native / Code / Stack / Graphics / Private Other / System（System 为 PSS 减私有页余量，各行之和恒等于 PSS 总量），OHOS 按 DevEco 内存类型拆 Native Heap / ArkTS Heap / Stack / GL·Graph / .so / .ttf / .hap / Dev / AnonPage Other / FilePage Other（均为 PSS）。iOS/macOS 的进程内存主数字改为 `phys_footprint`（Xcode 内存 gauge 口径），RSS 移到副标题。smaps 受限时退回 `smaps_rollup`（仅 PSS 总量）再退回 `getProcessMemoryUsage`；GPU memtrack 显存在 app 内不可读，Android 的 Graphics 仅为 smaps 可见部分、OHOS 总量不含 GL/Graph，可能略低于官方。PSS 整份 smaps 解析有主 isolate 开销，加 3 秒缓存；新增 smaps 解析与两套官方分类单测 7 项。构成表标题按口径标注（PSS / RSS），避免与卡片的 footprint 混读；CPU 相邻采样窗口超过 10 秒（页面隐藏后恢复）时丢弃当次百分比，避免显示长时间均值。
+## 0.2.0
+
+- GUI 新增「时间轴」Tab：把路由、网络、日志、异常四类调试事件按时间合并为一条流，用来对齐「一次操作前后 app 内先后发生了什么」。
+  - 数据来源：路由 / 网络仅在时间轴 Tab 激活时由服务端每 1.5s 经 VM service eval 增量拉取（`XBUme.controller.routes` / `XBUme.controller.network`），经 WebSocket 只推送新增或状态变化的条目；日志 / 异常复用页面已实时接收的数据在前端本地合并，不重复传输。
+  - 过滤与操作：时间范围（1/5/30 分钟/全部，默认 5 分钟）、事件类型（路由/网络/日志/异常分别开关）、日志级别（Flutter I / W·E / D·V）、空格分隔多关键字、暂停/恢复、一键回到最新、清空、复制当前视图。
+  - 展示：按时间升序合并（同一毫秒权重 异常 > 网络 > 路由 > 日志），行内为时间、类型徽标、摘要与状态；点击行展开详情——路由含前后路由与 phase，网络含方法/URL/状态码/耗时与错误，异常含摘要/相关 Widget/栈帧，日志含来源/tag/完整消息，详情内可跳转到对应 Tab 查看完整内容。
+  - 暂停时底部浮条提示有新事件，点击恢复并跳到底部；清空只清 GUI 视图里的路由/网络副本（不动 app 内记录），并以时间下限阻止旧记录回填；同一会话切走再切回保留已合并的历史。
+  - 详情内的跳转链接会定位到目标 Tab 的具体位置：滚动到对应行/卡片并闪烁高亮；Network 自动展开该条请求，日志定位时自动放开挡住目标行的过滤；路由事件定位到当前栈中同名路由（已 pop 时给出提示）。
+  - 修复时间轴实时刷新时点击偶发无效（需点两次才跳转）：按住鼠标期间推迟合帧重渲染，避免 mousedown 与 mouseup 之间的行被替换导致 click 丢失。
+  - 日志与异常使用本机接收/捕获时间，路由与网络使用 app 端事件时间；手机与本机时钟偏差大时跨源排序可能有偏差（页面说明文案已注明）。
+
+## 0.1.8
+
+- 路由栈名称列新增 XBVM：`/api/routeinfo` 除了 State / ChangeNotifier，还会静态解析页面的 XBVM 子类（`extends XBPage<HomeVM>` 泛型实参、`generateVM` 返回类型或构造调用、State 字段、`vmOf/vmWatch/Provider.of/Consumer` 等泛型实参，沿 extends 链验证 XBVM / XBPageVM 体系）；表格列改为「Widget / State / VM / Notifier」，VM 名可点击跳到「实例」Tab 扫描堆上实例。
+- 隐藏「状态」Tab（ChangeNotifier 聚合面板），代码保留，恢复时去掉页头 tab 的 `display:none` 即可。
+
+## 0.1.7
+
+- 修复路由栈 Tab 可能诱发的 App 端 framework 断言（`InheritedElement.notifyClients` 的 `check that it really is our descendant`，多发生在 `UnmanagedRestorationScope` 重建时）：`/api/routelocate` 原先用 `ModalRoute.of(e)` 遍历整棵 Element 树来收集目标路由的候选 Widget，而 `ModalRoute.of` 会给每个 Element 注册 `_ModalScopeStatus` 依赖——相当于让全树的 `didChangeDependencies` 在每次路由状态变化（isCurrent/canPop）时都被触发，可能诱导业务代码在构建/转场期间执行导航或重建，进而触发 framework 断言。现改为只从目标路由自己的 `ModalRoute.subtreeContext` 向下遍历页面子树，不再注册任何 InheritedWidget 依赖，同时避免 250 候选上限把深页面的用户 Widget 截掉。
+- 新增路由调试日志 `~/.xb_ume_ide/logs/route_debug.log`（超 2MB 轮转）：记录路由栈读取、路由定位、路由操作的端口/耗时/结果；当 App 端框架异常或未捕获异常到达时，自动追加最近 25 条路由操作快照，便于复现「切到路由栈 Tab 后操作手机出现异常」时直接对齐电脑端操作与手机端异常的时间线。
+- 上述 `check that it really is our descendant` 断言到达后，额外在 App 内只读跑一次依赖一致性探针，把「仍登记在 InheritedElement._dependents 里、但祖先链已回不到该 InheritedElement」的元素以 `[deps]` 写入 `route_debug.log`（继承点/失效 dependent/生命周期/祖先链，最多 8 对），用于确认断言是哪一对依赖失效导致。
+
+## 0.1.6
+
+- 修复 GUI 临时连接泄漏：`/api/sandbox/read`（监听页 50ms~2s 轮询）、`/api/screenshot`（自动刷新）、`/api/wtree`、`/api/wtree/pick`、`/api/sandbox/delete`、`/api/sandbox/upload`、`/api/runtime/op` 七处未关闭 `_SandboxRpc`，长时间使用会累积 WebSocket 与文件描述符（对端 app 进程内同样被占用）；关闭流程统一加超时，避免握手挂住阻塞 HTTP 响应。
+- 修复 GUI 轮询重入：设备轮询加互斥，设备日志进程启动期间占位去重，避免慢设备下重复启动 logcat/hilog 并遗留孤儿进程。
+- 修复 VM 会话失效不恢复：建连失败或连接断开后按轮询周期自动重建（原实现会永久失效到 GUI 重启），握手增加 5s 超时。
+- 修复实例字段写回字符串转义：值中的 `$`、换行、制表符改用 `_escEvalString`，并校验字段名，避免写回失败或写错值。
+- 路由操作新增 `_debugLocked` 保护：App 正在转场时返回 `BUSY`，避免与自身导航竞争触发 Navigator 断言。
+- GUI 退出新增 SIGHUP 处理（关闭终端窗口也会先断开 VM 会话，降低 DDS 死锁风险）。
+- 守护进程：修复实例指纹去重集合从未写入导致跨轮去重失效；`--uri` 模式断线后自动重连（原实现永久挂起）；事件年龄过滤兼容手机与本机时钟偏差；停止旧实例时优先用状态 pid 精确停止，并以 `ps` 严格校验命令行，避免误伤其他调试进程。
+- 修复 Widget 树输出缺段时的 `RangeError`。
+
+## 0.1.5
+
+- 调试会话来源标签增强：自动发现时经 `adb forward --list` / `hdc fport ls` 把本机转发端口映射到设备号，会话标签由 `port:端口` 升级为 `adb:设备号#port:端口`（无转发表时保持 `port:端口`），多台手机 / 同一手机多个 app 同时调试时可读可区分。
+- 新增电脑端 GUI 工具箱（`bin/ide_gui.dart`，本机 Web GUI、零新增依赖）：`--install` 时随守护脚本一并部署，并在系统常用位置创建桌面入口（macOS 应用程序文件夹 `xb_ume 工具箱.app` 可从 Launchpad/Spotlight 启动，无写权限时装到 `~/Applications`；Windows 桌面快捷方式），另有启动器与 `dart run xb_ume:ide --gui` 命令入口；三个 Tab——设备管理（adb/hdc/Xcode 模拟器/idevice_id 发现与选择）、守护进程（状态查询经互斥端口 status 协议、一键重启、IDE 优先级展示）、日志（选中设备的全量设备日志 + 全部调试会话 stdout/stderr 实时展示，支持来源/级别/关键字过滤、暂停、清屏、导出）；`--uninstall` 一并移除桌面入口。
+- 守护进程增加单实例接管锁：新实例启动时自动停止旧实例（命令行匹配 + 回环端口互斥双保险），只保留最新实例，避免多实例重复消费事件导致一次点击唤起多个 IDE；`--uninstall` 现在会停止所有 daemon 实例后再清理文件。
+- 修复 Windows 下 Android Studio 已安装但检测不到的问题：`_hasAndroidStudio` 原先仅对 macOS 检查二进制路径，现按平台路径（含 `%LOCALAPPDATA%\Programs\Android Studio`）与命令名统一检测；同时修复文档示例中不存在的 `XBUme.app` API，新增 IDE 跳转使用指南 `IDE_JUMP_GUIDE.md`。
+
+## 0.1.4
+
+- locator 选中组件新增宽高标注：气泡内新增 size 行展示组件真实宽高（逻辑像素），高亮框边缘新增 W/H 青色标签，组件超出屏幕时仍显示真实值；不影响现有边框、间距标注与拖拽功能。
+
+## 0.1.3
+
+-  优化 locator 层级展示
+
+## 0.1.2
+
+-  优化 locator 定位精度
+
+## 0.1.1
+
+- optimized.
+
+## 0.1.0
+
+- Initial release.
+- Pure Flutter UME-like debugging toolkit.
+- Includes core panel host and plugins:
+  - Console
+  - Route timeline
+  - Performance timeline
+  - Network (generic + Dio + http)
+  - Inspector
+  - Device info
+  - Storage inspector
+- Includes persistence support and a runnable example.
+

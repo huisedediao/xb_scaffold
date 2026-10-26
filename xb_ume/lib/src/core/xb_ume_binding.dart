@@ -107,6 +107,8 @@ class XBUmeBinding {
   }
 
   void _installGlobalHooks() {
+    _installSafeStackDemangler();
+
     if (config.captureDebugPrint) {
       _originDebugPrint = debugPrint;
       debugPrint = (String? message, {int? wrapWidth}) {
@@ -152,6 +154,36 @@ class XBUmeBinding {
 
     WidgetsBinding.instance.addTimingsCallback(_timingsCallback);
   }
+
+  /// 让框架的错误上报容忍 VM service 注入产生的栈帧。
+  ///
+  /// 指针注入与取值都经由 VM eval 执行，异常栈里会出现
+  /// `#12     Eval.<anonymous closure> ()` 这种没有 `(file:line)` 的帧；
+  /// `FlutterError` 打印时 `StackFrame.fromStackTraceLine` 对它会直接断言失败，
+  /// 导致“报错本身崩溃”。该崩溃若发生在一次路由变更（push/pop）的事务中间，
+  /// Navigator 会停在过渡态：新页面桥在动画起点、`_debugLocked` 永不复位，
+  /// 之后所有 pop 都失效。这里在 debug 下只保留合法帧，其余原样透传。
+  static void _installSafeStackDemangler() {
+    if (!kDebugMode) return;
+    final StackTraceDemangler origin = FlutterError.demangleStackTrace;
+    FlutterError.demangleStackTrace = (StackTrace stack) {
+      try {
+        final kept = origin(stack)
+            .toString()
+            .split('\n')
+            .where((String line) =>
+                line.isEmpty || _stackFramePattern.hasMatch(line))
+            .join('\n');
+        return StackTrace.fromString(kept);
+      } catch (_) {
+        return stack;
+      }
+    };
+  }
+
+  /// 与框架 `StackFrame.fromStackTraceLine` 的断言同形，保证不触发二次断言。
+  static final RegExp _stackFramePattern =
+      RegExp(r'^#(\d+) +(.+) \((.+?):?(\d+){0,1}:?(\d+){0,1}\)$');
 
   void _onFrameTimings(List<FrameTiming> timings) {
     for (final timing in timings) {

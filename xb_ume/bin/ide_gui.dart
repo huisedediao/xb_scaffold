@@ -244,7 +244,8 @@ Future<void> _mainImpl(List<String> args) async {
   _guiToken = generateGuiToken();
   _writeGuiTokenFile();
   print('[xbume-gui] 本地脚本访问令牌: $_home/.xb_ume_ide/gui.token');
-  _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree', trace: false);
+  _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree',
+      trace: false);
   await openBrowser(port);
   final state = GuiState();
   state.start();
@@ -421,6 +422,18 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/api/mcp') {
+      final status = await probeMcpStatus();
+      // 凭据只在用户点「复制 MCP 配置」时下发（?token=1），常态轮询不把 token
+      // 放进页面：HTTP 模式必须带它，否则客户端沿用默认配置会 401。
+      if (req.uri.queryParameters['token'] == '1' && status['mode'] == 'http') {
+        status['token'] = readMcpToken();
+      }
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(status));
+      await req.response.close();
+      return;
+    }
     if (path == '/api/clientlog' && req.method == 'POST') {
       // 前端事件上报（会话选择链路排障）：{tag,msg} → vm_sel.log
       try {
@@ -576,19 +589,19 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final raw = await rpc.evalStringOn(
           'package:flutter/src/widgets/navigator.dart',
           "(() { final root = WidgetsBinding.instance.renderViewElement; "
-          "if (root == null) return 'NO_ROOT'; "
-          "final navigators = <NavigatorState>[]; "
-          "void walk(Element e) { final w = e.widget; "
-          "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) { navigators.add(e.state as NavigatorState); } "
-          "e.visitChildren(walk); } "
-          "root.visitChildren(walk); "
-          "final sb = StringBuffer()..write(navigators.length); "
-          "for (var i = 0; i < navigators.length; i++) { "
-          "for (final entry in navigators[i]._history) { "
-          "final r = entry.route; "
-          "final args = r.settings.arguments; "
-          "sb..writeln()..write(i)..write('\\t')..write(r.runtimeType.toString())..write('\\t')..write(r.settings.name ?? '')..write('\\t')..write(r.isCurrent ? '1' : '0')..write('\\t')..write(args?.runtimeType.toString() ?? '')..write('\\t')..write(args?.toString().replaceAll('\\t', ' ').replaceAll('\\n', ' ') ?? ''); } } "
-          "return sb.toString(); })()",
+              "if (root == null) return 'NO_ROOT'; "
+              "final navigators = <NavigatorState>[]; "
+              "void walk(Element e) { final w = e.widget; "
+              "if (w is Navigator && e is StatefulElement && e.state is NavigatorState) { navigators.add(e.state as NavigatorState); } "
+              "e.visitChildren(walk); } "
+              "root.visitChildren(walk); "
+              "final sb = StringBuffer()..write(navigators.length); "
+              "for (var i = 0; i < navigators.length; i++) { "
+              "for (final entry in navigators[i]._history) { "
+              "final r = entry.route; "
+              "final args = r.settings.arguments; "
+              "sb..writeln()..write(i)..write('\\t')..write(r.runtimeType.toString())..write('\\t')..write(r.settings.name ?? '')..write('\\t')..write(r.isCurrent ? '1' : '0')..write('\\t')..write(args?.runtimeType.toString() ?? '')..write('\\t')..write(args?.toString().replaceAll('\\t', ' ').replaceAll('\\n', ' ') ?? ''); } } "
+              "return sb.toString(); })()",
         );
         final navigators = <Map<String, Object?>>[];
         if (raw != 'NO_ROOT') {
@@ -759,6 +772,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           if (r == 'NO_ROOT') return 0;
           return int.tryParse(r) ?? 0;
         }
+
         // 一次 getClassList：类名 → classId 列表（与实例 Tab 堆扫描同款匹配，
         // 含 '.类名' 后缀的同类变体）。注意 getClassList 返回的类名不带泛型
         // 实参（泛型类是 _FooState 而实例 runtimeType 是 _FooState<T>），
@@ -767,6 +781,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final lt = cls.indexOf('<');
           return lt > 0 ? cls.substring(0, lt) : cls;
         }
+
         final classList = await rpc.rawRpc('getClassList', {'isolateId': iso});
         final idsByCls = <String, List<String>>{};
         for (final c in (classList['classes'] as List? ?? <Object?>[])) {
@@ -861,7 +876,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             for (final n in r.split('|')) {
               if (n.isEmpty) continue;
               if (n.contains('<')) {
-                final inner = n.substring(n.indexOf('<') + 1, n.lastIndexOf('>'));
+                final inner =
+                    n.substring(n.indexOf('<') + 1, n.lastIndexOf('>'));
                 for (final part in inner.split(',')) {
                   final p = part.trim();
                   if (p.isNotEmpty &&
@@ -880,6 +896,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final lt = cls.indexOf('<');
           return lt > 0 ? cls.substring(0, lt) : cls;
         }
+
         final items = <Map<String, Object?>>[];
         if (candidates.isNotEmpty || toVerify.isNotEmpty) {
           final classList =
@@ -944,9 +961,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                     ? tc
                     : (set['instances'] as List? ?? const <Object?>[]).length;
                 if (instId.isEmpty &&
-                    (set['instances'] as List? ?? const <Object?>[]).isNotEmpty) {
-                  instId =
-                      ((set['instances'] as List).first as Map)['id']?.toString() ?? '';
+                    (set['instances'] as List? ?? const <Object?>[])
+                        .isNotEmpty) {
+                  instId = ((set['instances'] as List).first as Map)['id']
+                          ?.toString() ??
+                      '';
                 }
               } catch (_) {}
             }
@@ -962,8 +981,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                 });
                 for (final f in (obj['fields'] as List? ?? <Object?>[])) {
                   if (f is! Map) continue;
-                  final fname =
-                      ((f['decl'] as Map?)?['name'] ?? '').toString();
+                  final fname = ((f['decl'] as Map?)?['name'] ?? '').toString();
                   final v = f['value'];
                   if (v is! Map) continue;
                   if (fname == '_listeners') {
@@ -976,13 +994,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                       listeners = (l['elements'] as List? ?? <Object?>[])
                           .where((e) =>
                               e is Map &&
-                              (e['class'] as Map?)?['name']?.toString() != 'Null')
+                              (e['class'] as Map?)?['name']?.toString() !=
+                                  'Null')
                           .length;
                     } catch (_) {
                       listeners = -1;
                     }
                   } else if (fname == '_count') {
-                    final n = int.tryParse(v['valueAsString']?.toString() ?? '');
+                    final n =
+                        int.tryParse(v['valueAsString']?.toString() ?? '');
                     if (n != null && listeners < 0) listeners = n;
                   }
                   if (fieldsPreview.length < 8 &&
@@ -997,7 +1017,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                         '_debugCreator',
                       }.contains(fname)) {
                     var preview = v['valueAsString']?.toString() ??
-                        (v['class'] as Map?)?['name']?.toString() ?? '?';
+                        (v['class'] as Map?)?['name']?.toString() ??
+                        '?';
                     if (preview.length > 48) preview = preview.substring(0, 48);
                     fieldsPreview.add('$fname=$preview');
                   }
@@ -1038,9 +1059,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/routeinfo') {
       final file = req.uri.queryParameters['file'] ?? '';
       final cls = req.uri.queryParameters['class']?.trim() ?? '';
-      if (file.isEmpty ||
-          cls.isEmpty ||
-          !File(file).existsSync()) {
+      if (file.isEmpty || cls.isEmpty || !File(file).existsSync()) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -1119,8 +1138,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             "void walk(Element e) { cands.add(e.widget); e.visitChildren(walk); } "
             "walk(ctx); "
             "return cands.length > 250 ? cands.sublist(0, 250) : cands; })()";
-        final libId = await rpc
-            .libraryId('package:flutter/src/widgets/navigator.dart');
+        final libId =
+            await rpc.libraryId('package:flutter/src/widgets/navigator.dart');
         final isoId = await rpc.isolateId();
         final listRes = await rpc.rawRpc('evaluate', {
           'isolateId': isoId,
@@ -1219,14 +1238,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         throw '无法定位：扫描 $scanned 个候选类（其中框架类 $framework 个），均未解析到本机文件（最近一个：$lastLibUri）';
       } catch (e, st) {
         stderr.writeln('[routelocate] $e\n$st');
-        _routeDebugLog('routelocate',
+        _routeDebugLog(
+            'routelocate',
             'port=${_vmPortTag(uri)} nav=$nav idx=$idx open=${open ? 1 : 0} error=${_oneLine(e)} ms=${sw.elapsedMilliseconds}'
-            ' root=${projectRoot ?? '-'}'
-            ' cfg=${projectRoot != null && File('$projectRoot/.dart_tool/package_config.json').existsSync()}'
-            ' pkg=${projectRoot == null ? 0 : (_pkgRootsCache[projectRoot]?.length ?? 0)}'
-            ' libs=${fileUris.length}'
-            ' lastLib=${lastLibUri.isEmpty ? '-' : lastLibUri}'
-            ' scanned=$scanned fw=$framework');
+                ' root=${projectRoot ?? '-'}'
+                ' cfg=${projectRoot != null && File('$projectRoot/.dart_tool/package_config.json').existsSync()}'
+                ' pkg=${projectRoot == null ? 0 : (_pkgRootsCache[projectRoot]?.length ?? 0)}'
+                ' libs=${fileUris.length}'
+                ' lastLib=${lastLibUri.isEmpty ? '-' : lastLibUri}'
+                ' scanned=$scanned fw=$framework');
         await fail(e);
       } finally {
         await rpc.close();
@@ -1243,7 +1263,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final id = req.uri.queryParameters['id'] ?? '';
       if (uri.isEmpty ||
-          (path != '/api/network' && path != '/api/network/clear' && id.isEmpty)) {
+          (path != '/api/network' &&
+              path != '/api/network/clear' &&
+              id.isEmpty)) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -1270,9 +1292,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         // 校验 xb_ume core 库可达（未接入 xb_ume 的 app 会在此报错）。
         await rpc.libraryId('package:xb_ume/src/core/xb_ume.dart');
         Future<String> evalNet(String inner) => rpc.evalStringOn(
-          'package:xb_ume/src/core/xb_ume.dart',
-          "(() { $inner })()",
-        );
+              'package:xb_ume/src/core/xb_ume.dart',
+              "(() { $inner })()",
+            );
 
         if (path == '/api/network') {
           final raw = await evalNet(
@@ -1287,8 +1309,14 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             final p = line.split('\u0001');
             if (p.length < 8) continue;
             items.add(<String, Object?>{
-              'id': p[0], 'time': p[1], 'method': p[2], 'url': p[3],
-              'statusCode': p[4], 'durationMs': p[5], 'status': p[6], 'error': p[7],
+              'id': p[0],
+              'time': p[1],
+              'method': p[2],
+              'url': p[3],
+              'statusCode': p[4],
+              'durationMs': p[5],
+              'status': p[6],
+              'error': p[7],
             });
           }
           req.response.headers.contentType = ContentType.json;
@@ -1349,16 +1377,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final p = raw.split('\u0001');
           List<Map<String, String>> parseKv(String s) => s.isEmpty
               ? <Map<String, String>>[]
-              : s
-                  .split('\u0004')
-                  .map((e) {
-                    final i = e.indexOf('\u0003');
-                    return <String, String>{
-                      'k': i < 0 ? e : e.substring(0, i),
-                      'v': i < 0 ? '' : e.substring(i + 1),
-                    };
-                  })
-                  .toList();
+              : s.split('\u0004').map((e) {
+                  final i = e.indexOf('\u0003');
+                  return <String, String>{
+                    'k': i < 0 ? e : e.substring(0, i),
+                    'v': i < 0 ? '' : e.substring(i + 1),
+                  };
+                }).toList();
           final initiatorStack = p.length > 7 ? p[7] : '';
           final initiatorFrames = initiatorStack
               .split('\n')
@@ -1376,6 +1401,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             'initiatorFrames': initiatorFrames,
           };
         }
+
         if (path == '/api/network/detail') {
           final item = await fetchItem();
           if (item == null) throw '请求不存在（可能已被清除）';
@@ -1404,7 +1430,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         var url = sep < 0 ? mu : mu.substring(sep + 1);
         final item = await fetchItem();
         var headers = <String, String>{
-          for (final h in (item?['requestHeaders'] as List? ?? <Map<String, String>>[]))
+          for (final h
+              in (item?['requestHeaders'] as List? ?? <Map<String, String>>[]))
             if ((h['k'] ?? '').toString().isNotEmpty)
               h['k']!.toString(): h['v']?.toString() ?? '',
         };
@@ -1412,7 +1439,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (edit != null) {
           final eu = edit['url']?.toString().trim() ?? '';
           final eh = edit['headers'];
-          final crossHost = eu.isNotEmpty && eu != url && replayCrossHost(url, eu);
+          final crossHost =
+              eu.isNotEmpty && eu != url && replayCrossHost(url, eu);
           if (eu.isNotEmpty && eu != url) {
             final next = Uri.tryParse(eu);
             if (next == null || !next.hasScheme || next.host.isEmpty) {
@@ -1422,7 +1450,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           }
           if (eh is Map) {
             headers = {
-              for (final e in eh.entries) e.key.toString(): e.value?.toString() ?? '',
+              for (final e in eh.entries)
+                e.key.toString(): e.value?.toString() ?? '',
             };
             if (crossHost) {
               // 编辑重放时前端会把原 headers 预填回表单；跨 host 下值没改的
@@ -1452,8 +1481,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           if (body.isNotEmpty && method != 'GET' && method != 'HEAD') {
             // 显式设 content-length：否则 dart:io 走 chunked，部分简易服务端
             //（及与原始请求行为不一致）会解析不到 body。
-            rq.headers.set(
-                'content-length', utf8.encode(body).length.toString());
+            rq.headers
+                .set('content-length', utf8.encode(body).length.toString());
             rq.add(utf8.encode(body));
           }
           final rs = await rq.close();
@@ -1528,7 +1557,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     // -- Storage（shared_prefs XML 直读直写；保存时可经 app 内 API 立即生效）--
-    if (path == '/api/storage/list' || path == '/api/storage/read' || path == '/api/storage/write') {
+    if (path == '/api/storage/list' ||
+        path == '/api/storage/read' ||
+        path == '/api/storage/write') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
@@ -1551,7 +1582,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           "(() { try { return File('/proc/self/cmdline')"
           ".readAsStringSync().split(String.fromCharCode(0))[0].trim(); } "
           "catch (_) { return ''; } })()",
-        )).trim();
+        ))
+            .trim();
         final os = (await rpc.evalString('Platform.operatingSystem')).trim();
         if (os != 'ohos' && os != 'ios' && pkg.isEmpty) {
           throw '无法获取应用包名（/proc/self/cmdline）';
@@ -1573,7 +1605,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             "(() { final h = Platform.environment['HOME'] ?? ''; "
             'if (h.isNotEmpty) return h; '
             'return Directory.systemTemp.parent.path; })()',
-          )).trim();
+          ))
+              .trim();
           if (home.isEmpty) throw '无法获取 app 沙盒 HOME（iOS）';
           prefsDirs = <String>['$home/Library/Preferences'];
           ext = '.plist';
@@ -1581,8 +1614,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           prefsDirs = <String>['/data/data/$pkg/shared_prefs'];
           ext = '.xml';
         }
-        final dirList =
-            prefsDirs.map((d) => "'${_escPath(d)}'").join(',');
+        final dirList = prefsDirs.map((d) => "'${_escPath(d)}'").join(',');
         final listXml = await rpc.evalString(
           "(() { final out = <String>[]; "
           "for (final d in const <String>[$dirList]) { "
@@ -1630,7 +1662,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             try {
               await tmpBin.writeAsBytes(bytes);
               final pr = await Process.run('plutil', <String>[
-                '-convert', 'xml1', '-o', tmpXml, tmpBin.path,
+                '-convert',
+                'xml1',
+                '-o',
+                tmpXml,
+                tmpBin.path,
               ]);
               if (pr.exitCode != 0) {
                 throw 'plutil 转换失败：${pr.stderr}';
@@ -1644,8 +1680,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               await req.response.close();
               return;
             } finally {
-              try { await tmpBin.delete(); } catch (_) {}
-              try { await File(tmpXml).delete(); } catch (_) {}
+              try {
+                await tmpBin.delete();
+              } catch (_) {}
+              try {
+                await File(tmpXml).delete();
+              } catch (_) {}
             }
           }
           final xml = await rpc.evalString(
@@ -1685,15 +1725,23 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           try {
             await tmpXml.writeAsString(xml);
             final pr = await Process.run('plutil', <String>[
-              '-convert', 'binary1', '-o', tmpBin, tmpXml.path,
+              '-convert',
+              'binary1',
+              '-o',
+              tmpBin,
+              tmpXml.path,
             ]);
             if (pr.exitCode != 0) {
               throw 'plutil 转换失败（XML plist 可能非法）：${pr.stderr}';
             }
             bytes = await File(tmpBin).readAsBytes();
           } finally {
-            try { await tmpXml.delete(); } catch (_) {}
-            try { await File(tmpBin).delete(); } catch (_) {}
+            try {
+              await tmpXml.delete();
+            } catch (_) {}
+            try {
+              await File(tmpBin).delete();
+            } catch (_) {}
           }
         } else {
           bytes = utf8.encode(xml);
@@ -1742,8 +1790,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
 
       final rpc = _SandboxRpc(uri);
       // 列目录的 app 端表达式（d 须为绝对路径）。
-      String listExpr(String d) =>
-          "(() { final sb = StringBuffer(); "
+      String listExpr(String d) => "(() { final sb = StringBuffer(); "
           "for (final e in Directory('${_escPath(d)}').listSync(followLinks: false)) { "
           "var size = -1; var mtime = 0; "
           "try { final st = e.statSync(); "
@@ -1782,8 +1829,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             if (os == 'ohos') '/data/app/el2/100/base',
             if (os == 'ohos') '/data/app/el1/100/base',
           ];
-          final quoted =
-              candidates.map((c) => "'${_escPath(c)}'").join(',');
+          final quoted = candidates.map((c) => "'${_escPath(c)}'").join(',');
           final quotedPart = quoted.isEmpty ? '' : '$quoted, ';
           // Android 11+ 分区存储：无法列出其他应用的目录（Android/data 顶层
           // 也是 errno=13），但本包名目录可访问；包名经 /proc/self/cmdline 取。
@@ -1807,17 +1853,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             "try { Directory(c).listSync(followLinks: false); ok.add(c); } "
             "catch (_) {} } return ok.join('\\n'); })()",
           );
-          roots = rootsRaw
-              .split('\n')
-              .where((l) => l.isNotEmpty)
-              .toList();
+          roots = rootsRaw.split('\n').where((l) => l.isNotEmpty).toList();
           if (roots.isNotEmpty) {
             listing = await rpc.evalString(listExpr(roots.first));
           }
         } else {
           listing = await rpc.evalString(listExpr(dir));
         }
-        final actualRoot = dir.isEmpty ? (roots.isEmpty ? '' : roots.first) : dir;
+        final actualRoot =
+            dir.isEmpty ? (roots.isEmpty ? '' : roots.first) : dir;
         final entries = <Map<String, Object?>>[];
         for (final line in listing.split('\n')) {
           if (line.isEmpty) continue;
@@ -1864,7 +1908,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/sandbox/read') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final target = req.uri.queryParameters['path'] ?? '';
-      final offset = int.tryParse(req.uri.queryParameters['offset'] ?? '0') ?? 0;
+      final offset =
+          int.tryParse(req.uri.queryParameters['offset'] ?? '0') ?? 0;
       final max = int.tryParse(req.uri.queryParameters['max'] ?? '0') ?? 0;
       if (uri.isEmpty ||
           target.isEmpty ||
@@ -1874,7 +1919,10 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(
-          <String, Object?>{'ok': false, 'error': 'bad request（参数不合法或单次请求超 1MB）'},
+          <String, Object?>{
+            'ok': false,
+            'error': 'bad request（参数不合法或单次请求超 1MB）'
+          },
         ));
         await req.response.close();
         return;
@@ -1906,7 +1954,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             // base64 比 join(',') 减少 VM service 传输量（约 1.3x vs 2.5x）。
             "return base64.encode(gzip.encode(b)); } finally { fh.closeSync(); } })()",
           );
-          final bytes = dataRaw.isEmpty ? <int>[] : gzip.decode(base64.decode(dataRaw));
+          final bytes =
+              dataRaw.isEmpty ? <int>[] : gzip.decode(base64.decode(dataRaw));
           // 按 UTF-8 序列边界截尾，避免多字节字符被 max 切断产生替换符；
           // 截掉的部分由调用方以下一次请求的 offset 续读。
           final cut = _utf8CompleteBoundary(bytes);
@@ -1977,7 +2026,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         );
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       } finally {
         await rpc.close();
       }
@@ -1994,7 +2044,10 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
         req.response.write(
-          jsonEncode(<String, Object?>{'ok': false, 'error': 'bad request（uri/path 必填）'}),
+          jsonEncode(<String, Object?>{
+            'ok': false,
+            'error': 'bad request（uri/path 必填）'
+          }),
         );
         await req.response.close();
         return;
@@ -2041,7 +2094,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (_) {
         req.response.headers.contentType = ContentType.json;
         req.response.write(
-          jsonEncode(<String, Object?>{'ok': false, 'error': 'b64 字段不是合法 base64'}),
+          jsonEncode(
+              <String, Object?>{'ok': false, 'error': 'b64 字段不是合法 base64'}),
         );
         await req.response.close();
         return;
@@ -2052,9 +2106,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         const libCtx =
             'package:xb_ume/src/persistence/xb_ume_persistence_io.dart';
         const chunk = 1 << 19; // 512KB/块，b64 后约 700KB，控制 eval 表达式体积
-        for (var off = 0;
-            off < bytes.length || off == 0;
-            off += chunk) {
+        for (var off = 0; off < bytes.length || off == 0; off += chunk) {
           final end =
               (off + chunk) < bytes.length ? (off + chunk) : bytes.length;
           final part = base64.encode(bytes.sublist(off, end));
@@ -2080,7 +2132,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         );
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       } finally {
         await rpc.close();
       }
@@ -2209,8 +2262,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           payload['cpu'] = perfCpuFromSamples(samples);
         } catch (e) {
           final err = e.toString();
-          payload['cpuError'] =
-              err.contains('Profiler is disabled') ? '该构建未开启 CPU 采样，无法获取 CPU' : err;
+          payload['cpuError'] = err.contains('Profiler is disabled')
+              ? '该构建未开启 CPU 采样，无法获取 CPU'
+              : err;
         }
         // 进程级 CPU / footprint（与 Xcode 调试导航器同口径）：由 app 端
         // xb_ume 注册的 ext.xbume.processStats 提供；旧版 SDK 未注册时静默
@@ -2286,7 +2340,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (s == 'NO_ROOT') {
           req.response.headers.contentType = ContentType.json;
           req.response.write(
-            jsonEncode(<String, Object?>{'ok': false, 'error': 'app 无渲染树（尚未运行首帧）'}),
+            jsonEncode(
+                <String, Object?>{'ok': false, 'error': 'app 无渲染树（尚未运行首帧）'}),
           );
           await req.response.close();
           return;
@@ -2294,7 +2349,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final parts = s.split('\u0003');
         // 末两段为空行分隔与尾部元数据（dpr\u0001物理宽\u0001物理高）；
         // 输出异常（空/缺段）时按空树处理，避免 sublist 越界。
-        final meta = parts.length >= 2 ? parts[parts.length - 1].split('\u0001') : <String>[];
+        final meta = parts.length >= 2
+            ? parts[parts.length - 1].split('\u0001')
+            : <String>[];
         final rows = parts.length >= 2
             ? parts.sublist(0, parts.length - 2)
             : const <String>[];
@@ -2329,7 +2386,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       } finally {
         await rpc.close();
       }
@@ -2341,7 +2399,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final x = req.uri.queryParameters['x'] ?? '';
       final y = req.uri.queryParameters['y'] ?? '';
-      if (uri.isEmpty || double.tryParse(x) == null || double.tryParse(y) == null) {
+      if (uri.isEmpty ||
+          double.tryParse(x) == null ||
+          double.tryParse(y) == null) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -2369,7 +2429,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }
         final parts = s.split('\u0003');
         if (parts.isEmpty || parts.first != 'PICK') {
-          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '响应格式异常'}));
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '响应格式异常'}));
           await req.response.close();
           return;
         }
@@ -2409,7 +2470,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       } finally {
         await rpc.close();
       }
@@ -2430,7 +2492,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
                 ? j.length
                 : (j is Map ? (j['steps'] as List? ?? <Object?>[]).length : 0);
             items.add(<String, Object?>{
-              'name': f.uri.pathSegments.last.replaceAll(RegExp(r'\.json$'), ''),
+              'name':
+                  f.uri.pathSegments.last.replaceAll(RegExp(r'\.json$'), ''),
               'steps': steps,
               'mtime': f.statSync().modified.toIso8601String(),
             });
@@ -2438,7 +2501,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }
       }
       req.response.headers.contentType = ContentType.json;
-      req.response.write(jsonEncode(<String, Object?>{'ok': true, 'items': items}));
+      req.response
+          .write(jsonEncode(<String, Object?>{'ok': true, 'items': items}));
       await req.response.close();
       return;
     }
@@ -2448,14 +2512,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       if (file == null) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': _autoNameError}));
         await req.response.close();
         return;
       }
       req.response.headers.contentType = ContentType.json;
       if (path == '/api/auto/get') {
         if (!file.existsSync()) {
-          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
         } else {
           req.response.write(jsonEncode(<String, Object?>{
             'ok': true,
@@ -2478,17 +2544,20 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (file == null) {
           req.response.statusCode = HttpStatus.badRequest;
           req.response.headers.contentType = ContentType.json;
-          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': _autoNameError}));
           await req.response.close();
           return;
         }
         file.parent.createSync(recursive: true);
-        file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(j['steps'] ?? []));
+        file.writeAsStringSync(
+            const JsonEncoder.withIndent('  ').convert(j['steps'] ?? []));
         req.response.headers.contentType = ContentType.json;
         req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       }
       await req.response.close();
       return;
@@ -2511,13 +2580,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       try {
         if (body.isNotEmpty) {
           final j = jsonDecode(body);
-          steps = j is List ? j : (j is Map ? (j['steps'] as List? ?? <Object?>[]) : <Object?>[]);
+          steps = j is List
+              ? j
+              : (j is Map ? (j['steps'] as List? ?? <Object?>[]) : <Object?>[]);
           if (j is Map && name.isEmpty) name = (j['name'] ?? '').toString();
         } else if (name.isNotEmpty) {
           final file = _autoScenarioFile(name);
           if (file == null || !file.existsSync()) {
             req.response.headers.contentType = ContentType.json;
-            req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
+            req.response.write(
+                jsonEncode(<String, Object?>{'ok': false, 'error': '场景不存在'}));
             await req.response.close();
             return;
           }
@@ -2527,7 +2599,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '步骤解析失败: $e'}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': '步骤解析失败: $e'}));
         await req.response.close();
         return;
       }
@@ -2539,13 +2612,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final cont = (req.uri.queryParameters['continue'] ?? '') == '1';
       unawaited(_autoRunSteps(uri, name, steps, continueOnFail: cont));
       req.response.headers.contentType = ContentType.json;
-      req.response.write(jsonEncode(<String, Object?>{'ok': true, 'total': steps.length}));
+      req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'total': steps.length}));
       await req.response.close();
       return;
     }
     if (path == '/api/auto/status') {
       req.response.headers.contentType = ContentType.json;
-      req.response.write(jsonEncode(<String, Object?>{'ok': true}..addAll(_auto.statusJson())));
+      req.response.write(jsonEncode(
+          <String, Object?>{'ok': true}..addAll(_auto.statusJson())));
       await req.response.close();
       return;
     }
@@ -2575,8 +2650,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (_) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(
-            jsonEncode(<String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
         await req.response.close();
         return;
       }
@@ -2606,7 +2681,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       if (bad != null) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
         await req.response.close();
         return;
       }
@@ -2621,15 +2697,15 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         shotEveryStep: (j['shotEveryStep'] ?? true) == true,
       ));
       req.response.headers.contentType = ContentType.json;
-      req.response.write(jsonEncode(
-          <String, Object?>{'ok': true, 'total': steps.length}));
+      req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'total': steps.length}));
       await req.response.close();
       return;
     }
     if (path == '/api/compare/status') {
       req.response.headers.contentType = ContentType.json;
-      req.response.write(
-          jsonEncode(<String, Object?>{'ok': true}..addAll(_compare.statusJson())));
+      req.response.write(jsonEncode(
+          <String, Object?>{'ok': true}..addAll(_compare.statusJson())));
       await req.response.close();
       return;
     }
@@ -2654,8 +2730,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       } catch (_) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(
-            jsonEncode(<String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
+        req.response.write(jsonEncode(
+            <String, Object?>{'ok': false, 'error': '请求体不是合法 JSON'}));
         await req.response.close();
         return;
       }
@@ -2670,26 +2746,32 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       if (bad == null && !remoteOpAllowed(type)) {
         bad = '遥控只支持 tap / swipe / input';
       }
-      if (bad == null && type == 'input' &&
+      if (bad == null &&
+          type == 'input' &&
           (step['text'] ?? '').toString().length > 5000) {
         bad = '输入文本过长（最多 5000 字）';
       }
       if (bad != null) {
         req.response.statusCode = HttpStatus.badRequest;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': bad}));
         await req.response.close();
         return;
       }
       try {
         final (actual, err) = await _autoExecStep(uri, step);
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(
-            <String, Object?>{'ok': err.isEmpty, 'actual': actual, 'error': err}));
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': err.isEmpty,
+          'actual': actual,
+          'error': err
+        }));
       } catch (e) {
         req.response.statusCode = HttpStatus.internalServerError;
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
       }
       await req.response.close();
       return;
@@ -2736,28 +2818,28 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           final cIn = j['ctx'];
           final oldCtx = _aiCtx();
           bool cv(Object? v, bool old) => v is bool ? v : old;
-          f.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(
-              <String, Object?>{
-                'baseUrl': (j['baseUrl'] ?? '').toString().trim(),
-                'apiKey': newKey,
-                'model': (j['model'] ?? '').toString().trim(),
-                'ctx': <String, Object?>{
-                  'routes': cv(
-                      cIn is Map ? cIn['routes'] : null, oldCtx['routes'] ?? true),
-                  'text': cv(
-                      cIn is Map ? cIn['text'] : null, oldCtx['text'] ?? true),
-                  'net': cv(
-                      cIn is Map ? cIn['net'] : null, oldCtx['net'] ?? true),
-                  'log': cv(
-                      cIn is Map ? cIn['log'] : null, oldCtx['log'] ?? true),
-                },
-              }));
+          f.writeAsStringSync(
+              const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+            'baseUrl': (j['baseUrl'] ?? '').toString().trim(),
+            'apiKey': newKey,
+            'model': (j['model'] ?? '').toString().trim(),
+            'ctx': <String, Object?>{
+              'routes': cv(
+                  cIn is Map ? cIn['routes'] : null, oldCtx['routes'] ?? true),
+              'text':
+                  cv(cIn is Map ? cIn['text'] : null, oldCtx['text'] ?? true),
+              'net': cv(cIn is Map ? cIn['net'] : null, oldCtx['net'] ?? true),
+              'log': cv(cIn is Map ? cIn['log'] : null, oldCtx['log'] ?? true),
+              'elements': cv(cIn is Map ? cIn['elements'] : null,
+                  oldCtx['elements'] ?? true),
+            },
+          }));
           req.response.headers.contentType = ContentType.json;
           req.response.write(jsonEncode(<String, Object?>{'ok': true}));
         } catch (e) {
           req.response.headers.contentType = ContentType.json;
-          req.response
-              .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': e.toString()}));
         }
         await req.response.close();
         return;
@@ -2778,8 +2860,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       if (_ai.running || _auto.running) {
         req.response.statusCode = HttpStatus.conflict;
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': false, 'error': '已有任务在执行'}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': '已有任务在执行'}));
         await req.response.close();
         return;
       }
@@ -2811,8 +2893,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/ai/goals' && req.method == 'GET') {
       req.response.headers.contentType = ContentType.json;
-      req.response
-          .write(jsonEncode(<String, Object?>{'ok': true, 'items': _aiGoalsLoad()}));
+      req.response.write(
+          jsonEncode(<String, Object?>{'ok': true, 'items': _aiGoalsLoad()}));
       await req.response.close();
       return;
     }
@@ -2826,8 +2908,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/ai/status') {
       req.response.headers.contentType = ContentType.json;
-      req.response
-          .write(jsonEncode(<String, Object?>{'ok': true}..addAll(_ai.statusJson())));
+      req.response.write(
+          jsonEncode(<String, Object?>{'ok': true}..addAll(_ai.statusJson())));
       await req.response.close();
       return;
     }
@@ -2849,7 +2931,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.headers.set(
           'Content-Disposition',
           'attachment; filename="xb_ume_ai_report_'
-          '${_ai.runId.isEmpty ? DateTime.now().millisecondsSinceEpoch : _ai.runId}.html"');
+              '${_ai.runId.isEmpty ? DateTime.now().millisecondsSinceEpoch : _ai.runId}.html"');
       if (hasSaved) {
         await saved.openRead().pipe(req.response);
       } else {
@@ -2873,7 +2955,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (file == null) {
           req.response.statusCode = HttpStatus.badRequest;
           req.response.headers.contentType = ContentType.json;
-          req.response.write(jsonEncode(<String, Object?>{'ok': false, 'error': _autoNameError}));
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': _autoNameError}));
           await req.response.close();
           return;
         }
@@ -2881,7 +2964,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final steps = <Object?>[];
         for (final r in _ai.rounds) {
           for (var i = 0; i < r.results.length && i < r.steps.length; i++) {
-            if (r.results[i].status == 'pass' || r.results[i].status == 'fail') {
+            if (r.results[i].status == 'pass' ||
+                r.results[i].status == 'fail') {
               steps.add(r.steps[i]);
             }
           }
@@ -2897,12 +2981,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         file.writeAsStringSync(
             const JsonEncoder.withIndent('  ').convert(steps));
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': true, 'steps': steps.length}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': true, 'steps': steps.length}));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       }
       await req.response.close();
       return;
@@ -2963,8 +3047,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final result = await _excAnalyze(rec, uri);
         req.response.write(jsonEncode(result));
       } catch (e) {
-        req.response.write(jsonEncode(
-            <String, Object?>{'ok': false, 'error': '$e'}));
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
       }
       await req.response.close();
       return;
@@ -3074,8 +3158,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/watch/pause' && req.method == 'POST') {
       final on = (req.uri.queryParameters['on'] ?? '1') == '1';
-      final ok =
-          state.pauseWatch(req.uri.queryParameters['id'] ?? '', on);
+      final ok = state.pauseWatch(req.uri.queryParameters['id'] ?? '', on);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': ok}));
       await req.response.close();
@@ -3170,9 +3253,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/instances/find') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       final cls = req.uri.queryParameters['class']?.trim() ?? '';
-      final limit =
-          (int.tryParse(req.uri.queryParameters['limit'] ?? '') ?? 20)
-              .clamp(1, 100);
+      final limit = (int.tryParse(req.uri.queryParameters['limit'] ?? '') ?? 20)
+          .clamp(1, 100);
       if (uri.isEmpty || cls.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
@@ -3262,8 +3344,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       }
       await rpc.close();
       await req.response.close();
@@ -3285,11 +3367,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final iso = await rpc.isolateId();
         final node = await _instNode(rpc, iso, id, name, depth, <String>{});
         req.response.headers.contentType = ContentType.json;
-        req.response.write(jsonEncode(<String, Object?>{'ok': true, 'node': node}));
+        req.response
+            .write(jsonEncode(<String, Object?>{'ok': true, 'node': node}));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       }
       await rpc.close();
       await req.response.close();
@@ -3351,7 +3434,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         final rtype = result['type']?.toString() ?? '';
         if (rtype == 'Error' || rtype == '@Error') {
           throw (result['message']?.toString() ?? '写回失败（字段不存在或 final？）')
-              .split('\n').take(3).join(' ');
+              .split('\n')
+              .take(3)
+              .join(' ');
         }
         // ChangeNotifier 类写回后自动 notifyListeners（无该方法时静默跳过）。
         var notified = false;
@@ -3373,8 +3458,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         }));
       } catch (e) {
         req.response.headers.contentType = ContentType.json;
-        req.response
-            .write(jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
+        req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}));
       }
       await rpc.close();
       await req.response.close();
@@ -3420,15 +3505,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             );
             final parts = stat.split('\t');
             final size = int.tryParse(parts.first) ?? 0;
-            final mtime =
-                parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+            final mtime = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
             if (size <= 0) {
               await fail('文件为空或不是普通文件', code: HttpStatus.badRequest);
               return;
             }
             if (size > 256 * 1024 * 1024) {
-              await fail('数据库文件 ${(size / 1024 / 1024).toStringAsFixed(1)}MB '
-                  '超过 256MB 上限', code: HttpStatus.badRequest);
+              await fail(
+                  '数据库文件 ${(size / 1024 / 1024).toStringAsFixed(1)}MB '
+                  '超过 256MB 上限',
+                  code: HttpStatus.badRequest);
               return;
             }
             final id = dbCacheId(uri, target, size, mtime);
@@ -3464,8 +3550,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             }
             final tables = await dbListTables(file.path);
             var sqliteVer = '';
-            final ver = await dbRunSqlite(
-                file.path, 'SELECT sqlite_version() AS v');
+            final ver =
+                await dbRunSqlite(file.path, 'SELECT sqlite_version() AS v');
             if (ver.exitCode == 0) {
               final p = dbParseJsonRows(ver.stdout);
               final rows = (p['rows'] as List).cast<List<Object?>>();
@@ -3556,7 +3642,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           req.response.headers.set(
             'Content-Disposition',
             'attachment; filename="$fileName"; filename*=UTF-8\'\''
-            '${Uri.encodeComponent(fileName)}',
+                '${Uri.encodeComponent(fileName)}',
           );
           // BOM：让 Excel 正确识别 UTF-8 中文。
           req.response.add(utf8.encode('\uFEFF'));
@@ -3650,7 +3736,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         for (final f in files) {
           final size = int.tryParse(f[1]) ?? 0;
           final mtimeSec = (int.tryParse(f[2]) ?? 0) ~/ 1000;
-          final header = _tarHeader(_relativeTo(f[0], target, os), size, mtimeSec);
+          final header =
+              _tarHeader(_relativeTo(f[0], target, os), size, mtimeSec);
           if (header == null) {
             skipped++;
             continue;
@@ -3970,7 +4057,8 @@ class GuiState {
     } catch (e) {
       // 避免每 3s 轮询刷屏：同一设备只提示一次。
       if (_deviceLogStartFailed.add(id)) {
-        addDeviceLog(id, source, '[GUI] 无法启动 ${command.first}（未安装或不在 PATH）: $e');
+        addDeviceLog(
+            id, source, '[GUI] 无法启动 ${command.first}（未安装或不在 PATH）: $e');
       }
     } finally {
       _deviceLogStarting.remove(id);
@@ -4152,8 +4240,7 @@ class GuiState {
     if (_exceptions.isNotEmpty) {
       final last = _exceptions.last;
       final lastTs = (last['ts'] as int?) ?? 0;
-      if (last['hash'] == hash &&
-          now.millisecondsSinceEpoch - lastTs < 10000) {
+      if (last['hash'] == hash && now.millisecondsSinceEpoch - lastTs < 10000) {
         last['count'] = ((last['count'] as int?) ?? 1) + 1;
         last['time'] = rec['time'];
         last['ts'] = rec['ts'];
@@ -4228,8 +4315,7 @@ class GuiState {
   // 翻倍流量；这里只轮询 app 端的 routes / network 两个环形缓冲（各 300 条），
   // 做 id 去重与状态更新后增量广播。轮询仅在「时间轴」Tab 激活时运行。
 
-  static const String _timelineExpr =
-      "(() { final r = StringBuffer(); "
+  static const String _timelineExpr = "(() { final r = StringBuffer(); "
       "for (final e in XBUme.controller.routes) { "
       "r..write(e.id)..write('\\u0001')..write(e.time.millisecondsSinceEpoch)..write('\\u0001')"
       "..write(e.action.name)..write('\\u0001')"
@@ -4364,8 +4450,7 @@ class GuiState {
       });
     }
     // 网络：id / ms / method / url / code / dur / status / err
-    for (final line
-        in (halves.length > 1 ? halves[1] : '').split('\u0002')) {
+    for (final line in (halves.length > 1 ? halves[1] : '').split('\u0002')) {
       if (line.isEmpty) continue;
       final p = line.split('\u0001');
       if (p.length < 8) continue;
@@ -4485,9 +4570,7 @@ class GuiState {
       kind: kind,
       targetId: targetId,
       expr: expr,
-      libUri: lib.isEmpty
-          ? 'package:flutter/src/widgets/binding.dart'
-          : lib,
+      libUri: lib.isEmpty ? 'package:flutter/src/widgets/binding.dart' : lib,
       label: label,
       intervalMs: watchIntervalMs(body['intervalMs']),
       condition: cond,
@@ -4605,8 +4688,7 @@ class GuiState {
         if (met && !w.condPrev) {
           final shot = await _watchShot(rpc);
           w.shots++;
-          _watchEmit(w,
-              old: value, newValue: value, shot: shot, condMet: true);
+          _watchEmit(w, old: value, newValue: value, shot: shot, condMet: true);
         }
         w.condPrev = met;
       }
@@ -4622,8 +4704,7 @@ class GuiState {
         w.lastError = '${w.lastError}（连续失败 30 次，已自动暂停）';
         _broadcastWatches();
       } else {
-        broadcast(
-            <String, Object?>{'type': 'watchState', 'item': w.toJson()});
+        broadcast(<String, Object?>{'type': 'watchState', 'item': w.toJson()});
       }
       // 连接可能已失效：丢弃复用连接，下一轮重建。
       final dead = _watchRpcs.remove(w.uri);
@@ -4731,7 +4812,13 @@ class GuiState {
       } else if (parsed['type'] == 'refresh') {
         unawaited(poll());
       }
-    }, onDone: () { _clients.remove(ws); if (_clients.isEmpty) stopTimeline(); }, onError: (_) { _clients.remove(ws); if (_clients.isEmpty) stopTimeline(); });
+    }, onDone: () {
+      _clients.remove(ws);
+      if (_clients.isEmpty) stopTimeline();
+    }, onError: (_) {
+      _clients.remove(ws);
+      if (_clients.isEmpty) stopTimeline();
+    });
   }
 
   void broadcast(Map<String, Object?> message) {
@@ -4751,7 +4838,8 @@ class GuiState {
 
 /// Watch 轮询间隔（ms）：200–10000，缺省 500；过密 eval 会拖慢被调 app。
 int watchIntervalMs(Object? raw) {
-  final v = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '') ?? 500;
+  final v =
+      raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '') ?? 500;
   return v.clamp(200, 10000);
 }
 
@@ -4930,9 +5018,8 @@ class _VmSession {
     // streamListen 响应：失败必须显式暴露，静默吞掉会导致该通道永久无数据。
     if (parsed['id'] == 'sl') {
       if (parsed['error'] != null) {
-        stderr.writeln('[xbume-gui] streamListen($streamId) 被拒: $uri ${
-          jsonEncode(parsed['error'])
-        }');
+        stderr.writeln(
+            '[xbume-gui] streamListen($streamId) 被拒: $uri ${jsonEncode(parsed['error'])}');
       }
       return;
     }
@@ -5046,8 +5133,8 @@ class _UncaughtTracker {
 /// debugPrint 每行输出自带空行分隔（WriteEvent 实测为 "行\n\n\n"），
 /// 空行不作为块结束信号；非空非帧行、达到上限或长时间无新行时结算。
 class _UncaughtParser {
-  static final RegExp _headRe =
-      RegExp(r'^(?:flutter: )?(?:Unhandled Exception: |XBErrorHandler catch error: )(.*)$');
+  static final RegExp _headRe = RegExp(
+      r'^(?:flutter: )?(?:Unhandled Exception: |XBErrorHandler catch error: )(.*)$');
   static final RegExp _frameRe =
       RegExp(r'^#\s*(\d+)\s+(.*?)\s+\((.+?):(\d+):(\d+)\)$');
   // 无位置的帧行（如 eval 生成的 "#0  Eval...<...>()"、异步栈尾帧）：
@@ -5273,7 +5360,8 @@ String? sharedPrefsSetExpr(Map row) {
 /// 不把内容拼进单个 eval 字符串——XML 超长（实测 4.8MB）或含特殊字符时
 /// VM 会报「Expected one expression, but found additional input」。
 /// 先写临时文件再替换：中途失败不会把原文件写成半截。
-Future<void> _writeAppFileBytes(_SandboxRpc rpc, String path, List<int> bytes) async {
+Future<void> _writeAppFileBytes(
+    _SandboxRpc rpc, String path, List<int> bytes) async {
   const chunk = 64 * 1024;
   final tmp = '$path.xbume.tmp';
   for (var off = 0; off < bytes.length || off == 0; off += chunk) {
@@ -5284,7 +5372,8 @@ Future<void> _writeAppFileBytes(_SandboxRpc rpc, String path, List<int> bytes) a
       "(() { final f = File('${_escPath(tmp)}'); "
       'f.writeAsBytesSync(<int>[$csv], mode: $mode); '
       'return f.lengthSync().toString(); })()',
-    )).trim();
+    ))
+        .trim();
     if (got != '$end') throw '写入不完整（第 $off 字节起：期望累计 $end，实际 $got）';
   }
   final r = (await rpc.evalString(
@@ -5292,7 +5381,8 @@ Future<void> _writeAppFileBytes(_SandboxRpc rpc, String path, List<int> bytes) a
     "try { t.renameSync('${_escPath(path)}'); return 'renamed'; } "
     "catch (_) { File('${_escPath(path)}').writeAsBytesSync(t.readAsBytesSync()); "
     "try { t.deleteSync(); } catch (_) {} return 'copied'; } })()",
-  )).trim();
+  ))
+      .trim();
   if (r != 'renamed' && r != 'copied') throw '写回失败：$r';
 }
 
@@ -5475,7 +5565,8 @@ const String _depsProbeExpr =
 /// P9：Element 树全量拉取表达式（binding.dart 上下文可见 WidgetsBinding/Element）。
 /// 输出格式：每行 深度\u0001 类型 \u0001 key\u0001 bounds(x,y,w,h 逻辑像素，无则为空)\u0003；
 /// 末尾额外跟一个空行 + dpr\u0001物理宽\u0001物理高。不用 Dart 模板字符串（避开多层转义）。
-const String _wtreeExpr = "(() { final v = WidgetsBinding.instance.platformDispatcher.views.first; "
+const String _wtreeExpr =
+    "(() { final v = WidgetsBinding.instance.platformDispatcher.views.first; "
     "final root = WidgetsBinding.instance.renderViewElement; "
     "if (root == null) return 'NO_ROOT'; "
     "final out = StringBuffer(); final sep = String.fromCharCode(1); "
@@ -5541,7 +5632,7 @@ const String _wpickExprBody =
     "if (pr is RenderBox && pr.hasSize) { final tl = pr.localToGlobal(Offset.zero); "
     "pb = tl.dx.round().toString() + ',' + tl.dy.round().toString() + ',' "
     "+ pr.size.width.round().toString() + ',' + pr.size.height.round().toString(); } "
-    "final jm2 = pick!.toDiagnosticsNode().toJsonMap(InspectorSerializationDelegate(" 
+    "final jm2 = pick!.toDiagnosticsNode().toJsonMap(InspectorSerializationDelegate("
     "service: WidgetInspectorService.instance, includeProperties: false, subtreeDepth: 1)); "
     "final loc0 = jm2['creationLocation']; int pl = 0; int pc = 0; "
     "if (loc0 is Map) { final f2 = (loc0['file'] ?? '').toString(); "
@@ -5615,6 +5706,27 @@ int _nextPointer() => DateTime.now().microsecondsSinceEpoch & 0x3fffffff;
 const Set<String> remoteOpTypes = <String>{'tap', 'swipe', 'input'};
 bool remoteOpAllowed(String type) => remoteOpTypes.contains(type);
 
+/// 帧内注入守卫（与 MCP 侧 busyGuard 同义）。
+/// VM `evaluate` 会在安全点插到应用调用栈中间执行；若此时正处于
+/// build/layout/paint，改指针或改滚动位置会在布局内部触发 setState，
+/// 撞 `Build scheduled during frame.` / `scroll_position.dart` 断言。
+const String _autoBusyGuard =
+    "final _phase = SchedulerBinding.instance.schedulerPhase; "
+    "if (_phase == SchedulerPhase.persistentCallbacks || "
+    "_phase == SchedulerPhase.midFrameMicrotasks) return 'BUSY'; ";
+
+/// 注入求值：遇到 BUSY 等到下一帧重试，避免把异常抛进框架事务。
+Future<String> _autoEvalInject(_SandboxRpc rpc, String lib, String expr,
+    {int tries = 40}) async {
+  var last = 'BUSY';
+  for (var i = 0; i < tries; i++) {
+    last = await rpc.evalStringOn(lib, expr);
+    if (last != 'BUSY') return last;
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+  }
+  return last;
+}
+
 String _autoTapExpr(String x, String y, {bool phys = false, int pointer = 0}) {
   final pos = phys
       ? "final pos = Offset($x, $y) / WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
@@ -5622,7 +5734,7 @@ String _autoTapExpr(String x, String y, {bool phys = false, int pointer = 0}) {
   // down 派发中业务异常时仍补发 up（释放指针）并返回错误摘要；不 rethrow——
   // 异常经 FlutterError 上报时 inspector 序列化 eval 栈帧会二次炸
   // stack_frame.dart 断言，污染错误信息。
-  return "(() { $pos"
+  return "(() { $_autoBusyGuard$pos"
       "final pe = PointerDownEvent(pointer: $pointer, position: pos); "
       "try { GestureBinding.instance.handlePointerEvent(pe); } catch (e) { "
       "GestureBinding.instance.handlePointerEvent(PointerUpEvent(pointer: $pointer, position: pos)); "
@@ -5773,8 +5885,7 @@ String get _autoScenariosDir => '$_home/.xb_ume_ide/scenarios';
 String get _autoArtifactsDir => '$_home/.xb_ume_ide/scenarios/artifacts';
 
 /// 场景名非法时的统一提示（400 响应与前端预校验共用）。
-const String _autoNameError =
-    '场景名非法：只允许中文/字母/数字/下划线/横线，长度 1-64（不能含空格、点号等）';
+const String _autoNameError = '场景名非法：只允许中文/字母/数字/下划线/横线，长度 1-64（不能含空格、点号等）';
 
 /// 场景名 → json 文件；名字只允许字母数字下划线中横线中文，防穿越。
 File? _autoScenarioFile(String name) {
@@ -5801,13 +5912,13 @@ Future<String> _inspectorShot(_SandboxRpc rpc) async {
   final isoId = await rpc.isolateId();
   const group = 'xb_shot';
   try {
-    final tree = await rpc
-        .rawRpc('ext.flutter.inspector.getRootWidgetSummaryTree', <String, Object?>{
+    final tree = await rpc.rawRpc(
+        'ext.flutter.inspector.getRootWidgetSummaryTree', <String, Object?>{
       'isolateId': isoId,
       'objectGroup': group,
     });
-    final shot = await rpc
-        .rawRpc('ext.flutter.inspector.screenshot', <String, Object?>{
+    final shot =
+        await rpc.rawRpc('ext.flutter.inspector.screenshot', <String, Object?>{
       'isolateId': isoId,
       // 根渲染对象即 RenderView，尺寸已是物理像素；1.0 即原分辨率。
       'id': inspectorRootId('${tree['result'] ?? ''}'),
@@ -5857,15 +5968,64 @@ Future<(String, String)> _autoExecStep(
   final rpc = _SandboxRpc(uri);
   try {
     switch (type) {
+      // tapRef：按元素候选的 ref 反查（重跑收集表达式，索引确定），
+      // 拿到逻辑像素中心后走同一套 tap 注入。相比模型看截图估坐标，
+      // 不受图幅/缩放/底部导航估计偏差影响；界面已变时用 type 校验拦下。
+      case 'tapRef':
+        final ref = (st['ref'] as num?)?.toInt();
+        if (ref == null || ref < 0) return ('', 'tapRef 需要 ref（元素候选的 #号）');
+        String raw;
+        try {
+          raw = await rpc.evalStringOn(_kAiElemLib, _aiElementsExpr(only: ref));
+        } catch (e) {
+          return ('', 'tapRef 反查失败: $e');
+        }
+        if (raw == 'NO_ROOT') return ('', 'app 无渲染树');
+        if (raw == 'NOREF') {
+          return ('', '元素候选 #$ref 已不存在（界面可能已变化），请重新查看候选');
+        }
+        final cands = aiParseElements(raw);
+        if (cands.isEmpty) return ('', '元素候选 #$ref 反查失败（响应格式异常）');
+        final c = cands.first;
+        final want = (st['expectType'] ?? '').toString().trim();
+        if (want.isNotEmpty && want != c.type) {
+          return ('', '元素 #$ref 现在是 ${c.type}（候选时是 $want），界面已变化，请改用坐标或重新决策');
+        }
+        final s = await _autoEvalInject(
+            rpc,
+            'package:flutter/src/widgets/binding.dart',
+            _autoTapExpr(c.cx.toString(), c.cy.toString(),
+                pointer: _nextPointer()));
+        final label = c.describe();
+        return (
+          s == 'OK' ? '点击 $label' : '点击 $label（未生效）',
+          s == 'OK'
+              ? ''
+              : s == 'BUSY'
+                  ? '应用正在绘制帧，注入被推迟后仍未成功，请重试'
+                  : (s.startsWith('ERR:')
+                      ? 'tapRef 派发异常: ${s.substring(4)}'
+                      : 'tapRef 注入异常: $s'),
+        );
       case 'tap':
         final x = (st['x'] as num?)?.toDouble();
         final y = (st['y'] as num?)?.toDouble();
         if (x == null || y == null) return ('', 'tap 需要 x/y 数值坐标');
-        final s = await rpc.evalStringOn(
+        final s = await _autoEvalInject(
+            rpc,
             'package:flutter/src/widgets/binding.dart',
             _autoTapExpr(x.toString(), y.toString(),
                 phys: (st['phys'] ?? false) == true, pointer: _nextPointer()));
-        return (s, s == 'OK' ? '' : (s.startsWith('ERR:') ? 'tap 派发异常: ${s.substring(4)}' : 'tap 注入异常: $s'));
+        return (
+          s,
+          s == 'OK'
+              ? ''
+              : s == 'BUSY'
+                  ? '应用正在绘制帧，注入被推迟后仍未成功，请重试'
+                  : (s.startsWith('ERR:')
+                      ? 'tap 派发异常: ${s.substring(4)}'
+                      : 'tap 注入异常: $s')
+        );
       case 'swipe':
         final x1 = (st['x1'] as num?)?.toDouble();
         final y1 = (st['y1'] as num?)?.toDouble();
@@ -5893,8 +6053,11 @@ Future<(String, String)> _autoExecStep(
         const ctx = 'package:flutter/src/widgets/binding.dart';
         String downReply;
         try {
-          downReply = await rpc.evalStringOn(ctx,
-              "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+          downReply = await _autoEvalInject(
+              rpc,
+              ctx,
+              "(() { $_autoBusyGuard"
+              "final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
               "try { GestureBinding.instance.handlePointerEvent("
               "PointerDownEvent(pointer: $pid, position: Offset(${px(x1)}, ${px(y1)}), timeStamp: Duration(microseconds: $downUs))); } catch (e) { "
               "GestureBinding.instance.handlePointerEvent("
@@ -5904,7 +6067,12 @@ Future<(String, String)> _autoExecStep(
           return ('', 'swipe down 注入失败: $e');
         }
         if (downReply != 'OK') {
-          return ('', 'swipe down 异常: ${downReply.startsWith('ERR:') ? downReply.substring(4) : downReply}');
+          return (
+            '',
+            downReply == 'BUSY'
+                ? '应用正在绘制帧，注入被推迟后仍未成功，请重试'
+                : 'swipe down 异常: ${downReply.startsWith('ERR:') ? downReply.substring(4) : downReply}'
+          );
         }
         var pmx = x1;
         var pmy = y1;
@@ -5913,28 +6081,61 @@ Future<(String, String)> _autoExecStep(
           final mx = x1 + (x2 - x1) * t;
           final my = y1 + (y2 - y1) * t;
           final tsUs = tsBase + (ms * 1000 * t).round();
-          await rpc.evalStringOn(ctx,
-              "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+          final moveReply = await _autoEvalInject(
+              rpc,
+              ctx,
+              "(() { $_autoBusyGuard"
+              "final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
               "GestureBinding.instance.handlePointerEvent("
               "PointerMoveEvent(pointer: $pid, position: Offset(${px(mx)}, ${px(my)}), "
               "delta: Offset(${px(mx)} - ${px(pmx)}, ${px(my)} - ${px(pmy)}), "
               "timeStamp: Duration(microseconds: $tsUs))); return 'OK'; })()");
+          if (moveReply != 'OK') {
+            await _autoEvalInject(
+                rpc,
+                ctx,
+                "(() { $_autoBusyGuard"
+                "final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+                "GestureBinding.instance.handlePointerEvent("
+                "PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}), "
+                "timeStamp: Duration(microseconds: ${tsBase + ms * 1000}))); return 'OK'; })()");
+            return (
+              '',
+              moveReply == 'BUSY'
+                  ? '应用正在绘制帧，注入被推迟后仍未成功，请重试'
+                  : 'swipe move 异常: $moveReply'
+            );
+          }
           pmx = mx;
           pmy = my;
           await Future.delayed(Duration(milliseconds: moveMs));
         }
-        await rpc.evalStringOn(ctx,
-            "(() { final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
+        await _autoEvalInject(
+            rpc,
+            ctx,
+            "(() { $_autoBusyGuard"
+            "final d = WidgetsBinding.instance.platformDispatcher.views.first.devicePixelRatio; "
             "GestureBinding.instance.handlePointerEvent("
             "PointerUpEvent(pointer: $pid, position: Offset(${px(x2)}, ${px(y2)}), timeStamp: Duration(microseconds: ${tsBase + ms * 1000}))); return 'OK'; })()");
-        return ('swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})', '');
+        return (
+          'swipe (${x1.round()},${y1.round()})->(${x2.round()},${y2.round()})',
+          ''
+        );
       case 'input':
         final text = (st['text'] ?? '').toString();
         // _instance/_currentConnection 是 text_input.dart 库内私有，
         // 必须在该库上下文 eval（binding.dart 上下文会 Member not found）。
         final s = await rpc.evalStringOn(
-            'package:flutter/src/services/text_input.dart', _autoInputExpr(text));
-        return (s, s == 'OK' ? '' : s == 'NO_CONN' ? '无焦点输入框（先 tap 输入框）' : '注入异常: $s');
+            'package:flutter/src/services/text_input.dart',
+            _autoInputExpr(text));
+        return (
+          s,
+          s == 'OK'
+              ? ''
+              : s == 'NO_CONN'
+                  ? '无焦点输入框（先 tap 输入框）'
+                  : '注入异常: $s'
+        );
       case 'wait':
         final ms = (st['ms'] as num?)?.toInt() ?? 500;
         await Future.delayed(Duration(milliseconds: ms.clamp(0, 60000)));
@@ -5944,7 +6145,9 @@ Future<(String, String)> _autoExecStep(
             'package:flutter/src/widgets/navigator.dart', _autoRoutesExpr);
         if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈');
         final names = s.split(',').where((e) => e.isNotEmpty).toList();
-        if (names.length <= 1) return ('${names.length} route', '已是最后一个路由，无法返回');
+        if (names.length <= 1) {
+          return ('${names.length} route', '已是最后一个路由，无法返回');
+        }
         final op = await _autoRouteOp(uri, 'pop', idx: names.length - 1);
         return (op, op == 'OK' ? '' : 'pop 失败: $op');
       case 'navigate':
@@ -5957,8 +6160,16 @@ Future<(String, String)> _autoExecStep(
         final t = (st['widget'] ?? '').toString().trim();
         if (t.isEmpty) return ('', 'assertVisible 需要 widget（页面/组件类名）');
         final s = await rpc.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _autoAssertVisibleExpr(t));
-        return (s, s == 'FOUND' ? '' : s == 'NOT_FOUND' ? '树中不存在可见的 $t' : '查找异常: $s');
+            'package:flutter/src/widgets/binding.dart',
+            _autoAssertVisibleExpr(t));
+        return (
+          s,
+          s == 'FOUND'
+              ? ''
+              : s == 'NOT_FOUND'
+                  ? '树中不存在可见的 $t'
+                  : '查找异常: $s'
+        );
       case 'assertRoute':
         final name = (st['name'] ?? '').toString();
         final s = await rpc.evalStringOn(
@@ -5966,8 +6177,10 @@ Future<(String, String)> _autoExecStep(
         if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈');
         final names = s.split(',').where((e) => e.isNotEmpty).toList();
         final top = names.isEmpty ? '' : names.last;
-        return (top,
-            name.isEmpty || top.contains(name) ? '' : '栈顶路由 $top 不匹配 $name');
+        return (
+          top,
+          name.isEmpty || top.contains(name) ? '' : '栈顶路由 $top 不匹配 $name'
+        );
       case 'assertInstance':
         final cls = (st['class'] ?? '').toString().trim();
         if (cls.isEmpty) return ('', 'assertInstance 需要 class');
@@ -5979,8 +6192,10 @@ Future<(String, String)> _autoExecStep(
         final s = await rpc.evalStringOn(
             'package:flutter/src/widgets/binding.dart', expr);
         final expect = (st['expect'] ?? '').toString();
-        return (s,
-            expect.isEmpty || s.contains(expect) ? '' : '期望包含「$expect」实际「$s」');
+        return (
+          s,
+          expect.isEmpty || s.contains(expect) ? '' : '期望包含「$expect」实际「$s」'
+        );
       case 'assertText':
         final contains = (st['contains'] ?? '').toString();
         final notContains = (st['notContains'] ?? '').toString();
@@ -5996,12 +6211,16 @@ Future<(String, String)> _autoExecStep(
         final texts = s.split('\u0002').where((e) => e.isNotEmpty).toList();
         if (contains.isNotEmpty) {
           final hit = texts.where((e) => e.contains(contains)).toList();
-          return (hit.isEmpty ? '未命中' : '命中: ${hit.take(3).join(' / ')}',
-              hit.isEmpty ? '页面文本中未找到「$contains」' : '');
+          return (
+            hit.isEmpty ? '未命中' : '命中: ${hit.take(3).join(' / ')}',
+            hit.isEmpty ? '页面文本中未找到「$contains」' : ''
+          );
         }
         final bad = texts.where((e) => e.contains(notContains)).toList();
-        return (bad.isEmpty ? '未出现「$notContains」' : '仍存在: ${bad.take(3).join(' / ')}',
-            bad.isEmpty ? '' : '页面文本中不应出现「$notContains」');
+        return (
+          bad.isEmpty ? '未出现「$notContains」' : '仍存在: ${bad.take(3).join(' / ')}',
+          bad.isEmpty ? '' : '页面文本中不应出现「$notContains」'
+        );
       case 'assertRequest':
         final url = (st['urlContains'] ?? '').toString().trim();
         if (url.isEmpty) return ('', 'assertRequest 需要 urlContains');
@@ -6018,23 +6237,27 @@ Future<(String, String)> _autoExecStep(
                 ? _ai.startedAt
                 : DateTime.now().subtract(const Duration(minutes: 5)));
         final recs = await _aiNetRecords(uri, since: since, limit: 100);
-        final matched = recs.where((e) =>
-            e['url'].toString().contains(url) &&
-            (method.isEmpty ||
-                e['method'].toString().toUpperCase() == method)).toList();
+        final matched = recs
+            .where((e) =>
+                e['url'].toString().contains(url) &&
+                (method.isEmpty ||
+                    e['method'].toString().toUpperCase() == method))
+            .toList();
         final desc = matched
             .map((e) => '${e['method']} ${e['url']} ${e['statusCode']}')
             .join(' · ');
         if (neg) {
-          return (matched.isEmpty ? '无匹配（符合预期）' : desc,
-              matched.isEmpty ? '' : '不应出现的请求出现了：$desc');
+          return (
+            matched.isEmpty ? '无匹配（符合预期）' : desc,
+            matched.isEmpty ? '' : '不应出现的请求出现了：$desc'
+          );
         }
-        return (matched.isEmpty
-                ? '窗口内 ${recs.length} 条请求，无匹配'
-                : desc,
-            matched.isEmpty
-                ? '窗口内无匹配请求（urlContains=$url${method.isEmpty ? '' : ' method=$method'}）'
-                : '');
+        return (
+          matched.isEmpty ? '窗口内 ${recs.length} 条请求，无匹配' : desc,
+          matched.isEmpty
+              ? '窗口内无匹配请求（urlContains=$url${method.isEmpty ? '' : ' method=$method'}）'
+              : ''
+        );
       case 'assertLog':
         final contains = (st['contains'] ?? '').toString();
         final notContains = (st['notContains'] ?? '').toString();
@@ -6070,16 +6293,23 @@ Future<(String, String)> _autoExecStep(
           hits.add('[${e['level']}/${e['source']}] $m');
         }
         if (contains.isNotEmpty) {
-          final hit = hits.firstWhere((e) => e.contains(contains),
-              orElse: () => '');
-          return (hit.isEmpty ? '窗口内 ${hits.length} 条无匹配' : hit,
-              hit.isEmpty ? '日志中未找到「$contains」' : '');
+          final hit =
+              hits.firstWhere((e) => e.contains(contains), orElse: () => '');
+          return (
+            hit.isEmpty ? '窗口内 ${hits.length} 条无匹配' : hit,
+            hit.isEmpty ? '日志中未找到「$contains」' : ''
+          );
         }
         final bad = hits.where((e) => e.contains(notContains)).take(3).toList();
-        return (bad.isEmpty ? '未出现「$notContains」' : bad.join(' | '),
-            bad.isEmpty ? '' : '日志中不应出现「$notContains」');
+        return (
+          bad.isEmpty ? '未出现「$notContains」' : bad.join(' | '),
+          bad.isEmpty ? '' : '日志中不应出现「$notContains」'
+        );
       default:
-        return ('', '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/assertVisible/assertRoute/assertInstance/assertText/assertRequest/assertLog/eval）');
+        return (
+          '',
+          '未知步骤类型 $type（支持 tap/swipe/input/wait/back/navigate/assertVisible/assertRoute/assertInstance/assertText/assertRequest/assertLog/eval）'
+        );
     }
   } catch (e) {
     return ('', e.toString());
@@ -6111,7 +6341,8 @@ Future<String> _autoRouteOp(String uri, String op,
             "try { final r = navigators[0]._routeNamed('${_escEvalString(name)}', arguments: null); "
             "if (r == null) return 'UNKNOWN'; navigators[0].push(r); return 'OK'; "
             "} catch (e) { return 'ERR:' + e.runtimeType.toString(); } })()";
-    return await rpc.evalStringOn('package:flutter/src/widgets/navigator.dart', expr);
+    return await rpc.evalStringOn(
+        'package:flutter/src/widgets/navigator.dart', expr);
   } finally {
     await rpc.close();
   }
@@ -6300,7 +6531,8 @@ String get _aiConfigPath => '$_home/.xb_ume_ide/ai_config.json';
 /// AI 目标历史（下拉选择复用）：去重、最新在前、上限 20 条。
 List<String> _aiGoalsLoad() {
   try {
-    final j = jsonDecode(File('$_home/.xb_ume_ide/ai_goals.json').readAsStringSync());
+    final j =
+        jsonDecode(File('$_home/.xb_ume_ide/ai_goals.json').readAsStringSync());
     return j is List ? j.map((e) => e.toString()).toList() : <String>[];
   } catch (_) {
     return <String>[];
@@ -6350,10 +6582,17 @@ Map<String, bool> _aiCtx() {
         'text': b(c['text']),
         'net': b(c['net']),
         'log': b(c['log']),
+        'elements': b(c['elements']),
       };
     }
   } catch (_) {}
-  return <String, bool>{'routes': true, 'text': true, 'net': true, 'log': true};
+  return <String, bool>{
+    'routes': true,
+    'text': true,
+    'net': true,
+    'log': true,
+    'elements': true,
+  };
 }
 
 /// AI 一轮的完整记录（决策 + 执行结果）。
@@ -6417,14 +6656,25 @@ final _ai = _AiRunState();
 const int _aiMaxStepsPerRound = 5;
 const int _aiMaxRetries = 3; // AI 调用/回复解析失败的单轮重试上限（退避 2s/4s/6s）
 const Set<String> _aiAllowedStepTypes = {
-  'tap', 'swipe', 'input', 'wait', 'back', 'assertVisible', 'assertInstance',
-  'eval', 'assertText', 'assertRequest', 'assertLog',
+  'tap',
+  'tapRef',
+  'swipe',
+  'input',
+  'wait',
+  'back',
+  'assertVisible',
+  'assertInstance',
+  'eval',
+  'assertText',
+  'assertRequest',
+  'assertLog',
 };
 
 const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员。你会看到 app 当前截图和操作目标，
 需要返回 JSON 指令驱动 UI 完成目标。
 可用步骤类型（坐标均为截图的物理像素，与截图分辨率一致）：
 - {"type":"tap","x":整数,"y":整数} 点击
+- {"type":"tapRef","ref":整数,"expectType":"候选里的类型"} 按元素候选的 ref 点击（推荐：比坐标准，expectType 选填用于校验界面是否已变化；不可再写 type，否则与步骤类型撞键）
 - {"type":"swipe","x1":..,"y1":..,"x2":..,"y2":..,"ms":400} 滑动
 - {"type":"input","text":"内容"} 向当前焦点输入框输入文本（须先 tap 输入框获得焦点）
 - {"type":"back"} 返回上一页
@@ -6438,11 +6688,11 @@ const String _aiSystemPrompt = '''你是 Flutter app 的 UI 自动化操作员�
 规则：
 1. 只输出一个 JSON 对象：{"done":false,"think":"简短分析","steps":[...]}，不要输出任何其他文本。
 2. 每次最多 5 步，做一小批就等结果；点击若引起页面跳转，后续加 {"type":"wait","ms":900}。
-3. 从截图中识别按钮/输入框/列表位置，坐标对准元素中心；坐标基于给定的截图分辨率，(0,0) 在左上角、右下角约 (宽,高)；底部导航栏贴在截图底边（y 接近图像高度），不在屏幕中部。
+3. 优先用「元素候选」里的 ref 点击（比截图估坐标稳）；候选中找不到目标时才用截图估坐标，坐标基于给定的截图分辨率，(0,0) 在左上角、右下角约 (宽,高)；底部导航栏贴在截图底边（y 接近图像高度），不在屏幕中部。
 4. 连续两轮界面无变化时必须换策略（换坐标/滑动/返回）。
 5. 目标已达成时返回 {"done":true,"think":"...","steps":[]}。
 6. 步骤失败时分析原因（元素不在/坐标偏/需先滚动），下一轮修正。
-7. 消息里会附「结构化上下文」（路由栈/页面文本/网络请求/增量日志）：判断状态是否变化、请求是否发出、列表是否刷新、有无报错等数据层问题时，优先用这些证据与 assertText/assertRequest/assertLog 断言，截图只用于定位元素坐标。
+7. 消息里会附「结构化上下文」（路由栈/页面文本/网络请求/增量日志/元素候选）：判断状态是否变化、请求是否发出、列表是否刷新、有无报错等数据层问题时，优先用这些证据与 assertText/assertRequest/assertLog 断言；点哪个元素优先看元素候选的 ref 与 bounds，截图只用于确认视觉效果。
 8. 如果目标包含重复次数、成功率或统计类要求（如「连续测 20 次」），每轮 think 必须写明当前进度与本次结果，例如「第 5/20 次：播放成功」，便于结束后按记录统计。''';
 
 /// 从 AI 回复提取首个平衡的 JSON 对象（容忍 ``` 围栏与前后杂文本）。
@@ -6548,6 +6798,179 @@ String _aiPageTextExpr({int limit = 40}) =>
     "e.visitChildren(visit); } visit(root); "
     "return out.join(String.fromCharCode(2)); })()";
 
+/// 元素候选收集表达式所在库：与点截图反查（_wpickExpr）同源，
+/// 该库可见 inspector 的 InspectorSerializationDelegate / WidgetInspectorService，
+/// 才能拿到控件 creationLocation（业务源码位置）。
+const String _kAiElemLib =
+    'package:xb_ume/src/core/xb_ume_widget_spacing_calculator.dart';
+
+/// 元素候选收集表达式（calculator 库上下文）。
+///
+/// 输出（行分隔 \u0003、字段分隔 \u0001）：
+///   首行 META\u0001dpr\u0001物理宽\u0001物理高
+///   之后每行 ref\u0001类型\u0001文本\u0001l,t,w,h（逻辑像素）\u0001源码文件名:行
+/// [only] >= 0 时只输出该 ref（tapRef 反查用，其余元素不序列化源码）。
+///
+/// 只收「能点的 / 有文字的」元素，面积超过屏幕 70% 的容器（整页 InkWell 之类）
+/// 会挤掉真正的小控件，直接排除；同一文本（无文本时按类型）同一 bounds 去重。
+String _aiElementsExpr({int limit = 50, int srcLimit = 20, int only = -1}) =>
+    "(() { final v = WidgetsBinding.instance.platformDispatcher.views.first; "
+    "final root = WidgetsBinding.instance.renderViewElement; "
+    "if (root == null) return 'NO_ROOT'; "
+    "final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
+    "final sw = v.physicalSize.width / v.devicePixelRatio; "
+    "final sh = v.physicalSize.height / v.devicePixelRatio; "
+    "final maxArea = sw * sh * 0.7; "
+    // 图标字形是私有区字符（BMP U+E000..U+F8FF、增补平面 U+F0000+），
+    // 不是用户可读文本：不剔除会让一排图标排在候选表最前，模型误当成可点目标。
+    "String clean(String s) { final sb = StringBuffer(); "
+    "for (final r in s.runes) { if (r < 32 || (r >= 0xE000 && r <= 0xF8FF) "
+    "|| r >= 0xF0000 || r == 0x200B || r == 0x200C || r == 0x200D "
+    "|| r == 0xFEFF) continue; "
+    "sb.writeCharCode(r); } return sb.toString().trim(); } "
+    "bool act(String t) { return t.contains('Button') || t.contains('InkWell') "
+    "|| t.contains('GestureDetector') || t.contains('TextField') "
+    "|| t.contains('EditableText') || t.contains('ListTile') "
+    "|| t.contains('Switch') || t.contains('Checkbox') || t.contains('Radio') "
+    "|| t.contains('Slider') || t.contains('Chip') || t.contains('Tab') "
+    "|| t.contains('Dismissible') || t.contains('Dropdown') "
+    "|| t == 'Text' || t == 'RichText' || t == 'Icon'; } "
+    "String txt(Element e) { final t = e.widget.runtimeType.toString(); "
+    "try { if (t == 'Text') { final d = (e.widget as dynamic).data; "
+    "if (d is String) return d; "
+    "final tp = (e.widget as dynamic).textSpan; "
+    "if (tp is TextSpan) return tp.toPlainText(); } "
+    "else if (t == 'RichText') { final tp = (e.widget as dynamic).text; "
+    "if (tp is TextSpan) return tp.toPlainText(); } "
+    "else if (t == 'EditableText') { "
+    "final c = (e.widget as dynamic).controller; "
+    "final s = c == null ? null : c.text; if (s is String) return s; } "
+    "} catch (_) {} return ''; } "
+    // 交互容器自身没有文字：在子树浅层（<=3）里找第一个非空文本当标签
+    "String inner(Element e) { final q = <Element>[]; final dq = <int>[]; "
+    "e.visitChildren((Element c) { q.add(c); dq.add(0); }); var n = 0; "
+    "while (q.isNotEmpty && n < 40) { n++; final c = q.removeAt(0); "
+    "final d = dq.removeAt(0); final tx = clean(txt(c)); "
+    "if (tx.isNotEmpty) return tx; "
+    "if (d < 3) { final ks = <Element>[]; c.visitChildren(ks.add); "
+    "for (final k in ks) { q.add(k); dq.add(d + 1); } } } return ''; } "
+    "String loc(Element e) { try { final jm = e.toDiagnosticsNode().toJsonMap("
+    "InspectorSerializationDelegate(service: WidgetInspectorService.instance, "
+    "includeProperties: false, subtreeDepth: 1)); "
+    "final lo = jm['creationLocation']; "
+    "if (lo is Map) { final f = (lo['file'] ?? '').toString(); "
+    "if (f.isNotEmpty) { var s = f; final i = s.lastIndexOf('/'); "
+    "if (i >= 0) s = s.substring(i + 1); "
+    "final ln = (lo['line'] as num?)?.toInt() ?? 0; "
+    "return s + ':' + ln.toString(); } } } catch (_) {} return ''; } "
+    "final rows = <List<Object>>[]; final seen = <String>{}; "
+    "void visit(Element e) { "
+    "final t = e.widget.runtimeType.toString(); final r = e.renderObject; "
+    "if (act(t) && r is RenderBox && r.attached && r.hasSize) { "
+    "final tl = r.localToGlobal(Offset.zero); "
+    "final w = r.size.width; final h = r.size.height; "
+    "if (w >= 4 && h >= 4 && w * h <= maxArea "
+    "&& tl.dx >= -2 && tl.dy >= -2 && tl.dx <= sw && tl.dy <= sh) { "
+    "final l = tl.dx.round(); final tp0 = tl.dy.round(); "
+    "final wr = w.round(); final hr = h.round(); "
+    "var tx = clean(txt(e)); "
+    "if (tx.isEmpty) { tx = inner(e); } "
+    "if (tx.length > 60) { tx = tx.substring(0, 60); } "
+    // 同一文本同一位置只留 DFS 先到的那个：Text 是 RichText 的父节点，
+    // 先到 → 保留语义更清楚的 Text，子 RichText 被去重掉。
+    "final key = (tx.isEmpty ? t : tx) + '|' + l.toString() + ',' "
+    "+ tp0.toString() + ',' + wr.toString() + ',' + hr.toString(); "
+    "if (seen.add(key)) { rows.add(<Object>[t, tx, l, tp0, wr, hr, e, '']); } } } "
+    "final kids = <Element>[]; e.visitChildren(kids.add); "
+    "for (var i = kids.length - 1; i >= 0; i--) { visit(kids[i]); } } "
+    "visit(root); "
+    "rows.sort((a, b) { final ta = (a[1] as String).isEmpty ? 1 : 0; "
+    "final tb = (b[1] as String).isEmpty ? 1 : 0; "
+    "if (ta != tb) return ta.compareTo(tb); "
+    "final c = (a[0] as String).compareTo(b[0] as String); "
+    "if (c != 0) return c; "
+    "final ca = a[3] as int; final cb = b[3] as int; "
+    "if (ca != cb) return ca.compareTo(cb); "
+    "return (a[2] as int).compareTo(b[2] as int); }); "
+    "final n = rows.length < $limit ? rows.length : $limit; "
+    "if ($only >= 0 && $only >= n) return 'NOREF'; "
+    "final out = StringBuffer(); out.write('META'); out.write(sep); "
+    "out.write(v.devicePixelRatio.toString()); out.write(sep); "
+    "out.write(v.physicalSize.width.round().toString()); out.write(sep); "
+    "out.write(v.physicalSize.height.round().toString()); out.write(row); "
+    "var srcs = 0; "
+    "for (var i = 0; i < n; i++) { if ($only >= 0 && i != $only) continue; "
+    "final r0 = rows[i]; var src = ''; "
+    "final wantSrc = $only >= 0 || (srcs < $srcLimit && (r0[1] as String).isNotEmpty); "
+    "if (wantSrc) { src = loc(r0[6] as Element); srcs++; } "
+    "out.write(i.toString()); out.write(sep); out.write(r0[0] as String); "
+    "out.write(sep); out.write(r0[1] as String); out.write(sep); "
+    "out.write((r0[2] as int).toString()); out.write(','); "
+    "out.write((r0[3] as int).toString()); out.write(','); "
+    "out.write((r0[4] as int).toString()); out.write(','); "
+    "out.write((r0[5] as int).toString()); out.write(sep); "
+    "out.write(src); out.write(row); } "
+    "return out.toString(); })()";
+
+/// AI 元素候选（bounds 为逻辑像素，[cx]/[cy] 为中心点）。
+class AiElementCandidate {
+  AiElementCandidate({
+    required this.ref,
+    required this.type,
+    required this.text,
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+    required this.src,
+  });
+
+  final int ref;
+  final String type;
+  final String text;
+  final int left;
+  final int top;
+  final int width;
+  final int height;
+  final String src;
+
+  double get cx => left + width / 2;
+  double get cy => top + height / 2;
+
+  /// 给模型看的一行：ref/类型/"文本"/bounds/源码。
+  String describe() => '#$ref ${text.isEmpty ? type : '$type "$text"'} '
+      '($left,$top $width×$height)${src.isEmpty ? '' : ' ← $src'}';
+}
+
+/// 解析 [_aiElementsExpr] 输出；无法解析的行跳过（不因一个坏行丢掉整批）。
+List<AiElementCandidate> aiParseElements(String raw) {
+  final out = <AiElementCandidate>[];
+  for (final line in raw.split('\u0003')) {
+    if (line.isEmpty || line.startsWith('META')) continue;
+    final p = line.split('\u0001');
+    if (p.length < 4) continue;
+    final ref = int.tryParse(p[0]);
+    final box = p[3].split(',');
+    if (ref == null || box.length < 4) continue;
+    final l = int.tryParse(box[0]);
+    final t = int.tryParse(box[1]);
+    final w = int.tryParse(box[2]);
+    final h = int.tryParse(box[3]);
+    if (l == null || t == null || w == null || h == null) continue;
+    out.add(AiElementCandidate(
+      ref: ref,
+      type: p[1],
+      text: p[2],
+      left: l,
+      top: t,
+      width: w,
+      height: h,
+      src: p.length > 4 ? p[4] : '',
+    ));
+  }
+  return out;
+}
+
 /// 拉取 app 端 network 记录（xb_ume core 库 eval，与 /api/network 同源），
 /// 可按时间窗过滤；app 未接入 network 模块时在此抛异常由调用方标 N/A。
 Future<List<Map<String, Object?>>> _aiNetRecords(String uri,
@@ -6555,14 +6978,15 @@ Future<List<Map<String, Object?>>> _aiNetRecords(String uri,
   final rpc = _SandboxRpc(uri);
   try {
     await rpc.libraryId('package:xb_ume/src/core/xb_ume.dart');
-    final cutoffExpr =
-        since == null ? '' : "final c = DateTime.parse('${since.toIso8601String()}'); ";
+    final cutoffExpr = since == null
+        ? ''
+        : "final c = DateTime.parse('${since.toIso8601String()}'); ";
     final filterExpr = since == null ? '' : '.where((e) => e.time.isAfter(c)) ';
     final raw = await rpc.evalStringOn(
       'package:xb_ume/src/core/xb_ume.dart',
       "(() { final n = XBUme.controller.network; $cutoffExpr"
-      "return n$filterExpr.map((e) => [e.method, e.url, "
-      "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
+          "return n$filterExpr.map((e) => [e.method, e.url, "
+          "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
     );
     final items = <Map<String, Object?>>[];
     for (final line in raw.split('\u0002')) {
@@ -6587,7 +7011,7 @@ Future<List<Map<String, Object?>>> _aiNetRecords(String uri,
 /// N/A 继续，不中断循环。增量日志由 _aiLogDelta 在 _aiLoop 侧单独处理（带游标）。
 Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
   final out = StringBuffer();
-  if (ctx['routes'] == true || ctx['text'] == true) {
+  if (ctx['routes'] == true || ctx['text'] == true || ctx['elements'] == true) {
     final rpc = _SandboxRpc(uri);
     try {
       if (ctx['routes'] == true) {
@@ -6615,6 +7039,22 @@ Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
           out.write('页面文本：N/A\n');
         }
       }
+      if (ctx['elements'] == true) {
+        try {
+          final raw = await rpc.evalStringOn(_kAiElemLib, _aiElementsExpr());
+          final cands = aiParseElements(raw);
+          if (cands.isEmpty) {
+            out.write('元素候选：无（树里没有可识别控件，请按截图定位）\n');
+          } else {
+            out.write('元素候选（ref 可直接用于 tapRef；bounds 为逻辑像素）：\n');
+            for (final c in cands) {
+              out.write('- ${c.describe()}\n');
+            }
+          }
+        } catch (_) {
+          out.write('元素候选：N/A\n');
+        }
+      }
     } finally {
       await rpc.close();
     }
@@ -6622,9 +7062,7 @@ Future<String> _aiCollectContext(String uri, Map<String, bool> ctx) async {
   if (ctx['net'] == true) {
     try {
       final recs = await _aiNetRecords(uri, since: _ai.startedAt);
-      out.write(recs.isEmpty
-          ? '最近网络请求（本次运行以来）：无\n'
-          : '最近网络请求（本次运行以来）：\n');
+      out.write(recs.isEmpty ? '最近网络请求（本次运行以来）：无\n' : '最近网络请求（本次运行以来）：\n');
       for (final e in recs) {
         out.write(
             '- ${e['method']} ${e['url']} ${e['statusCode']} ${e['status']}\n');
@@ -6779,7 +7217,8 @@ String excBuildAnalysisUserPrompt({
   final widget = rec['widget']?.toString() ?? '';
   final widgetFile = rec['widgetFile']?.toString() ?? '';
   final widgetLine = (rec['widgetLine'] as num?)?.toInt() ?? 0;
-  final channel = rec['channel'] == 'framework' ? '框架异常（FlutterError）' : '未捕获异常';
+  final channel =
+      rec['channel'] == 'framework' ? '框架异常（FlutterError）' : '未捕获异常';
   final frames = <Map<String, Object?>>[];
   for (final f in (rec['stack'] as List? ?? const <Object?>[])) {
     if (f is Map) frames.add(Map<String, Object?>.from(f));
@@ -6896,11 +7335,11 @@ Future<Map<String, Object?>> _excAnalyze(
     if (f is Map) frames.add(Map<String, Object?>.from(f));
   }
   final snippets = _excBuildSnippets(frames);
-  final excTs = (rec['ts'] as num?)?.toInt() ??
-      DateTime.now().millisecondsSinceEpoch;
+  final excTs =
+      (rec['ts'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
   final ctx = await _excCollectContext(uri, excTs);
-  final (logs, _) = _aiLogDelta(excTs - 15000,
-      source: rec['source']?.toString() ?? '');
+  final (logs, _) =
+      _aiLogDelta(excTs - 15000, source: rec['source']?.toString() ?? '');
   final user = excBuildAnalysisUserPrompt(
     rec: rec,
     snippets: snippets,
@@ -6975,8 +7414,14 @@ Future<void> _aiLoop(String uri, String goal) async {
       // 轮 18 误以为 924×2000，点出屏外），必须显式告知。
       var iw = 0, ih = 0;
       if (pngBytes.length > 24 && pngBytes[0] == 0x89 && pngBytes[1] == 0x50) {
-        iw = (pngBytes[16] << 24) | (pngBytes[17] << 16) | (pngBytes[18] << 8) | pngBytes[19];
-        ih = (pngBytes[20] << 24) | (pngBytes[21] << 16) | (pngBytes[22] << 8) | pngBytes[23];
+        iw = (pngBytes[16] << 24) |
+            (pngBytes[17] << 16) |
+            (pngBytes[18] << 8) |
+            pngBytes[19];
+        ih = (pngBytes[20] << 24) |
+            (pngBytes[21] << 16) |
+            (pngBytes[22] << 8) |
+            pngBytes[23];
       }
       // 2.5) 结构化上下文：路由栈/页面文本/最近请求/增量日志
       //（单项失败标 N/A 继续，不中断循环；增量日志带游标只取新增）
@@ -6999,9 +7444,11 @@ Future<void> _aiLoop(String uri, String goal) async {
       final hist = StringBuffer();
       for (final p in _ai.rounds) {
         if (p.round == r.round) continue;
-        hist.write('轮${p.round}: ${p.error.isNotEmpty ? '异常=${p.error}' : 'think=${p.think}'}; ');
+        hist.write(
+            '轮${p.round}: ${p.error.isNotEmpty ? '异常=${p.error}' : 'think=${p.think}'}; ');
         for (final sr in p.results) {
-          hist.write('${sr.type}=${sr.status == 'pass' ? 'OK' : '失败:${sr.error.isEmpty ? sr.actual : sr.error}'}; ');
+          hist.write(
+              '${sr.type}=${sr.status == 'pass' ? 'OK' : '失败:${sr.error.isEmpty ? sr.actual : sr.error}'}; ');
         }
       }
       final userText = StringBuffer();
@@ -7029,7 +7476,9 @@ Future<void> _aiLoop(String uri, String goal) async {
       if (failB64 != null) {
         content.add(<String, Object?>{
           'type': 'image_url',
-          'image_url': <String, Object?>{'url': 'data:image/png;base64,$failB64'},
+          'image_url': <String, Object?>{
+            'url': 'data:image/png;base64,$failB64'
+          },
         });
       }
       failB64 = null;
@@ -7066,7 +7515,8 @@ Future<void> _aiLoop(String uri, String goal) async {
         if (obj['done'] == true) break;
         // 4) 过滤步骤（白名单 + 每轮上限），AI 坐标即截图像素 → phys:true
         steps.clear();
-        final rawSteps = obj['steps'] is List ? obj['steps'] as List : <Object?>[];
+        final rawSteps =
+            obj['steps'] is List ? obj['steps'] as List : <Object?>[];
         for (final s in rawSteps) {
           if (steps.length >= _aiMaxStepsPerRound) break;
           if (s is Map) {
@@ -7102,9 +7552,8 @@ Future<void> _aiLoop(String uri, String goal) async {
       // 5) 执行：失败即停本轮，失败截图反馈给 AI 重新决策
       for (final st in steps) {
         if (_ai.stopReq) break;
-        final res = _AutoStepResult(
-            r.results.length, (st['type'] ?? '?').toString(),
-            (st['expect'] ?? '').toString());
+        final res = _AutoStepResult(r.results.length,
+            (st['type'] ?? '?').toString(), (st['expect'] ?? '').toString());
         r.results.add(res);
         final sw = Stopwatch()..start();
         final (actual, err) = await _autoExecStep(uri, st);
@@ -7116,14 +7565,16 @@ Future<void> _aiLoop(String uri, String goal) async {
             ..error = err;
           res.shot = await _autoShot(uri, _ai.runId, res.index);
           if (res.shot != null) {
-            failB64 =
-                base64Encode(File('$_autoArtifactsDir/${res.shot}').readAsBytesSync());
+            failB64 = base64Encode(
+                File('$_autoArtifactsDir/${res.shot}').readAsBytesSync());
           }
           break;
         }
         res.status = 'pass';
         final waitAfter = (st['waitAfter'] as num?)?.toInt() ?? 700;
-        if (waitAfter > 0) await Future.delayed(Duration(milliseconds: waitAfter));
+        if (waitAfter > 0) {
+          await Future.delayed(Duration(milliseconds: waitAfter));
+        }
       }
       await Future.delayed(const Duration(milliseconds: 300));
     }
@@ -7154,7 +7605,8 @@ void _saveAiReport() {
 }
 
 /// 总结分析员的 system 提示词：逐条拆解指令、只依据记录、统计必须给依据。
-const String _aiSummarySystemPrompt = '''你是 Flutter UI 自动化测试的分析员。你会收到一条测试指令和一次自动化执行的完整记录，
+const String _aiSummarySystemPrompt =
+    '''你是 Flutter UI 自动化测试的分析员。你会收到一条测试指令和一次自动化执行的完整记录，
 需要核对执行结果是否满足指令要求，并输出结构化总结。
 要求：
 1. 先从指令中拆出可核对的要求（操作步骤、次数、判定标准、要计算的指标等），requirements 逐条覆盖，不得遗漏。
@@ -7170,7 +7622,7 @@ const String _aiSummarySystemPrompt = '''你是 Flutter UI 自动化测试的分
   "summary": "多段文字：需求理解、实际执行结果、失败原因归类、改进建议",
   "issues": ["问题或建议"],
   "confidence": "high|medium|low"
-}'''; 
+}''';
 
 /// 结束后的 AI 总结：把指令 + 逐轮记录交给模型，要求逐条覆盖指令。
 /// 最多 3 次调用（正常 1 次 + 失败重试 / 覆盖补全），失败不影响已落盘报告。
@@ -7203,7 +7655,10 @@ Future<void> _aiSummarize() async {
       if (attempt > 0) await Future.delayed(Duration(seconds: 2 * attempt));
       try {
         final reply = await _aiCall(<Map<String, Object?>>[
-          <String, Object?>{'role': 'system', 'content': _aiSummarySystemPrompt},
+          <String, Object?>{
+            'role': 'system',
+            'content': _aiSummarySystemPrompt
+          },
           <String, Object?>{'role': 'user', 'content': '$user$extra'},
         ]).timeout(const Duration(seconds: 45));
         final obj = _aiParseReply(reply);
@@ -7312,7 +7767,8 @@ List<String> aiSummaryMissingRequirements(
   return nums.where((n) => !text.contains(n)).toList();
 }
 
-String _aiSummaryStatusLabel(String s) => const <String, String>{
+String _aiSummaryStatusLabel(String s) =>
+    const <String, String>{
       'met': '✅ 满足',
       'partial': '⚠️ 部分满足',
       'unmet': '❌ 未满足',
@@ -7320,12 +7776,14 @@ String _aiSummaryStatusLabel(String s) => const <String, String>{
     }[s] ??
     (s.isEmpty ? '—' : s);
 
-String _aiSummaryStatusColor(String s) => const <String, String>{
+String _aiSummaryStatusColor(String s) =>
+    const <String, String>{
       'met': '#2e7d32',
       'partial': '#b26a00',
       'unmet': '#c62828',
       'unknown': '#666',
-    }[s] ?? '#666';
+    }[s] ??
+    '#666';
 
 /// 渲染「AI 总结」区块（报告用纯函数，便于单测）。
 /// 基础报告（未开始生成、无错误、无总结）返回空串，避免出现无意义的空区块。
@@ -7356,12 +7814,14 @@ String buildAiSummaryHtml(
   }
   final metrics = summary['metrics'];
   if (metrics is List && metrics.isNotEmpty) {
-    b.write('<table style="border-collapse:collapse;font-size:13px;margin:8px 0">'
+    b.write(
+        '<table style="border-collapse:collapse;font-size:13px;margin:8px 0">'
         '<tr><th style="$bd">指标</th><th style="$bd">值</th>'
         '<th style="$bd">计数依据</th></tr>');
     for (final m in metrics) {
       if (m is! Map) continue;
-      b.write('<tr><td style="$bd">${_htmlEsc((m['name'] ?? '').toString())}</td>'
+      b.write(
+          '<tr><td style="$bd">${_htmlEsc((m['name'] ?? '').toString())}</td>'
           '<td style="$bd"><b>${_htmlEsc((m['value'] ?? '').toString())}</b></td>'
           '<td style="$bd">${_htmlEsc((m['basis'] ?? '').toString())}</td></tr>');
     }
@@ -7400,11 +7860,16 @@ String buildAiSummaryHtml(
   }
   final warn = (summary['coverageWarning'] ?? '').toString();
   if (warn.isNotEmpty) {
-    b.write('<div style="font-size:12px;color:#b26a00">${_htmlEsc(warn)}</div>');
+    b.write(
+        '<div style="font-size:12px;color:#b26a00">${_htmlEsc(warn)}</div>');
   }
   final conf = (summary['confidence'] ?? '').toString();
-  final confLabel =
-      const <String, String>{'high': '高', 'medium': '中', 'low': '低'}[conf] ?? conf;
+  final confLabel = const <String, String>{
+        'high': '高',
+        'medium': '中',
+        'low': '低'
+      }[conf] ??
+      conf;
   final info = <String>[
     if (model.isNotEmpty) '模型 $model',
     if (ms > 0) '耗时 ${(ms / 1000).toStringAsFixed(1)}s',
@@ -7484,16 +7949,19 @@ String _aiReportHtml() {
   // 逐轮明细（同前端轮卡片形态，截图内嵌）
   final roundsHtml = StringBuffer();
   for (final r in _ai.rounds) {
-    roundsHtml.write('<div style="border:1px solid #ccc;margin:8px 0;padding:8px">');
+    roundsHtml
+        .write('<div style="border:1px solid #ccc;margin:8px 0;padding:8px">');
     final shotUri = _autoShotDataUri(r.shot);
     roundsHtml.write('<div style="display:flex;gap:8px;align-items:flex-start">'
         '<b style="font-size:13px">轮 ${r.round + 1}</b>');
     if (shotUri != null) {
-      roundsHtml.write('<img src="$shotUri" style="height:96px;border:1px solid #999">');
+      roundsHtml.write(
+          '<img src="$shotUri" style="height:96px;border:1px solid #999">');
     }
     roundsHtml.write('<div style="flex:1;font-size:13px">');
     if (r.retries > 0) {
-      roundsHtml.write('<div style="color:#b26a00">AI 调用重试 ${r.retries} 次</div>');
+      roundsHtml
+          .write('<div style="color:#b26a00">AI 调用重试 ${r.retries} 次</div>');
     }
     if (r.error.isNotEmpty) {
       roundsHtml.write('<div style="color:#c62828">${_htmlEsc(r.error)}</div>');
@@ -7503,7 +7971,8 @@ String _aiReportHtml() {
     }
     roundsHtml.write('</div></div>');
     if (r.results.isNotEmpty) {
-      roundsHtml.write('<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:6px">'
+      roundsHtml.write(
+          '<table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:6px">'
           '<tr><th style="$bd">#</th><th style="$bd">类型</th><th style="$bd">期望</th>'
           '<th style="$bd">状态</th><th style="$bd">耗时</th><th style="$bd">实际 / 错误</th></tr>');
       for (final s in r.results) {
@@ -7654,7 +8123,8 @@ Future<Map<String, Object?>> _instNode(
                 rpc, iso, kid, 'key: $keyPreview', depth - 1, visited)
             : refSummary('key: $keyPreview', kref),
       );
-      children.add(await expandRef('value', v is Map ? v : <String, Object?>{}));
+      children
+          .add(await expandRef('value', v is Map ? v : <String, Object?>{}));
     }
   } else if (fields != null) {
     node['kind'] = 'object';
@@ -7688,9 +8158,8 @@ Future<Map<String, Object?>> _instNode(
 /// owner/library 缺失时视为用户字段（保守显示）。
 bool _fieldIsSdk(Map? decl) {
   final owner = decl?['owner'];
-  final libUri = owner is Map
-      ? ((owner['library'] as Map?)?['uri'] ?? '').toString()
-      : '';
+  final libUri =
+      owner is Map ? ((owner['library'] as Map?)?['uri'] ?? '').toString() : '';
   return libUri.startsWith('dart:') || libUri.startsWith('package:flutter/');
 }
 
@@ -7914,7 +8383,8 @@ String dbCsvFileName(String dbId) {
     if (meta.existsSync()) {
       final raw = meta.readAsStringSync().trim();
       if (raw.isNotEmpty) {
-        name = raw.replaceAll(RegExp(r'\.(db|sqlite3?|db3)$', caseSensitive: false), '');
+        name = raw.replaceAll(
+            RegExp(r'\.(db|sqlite3?|db3)$', caseSensitive: false), '');
       }
     }
   } catch (_) {}
@@ -8125,7 +8595,9 @@ class _SandboxRpc {
         }
       }
     }
-    throw uri == 'dart:io' ? 'app 未加载 dart:io 库' : 'app 未加载 $uri 库（非 Flutter 调试会话？）';
+    throw uri == 'dart:io'
+        ? 'app 未加载 dart:io 库'
+        : 'app 未加载 $uri 库（非 Flutter 调试会话？）';
   }
 
   /// 在 app 的 dart:io 库上下文执行表达式，返回完整字符串。
@@ -8185,7 +8657,8 @@ class _SandboxRpc {
 
   /// 在指定库上下文执行表达式，返回原始 evaluate 响应。表达式返回对象时
   /// （type 为 Instance/@Instance），id 可用于 getObject 展开字段树。
-  Future<Map<String, Object?>> evalRefOn(String libraryUri, String expression) async {
+  Future<Map<String, Object?>> evalRefOn(
+      String libraryUri, String expression) async {
     await _ensureConnected();
     final libId = await _libraryId(libraryUri);
     final result = await _rpc('evaluate', {
@@ -8413,8 +8886,7 @@ void _vmSelLog(String tag, String msg) {
       f.renameSync('${f.path}.1');
     }
     final t = DateTime.now().toIso8601String();
-    f.writeAsStringSync('$t [$tag] $msg\n',
-        mode: FileMode.append, flush: true);
+    f.writeAsStringSync('$t [$tag] $msg\n', mode: FileMode.append, flush: true);
   } catch (_) {
     // 日志写入失败不影响主流程
   }
@@ -8480,7 +8952,7 @@ void _dumpRouteTraceForException(
   _routeDebugLog(
       'exception/$channel',
       'source=$label summary=$sum'
-      '${head.isEmpty ? '' : ' firstFrames=$head'}');
+          '${head.isEmpty ? '' : ' firstFrames=$head'}');
   final recent = _routeTrace.length > 25
       ? _routeTrace.sublist(_routeTrace.length - 25)
       : List<String>.of(_routeTrace);
@@ -8503,7 +8975,9 @@ bool _isDescendantAssert(Map<String, Object?> rec) {
   }
   for (final f in (rec['stack'] as List? ?? const <Object?>[])) {
     if (f is Map &&
-        (f['raw'] ?? '').toString().contains('InheritedElement.notifyClients')) {
+        (f['raw'] ?? '')
+            .toString()
+            .contains('InheritedElement.notifyClients')) {
       return true;
     }
   }
@@ -8526,8 +9000,8 @@ void _dumpDepsForException(_VmSession session, String label) {
       var lines = 0;
       for (final line in out.split('\n')) {
         if (line.isEmpty) continue;
-        _routeDebugLog('deps',
-            'port=${_vmPortTag(session.uri)} source=$label $line',
+        _routeDebugLog(
+            'deps', 'port=${_vmPortTag(session.uri)} source=$label $line',
             trace: false);
         if (++lines >= 40) break;
       }
@@ -8539,6 +9013,153 @@ void _dumpDepsForException(_VmSession session, String label) {
       await rpc.close();
     }
   });
+}
+
+// ── MCP 服务探测（「守护进程」页展示） ──
+//
+// MCP 有两种存在形式，页面要同时认：
+//   - HTTP 模式：本机监听端口（默认 46140，可用 --http 改），可握手拿工具数；
+//   - stdio 模式：由 IDE/客户端以子进程拉起，没有端口，只能看进程命令行。
+// 只做只读探测、不拉起进程：连不上就是「未运行」，由页面给出启动命令。
+
+/// MCP HTTP 默认端口与探测范围（与 README / MCP_GUIDE 一致）。
+const int kMcpDefaultPort = 46140;
+
+/// 读 mcp.token（HTTP 模式首次运行由服务端生成）。
+String readMcpToken() {
+  try {
+    final f = File('$_home/.xb_ume_ide/mcp.token');
+    return f.existsSync() ? f.readAsStringSync().trim() : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/// 探测本机 MCP 服务状态（供 /api/mcp）。
+Future<Map<String, Object?>> probeMcpStatus() async {
+  final token = readMcpToken();
+  // 端口被改到相邻值时也能发现；本机未监听端口会立刻 RST，扫 10 个不慢。
+  for (var port = kMcpDefaultPort; port < kMcpDefaultPort + 10; port++) {
+    final hit = await _probeMcpHttp(port, token);
+    if (hit != null) return hit;
+  }
+  final pids = await _mcpStdioPids();
+  if (pids.isNotEmpty) {
+    return <String, Object?>{
+      'running': true,
+      'mode': 'stdio',
+      'pids': pids,
+      'toolCount': null,
+    };
+  }
+  return <String, Object?>{
+    'running': false,
+    'defaultPort': kMcpDefaultPort,
+    'hint': 'dart run xb_ume:mcp（stdio）或 dart run xb_ume:mcp --http $kMcpDefaultPort',
+    'hasToken': token.isNotEmpty,
+  };
+}
+
+/// 对 http://127.0.0.1:<port>/mcp 发一条 JSON-RPC，返回响应 JSON；失败返回 null。
+Future<Map<String, Object?>?> _mcpPost(
+  HttpClient hc,
+  int port,
+  String token,
+  Map<String, Object?> body,
+) async {
+  try {
+    final req = await hc.postUrl(Uri.parse('http://127.0.0.1:$port/mcp'));
+    req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+    req.headers.set(HttpHeaders.acceptHeader,
+        'application/json, text/event-stream');
+    if (token.isNotEmpty) req.headers.set('X-XBUME-Token', token);
+    req.write(jsonEncode(body));
+    final res = await req.close().timeout(const Duration(seconds: 2));
+    final text = await res.transform(utf8.decoder).join();
+    if (text.trim().isEmpty) return null;
+    final j = jsonDecode(text);
+    return j is Map ? Map<String, Object?>.from(j) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 握手一个端口：initialize 成功才认作 MCP，再 tools/list 取工具数。
+Future<Map<String, Object?>?> _probeMcpHttp(int port, String token) async {
+  final hc = HttpClient()
+    ..connectionTimeout = const Duration(milliseconds: 400);
+  try {
+    final init = await _mcpPost(hc, port, token, <String, Object?>{
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'initialize',
+      'params': <String, Object?>{
+        'protocolVersion': '2025-06-18',
+        'capabilities': <String, Object?>{
+          'tools': <String, Object?>{},
+        },
+        'clientInfo': <String, Object?>{'name': 'xbume-gui', 'version': '1'},
+      },
+    });
+    final result = init?['result'];
+    if (result is! Map) return null;
+    var count = 0;
+    final list = await _mcpPost(hc, port, token, <String, Object?>{
+      'jsonrpc': '2.0',
+      'id': 2,
+      'method': 'tools/list',
+      'params': <String, Object?>{},
+    });
+    final tools = (list?['result'] as Map?)?['tools'];
+    if (tools is List) count = tools.length;
+    final info = result['serverInfo'];
+    return <String, Object?>{
+      'running': true,
+      'mode': 'http',
+      'port': port,
+      'url': 'http://127.0.0.1:$port/mcp',
+      'protocolVersion': '${result['protocolVersion'] ?? ''}',
+      'serverName': info is Map ? '${info['name'] ?? ''}' : '',
+      'serverVersion': info is Map ? '${info['version'] ?? ''}' : '',
+      'toolCount': count,
+    };
+  } finally {
+    hc.close(force: true);
+  }
+}
+
+/// stdio 模式的 MCP 服务 pid（无端口，靠进程命令行识别）。
+Future<List<int>> _mcpStdioPids() async {
+  try {
+    if (Platform.isWindows) {
+      const ps = "Get-CimInstance Win32_Process | Where-Object { "
+          "\$_.CommandLine -match 'xb_ume:mcp' -and "
+          "\$_.CommandLine -notmatch '--http' } | "
+          "ForEach-Object { \$_.ProcessId }";
+      final r =
+          await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
+      return r.stdout
+          .toString()
+          .split('\n')
+          .map((e) => int.tryParse(e.trim()))
+          .whereType<int>()
+          .toList(growable: false);
+    }
+    final r = await Process.run('pgrep', <String>['-f', 'xb_ume:mcp']);
+    final out = <int>[];
+    for (final line in r.stdout.toString().split('\n')) {
+      final p = int.tryParse(line.trim());
+      if (p == null || p == pid) continue;
+      // pgrep -f 是子串匹配，会命中 --http 实例；用 ps 复核命令行再判定。
+      final ps = await Process.run('ps', <String>['-p', '$p', '-o', 'command=']);
+      final cmd = ps.stdout.toString();
+      if (!cmd.contains('xb_ume:mcp') || cmd.contains('--http')) continue;
+      out.add(p);
+    }
+    return out;
+  } catch (_) {
+    return const <int>[];
+  }
 }
 
 /// 查询 daemon 状态（经互斥端口 status 协议）。未运行返回 null。
@@ -8731,7 +9352,8 @@ Future<List<String>> scanInstalledIdes() async {
 List<String> readGuiIdeOrderList() {
   final order = _guiReadConfigRaw()['ideOrder'];
   if (order is! List) return List<String>.of(_guiDefaultIdeOrder);
-  final names = order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+  final names =
+      order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
   return names.isEmpty ? List<String>.of(_guiDefaultIdeOrder) : names;
 }
 
@@ -8998,7 +9620,8 @@ List<String> _guiIdeOrder() {
     final parsed = jsonDecode(file.readAsStringSync());
     final order = parsed is Map<String, Object?> ? parsed['ideOrder'] : null;
     if (order is! List) return _guiDefaultIdeOrder;
-    final names = order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    final names =
+        order.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
     return names.isEmpty ? _guiDefaultIdeOrder : names;
   } catch (_) {
     return _guiDefaultIdeOrder;
@@ -9031,7 +9654,8 @@ Future<String?> _guiLaunchIde(String path, int line) async {
     if (cli == null) continue;
     if (await _guiRunChecked(cli, <String>[
       ...(_guiIdeCliSubcommands[ide] ?? const <String>[]),
-      '-g', '$path:$line',
+      '-g',
+      '$path:$line',
     ])) {
       // 后台进程唤起不会激活 IDE 窗口，补一次 open -a 把它带到前台。
       if (Platform.isMacOS) {
@@ -9052,7 +9676,8 @@ Future<String?> _guiLaunchIde(String path, int line) async {
 }
 
 /// 包名 → 包根路径缓存（来自项目 .dart_tool/package_config.json）。
-final Map<String, Map<String, String>> _pkgRootsCache = <String, Map<String, String>>{};
+final Map<String, Map<String, String>> _pkgRootsCache =
+    <String, Map<String, String>>{};
 
 /// file: URI → 本机路径；非 file URI 或非法编码返回 null。
 /// 百分号编码会解码；Windows 盘符按字符串还原（'/C:/x' → 'C:/x'），
@@ -9195,7 +9820,8 @@ String? _resolveLibraryFile(String uri) {
 int _findClassDeclLine(String path, String className) {
   try {
     final lines = File(path).readAsLinesSync();
-    final pattern = RegExp('^(?:abstract\\s+)?(?:class|enum|mixin|extension)\\s+$className\\b');
+    final pattern = RegExp(
+        '^(?:abstract\\s+)?(?:class|enum|mixin|extension)\\s+$className\\b');
     for (var i = 0; i < lines.length; i++) {
       if (pattern.hasMatch(lines[i])) return i + 1;
     }
@@ -9256,16 +9882,18 @@ int _findClassDeclLine(String path, String className) {
 
 /// 源码中类 <clsName> 的声明子句（class 关键字到类体 `{` 之前）。
 String? _classDeclOf(String src, String clsName) {
-  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
-              '${RegExp.escape(clsName)}[\\s<][^{]*\\{')
+  final m = RegExp(
+          '(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+          '${RegExp.escape(clsName)}[\\s<][^{]*\\{')
       .firstMatch(src);
   return m?.group(0);
 }
 
 /// 源码中类 <clsName> 的类体（大括号配平截取，不含外层花括号）。
 String? _classBodyOf(String src, String clsName) {
-  final m = RegExp('(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
-              '${RegExp.escape(clsName)}[\\s<]')
+  final m = RegExp(
+          '(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+          '${RegExp.escape(clsName)}[\\s<]')
       .firstMatch(src);
   if (m == null) return null;
   final open = src.indexOf('{', m.end);
@@ -9328,7 +9956,8 @@ String? _superClassOf(String src, String clsName) {
       _classDeclOf(stateSrc, stateName),
   ]) {
     if (decl == null) continue;
-    final m = RegExp(r'\bextends\s+[A-Za-z_$][\w$]*\s*<([^>]*)>').firstMatch(decl);
+    final m =
+        RegExp(r'\bextends\s+[A-Za-z_$][\w$]*\s*<([^>]*)>').firstMatch(decl);
     if (m == null) continue;
     for (final raw in m.group(1)!.split(',')) {
       probe(raw);
@@ -9340,8 +9969,8 @@ String? _superClassOf(String src, String clsName) {
       .firstMatch(widgetBody);
   if (gmType != null) probe(gmType.group(1)!);
   final gmExpr = RegExp(
-          r'generateVM\s*\([^)]*\)\s*(?:async\s*)?=>\s*([A-Za-z_$][\w$]*)')
-      .firstMatch(widgetBody) ??
+              r'generateVM\s*\([^)]*\)\s*(?:async\s*)?=>\s*([A-Za-z_$][\w$]*)')
+          .firstMatch(widgetBody) ??
       RegExp(r'generateVM\s*\([^)]*\)\s*(?:async\s*)?\{[\s\S]{0,400}?\breturn\s+([A-Za-z_$][\w$]*)')
           .firstMatch(widgetBody);
   if (gmExpr != null) probe(gmExpr.group(1)!);
@@ -9413,7 +10042,8 @@ String? _pubspecRootFor(String file) {
 }
 
 /// 项目根 →（类名 → 类所在 lib 文件路径）索引，每个根首次构建后缓存。
-final Map<String, Map<String, String>> _clsFileCache = <String, Map<String, String>>{};
+final Map<String, Map<String, String>> _clsFileCache =
+    <String, Map<String, String>>{};
 
 Map<String, String> _clsFileIndexFor(String root) {
   return _clsFileCache.putIfAbsent(root, () {
@@ -9428,7 +10058,8 @@ Map<String, String> _clsFileIndexFor(String root) {
         } catch (_) {
           continue;
         }
-        for (final m in RegExp(r'\bclass\s+([A-Za-z_$][\w$]*)').allMatches(src)) {
+        for (final m
+            in RegExp(r'\bclass\s+([A-Za-z_$][\w$]*)').allMatches(src)) {
           idx.putIfAbsent(m.group(1)!, () => ent.path);
         }
       }
@@ -9659,12 +10290,13 @@ Map<String, Object?> makeLogEntry(String raw, String source) {
   } else if (source == 'ios') {
     parsed = parseIosLogLine(raw);
   }
-  final entry = parsed ?? <String, String>{
-    'ts': '',
-    'level': 'I',
-    'tag': source,
-    'msg': raw,
-  };
+  final entry = parsed ??
+      <String, String>{
+        'ts': '',
+        'level': 'I',
+        'tag': source,
+        'msg': raw,
+      };
   return <String, Object?>{
     'ts': entry['ts'],
     'level': entry['level'],
@@ -9748,7 +10380,8 @@ void trimLogBuffer(
 Future<bool> pingGui(int port) async {
   HttpClient? client;
   try {
-    client = HttpClient()..connectionTimeout = const Duration(milliseconds: 500);
+    client = HttpClient()
+      ..connectionTimeout = const Duration(milliseconds: 500);
     final request = await client
         .getUrl(Uri.parse('http://127.0.0.1:$port/ping'))
         .timeout(const Duration(seconds: 1));
@@ -10007,6 +10640,10 @@ const String guiHtml = r'''
     <div class="card">
       <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button><button onclick="rtOp('reassemble')" title="ext.flutter.reassemble：重建全部 Widget（实例 Tab 字段写回后立即生效）；完整热重载需 IDE 编译 kernel，此处不做">UI 重建</button><button onclick="rtOp('gc')" title="_collectAllGarbage：触发全量 GC（泄漏检测前用）">触发 GC</button><span id="rt-op-stat" class="muted"></span></div>
       <div id="daemon-status" class="muted">查询中…</div>
+    </div>
+    <div class="card">
+      <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button></div>
+      <div id="mcp-detail" class="muted" style="margin-top:4px">让 Qoder / Cursor / Claude Code 直接驱动本机调试会话（会话发现、找组件、点击、场景、设备）；工具清单与配置示例见 MCP_GUIDE.md</div>
     </div>
     <div class="card">
       <div class="row"><b>IDE 优先级</b><button onclick="resetIdeOrder()">恢复默认</button><button onclick="openConfig()">打开配置文件</button></div>
@@ -10365,6 +11002,7 @@ const String guiHtml = r'''
         <label><input type="checkbox" id="ai-ctx-text" checked> 页面文本</label>
         <label><input type="checkbox" id="ai-ctx-net" checked> 网络请求</label>
         <label><input type="checkbox" id="ai-ctx-log" checked> 增量日志</label>
+        <label><input type="checkbox" id="ai-ctx-elements" checked> 元素候选</label>
         <span class="muted">关闭后 AI 消息不含对应上下文、对应断言步骤被忽略</span>
       </div>
     </div>
@@ -10458,7 +11096,7 @@ document.querySelectorAll('.tab').forEach(function(t){
     document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
     t.classList.add('active');
     document.getElementById('page-' + t.dataset.tab).classList.add('active');
-    if (t.dataset.tab === 'daemon') { refreshDaemon(); loadIdeOrder(); }
+    if (t.dataset.tab === 'daemon') { refreshDaemon(); refreshMcp(); loadIdeOrder(); }
     else if (t.dataset.tab === 'timeline') tlShow();
     else if (t.dataset.tab === 'sandbox') sbRefresh();
     else if (t.dataset.tab === 'db') dbRefresh();
@@ -11310,6 +11948,7 @@ function aiCfgShow(){
     document.getElementById('ai-ctx-text').checked = c.text !== false;
     document.getElementById('ai-ctx-net').checked = c.net !== false;
     document.getElementById('ai-ctx-log').checked = c.log !== false;
+    document.getElementById('ai-ctx-elements').checked = c.elements !== false;
   });
 }
 function aiCfgSave(){
@@ -11322,7 +11961,8 @@ function aiCfgSave(){
       ctx: { routes: document.getElementById('ai-ctx-routes').checked,
         text: document.getElementById('ai-ctx-text').checked,
         net: document.getElementById('ai-ctx-net').checked,
-        log: document.getElementById('ai-ctx-log').checked } }) })
+        log: document.getElementById('ai-ctx-log').checked,
+        elements: document.getElementById('ai-ctx-elements').checked } }) })
     .then(function(r){ return r.json(); })
     .then(function(j){ alert(j.ok ? 'AI 配置已保存' : (j.error || '保存失败')); });
 }
@@ -12487,6 +13127,73 @@ function refreshDaemon(){
   }).catch(function(){ document.getElementById('daemon-status').textContent = '查询失败（GUI 服务异常）'; var vm = document.getElementById('vmstat'); vm.style.display = ''; vm.textContent = 'VM 未知'; document.getElementById('vmsel').style.display = 'none'; });
 }
 setInterval(refreshDaemon, 5000);
+
+// ── MCP 服务状态 ──
+// 后端只读探测（/api/mcp）：HTTP 模式握手拿工具数，stdio 模式看进程命令行。
+var mcpStatus = null;
+// 用户点过「复制配置」后 #mcp-detail 展示的是要手动复制的 JSON，轮询不再
+// 覆盖它（否则 15 秒后文本消失，剪贴板被拦时无兜底）；点「刷新」才恢复摘要。
+var mcpConfigShown = false;
+// 返回 Promise：供 copyMcpConfig 在首屏状态未到时等一次结果。
+function refreshMcp(force){
+  return fetch('/api/mcp').then(function(r){ return r.json(); }).then(function(d){
+    mcpStatus = d;
+    if (mcpConfigShown && !force) return;
+    var el = document.getElementById('mcp-status');
+    var det = document.getElementById('mcp-detail');
+    if (!d.running) {
+      el.innerHTML = '<span class="bad">未运行</span>';
+      det.innerHTML = '启动：<code>' + esc(d.hint || 'dart run xb_ume:mcp') + '</code>；接入步骤见 MCP_GUIDE.md';
+      return;
+    }
+    if (d.mode === 'http') {
+      el.innerHTML = '<span class="ok">运行中</span> · HTTP ' + d.port + ' · ' + (d.toolCount ? d.toolCount + ' 个工具' : '工具数未知');
+      det.innerHTML = '地址 <code>' + esc(d.url) + '</code>（仅本机回环，需 token）；协议 ' + esc(d.protocolVersion || '未知');
+    } else {
+      el.innerHTML = '<span class="ok">运行中</span> · stdio · pid ' + (d.pids || []).join(', ');
+      det.textContent = '由 MCP 客户端以子进程拉起（无监听端口）；工具数在客户端会话中可见';
+    }
+  }).catch(function(){
+    document.getElementById('mcp-status').textContent = '查询失败';
+  });
+}
+function mcpConfigText(token){
+  var d = mcpStatus || {};
+  if (d.running && d.mode === 'http' && d.url) {
+    var cfg = {mcpServers: {xb_ume: {type: 'http', url: d.url}}};
+    // token 必带：服务端对 HTTP 请求做了回环 Host 与 token 双重校验。
+    if (token) cfg.mcpServers.xb_ume.headers = {'X-XBUME-Token': token};
+    return JSON.stringify(cfg, null, 2);
+  }
+  return JSON.stringify({mcpServers: {xb_ume: {command: 'dart', args: ['run', 'xb_ume:mcp']}}}, null, 2);
+}
+function copyMcpConfig(btn){
+  // 首屏探测未回来时先等一次：否则 HTTP 服务会被当成 stdio，复制出的配置
+  // 与正在跑的服务对不上。只重试一次，失败就按现状降级。
+  if (!mcpStatus && !copyMcpConfig.retried) {
+    copyMcpConfig.retried = true;
+    refreshMcp().then(function(){ copyMcpConfig(btn); });
+    return;
+  }
+  var d = mcpStatus || {};
+  var write = function(token){
+    var text = mcpConfigText(token);
+    // 同时把配置显示在下方：剪贴板被浏览器拦下时也能手动选中复制。
+    var det = document.getElementById('mcp-detail');
+    if (det) det.innerHTML = '<pre style="margin:4px 0 0;white-space:pre-wrap">' + esc(text) + '</pre>';
+    mcpConfigShown = true;
+    var done = function(){ if (btn) { btn.textContent = '已复制'; setTimeout(function(){ btn.textContent = '复制 MCP 配置'; }, 1500); } };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function(){ copyLogsFallback(text); done(); });
+    } else { copyLogsFallback(text); done(); }
+  };
+  if (d.running && d.mode === 'http') {
+    fetch('/api/mcp?token=1').then(function(r){ return r.json(); })
+      .then(function(x){ write(x.token || ''); })
+      .catch(function(){ write(''); });
+  } else { write(''); }
+}
+setInterval(refreshMcp, 15000);
 function setVmFilter(v){
   vmFilter = v; saveVmFp(fpBySource[v] || '');
   clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
@@ -14712,6 +15419,9 @@ function tlGoWatch(watchId){
   }, '监听列表里没有该项（可能已被删除）');
 }
 loadIdeOrder();
+// 默认激活的就是「守护进程」页：立即拉一次 MCP 状态。仅靠 setInterval
+// 会导致首屏最多 15 秒显示「查询中…」。
+refreshMcp();
 </script>
 </body>
 </html>

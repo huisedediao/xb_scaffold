@@ -4,15 +4,9 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-/// xb_ume 数据目录：$XB_UME_HOME 优先，否则 $HOME/.xb_ume_ide。
-String xbUmeHome() {
-  final env = Platform.environment['XB_UME_HOME'];
-  if (env != null && env.trim().isNotEmpty) return env.trim();
-  final home = Platform.environment['HOME'] ??
-      Platform.environment['USERPROFILE'] ??
-      Directory.current.path;
-  return '$home/.xb_ume_ide';
-}
+import '../paths.dart';
+
+export '../paths.dart' show xbUmeHome;
 
 /// 场景解析：已存在的路径优先，否则按名字在数据目录 scenarios 下找。
 File? resolveScenarioFile(String arg) {

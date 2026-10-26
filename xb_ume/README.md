@@ -4,7 +4,7 @@
 
 - **App 内面板**：悬浮球 + 底部面板，内置 Console / Route / Performance / Network / Inspector / Locator / Device / Storage 八个插件；
 - **电脑端 GUI 工具箱**：本机 Web 页面，提供设备与调试会话管理、日志、时间轴、异常、沙盒、数据库、路由栈、Network、Storage、实例、截图、性能、自动化、对比等能力；
-- 另含 **IDE 跳转**（App 内点源码行尾 ↗ → 电脑端 IDE）与 **命令行场景执行**（CLI / CI）。
+- 另含 **IDE 跳转**（App 内点源码行尾 ↗ → 电脑端 IDE）、**命令行场景执行**（CLI / CI）与 **MCP 服务**（Qoder / Cursor / Claude Code 直连调试会话）。
 
 App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `dio` / `package:http` 已在包内声明）；电脑端脚本零新增依赖、无需编译。
 
@@ -19,6 +19,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 - [电脑端 GUI 工具箱](#电脑端-gui-工具箱)
 - [IDE 跳转](#ide-跳转)
 - [命令行执行场景（CLI / CI）](#命令行执行场景cli--ci)
+- [MCP 接入（AI 直接驱动调试会话）](#mcp-接入ai-直接驱动调试会话)
 - [常见问题](#常见问题)
 - [卸载](#卸载)
 - [相关文档](#相关文档)
@@ -38,6 +39,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | 电脑端 | GUI 工具箱 | 14 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化等 |
 | App 内 / 电脑端 | IDE 跳转 | 点源码行尾 ↗ 或 GUI 栈帧「跳转」→ 在 VS Code / Android Studio 等打开对应行列 |
 | 命令行 | `xb_ume run` | 同一份场景 JSON 在 CI 中回放并产出 HTML 报告 |
+| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：按组件 ref 点击、读路由/网络/日志、跑场景、驱动设备 |
 
 ## 环境与平台支持
 
@@ -505,6 +507,37 @@ xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --repor
 
 退出码：`0` 全过（含 skip）、`1` 有失败、`2` 参数/场景/连接错误。报告为自包含 HTML（截图 base64 内嵌）。步骤语义与 GUI 自动化一致；`assertLog` 在 CLI 下标记 skip。详见 [GUI_GUIDE.md](GUI_GUIDE.md) 第十八章。
 
+## MCP 接入（AI 直接驱动调试会话）
+
+xb_ume 自带 MCP 服务（`bin/mcp.dart`，零新增依赖），把「进程内白盒」能力交给 AI 助手：按 Widget 树找组件（带 `ref` 与源码位置）、注入真实手势、读路由栈/网络/日志、跑场景；需要装包/起停/按键时切到设备后端。
+
+```bash
+# stdio：由 Qoder / Cursor / Claude Code 作为子进程拉起（推荐）
+dart run xb_ume:mcp
+
+# Streamable HTTP：仅本机回环 46140，需 token（~/.xb_ume_ide/mcp.token）
+dart run xb_ume:mcp --http 46140
+```
+
+客户端配置（stdio，粘进客户端的 MCP Servers 配置）：
+
+```json
+{
+  "mcpServers": {
+    "xb_ume": {
+      "command": "dart",
+      "args": ["run", "xb_ume:mcp"]
+    }
+  }
+}
+```
+
+默认暴露 20 个工具（core 14 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络、日志、场景运行与报告、设备发现与启动。按键/原生点击需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。
+
+GUI「守护进程」页新增「MCP 服务」一行（运行状态 / 端口 / 工具数）与「复制 MCP 配置」按钮，按当前运行状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
+
+工具清单与参数、五个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+
 ## 常见问题
 
 | 现象 | 处理 |
@@ -517,6 +550,7 @@ xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --repor
 | Network 没有记录 | 请求未经过 `XBUmeDioInterceptor` / `XBUmeHttpClient` / `XBUmeNetworkReporter` |
 | 沙盒/数据库/实例提示表达式求值失败 | 鸿蒙 Flutter 引擎不提供表达式编译服务，换 Android / iOS / macOS 会话；release/AOT 同样不可用 |
 | `flutter test` 偶发 `Unable to connect to flutter_tester` | 守护进程轮询本机 VM service 可能干扰测试握手；先 `pgrep -fl ide.dart` 找到精确 PID 后 `kill <pid>`，不要用宽泛 `pkill` |
+| MCP 连不上 / 工具报「未选择会话」 | 先调 `xbume_sessions`；HTTP 模式需带 `X-XBUME-Token`（见 [MCP_GUIDE.md](MCP_GUIDE.md) 排障章） |
 | GUI 被 `kill -9` 后某个会话对 DevTools 也无响应 | 流订阅被硬切断触发 DDS 死锁，重启该 `flutter run` 会话即可；正常退出 GUI 已主动关连接规避 |
 
 更多问题见 [GUI_GUIDE.md](GUI_GUIDE.md) 第十七章。
@@ -533,8 +567,9 @@ dart run xb_ume:ide --uninstall
 ## 相关文档
 
 - GUI 工具箱完整指南（14 个 Tab 的操作、令牌、CLI、FAQ）：[GUI_GUIDE.md](GUI_GUIDE.md)
+- MCP 接入（工具清单、客户端配置、场景 DSL、后端矩阵）：[MCP_GUIDE.md](MCP_GUIDE.md)
 - IDE 跳转与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
 - 版本变更：[CHANGELOG.md](CHANGELOG.md)
 - 完整示例：[`example/lib/main.dart`](example/lib/main.dart)
 
-当前版本：`0.3.0`。
+当前版本：`0.4.0`。
