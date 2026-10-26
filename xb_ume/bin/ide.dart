@@ -178,6 +178,9 @@ Future<void> install(List<String> args) async {
   final deployedScript =
       '${installDir.path}${Platform.pathSeparator}ide.dart';
   await File(deployedScript).writeAsString(File(scriptPath).readAsStringSync());
+  // 部署副本在 ~/.xb_ume_ide 下独立运行，dart 只从脚本所在目录解析相对
+  // import；依赖没一起复制时 daemon 启动即编译失败。
+  await _deployRuntimeDeps(scriptPath, installDir.path);
 
   final dartBin = Platform.resolvedExecutable;
   final ide = _argValue(args, '--ide') ?? 'auto';
@@ -230,6 +233,28 @@ Future<void> install(List<String> args) async {
 
 /// GUI 桌面入口名称（macOS 应用包 / Windows 桌面快捷方式）。
 const String kGuiAppName = 'xb_ume 工具箱';
+
+/// ide.dart 运行时依赖的相对模块（相对 bin/ 目录，部署时保持同样的路径）。
+///
+/// 新增 bin/src 下的相对 import 时必须登记，否则部署副本起不来。
+const List<String> _kIdeRuntimeDeps = <String>[
+  'src/session/discovery.dart',
+];
+
+Future<void> _deployRuntimeDeps(String ideScriptPath, String installDir) async {
+  final binDir = File(ideScriptPath).parent.path;
+  final sep = Platform.pathSeparator;
+  for (final rel in _kIdeRuntimeDeps) {
+    final src = File('$binDir$sep${rel.replaceAll('/', sep)}');
+    if (!src.existsSync()) {
+      print('[xbume-ide] 缺少运行时依赖 $rel，部署副本可能无法启动。');
+      continue;
+    }
+    final dest = File('$installDir$sep${rel.replaceAll('/', sep)}');
+    await dest.parent.create(recursive: true);
+    await dest.writeAsString(src.readAsStringSync());
+  }
+}
 
 /// 部署 GUI 工具箱脚本并生成可双击的启动器（best-effort，失败不影响 daemon 安装）。
 Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin) async {

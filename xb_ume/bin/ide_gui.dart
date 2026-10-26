@@ -9221,6 +9221,16 @@ Future<Map<String, Object?>> restartDaemon() async {
       'message': '未找到守护脚本，请先执行 dart run xb_ume:ide --install',
     };
   }
+  // 部署副本的相对 import 没跟随复制时（升级后常见），dart 会直接编译失败、
+  // 进程秒退，只看到「未检测到 daemon」无从下手；这里先把缺的文件点出来。
+  final missing = _missingDaemonDeps(script);
+  if (missing.isNotEmpty) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '守护脚本缺少依赖 ${missing.join('、')}（部署不完整）：'
+          '请重新执行 dart run xb_ume:ide --install',
+    };
+  }
   await killOtherDaemons();
   try {
     await Process.start(
@@ -9241,6 +9251,23 @@ Future<Map<String, Object?>> restartDaemon() async {
     'ok': false,
     'message': '重启后未检测到 daemon（可查看 ~/.xb_ume_ide/daemon.log）',
   };
+}
+
+/// 检查部署脚本里的 `import 'src/...'` 相对依赖是否都在安装目录内。
+List<String> _missingDaemonDeps(File script) {
+  final missing = <String>[];
+  try {
+    final re = RegExp(r'''^import\s+'(src/[^']+)';''', multiLine: true);
+    for (final m in re.allMatches(script.readAsStringSync())) {
+      final rel = m.group(1)!;
+      final f = File('$_home/.xb_ume_ide${Platform.pathSeparator}'
+          '${rel.replaceAll('/', Platform.pathSeparator)}');
+      if (!f.existsSync()) missing.add(rel);
+    }
+  } catch (_) {
+    // 读不了就不拦：让启动流程自己暴露真实错误。
+  }
+  return missing;
 }
 
 /// 停止本机上其他 `ide.dart --daemon` 进程（排除自身）。

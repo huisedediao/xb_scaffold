@@ -8,9 +8,10 @@
 - 修复 `tapRef` 步骤被丢弃的问题：步骤 JSON 里候选类型与步骤类型同名 `type` 会互相覆盖（jsonDecode 后者胜），入参改名为 `expectType` 并在提示词中明确禁止重写 `type`。
 - GUI「守护进程」Tab 新增「MCP 服务」卡片：只读探测本机 MCP（HTTP 模式扫 46140-46149 并握手 `initialize` + `tools/list` 拿工具数；stdio 模式按进程命令行识别），展示运行状态/端口/工具数/协议版本，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 自动带 `X-XBUME-TOKEN`，凭据只在点复制时经 `/api/mcp?token=1` 下发）。
 - 会话发现逻辑抽到 `bin/src/session/discovery.dart`，daemon 与 MCP 服务共用一份实现（含增强 PATH 与 adb/hdc 转发来源映射）。
+- 修复 `--install` 部署不完整导致 daemon 起不来：`ide.dart` 改为依赖 `src/session/discovery.dart` 后，部署副本仍只复制单文件，dart 从部署目录解析不到 import 直接编译失败，GUI 只提示「重启后未检测到 daemon」；现在安装时按 `_kIdeRuntimeDeps` 清单连同依赖一起复制（保持相对路径），GUI 重启前先检查部署副本的相对依赖并点名缺失项，提示重新安装；新增 `test/ide_deploy_deps_test.dart` 锁住「相对 import ⇄ 清单」一致性。
 - 新增 [MCP_GUIDE.md](MCP_GUIDE.md)：工具清单与参数、Qoder/Cursor/Claude Code 配置、五个典型 prompt、场景 DSL 全表、后端能力矩阵、安全模型、排障与已知缺口；README 新增「MCP 接入」章节与总览行，GUI_GUIDE 补守护进程页的 MCP 卡片说明。
 - CHANGELOG 改为降序（最新在最上），与仓库其他包一致。
-- 新增 `test/mcp_protocol_test.dart`、`test/device_parse_test.dart`、`test/scenario_steps_test.dart`、`test/mobile_mcp_test.dart`；`flutter test` 184 项全过。
+- 新增 `test/mcp_protocol_test.dart`、`test/device_parse_test.dart`、`test/scenario_steps_test.dart`、`test/mobile_mcp_test.dart`、`test/ide_deploy_deps_test.dart`；`flutter test` 227 项全过。
 
 ## 0.3.0
 

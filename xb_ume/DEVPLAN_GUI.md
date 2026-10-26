@@ -133,3 +133,4 @@
 - 2026-10-19 会话选择保持 v2（掉选自愈 + localStorage 指纹持久化：回退不清指纹、每轮按 fp 自动找回，页面刷新/重开浏览器自动选回；node 状态机单测 10 断言 + 浏览器端到端全过）
 - 2026-10-19 会话选择排障日志：`~/.xb_ume_ide/logs/vm_sel.log`（2MB 轮转）记录 daemon 会话增减（source|fp 集合差异，仅变化时记）与前端上报（页面加载恢复指纹/用户选择/指纹找回/缺失计数/回退/前后台切换/daemon 断连恢复，POST /api/clientlog）；验证：GUI 重启后页面自动恢复指纹 + 会话变化日志 + 上报链路落盘全通
 - 2026-10-26 P17 完成（MCP 双向集成：MCP Server 双传输 + 默认 20 工具 + 设备后端可插拔 + 场景 DSL 复合/设备步骤 + AI 元素候选与 tapRef + GUI MCP 服务卡片；MCP_GUIDE.md 新建，README/GUI_GUIDE/CHANGELOG（转降序）与版本 0.4.0 同步；验证 HTTP tools=20/401 兜底 + 浏览器卡片与复制配置全过 + flutter test 224 项）
+- 2026-10-26 P17 修复（守护进程起不来：`ide.dart` 改为依赖 `src/session/discovery.dart` 后，`--install` 仍只复制单文件，部署副本从 ~/.xb_ume_ide 解析不到 import 直接编译失败，GUI 只报「重启后未检测到 daemon」。修复：安装按 `_kIdeRuntimeDeps` 清单连同依赖复制并保持相对路径，GUI 重启前先检查部署副本相对依赖并点名缺失，新增 `test/ide_deploy_deps_test.dart` 锁住「相对 import ⇄ 清单」一致；实测 `--install` 后 daemon 监听 46128、launchctl 状态 0、GUI /api/daemon running=true 且已发现 1 个会话）
