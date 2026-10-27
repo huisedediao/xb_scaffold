@@ -4,7 +4,6 @@
 - AI 调试 Tab 的工具栏按「一键开启 → 状态（N 个工具 / eval 已开 / 指令已复制）→ 复制 AI 指令 / 复制 MCP 配置」排列：项目目录输入框自适应剩余宽度（长路径不再被截成两段），指令预览区高度随窗口（`calc(100vh - 400px)`，内部滚动）；剪贴板被浏览器策略拦下时给出「点『复制 AI 指令』手动全选」而不是静默失败。
 - GUI 页签切换重构为 `showTab(tab)` 并支持 `#<tab>` 深链（文档、脚本、截图共用一个入口）：`http://127.0.0.1:<gui 端口>/#ai` 直接落在 AI 调试 Tab，行为与手动点击一致（各 Tab 的进入钩子照旧执行）。
 - 新增 `test/ai_prompt_test.dart`（6 项：项目目录校验与报错文案、指令包含项目/设备/`cwd`/三阶段工具与热重载、`hasEval` 决定是否出现 `xbume_eval`、客户端配置含 `type: http` + token、GUI 结构守卫：`data-tab="ai"` / `page-ai` / `/api/ai/setup` / `/api/ai/config` / `startMcp(forceEval: true)` / `--allow-eval` 拼接 / 拒绝停外部服务）；`flutter test` 252 → 258 项全过。
-
 - 新增两个 MCP 工具，把「改代码 → 重载 → 复跑」也交给 AI：`xbume_hot_reload`（向本服务用 `xbume_app_launch(via: "flutter-run")` 拉起的进程写 `r` / `R`，热重载或热重启，识别 flutter 的完成行后返回耗时与最近输出；热重启后自动清 isolate 缓存；会话不在自己手里时明确拒绝，不按名字杀进程）与 `xbume_eval`（新增 `--allow-eval` 开关，默认关；在 app 进程内求值单条表达式，`lib` 支持完整 uri 或子串匹配且业务库优先，返回 `值` + 库 + 类型，编译错误与运行时异常分开报，4000 字符上限 + `maxChars` 截断）。默认工具 23 → 24（core 17 → 18），`--tool-groups all` 28 → 29；GUI「MCP 服务」卡片新增「允许 eval」勾选（`config.json` 的 `mcpAllowEval` + `/api/mcp/eval`，只影响下次启动，重启后生效）。
 - 修复热重载等待完成的正则漏配：`flutter run` 无改动时只打印「Reloaded 0 libraries in 83ms」（没有 `of N`），原正则按「Reloaded X of Y libraries」匹配会白等到超时；现在 `of N` 可选，实测空改动 146ms、改一个文件 229ms 即命中。
 - 新增 MCP 服务 `dart run xb_ume:mcp`（`bin/mcp.dart` + `bin/src/mcp/*`，零新增依赖）：JSON-RPC 2.0 手写协议层，stdio（换行分隔，客户端拉起）与 Streamable HTTP（仅绑 127.0.0.1，默认 46140，token 校验 + Host 校验）双传输；默认 23 个工具（core 17 + diagnose 3 + run-safe 3），`act` / `device-write` 等有副作用的组必须显式 `--tool-groups` 开启；`--uri` 可手工指定会话，省略时自动扫描本机 VM service。

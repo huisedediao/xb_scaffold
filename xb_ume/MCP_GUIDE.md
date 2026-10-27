@@ -98,7 +98,8 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 29 个工具（core 18 + diagnose 3 + run-safe 3 + act 2 + device-write 3）：
+- 一次开全 29 个工具（core 18 + diagnose 3 + run-safe 3 + act 2 + device-write 3）；
+  「AI 调试」入口另外带上 `xbume_eval`（共 30 个）：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对
   本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
@@ -177,7 +178,7 @@ claude mcp add --transport http xb_ume http://127.0.0.1:46140/mcp \
 ### 只想给某类操作临时放权
 
 ```bash
-# 默认：core + diagnose + run-safe（20 个工具，全是只读或 app 内注入）
+# 默认：core + diagnose + run-safe（24 个工具，全是只读或 app 内注入）
 dart run xb_ume:mcp
 
 # 加上按键 / 原生点击
