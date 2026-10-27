@@ -49,7 +49,26 @@ dart run xb_ume:mcp --http 46140
 - 每个请求必须带 `X-XBUME-Token` 或 `Authorization: Bearer`，否则 401；
 - `POST /mcp` 返回单条 JSON 响应（不提供 SSE 长连接，`GET` 明确 405）。
 
-启动后 stderr 会打印可直接粘贴的配置片段。
+启动后 stderr 会打印可直接粘贴的配置片段，拼好的客户端配置见
+[第 2 节](#2-客户端配置)。
+
+### GUI 一键启动
+
+装过工具箱（`dart run xb_ume:ide --install`）就不用再敲命令：打开 GUI →
+「守护进程」Tab →「MCP 服务」卡片点「启动」，它在后台拉起部署副本
+`~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲端口> --tool-groups all`，
+输出同时写入 `~/.xb_ume_ide/logs/mcp.log`；点「停止」结束该进程。
+
+- 勾选「随工具箱启动」后，每次打开工具箱都会自动拉起（状态存在
+  `~/.xb_ume_ide/config.json` 的 `mcpAutoStart`，默认关）；取消勾选不会停掉
+  正在运行的服务，要停点「停止」。
+- 一次开全 25 个工具（core + diagnose + run-safe + act + device-write）：
+  装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对
+  本机任何进程都可见**，不需要时就把服务停掉。
+- GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
+  stdio 拉起的进程要去客户端里关。
+- 重复点「启动」是幂等的：端口即单实例锁，不会起第二个实例；端口全占时
+  （46140-46149）直接报错，不会杀别人的进程。
 
 ### 常用参数
 
@@ -61,6 +80,7 @@ dart run xb_ume:mcp --http 46140
 | `--tool-groups <list>` | `all` 或逗号分隔；目前可用的扩展组是 `act`、`device-write` |
 | `--no-tool-groups` | 只暴露 core 组 |
 | `--device-backend <list>` | `auto`（默认）/ `adb,hdc,simctl,idevice` / `mobile-mcp` |
+| `--log-file <path>` | 日志同时追加到文件（GUI 启动时为 `~/.xb_ume_ide/logs/mcp.log`） |
 | `--allow-eval` | 预留开关，当前无对应工具（见「已知缺口」） |
 
 不带 `--uri` 时，服务会自己扫描本机回环端口上的 VM service（含

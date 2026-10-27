@@ -534,7 +534,7 @@ dart run xb_ume:mcp --http 46140
 
 默认暴露 20 个工具（core 14 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络、日志、场景运行与报告、设备发现与启动。按键/原生点击需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。
 
-GUI「守护进程」页新增「MCP 服务」一行（运行状态 / 端口 / 工具数）与「复制 MCP 配置」按钮，按当前运行状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
+GUI「守护进程」页的「MCP 服务」卡片可直接启停：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `logs/mcp.log`），点「停止」结束；勾上「随工具箱启动」后每次打开工具箱自动拉起（默认关）。卡片同时展示运行状态/端口/工具数，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
 
 工具清单与参数、五个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
 

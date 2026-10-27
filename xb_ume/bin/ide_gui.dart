@@ -277,6 +277,13 @@ Future<void> _mainImpl(List<String> args) async {
       // 当前平台不支持该信号：跳过。
     }
   }
+  // 「随工具箱启动」：配置里开了就把 MCP HTTP 服务拉起来。失败只记一行日志
+  // （端口被占、部署副本缺失等），不影响 GUI 本身。
+  if (readMcpAutoStart()) {
+    unawaited(startMcp().then((r) {
+      print('[xbume-gui] MCP 自动启动：${r['message'] ?? r}');
+    }));
+  }
   try {
     await for (final req in server) {
       unawaited(handleRequest(state, req));
@@ -424,6 +431,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/mcp') {
       final status = await probeMcpStatus();
+      // 启停能力与自动开关随探测一起下发：卡片据此决定显示「启动」还是「停止」。
+      status['autoStart'] = readMcpAutoStart();
+      status['launchable'] =
+          File('$_home/.xb_ume_ide/mcp.dart').existsSync();
+      final rec = readMcpPidRecord();
+      if (rec['pid'] != null) status['managedPid'] = rec['pid'];
       // 凭据只在用户点「复制 MCP 配置」时下发（?token=1），常态轮询不把 token
       // 放进页面：HTTP 模式必须带它，否则客户端沿用默认配置会 401。
       if (req.uri.queryParameters['token'] == '1' && status['mode'] == 'http') {
@@ -431,6 +444,30 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(status));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/mcp/start' && req.method == 'POST') {
+      final r = await startMcp();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(r));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/mcp/stop' && req.method == 'POST') {
+      final r = await stopMcp();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(r));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/mcp/auto' && req.method == 'POST') {
+      final on = (req.uri.queryParameters['on'] ?? '1') == '1';
+      await writeMcpAutoStart(on);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+        jsonEncode(<String, Object?>{'ok': true, 'autoStart': on}),
+      );
       await req.response.close();
       return;
     }
@@ -9060,6 +9097,182 @@ Future<Map<String, Object?>> probeMcpStatus() async {
   };
 }
 
+// ── MCP 服务启停（守护进程页的「启动/停止」）───────────────────────────
+
+/// GUI 拉起的 MCP 服务记录（pid + port），停服务时按它定位。
+File get _mcpPidFile => File('$_home/.xb_ume_ide/mcp.pid');
+
+Map<String, Object?> readMcpPidRecord() {
+  try {
+    final f = _mcpPidFile;
+    if (!f.existsSync()) return const <String, Object?>{};
+    final j = jsonDecode(f.readAsStringSync());
+    if (j is Map) return j.map((k, v) => MapEntry(k.toString(), v));
+  } catch (_) {
+    // 记录损坏就当成没有。
+  }
+  return const <String, Object?>{};
+}
+
+/// 「随工具箱启动」开关（config.json 的 mcpAutoStart，默认关）。
+bool readMcpAutoStart() => _guiReadConfigRaw()['mcpAutoStart'] == true;
+
+Future<void> writeMcpAutoStart(bool on) async {
+  final cfg = _guiReadConfigRaw();
+  cfg['mcpAutoStart'] = on;
+  final file = File('$_home/.xb_ume_ide/config.json');
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
+}
+
+/// 读 token；不存在就先生成（规则与 mcp.dart 的 ensureToken 一致）。
+/// 不先建好就去拉起服务，第一次握手会因两边的 token 不一致拿 401。
+String ensureMcpToken() {
+  final cur = readMcpToken();
+  if (cur.length >= 16) return cur;
+  final rnd = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+  final token = rnd.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  try {
+    final f = File('$_home/.xb_ume_ide/mcp.token');
+    f.parent.createSync(recursive: true);
+    f.writeAsStringSync(token);
+    // token 是本地共享密钥，收紧到仅当前用户可读。
+    try {
+      Process.runSync('chmod', <String>['600', f.path]);
+    } catch (_) {}
+  } catch (_) {
+    // 写不了就交给服务端自己生成。
+  }
+  return token;
+}
+
+/// 端口是否还能监听（MCP 自己会 bind，这里只在启动前挑一个空位）。
+Future<bool> _mcpPortFree(int port) async {
+  try {
+    final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+    await s.close();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 启动 MCP HTTP 服务（后台子进程，部署副本 ~/.xb_ume_ide/mcp.dart）。
+/// 启动时开放全部工具组（core + diagnose + run-safe + act + device-write）；
+/// 装包/卸包/停进程这些高危工具自身仍强制 confirm: true。
+Future<Map<String, Object?>> startMcp() async {
+  final current = await probeMcpStatus();
+  if (current['running'] == true) {
+    return <String, Object?>{
+      ...current,
+      'ok': true,
+      'message': current['mode'] == 'http'
+          ? 'MCP 服务已在运行（端口 ${current['port']}）'
+          : '已有 stdio 模式的 MCP 进程在跑（无监听端口）',
+    };
+  }
+  final script = File('$_home/.xb_ume_ide/mcp.dart');
+  if (!script.existsSync()) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '未找到 ~/.xb_ume_ide/mcp.dart，请先执行 dart run xb_ume:ide --install',
+    };
+  }
+  int? port;
+  for (var p = kMcpDefaultPort; p < kMcpDefaultPort + 10; p++) {
+    if (await _mcpPortFree(p)) {
+      port = p;
+      break;
+    }
+  }
+  if (port == null) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '端口 $kMcpDefaultPort-${kMcpDefaultPort + 9} 都被占用',
+    };
+  }
+  final log = File('$_home/.xb_ume_ide/logs/mcp.log');
+  log.parent.createSync(recursive: true);
+  final Process proc;
+  try {
+    proc = await Process.start(
+      Platform.resolvedExecutable,
+      <String>[
+        script.path,
+        '--http',
+        '$port',
+        '--tool-groups',
+        'all',
+        '--log-file',
+        log.path,
+      ],
+      workingDirectory: '$_home/.xb_ume_ide',
+      mode: ProcessStartMode.detached,
+    );
+  } catch (e) {
+    return <String, Object?>{'ok': false, 'message': '拉起进程失败：$e'};
+  }
+  try {
+    _mcpPidFile.writeAsStringSync(jsonEncode(<String, Object?>{
+      'pid': proc.pid,
+      'port': port,
+      'at': DateTime.now().toIso8601String(),
+    }));
+  } catch (_) {}
+  // 等握手成功：dart 冷启动要 JIT 编译，最多等 10 秒。
+  final token = ensureMcpToken();
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final hit = await _probeMcpHttp(port, token);
+    if (hit != null) {
+      return <String, Object?>{
+        ...hit,
+        'ok': true,
+        'message': 'MCP 服务已启动（端口 $port）',
+      };
+    }
+  }
+  return <String, Object?>{
+    'ok': false,
+    'pid': proc.pid,
+    'port': port,
+    'message': '已拉起进程 ${proc.pid}，但 10 秒内没握手成功，详见 ${log.path}',
+  };
+}
+
+/// 停止 GUI 拉起的 MCP 服务（按 PID 记录）。
+Future<Map<String, Object?>> stopMcp() async {
+  final rec = readMcpPidRecord();
+  final pid = int.tryParse('${rec['pid'] ?? ''}');
+  if (pid == null) {
+    final st = await probeMcpStatus();
+    if (st['running'] == true) {
+      return <String, Object?>{
+        'ok': false,
+        'message': '这个 MCP 服务不是工具箱启动的（没有 PID 记录），请手动停止',
+      };
+    }
+    return <String, Object?>{'ok': true, 'message': 'MCP 服务未运行'};
+  }
+  var killed = false;
+  try {
+    killed = Process.killPid(pid, ProcessSignal.sigterm);
+  } catch (_) {}
+  final port = int.tryParse('${rec['port'] ?? ''}') ?? kMcpDefaultPort;
+  // MCP 收到 SIGTERM 会优雅关闭，这里等端口释放后再返回。
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (await _mcpPortFree(port)) break;
+  }
+  try {
+    _mcpPidFile.deleteSync();
+  } catch (_) {}
+  return <String, Object?>{
+    'ok': true,
+    'message': killed ? 'MCP 服务已停止（pid $pid）' : '进程 $pid 已不存在，已清理记录',
+  };
+}
+
 /// 对 http://127.0.0.1:<port>/mcp 发一条 JSON-RPC，返回响应 JSON；失败返回 null。
 Future<Map<String, Object?>?> _mcpPost(
   HttpClient hc,
@@ -10669,7 +10882,7 @@ const String guiHtml = r'''
       <div id="daemon-status" class="muted">查询中…</div>
     </div>
     <div class="card">
-      <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button></div>
+      <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button id="mcp-toggle" onclick="toggleMcp(this)">启动</button><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button><label class="chk" style="margin-left:6px" title="勾选后再打开工具箱会自动拉起 MCP HTTP 服务（默认 46140）；取消勾选不会停掉正在运行的服务"><input type="checkbox" id="mcp-auto" onchange="setMcpAuto(this)">随工具箱启动</label></div>
       <div id="mcp-detail" class="muted" style="margin-top:4px">让 Qoder / Cursor / Claude Code 直接驱动本机调试会话（会话发现、找组件、点击、场景、设备）；工具清单与配置示例见 MCP_GUIDE.md</div>
     </div>
     <div class="card">
@@ -10741,7 +10954,7 @@ const String guiHtml = r'''
       <input id="tl-kw" placeholder="关键字（路由名/URL/日志/异常）" oninput="tlKwInput()" style="width:260px">
       <button onclick="tlPause(this)" id="tl-pause-btn">暂停</button>
       <button onclick="tlToLatest()" title="滚到最新事件">最新</button>
-      <button onclick="tlClear()" title="仅清空时间轴里的路由/网络记录；日志与异常请到各自 Tab 清空">清空</button>
+      <button onclick="tlClear()" title="清空时间轴当前显示的全部事件（路由/网络/监听/日志/异常）；各 Tab 的原始数据不受影响">清空</button>
       <button onclick="tlCopy()" title="复制当前过滤后的时间轴文本">复制</button>
       <span class="muted" id="tl-stat">请先选择 VM</span>
     </div>
@@ -12653,6 +12866,24 @@ function clearLogs(){ logs = []; renderLogs(); if (tlOnTab()) tlSchedule(); }
 var watchEvents = [];   // 监听事件（WS 推送 + 打开 Tab 时回填，服务端保留 500 条）
 var tlOrder = [], tlByKey = {}, tlPaused = false, tlDirtyTimer = null;
 var tlExpanded = {}, tlSubUri = '', tlNewCount = 0, tlKwTimer = null;
+// 时间轴视图下限：点「清空」后早于此刻的事件不再显示。日志与异常是各 Tab
+// 共用的本地数据（不能替用户删掉），只能靠这个下限把它们从时间轴里隐藏，
+// 否则清空只清掉路由/网络，页面上还留着一屏日志，看起来就像没清。
+// 记 uri 是为了切换会话后自动失效，不然新会话的历史也会被一起挡掉。
+var tlFloor = { uri: '', ms: 0 };
+function tlFloorMs(){
+  var u = tlUri();
+  // 只在两个非空会话之间切换时失效：新会话有自己的历史，不该被上一次的
+  // 清空挡住。会话掉线（u 为空）或清空时本来没会话，都不算切换，否则
+  // 已清空的日志会重新冒出来。
+  if (u && tlFloor.uri && u !== tlFloor.uri) return 0;
+  return tlFloor.ms;
+}
+// ms 缺失或不是数字（部分异常只有文本时间）时按「保留」处理，避免误杀新事件。
+function tlBeforeFloor(ms){
+  var f = tlFloorMs();
+  return f > 0 && typeof ms === 'number' && ms > 0 && ms < f;
+}
 // 按住鼠标（准备点击/拖选）时不重建时间轴 DOM：否则 mousedown 与 mouseup
 // 之间的行被 250ms 合帧刷新替换，click 不会触发，表现为要点两次才生效。
 var tlPointerHeld = false, tlPointerReleaseTimer = null;
@@ -12714,6 +12945,8 @@ function tlMerge(items){
   var changed = false;
   items.forEach(function(e){
     if (!e || !e.t) return;
+    // 服务端清空失败或订阅重放时，别把清空前的历史又 merge 回来。
+    if (tlBeforeFloor(e.ms)) return;
     var k = e.t + ':' + e.id;
     var old = tlByKey[k];
     if (old) {
@@ -12769,8 +13002,8 @@ function tlBuild(){
   var range = parseInt(document.getElementById('tl-range').value, 10) || 0;
   var cutoff = range > 0 ? now - range * 60000 : 0;
   var evs = [];
-  if (tlCb('tl-t-route')) tlOrder.forEach(function(e){ if (e.t === 'route' && e.ms >= cutoff) evs.push(e); });
-  if (tlCb('tl-t-net')) tlOrder.forEach(function(e){ if (e.t === 'net' && e.ms >= cutoff) evs.push(e); });
+  if (tlCb('tl-t-route')) tlOrder.forEach(function(e){ if (e.t === 'route' && e.ms >= cutoff && !tlBeforeFloor(e.ms)) evs.push(e); });
+  if (tlCb('tl-t-net')) tlOrder.forEach(function(e){ if (e.t === 'net' && e.ms >= cutoff && !tlBeforeFloor(e.ms)) evs.push(e); });
   if (tlCb('tl-t-log')) {
     var wantFlutter = tlCb('tl-lv-flutter'), wantWarn = tlCb('tl-lv-warn'), wantAll = tlCb('tl-lv-all');
     logs.forEach(function(l){
@@ -12778,6 +13011,7 @@ function tlBuild(){
       if (!tlLogVisible(l, wantFlutter, wantWarn, wantAll)) return;
       var ms = l.rcvMs || 0;
       if (ms < cutoff) return;
+      if (tlBeforeFloor(ms)) return;
       evs.push({ t:'log', id:'l' + l._seq, ms: ms, level: l.level, tag: l.tag, app: l.app,
         msg: l.msg, ts: l.ts, source: l.source, device: l.device, _l: l });
     });
@@ -12786,6 +13020,7 @@ function tlBuild(){
     excItems.forEach(function(it){
       var ms = it.ts || 0;
       if (ms < cutoff) return;
+      if (tlBeforeFloor(ms)) return;
       evs.push({ t:'exc', id:'e' + it.id, ms: ms, item: it, count: it.count || 1, summary: it.summary || '' });
     });
   }
@@ -12793,6 +13028,7 @@ function tlBuild(){
     var wUri = tlUri();
     watchEvents.forEach(function(e){
       if (e.ms < cutoff) return;
+      if (tlBeforeFloor(e.ms)) return;
       if (wUri && e.uri !== wUri) return;
       evs.push(e);
     });
@@ -12937,7 +13173,11 @@ function tlRender(){
   body.innerHTML = html;
   if (!tlPaused && atBottom) body.scrollTop = body.scrollHeight;
   else body.scrollTop = prevTop;
-  tlStat(tlUri() ? '共 ' + total + ' 条' + (truncated ? '（显示最新 ' + LIMIT + '）' : '') : '请先选择 VM');
+  // 会话掉线后日志仍会继续到达，此时行区有内容就别再写「请先选择 VM」，
+  // 否则统计文字与行区自相矛盾。
+  tlStat((tlUri() || total > 0)
+    ? '共 ' + total + ' 条' + (truncated ? '（显示最新 ' + LIMIT + '）' : '')
+    : '请先选择 VM');
   tlUpdateNewBar();
 }
 
@@ -12971,13 +13211,15 @@ function tlToLatest(){
 }
 
 function tlClear(){
-  if (!confirm('清空时间轴里的路由/网络/监听记录？\n（app 内记录、日志、异常都不受影响）')) return;
+  // 点了就清，不再二次确认：先本地立即清空（视图下限兜住日志/异常），
+  // 再异步通知服务端丢弃已累积的路由/网络/监听，失败也不影响页面。
+  tlFloor = { uri: tlUri(), ms: Date.now() };
+  tlOrder = []; tlByKey = {}; tlExpanded = {}; watchEvents = [];
+  tlNewCount = 0;
+  tlRender();
   fetch('/api/timeline/clear', { method: 'POST' }).then(function(){
-    tlOrder = []; tlByKey = {}; tlExpanded = {};
     return fetch('/api/watch/clear', { method: 'POST' });
-  }).then(function(){
-    watchEvents = []; tlRender();
-  }).catch(function(e){ alert('清空失败：' + e); });
+  }).catch(function(e){ tlStat('服务端清空失败（页面已清空）：' + e); });
 }
 
 function tlCopy(){
@@ -13165,24 +13407,96 @@ var mcpConfigShown = false;
 function refreshMcp(force){
   return fetch('/api/mcp').then(function(r){ return r.json(); }).then(function(d){
     mcpStatus = d;
-    if (mcpConfigShown && !force) return;
-    var el = document.getElementById('mcp-status');
-    var det = document.getElementById('mcp-detail');
-    if (!d.running) {
-      el.innerHTML = '<span class="bad">未运行</span>';
-      det.innerHTML = '启动：<code>' + esc(d.hint || 'dart run xb_ume:mcp') + '</code>；接入步骤见 MCP_GUIDE.md';
-      return;
-    }
-    if (d.mode === 'http') {
-      el.innerHTML = '<span class="ok">运行中</span> · HTTP ' + d.port + ' · ' + (d.toolCount ? d.toolCount + ' 个工具' : '工具数未知');
-      det.innerHTML = '地址 <code>' + esc(d.url) + '</code>（仅本机回环，需 token）；协议 ' + esc(d.protocolVersion || '未知');
-    } else {
-      el.innerHTML = '<span class="ok">运行中</span> · stdio · pid ' + (d.pids || []).join(', ');
-      det.textContent = '由 MCP 客户端以子进程拉起（无监听端口）；工具数在客户端会话中可见';
-    }
+    mcpApplyStatus(d, force);
   }).catch(function(){
     document.getElementById('mcp-status').textContent = '查询失败';
   });
+}
+// 状态行/按钮/开关总是跟着刷新；详情区在用户点过「复制」后不被覆盖
+// （否则 15 秒轮询把配置文本冲掉，剪贴板被拦时没兑底）。
+function mcpApplyStatus(d, force){
+  var el = document.getElementById('mcp-status');
+  var det = document.getElementById('mcp-detail');
+  var btn = document.getElementById('mcp-toggle');
+  var auto = document.getElementById('mcp-auto');
+  if (auto) auto.checked = d.autoStart === true;
+  if (btn) {
+    if (d.running && d.mode === 'http') {
+      btn.textContent = '停止';
+      btn.disabled = false;
+      btn.title = d.managedPid ? '停止工具箱启动的 MCP 服务（pid ' + d.managedPid + '）'
+        : '这个服务不是工具箱启动的，停止会拒绝';
+    } else if (d.running) {
+      btn.textContent = '启动';
+      btn.disabled = true;
+      btn.title = '已有 stdio 模式的 MCP 进程（由客户端拉起，需在客户端里关闭）';
+    } else if (d.launchable === false) {
+      btn.textContent = '启动';
+      btn.disabled = true;
+      btn.title = '未找到 ~/.xb_ume_ide/mcp.dart，请先执行 dart run xb_ume:ide --install';
+    } else {
+      btn.textContent = '启动';
+      btn.disabled = false;
+      btn.title = '后台启动 MCP HTTP 服务（全部工具组，默认端口 46140）';
+    }
+  }
+  if (!d.running) {
+    el.innerHTML = '<span class="bad">未运行</span>';
+    if (!mcpConfigShown || force) {
+      det.innerHTML = '点「启动」后台拉起（默认 46140，仅本机回环，需 token）；也可手动：<code>'
+        + esc(d.hint || 'dart run xb_ume:mcp') + '</code>；接入步骤见 MCP_GUIDE.md';
+    }
+    return;
+  }
+  if (d.mode === 'http') {
+    el.innerHTML = '<span class="ok">运行中</span> · HTTP ' + d.port + ' · ' + (d.toolCount ? d.toolCount + ' 个工具' : '工具数未知');
+    if (!mcpConfigShown || force) {
+      det.innerHTML = '地址 <code>' + esc(d.url) + '</code>（仅本机回环，需 token）；协议 '
+        + esc(d.protocolVersion || '未知')
+        + '；已开放全部工具组（含装包/卸包/停进程，高危操作仍需 confirm）；日志 logs/mcp.log';
+    }
+  } else {
+    el.innerHTML = '<span class="ok">运行中</span> · stdio · pid ' + (d.pids || []).join(', ');
+    if (!mcpConfigShown || force) {
+      det.textContent = '由 MCP 客户端以子进程拉起（无监听端口）；工具数在客户端会话中可见';
+    }
+  }
+}
+function toggleMcp(btn){
+  var running = !!(mcpStatus && mcpStatus.running && mcpStatus.mode === 'http');
+  if (btn) { btn.disabled = true; btn.textContent = running ? '停止中…' : '启动中…'; }
+  mcpConfigShown = false;
+  fetch(running ? '/api/mcp/stop' : '/api/mcp/start', { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      return refreshMcp(true).then(function(){
+        if (d.ok === false) {
+          var det = document.getElementById('mcp-detail');
+          if (det) det.innerHTML = '<span class="bad">' + esc(d.message || '操作失败') + '</span>';
+        }
+      });
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = running ? '停止' : '启动'; }
+      var det = document.getElementById('mcp-detail');
+      if (det) det.innerHTML = '<span class="bad">' + esc('请求失败：' + e) + '</span>';
+    });
+}
+function setMcpAuto(cb){
+  var on = !!(cb && cb.checked);
+  fetch('/api/mcp/auto?on=' + (on ? '1' : '0'), { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok !== true) { if (cb) cb.checked = !on; return; }
+      if (mcpStatus) mcpStatus.autoStart = !!d.autoStart;
+      // 勾上时服务没跑就顺手拉起：开关立刻见效，不必再点一次「启动」。
+      // 取消勾选不停服务（可能正被客户端用着），要停点「停止」。
+      if (on && mcpStatus && mcpStatus.launchable !== false
+          && !(mcpStatus.running && mcpStatus.mode === 'http')) {
+        toggleMcp(document.getElementById('mcp-toggle'));
+      }
+    })
+    .catch(function(){ if (cb) cb.checked = !on; });
 }
 function mcpConfigText(token){
   var d = mcpStatus || {};

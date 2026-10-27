@@ -112,9 +112,11 @@ GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 
 - `未运行`（红色）：下方给出启动命令（`dart run xb_ume:mcp` 或 `--http 46140`）；
 - `运行中 · HTTP <端口> · <N> 个工具`：探测经 `initialize` + `tools/list` 握手得到，同时列出访问地址、协议版本（仅本机回环，需 token）；
 - `运行中 · stdio · pid <pid>`：stdio 模式没有监听端口，只能按进程命令行识别，工具数在客户端会话里可见；
-- **复制 MCP 配置**：按当前运行状态生成可直接粘贴的客户端配置（stdio → `command/args`；HTTP → `url` + `X-XBUME-Token`），剪贴板被浏览器拦下时配置会同时展开在下方可手动选中。
+- **复制 MCP 配置**：按当前运行状态生成可直接粘贴的客户端配置（stdio → `command/args`；HTTP → `url` + `X-XBUME-Token`），剪贴板被浏览器拦下时配置会同时展开在下方可手动选中；
+- **启动 / 停止**：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `~/.xb_ume_ide/logs/mcp.log`），点「停止」结束这个进程；重复启动是幂等的，不会起第二个实例。只停工具箱自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`），客户端以 stdio 拉起的要去客户端里关；
+- **随工具箱启动**：勾上后每次打开工具箱自动拉起 MCP（写在 `config.json` 的 `mcpAutoStart`，默认关）；勾上时若服务未运行会立即拉起，取消勾选不会停掉正在跑的服务。
 
-注意：MCP 服务不是常驻进程，默认没人调就不跑。需要时用上述命令启动，或让客户端以 stdio 方式拉起（推荐）。工具清单与完整配置见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+注意：MCP 服务默认不开（没人调就不跑），也不随系统开机自启；需要时点「启动」、勾上「随工具箱启动」，或让客户端以 stdio 方式拉起（推荐）。工具清单与完整配置见 [MCP_GUIDE.md](MCP_GUIDE.md)。
 
 ### 3. 日志查看（Tab「日志」）
 

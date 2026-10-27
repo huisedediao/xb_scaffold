@@ -234,25 +234,57 @@ Future<void> install(List<String> args) async {
 /// GUI 桌面入口名称（macOS 应用包 / Windows 桌面快捷方式）。
 const String kGuiAppName = 'xb_ume 工具箱';
 
-/// ide.dart 运行时依赖的相对模块（相对 bin/ 目录，部署时保持同样的路径）。
+/// 部署随 ide.dart 一起复制的运行时模块。
 ///
-/// 新增 bin/src 下的相对 import 时必须登记，否则部署副本起不来。
-const List<String> _kIdeRuntimeDeps = <String>[
-  'src/session/discovery.dart',
-];
-
+/// 部署副本在 ~/.xb_ume_ide 下独立运行，dart 只从脚本所在目录解析相对
+/// import。bin/ 下没有任何 `package:` 依赖，所以整棵 src 树复制过去就能独立
+/// 运行；按文件清单手工登记迟早会漏（daemon 与 MCP 各加一个模块就得改两处），
+/// 这里直接递归，并额外带上 MCP 入口（GUI「启动 MCP」用它）。
+///
+/// `test/ide_deploy_deps_test.dart` 锁住「bin/ 无 package: 依赖」这个前提。
 Future<void> _deployRuntimeDeps(String ideScriptPath, String installDir) async {
   final binDir = File(ideScriptPath).parent.path;
   final sep = Platform.pathSeparator;
-  for (final rel in _kIdeRuntimeDeps) {
-    final src = File('$binDir$sep${rel.replaceAll('/', sep)}');
-    if (!src.existsSync()) {
-      print('[xbume-ide] 缺少运行时依赖 $rel，部署副本可能无法启动。');
-      continue;
+  final src = Directory('$binDir${sep}src');
+  if (src.existsSync()) {
+    await _copyDartTree(src, Directory('$installDir${sep}src'));
+  } else {
+    print('[xbume-ide] 未找到 bin/src，部署副本可能无法启动。');
+  }
+  final mcp = File('$binDir${sep}mcp.dart');
+  if (mcp.existsSync()) {
+    await File('$installDir${sep}mcp.dart')
+        .writeAsString(mcp.readAsStringSync());
+  } else {
+    print('[xbume-ide] 未找到 mcp.dart，GUI「启动 MCP 服务」将不可用。');
+  }
+  // 部署副本旁边没有 pubspec.yaml，MCP 的 --version / 握手 serverInfo 靠它报版本。
+  try {
+    final pubspec = File('$binDir$sep..${sep}pubspec.yaml');
+    if (pubspec.existsSync()) {
+      final m = RegExp(r'^version:\s*(\S+)', multiLine: true)
+          .firstMatch(pubspec.readAsStringSync());
+      if (m != null) {
+        await File('$installDir${sep}version.txt').writeAsString(m.group(1)!);
+      }
     }
-    final dest = File('$installDir$sep${rel.replaceAll('/', sep)}');
+  } catch (_) {
+    // 版本号不影响功能。
+  }
+}
+
+/// 递归复制目录下的 .dart 文件，保持相对结构。
+Future<void> _copyDartTree(Directory from, Directory to) async {
+  await to.create(recursive: true);
+  final sep = Platform.pathSeparator;
+  for (final e in from.listSync(recursive: true, followLinks: false)) {
+    if (e is! File || !e.path.endsWith('.dart')) continue;
+    final rel = e.path
+        .substring(from.path.length)
+        .replaceFirst(RegExp(r'^[/\\]'), '');
+    final dest = File('${to.path}$sep$rel');
     await dest.parent.create(recursive: true);
-    await dest.writeAsString(src.readAsStringSync());
+    await dest.writeAsString(e.readAsStringSync());
   }
 }
 

@@ -8,10 +8,13 @@
 - 修复 `tapRef` 步骤被丢弃的问题：步骤 JSON 里候选类型与步骤类型同名 `type` 会互相覆盖（jsonDecode 后者胜），入参改名为 `expectType` 并在提示词中明确禁止重写 `type`。
 - GUI「守护进程」Tab 新增「MCP 服务」卡片：只读探测本机 MCP（HTTP 模式扫 46140-46149 并握手 `initialize` + `tools/list` 拿工具数；stdio 模式按进程命令行识别），展示运行状态/端口/工具数/协议版本，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 自动带 `X-XBUME-TOKEN`，凭据只在点复制时经 `/api/mcp?token=1` 下发）。
 - 会话发现逻辑抽到 `bin/src/session/discovery.dart`，daemon 与 MCP 服务共用一份实现（含增强 PATH 与 adb/hdc 转发来源映射）。
+- GUI「MCP 服务」卡片支持一键启停：点「启动」后台拉起部署副本（`~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲端口> --tool-groups all --log-file logs/mcp.log`，detached，pid 记 `~/.xb_ume_ide/mcp.pid`，拉起前预生成 token 免首次握手 401，10 秒内握手成功才回「已启动」），点「停止」按记录 pid 发 SIGTERM 并轮询等端口释放；重复启动幂等、不是工具箱拉起的服务拒绝停；新增「随工具箱启动」勾选（`config.json` 的 `mcpAutoStart`，默认关；勾上时若服务未运行立即拉起，GUI 启动时也自动拉起）；新增 `/api/mcp/start|stop|auto` 三个端点，`/api/mcp` 回包补 `autoStart` / `launchable` / `managedPid`，前端状态行与按钮随 5 秒轮询刷新而「复制 MCP 配置」生成的文本不被覆盖。
+- 修复 `--install` 部署副本跑不起来 MCP：部署改为递归复制整棵 `bin/src` + `bin/mcp.dart` + 写 `version.txt`，删掉容易漏的 `_kIdeRuntimeDeps` 单文件清单；`mcp.dart` 新增 `--log-file <path>`（stderr 照旧，同时按 ISO 时间戳追加到文件），`_readVersion` 在拿不到 `../pubspec.yaml` 时回退同目录 `version.txt`（部署副本 `--version` 报 0.4.0 而非 0.0.0）；`test/ide_deploy_deps_test.dart` 改为锁「`bin/` 下无 `package:` 依赖 + 部署函数递归复制 `src` 并带上 `mcp.dart`」。
 - 修复 `--install` 部署不完整导致 daemon 起不来：`ide.dart` 改为依赖 `src/session/discovery.dart` 后，部署副本仍只复制单文件，dart 从部署目录解析不到 import 直接编译失败，GUI 只提示「重启后未检测到 daemon」；现在安装时按 `_kIdeRuntimeDeps` 清单连同依赖一起复制（保持相对路径），GUI 重启前先检查部署副本的相对依赖并点名缺失项，提示重新安装；新增 `test/ide_deploy_deps_test.dart` 锁住「相对 import ⇄ 清单」一致性。
+- 修复时间轴「清空」看起来没生效：时间轴是路由/网络/监听/日志/异常五类事件的聚合视图，原实现只清路由/网络/监听，日志与异常仍原样留在页面上；现在点清空直接清掉视图内全部事件、不再弹二次确认（日志/异常只是被视图下限隐藏，各 Tab 原始数据不删），并处理三个边界：服务端清空失败或订阅重放时旧事件不再 merge 回来、会话掉线（uri 变空）不解除下限、只在两个非空会话之间切换时才让新会话历史正常显示；顺带修掉掉线时统计文字仍写「请先选择 VM」而行区有内容的不一致；新增 `test/gui_timeline_clear_test.dart` 锁住「不弹框 + 五类事件都受下限约束」。
 - 新增 [MCP_GUIDE.md](MCP_GUIDE.md)：工具清单与参数、Qoder/Cursor/Claude Code 配置、五个典型 prompt、场景 DSL 全表、后端能力矩阵、安全模型、排障与已知缺口；README 新增「MCP 接入」章节与总览行，GUI_GUIDE 补守护进程页的 MCP 卡片说明。
 - CHANGELOG 改为降序（最新在最上），与仓库其他包一致。
-- 新增 `test/mcp_protocol_test.dart`、`test/device_parse_test.dart`、`test/scenario_steps_test.dart`、`test/mobile_mcp_test.dart`、`test/ide_deploy_deps_test.dart`；`flutter test` 227 项全过。
+- 新增 `test/mcp_protocol_test.dart`、`test/device_parse_test.dart`、`test/scenario_steps_test.dart`、`test/mobile_mcp_test.dart`、`test/ide_deploy_deps_test.dart`、`test/gui_timeline_clear_test.dart`、`test/gui_mcp_control_test.dart`；`flutter test` 237 项全过。
 
 ## 0.3.0
 

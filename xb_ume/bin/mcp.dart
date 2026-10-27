@@ -42,6 +42,7 @@ xb_ume MCP 服务
   --no-tool-groups         只暴露核心工具
   --allow-eval             预留开关：eval 类工具尚未提供
   --device-backend <list>  设备后端：auto / adb,hdc,simctl,idevice / mobile-mcp
+  --log-file <path>        额外把启动与运日志追加写入文件（GUI 后台拉起时排障用）
   -h, --help               显示帮助
   --version                显示版本
 
@@ -56,6 +57,7 @@ class _Args {
   String toolGroups = '';
   bool allowEval = false;
   String deviceBackend = 'auto';
+  String logFile = '';
   final List<String> uris = <String>[];
   bool help = false;
   bool version = false;
@@ -90,6 +92,9 @@ _Args _parseArgs(List<String> argv) {
       case '--uri':
         a.uris.add(next('--uri'));
         break;
+      case '--log-file':
+        a.logFile = next('--log-file');
+        break;
       case '--tool-groups':
         a.toolGroups = next('--tool-groups');
         break;
@@ -120,10 +125,20 @@ int? _httpPort(String raw) {
 String _readVersion() {
   try {
     final f = File.fromUri(Platform.script.resolve('../pubspec.yaml'));
-    if (!f.existsSync()) return '0.0.0';
-    final m = RegExp(r'^version:\s*(\S+)', multiLine: true)
-        .firstMatch(f.readAsStringSync());
-    return m?.group(1) ?? '0.0.0';
+    if (f.existsSync()) {
+      final m = RegExp(r'^version:\s*(\S+)', multiLine: true)
+          .firstMatch(f.readAsStringSync());
+      if (m != null) return m.group(1)!;
+    }
+  } catch (_) {}
+  // 部署副本（~/.xb_ume_ide/mcp.dart）旁边没有 pubspec.yaml，读安装时写好的
+  // version.txt（--install 生成）。
+  try {
+    final f = File.fromUri(Platform.script.resolve('version.txt'));
+    if (f.existsSync()) {
+      final v = f.readAsStringSync().trim();
+      if (v.isNotEmpty) return v;
+    }
   } catch (_) {}
   return '0.0.0';
 }
@@ -157,7 +172,20 @@ Set<String> _resolveGroups(_Args a) {
   return groups;
 }
 
-void _log(String s) => stderr.writeln(s);
+/// 日志额外落盘的文件（GUI 以 detached 子进程拉起时 stderr 看不到）。
+File? _logSink;
+
+void _log(String s) {
+  stderr.writeln(s);
+  final sink = _logSink;
+  if (sink == null) return;
+  try {
+    sink.writeAsStringSync('${DateTime.now().toIso8601String()} $s\n',
+        mode: FileMode.append, flush: true);
+  } catch (_) {
+    // 写不了文件不影响服务本身。
+  }
+}
 
 Future<void> main(List<String> argv) async {
   _Args args;
@@ -171,6 +199,15 @@ Future<void> main(List<String> argv) async {
   if (args.help) {
     stdout.writeln(_usage);
     return;
+  }
+  if (args.logFile.isNotEmpty) {
+    try {
+      final f = File(args.logFile);
+      f.parent.createSync(recursive: true);
+      _logSink = f;
+    } catch (_) {
+      // 路径不可写就只走 stderr。
+    }
   }
   final version = _readVersion();
   if (args.version) {
