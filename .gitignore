@@ -16,6 +16,9 @@ migrate_working_dir/
 *.iws
 .idea/
 
+# AI 工具会话产物（验证截图、中间文件）；归档用的截图放 tmp_test/
+.codexbridge/
+
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
