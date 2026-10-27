@@ -14,6 +14,38 @@ xb_ume 的 MCP 服务有两种视角，这是它和其他移动端 MCP 的根本
 
 ---
 
+## 最快上手：AI 调试模式（一条命令 / 一个 Tab）
+
+不想先学 MCP、eval、鉴权这些前置？用这个入口，它把三件事一次做完：
+**拉起带 `xbume_eval` 的 MCP** → **生成一段可直接粘给 AI 的指令** → **把指令写进剪贴板**。
+
+```bash
+# 在 Flutter 项目根目录（含 pubspec.yaml）
+dart run xb_ume:ai
+
+# 指定项目 / 设备 / 只生成不动服务
+dart run xb_ume:ai --dir ~/work/my_app --device macos
+dart run xb_ume:ai --print-only     # 服务现状不动，只输出指令
+```
+
+GUI 里同一个东西叫「AI 调试」Tab：填项目目录（只需一次，之后记住）→ 点
+「一键开启」，状态栏出现 `已就绪 · N 个工具 · eval 已开 · 指令已复制` 就可以往下走了；
+旁边的「复制 AI 指令」「复制 MCP 配置」随时再取。深链
+`http://127.0.0.1:46129/#ai` 直达该页（端口以实际打开的为准）。
+
+拿到指令后**把它粘给 AI 即可**，中间这几步它自己会做，所以不需要你学：
+
+| 原来要你做的事 | 现在谁做 |
+| --- | --- |
+| 启动 app，并把会话接到 MCP 上 | AI 调 `xbume_app_launch(via: "flutter-run", cwd: "<指令里的项目路径>")`；flutter run 的 stdin 在 MCP 进程手里，`xbume_hot_reload` 才有句柄 |
+| 想用 `xbume_eval` 得手动加 `--allow-eval` | 入口自动带；已在跑但没 eval 时只重启**自己记录的那个**（pid 在 `~/.xb_ume_ide/mcp.pid`），外部服务不碰 |
+| 记住端口 / token / 客户端 JSON | 入口直接打印（GUI 里点「复制 MCP 配置」），token 自动读 `~/.xb_ume_ide/mcp.token` |
+
+唯一省不掉的一步：把 MCP 地址填进 AI 客户端（每个客户端只做一次，见
+[第 2 节](#2-客户端配置)）。指令里已写明「别让我手动启动 app」，AI 会自己拉起。
+
+---
+
 ## 1. 启动
 
 零新增依赖：MCP 协议层与传输层都是手写的 `dart:io`，不需要 Node。
@@ -62,7 +94,11 @@ dart run xb_ume:mcp --http 46140
 - 勾选「随工具箱启动」后，每次打开工具箱都会自动拉起（状态存在
   `~/.xb_ume_ide/config.json` 的 `mcpAutoStart`，默认关）；取消勾选不会停掉
   正在运行的服务，要停点「停止」。
-- 一次开全 25 个工具（core + diagnose + run-safe + act + device-write）：
+- 卡片上的「允许 eval」对应 `--allow-eval`（`config.json` 的 `mcpAllowEval`）：
+  勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
+  运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
+  才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
+- 一次开全 29 个工具（core 18 + diagnose 3 + run-safe 3 + act 2 + device-write 3）：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对
   本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
@@ -81,7 +117,7 @@ dart run xb_ume:mcp --http 46140
 | `--no-tool-groups` | 只暴露 core 组 |
 | `--device-backend <list>` | `auto`（默认）/ `adb,hdc,simctl,idevice` / `mobile-mcp` |
 | `--log-file <path>` | 日志同时追加到文件（GUI 启动时为 `~/.xb_ume_ide/logs/mcp.log`） |
-| `--allow-eval` | 预留开关，当前无对应工具（见「已知缺口」） |
+| `--allow-eval` | 额外开放 `xbume_eval`：在 app 进程内求值单行表达式（可读可改运行时状态），默认关；GUI 卡片上的「允许 eval」即此开关 |
 
 不带 `--uri` 时，服务会自己扫描本机回环端口上的 VM service（含
 `adb forward` / `hdc fport` 转发来源），逻辑与电脑端守护进程共用一份实现。
@@ -124,8 +160,8 @@ HTTP：
 }
 ```
 
-> GUI「守护进程」页的「复制 MCP 配置」会按当前运行状态生成上面两种片段之一
-> （HTTP 模式自动带上 token），直接粘贴即可。
+> GUI「守护进程」页的「复制 MCP 配置」、以及「AI 调试」页的「复制 MCP 配置」
+> 都会按当前运行状态生成上面两种片段之一（HTTP 模式自动带上 token），直接粘贴即可。
 
 ### Claude Code
 
@@ -158,9 +194,10 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 3. 工具清单
 
-工具名统一前缀 `xbume_`。默认暴露 **20 个**（core 14 + diagnose 3 + run-safe 3）。
+工具名统一前缀 `xbume_`。默认暴露 **24 个**（core 18 + diagnose 3 + run-safe 3）；
+加 `--allow-eval` 再多个 `xbume_eval`（25 个），`--tool-groups all` 全开则是 29 / 30。
 
-### core（14 个）
+### core（18 个）
 
 | 工具 | 主要参数 | 返回 |
 | --- | --- | --- |
@@ -174,10 +211,15 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_navigate` | `routeName?`, `back?` | pushNamed / pop，返回最新路由栈 |
 | `xbume_route_stack` | — | 从底到顶：路由名 / Route 类型 / 参数类型 / isPresent |
 | `xbume_network` | `urlContains?`, `method?`, `minStatus?`, `withinLastMs?`, `limit?` | app 内 xb_ume 拦截记录（需 app 接入 Network 模块） |
+| `xbume_network_detail` | `id?` 或 `urlContains`(+`method?`), `maxChars?`, `limit?` | 完整请求/响应头、body、发起点调用栈（敏感头已 `***` 脱敏）；答「这个 500 返回了什么」 |
 | `xbume_console` | `level?`, `keyword?`, `sinceMs?`, `limit?` | app 内 xb_ume 日志 |
+| `xbume_exceptions` | `kind?`(flutter/platform/app/all), `typeContains?`, `keyword?`, `sinceMs?`, `limit?` | 结构化异常：类型 / 摘要 / 库 / 上下文 / 栈 / 重复次数（比日志多出结构与合并计数） |
+| `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
 | `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?` | `via=flutter-run` 顺带把新会话设为当前 |
+| `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 向本服务拉起的 `flutter run` 写 `r`/`R`：改完代码就地热重载/热重启，返回耗时与完成行；热重启会清 isolate 缓存 |
+| `xbume_eval` | `expr`, `lib?`, `maxChars?` | **需 `--allow-eval`**：在 app 进程内求值单行表达式，返回 `值` + 库 + 类型；编译错误与运行时异常分开报 |
 
 ### run-safe（3 个，默认开启）
 
@@ -214,7 +256,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 4. 典型 prompt
 
-自然语言直接说目标即可，模型会自己串工具。以下是实测可用的五个：
+自然语言直接说目标即可，模型会自己串工具。以下是实测可用的七个：
 
 **① 看当前页面有什么**
 
@@ -246,6 +288,22 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 需 `--tool-groups act,device-write`：`xbume_devices` → `xbume_app_install` →
 `xbume_app_launch` → `xbume_screenshot`。
+
+**⑥ 复现一次报错并定位**
+
+> 点「提交」后报错了，帮我看看是哪个异常、发生在哪一行，顺带把之前那次 500 的返回体贴出来。
+
+`xbume_timeline`（把点击后的路由/网络/日志/异常按时间排开，找到出错时刻）→
+`xbume_exceptions`（拿到类型/库/上下文/首帧）→ `xbume_network_detail`（按 id 或
+URL 片段取完整响应体）。
+
+**⑦ 改代码 → 热重载 → 复跑**
+
+> 把这个标题改成「已修复」，热重载，然后重新点一次提交，确认不再报错。
+
+`xbume_hot_reload`(`mode: reload`，实测空改动 ~150ms、改一个文件 ~230ms) → 改动大时用
+`mode: restart`（isolate 会换，缓存自动重建）→ `xbume_tap` / `xbume_scenario_run` 复跑。
+前提：会话由 `xbume_app_launch(via: "flutter-run")` 拉起；外部终端里的进程不归 MCP 管。
 
 ---
 
@@ -368,6 +426,8 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 4. **HTTP 传输**：仅绑定回环地址、校验 `Host`、强制 token（`~/.xb_ume_ide/mcp.token`，0600）。
 5. **写操作串行化**：同一会话的 tap/input/swipe/navigate 排队执行，避免注入的手势互相穿插。
 6. **不假装支持**：后端缺能力返回 `unsupported` 而不是静默失败；`record` 步骤直接报未实现。
+7. **eval 默认关**：`xbume_eval` 能在 app 进程内读写运行时状态，必须 `--allow-eval`
+   （或 GUI 卡片勾「允许 eval」）才注册；只接受单条表达式，4000 字符上限，超长直接拒绝。
 
 ---
 
@@ -385,6 +445,8 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
 | macOS 上自动化卡在导航 | app 在后台时帧会被冻结：`open -a <绝对路径>` 把它切到前台再跑。 |
+| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部终端或 IDE 的 `flutter run`；用 `xbume_app_launch(via: "flutter-run")` 重新拉起，或手动按 `r`。 |
+| `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
 
 ---
 
@@ -396,8 +458,10 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
   请用系统录屏。GUI 与 CLI 都会明确报「尚未实现」。
 - **`inspect` / `ai` / `ide` 三个工具组为预留**：目前没有对应工具，
   `--tool-groups inspect` 之类只是允许但不会多出工具。
-- **`--allow-eval` 为预留开关**：`xbume_eval` 尚未注册；场景里的 `eval` 步骤与
-  GUI 的沙盒求值不受影响。
+- **性能/内存证据仍只在 GUI**：CPU、内存、帧耗时等采样没有进 MCP；
+  `xbume_eval` 只能读到 `ProcessInfo` 之类的单点值，看趋势要去「性能」Tab。
+- **`xbume_hot_reload` 只作用于自己拉起的 `flutter run`**：不接管外部终端里的进程
+  （也不按名字杀进程），那种情况只能手动按 `r` / `R`。
 - **`assertLog` 在 CLI/MCP 下跳过**：它依赖 GUI 的日志订阅上下文（`skip`，不算失败）。
 - **mobile-mcp 的常驻进程不由我们回收**：`mobilecli-* daemon` 若被适配器拉起，
   退出后可能仍在运行；需要时手动结束。xb_ume 只负责自己拉起的 `npx` 子进程。

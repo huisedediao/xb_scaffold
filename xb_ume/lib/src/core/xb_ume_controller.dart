@@ -6,6 +6,7 @@ import 'dart:ui' show FrameTiming;
 import 'package:flutter/widgets.dart';
 
 import '../config/xb_ume_config.dart';
+import '../models/xb_ume_exception_item.dart';
 import '../models/xb_ume_frame_item.dart';
 import '../models/xb_ume_log_item.dart';
 import '../models/xb_ume_network_item.dart';
@@ -23,7 +24,9 @@ class XBUmeController extends ChangeNotifier {
     required this.persistence,
   })  : _logs = XBRingBuffer<XBUmeLogItem>(config.maxConsoleRecords),
         _routes = XBRingBuffer<XBUmeRouteItem>(config.maxRouteRecords),
-        _frames = XBRingBuffer<XBUmeFrameItem>(config.maxPerformanceRecords);
+        _frames = XBRingBuffer<XBUmeFrameItem>(config.maxPerformanceRecords),
+        _exceptions =
+            XBRingBuffer<XBUmeExceptionItem>(config.maxExceptionRecords);
 
   final XBUmeConfig config;
   final XBUmePersistence persistence;
@@ -31,6 +34,7 @@ class XBUmeController extends ChangeNotifier {
   final XBRingBuffer<XBUmeLogItem> _logs;
   final XBRingBuffer<XBUmeRouteItem> _routes;
   final XBRingBuffer<XBUmeFrameItem> _frames;
+  final XBRingBuffer<XBUmeExceptionItem> _exceptions;
 
   final LinkedHashMap<String, XBUmeNetworkItem> _networkItems =
       LinkedHashMap<String, XBUmeNetworkItem>();
@@ -56,6 +60,7 @@ class XBUmeController extends ChangeNotifier {
   List<XBUmeLogItem> get logs => _logs.toList();
   List<XBUmeRouteItem> get routes => _routes.toList();
   List<XBUmeFrameItem> get frames => _frames.toList();
+  List<XBUmeExceptionItem> get exceptions => _exceptions.toList();
   List<XBUmeNetworkItem> get network => _networkItems.values.toList();
 
   List<XBUmePlugin> get plugins => _plugins.values.toList(growable: false);
@@ -139,6 +144,62 @@ class XBUmeController extends ChangeNotifier {
     _hasPendingConsoleUiUpdate = false;
     _logs.clear();
     _emitChanged();
+  }
+
+  /// 记录一条结构化异常。
+  ///
+  /// 相同签名（类型 + 摘要 + 栈首帧）且 10 秒内重复发生的不再新增条目，
+  /// 只原地累加 count 并刷新时间——回放/连续帧报错时不会把缓冲刷满。
+  void addException({
+    required Object error,
+    XBUmeExceptionKind kind = XBUmeExceptionKind.app,
+    StackTrace? stack,
+    String? message,
+    String? library,
+    String? context,
+  }) {
+    final now = DateTime.now();
+    final type = error.runtimeType.toString();
+    final text = _clip(message ?? error.toString(), max: 2000);
+    final stackText = stack == null ? null : _clip(stack.toString(), max: 8000);
+    final firstFrame = _firstStackFrame(stackText);
+    final signature = '$type|$text|$firstFrame';
+    final last = _exceptions.last;
+    if (last != null &&
+        last.signature == signature &&
+        now.difference(last.time).inMilliseconds < 10000) {
+      _exceptions.replaceLast(last.copyWith(time: now, count: last.count + 1));
+    } else {
+      _exceptions.add(
+        XBUmeExceptionItem(
+          id: nextId('exc'),
+          time: now,
+          kind: kind,
+          type: type,
+          message: text,
+          signature: signature,
+          stack: stackText,
+          library: library,
+          context: context == null ? null : _clip(context, max: 500),
+        ),
+      );
+    }
+    _emitChanged();
+  }
+
+  void clearExceptions() {
+    _exceptions.clear();
+    _emitChanged();
+  }
+
+  /// 栈首帧（`#0 ...` 行），用于去重签名。
+  String _firstStackFrame(String? stackText) {
+    if (stackText == null) return '';
+    for (final line in stackText.split('\n')) {
+      final t = line.trim();
+      if (t.startsWith('#')) return t.length > 200 ? t.substring(0, 200) : t;
+    }
+    return '';
   }
 
   void addRoute({
@@ -500,9 +561,10 @@ class XBUmeController extends ChangeNotifier {
     return config.sensitiveKeys.contains(key.toLowerCase().trim());
   }
 
-  String _clip(String text) {
-    if (text.length <= config.networkBodyMaxLength) return text;
-    return '${text.substring(0, config.networkBodyMaxLength)}...<clipped>';
+  String _clip(String text, {int? max}) {
+    final limit = max ?? config.networkBodyMaxLength;
+    if (text.length <= limit) return text;
+    return '${text.substring(0, limit)}...<clipped>';
   }
 
   @override

@@ -49,6 +49,7 @@ class LaunchHandle {
     required this.target,
     required this.logPath,
     required this.startedAt,
+    required this.process,
   });
 
   final int pid;
@@ -56,7 +57,52 @@ class LaunchHandle {
   final String? target;
   final String logPath;
   final DateTime startedAt;
+
+  /// 自己拉起的 flutter run 进程：stdin 用于热重载（r / R），只碰自己的进程。
+  final Process process;
   String? wsUri;
+
+  final StreamController<String> _lines = StreamController<String>.broadcast();
+  final List<String> _recent = <String>[];
+
+  /// 实时输出（stdout + stderr 合并，按行）。
+  Stream<String> get lines => _lines.stream;
+
+  /// 最近 400 行输出（超时/失败时回给调用方排障）。
+  List<String> get recent => List<String>.unmodifiable(_recent);
+
+  void addLine(String line) {
+    _recent.add(line);
+    if (_recent.length > 400) _recent.removeRange(0, _recent.length - 400);
+    if (!_lines.isClosed) _lines.add(line);
+  }
+
+  void dispose() {
+    if (!_lines.isClosed) _lines.close();
+  }
+}
+
+/// 一次热重载 / 热重启的结果。
+class HotReloadResult {
+  HotReloadResult({
+    required this.ok,
+    required this.restart,
+    required this.pid,
+    required this.elapsedMs,
+    required this.message,
+    this.lines = const <String>[],
+  });
+
+  final bool ok;
+  final bool restart;
+  final int pid;
+  final int elapsedMs;
+
+  /// 命中的完成标记行，或超时/失败说明。
+  final String message;
+
+  /// 本次等待窗口内新增的输出（最多 60 行）。
+  final List<String> lines;
 }
 
 /// 停止结果：flutter run 进程是否被结束，以及随之结束的子进程（app 本体）。
@@ -123,6 +169,7 @@ class FlutterRunLauncher {
       target: target,
       logPath: logPath,
       startedAt: DateTime.now(),
+      process: proc,
     );
     _live[proc.pid] = handle;
 
@@ -133,6 +180,7 @@ class FlutterRunLauncher {
     Future<void> pump(Stream<List<int>> stream) async {
       await for (final chunk in stream.transform(utf8.decoder).transform(const LineSplitter())) {
         sink.writeln(chunk);
+        handle.addLine(chunk);
         tail.add(chunk);
         if (tail.length > 60) tail.removeAt(0);
         if (!vmReady.isCompleted) {
@@ -209,6 +257,94 @@ class FlutterRunLauncher {
     return done.future.timeout(timeout, onTimeout: () => null);
   }
 
+  /// 按端口反查自己拉起的 flutter run（会话 → 进程）。
+  int? pidForPort(int port) {
+    for (final h in _live.values) {
+      final u = h.wsUri;
+      if (u == null) continue;
+      if (Uri.tryParse(u)?.port == port) return h.pid;
+    }
+    return null;
+  }
+
+  /// 触发热重载（r）或热重启（R）。
+  ///
+  /// 只对自己 `launch()` 拉起的进程生效：向它的 stdin 写按键，再等输出里的
+  /// 完成标记。flutter run 虽在非 TTY 下不会进 singleCharMode，但
+  /// `TerminalHandler` 仍监听 stdin（`processTerminalInput` 会 trim），所以
+  /// 管道写入可用。
+  Future<HotReloadResult> hotReload(
+    int pid, {
+    bool restart = false,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final h = _live[pid];
+    if (h == null) {
+      throw DeviceCommandError(
+          'flutter-run', 'hot reload', '未找到由本服务拉起的 flutter run 进程（pid $pid）');
+    }
+    final sw = Stopwatch()..start();
+    final captured = <String>[];
+    final done = Completer<HotReloadResult>();
+    final successRe = restart
+        ? RegExp(r'Restarted application|Hot restart performed')
+        : RegExp(r'Reloaded \d+ (?:of \d+ )?libraries|Hot reload performed|No changes detected');
+    final failRe = restart
+        ? RegExp(r'Hot restart failed|Failed to restart|Compilation failed|Error: Compiler message')
+        : RegExp(r'Hot reload was rejected|Hot reload failed|Failed to hot reload|Compilation failed|Error: Compiler message');
+
+    void finish(bool ok, String message) {
+      if (done.isCompleted) return;
+      done.complete(HotReloadResult(
+        ok: ok,
+        restart: restart,
+        pid: pid,
+        elapsedMs: sw.elapsedMilliseconds,
+        message: message,
+        lines: List<String>.of(captured),
+      ));
+    }
+
+    final sub = h.lines.listen((line) {
+      captured.add(line);
+      if (captured.length > 60) captured.removeAt(0);
+      if (successRe.hasMatch(line)) {
+        finish(true, line.trim());
+      } else if (failRe.hasMatch(line)) {
+        finish(false, line.trim());
+      }
+    });
+    // 进程中途退出时不要干等到超时。
+    unawaited(h.process.exitCode.then((code) {
+      if (!done.isCompleted) finish(false, 'flutter run 已退出（code=$code）');
+    }));
+
+    try {
+      h.process.stdin.writeln(restart ? 'R' : 'r');
+      await h.process.stdin.flush();
+    } catch (e) {
+      await sub.cancel();
+      throw DeviceCommandError(
+          'flutter-run', 'hot reload', 'stdin 写入失败（进程可能已退出）：$e');
+    }
+
+    final result = await done.future.timeout(
+      timeout,
+      onTimeout: () => HotReloadResult(
+        ok: false,
+        restart: restart,
+        pid: pid,
+        elapsedMs: sw.elapsedMilliseconds,
+        message: '等待 ${timeout.inSeconds}s 未看到${restart ? '热重启' : '热重载'}完成标记',
+        lines: <String>[...h.recent.length > 20
+            ? h.recent.sublist(h.recent.length - 20)
+            : h.recent],
+      ),
+    );
+    await sub.cancel();
+    return result;
+  }
+
   /// 按精确 PID 结束 flutter run，并把它的子进程（被拉起的 app）一并结束。
   ///
   /// 先 SIGTERM，3 秒后 SIGKILL；子进程必须在杀父进程**之前**取快照，
@@ -217,7 +353,7 @@ class FlutterRunLauncher {
     final children = _childrenOf(pid);
     final alive = Process.killPid(pid, ProcessSignal.sigterm);
     if (!alive) {
-      _live.remove(pid);
+      _live.remove(pid)?.dispose();
       return StopResult(stopped: false);
     }
     for (var i = 0; i < 30; i++) {
@@ -225,7 +361,7 @@ class FlutterRunLauncher {
       if (!_isAlive(pid)) break;
     }
     if (_isAlive(pid)) Process.killPid(pid, ProcessSignal.sigkill);
-    _live.remove(pid);
+    _live.remove(pid)?.dispose();
     final killed = <int>[];
     for (final c in children) {
       if (c <= 1 || c == pid) continue;

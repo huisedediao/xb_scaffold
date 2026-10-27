@@ -140,6 +140,12 @@ class VmClient {
   /// 按库 uri 查找库 id（公开版本）。
   Future<String> libraryId(String uri) => _libraryId(uri);
 
+  /// 热重启后 isolate 会更换，清掉缓存的 isolate / 库 id。
+  void resetIsolateCache() {
+    _isolateId = null;
+    _libIds.clear();
+  }
+
   Future<Map<String, Object?>> _rpc(
     String method, [
     Map<String, Object?>? params,

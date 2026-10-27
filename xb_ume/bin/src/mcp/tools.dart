@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../device/bridge.dart';
 import '../device/flutter_run.dart';
 import '../device/registry.dart';
 import '../paths.dart';
@@ -242,7 +243,7 @@ String _realPath(String path) {
 
 // ── 核心工具 ──
 
-List<McpTool> coreTools() => <McpTool>[
+List<McpTool> coreTools({bool allowEval = false}) => <McpTool>[
       _sessionsTool(),
       _useSessionTool(),
       _screenshotTool(),
@@ -253,7 +254,12 @@ List<McpTool> coreTools() => <McpTool>[
       _navigateTool(),
       _routeStackTool(),
       _networkTool(),
+      _networkDetailTool(),
       _consoleTool(),
+      _exceptionsTool(),
+      _timelineTool(),
+      _hotReloadTool(),
+      if (allowEval) _evalTool(),
       _scenarioRunTool(),
       _scenarioStatusTool(),
       _scenarioListTool(),
@@ -815,6 +821,112 @@ McpTool _networkTool() => McpTool(
       },
     );
 
+/// 文本展示用的截断（结构化回包仍保留完整内容）。
+String _short(String s, [int max = 400]) =>
+    s.length <= max ? s : '${s.substring(0, max)}…';
+
+McpTool _networkDetailTool() => McpTool(
+      name: 'xbume_network_detail',
+      title: '查看网络请求详情',
+      description: '按 id 或 URL 片段取完整请求/响应头、body 与发起点调用栈——'
+          '回答「这个 500 到底返回了什么」。URL 优先用 xbume_network 返回的 id 精确定位；'
+          'app 记录时已对 Authorization/Cookie 等敏感键做 `***` 脱敏。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'id': prop('string', '记录 id（xbume_network 返回的 id，精确匹配，优先于 urlContains）'),
+        'urlContains': prop('string', 'URL 包含的子串（省略 id 时必填，取最新的匹配）'),
+        'method': prop('string', 'HTTP 方法，进一步缩小范围（GET/POST…）'),
+        'maxChars': prop('integer', '单个 body / 发起点栈最多返回多少字符（默认 2000）',
+            defaultValue: 2000),
+        'limit': prop('integer', '最多返回几条匹配记录（默认 1）', defaultValue: 1),
+      }),
+      handler: (ctx, args) async {
+        final s = await _session(ctx, args);
+        final id = optionalString(args, 'id');
+        final url = optionalString(args, 'urlContains');
+        if ((id == null || id.isEmpty) && (url == null || url.isEmpty)) {
+          throw McpToolException('需要 id 或 urlContains',
+              hint: '先调 xbume_network 找到目标请求');
+        }
+        final maxChars =
+            (optionalInt(args, 'maxChars') ?? 2000).clamp(200, 20000);
+        final limit = (optionalInt(args, 'limit') ?? 1).clamp(1, 5);
+        final raw = await s.client.evalStringOn(
+          kLibXbUme,
+          networkDetailExpr(
+            id: id,
+            urlContains: url,
+            method: optionalString(args, 'method'),
+            maxChars: maxChars,
+            limit: limit,
+          ),
+        );
+        if (raw == 'NOT_FOUND') {
+          throw McpToolException('没有匹配的网络记录（id=$id urlContains=$url）',
+              hint: '用 xbume_network 确认 URL/方法；app 需接入 Network 模块');
+        }
+        final items = <Map<String, Object?>>[];
+        for (final row in raw.split('\u0003')) {
+          if (row.isEmpty) continue;
+          final f = row.split('\u0001');
+          if (f.length < 17) continue;
+          items.add(<String, Object?>{
+            'id': f[0],
+            'time': f[1],
+            'method': f[2],
+            'url': f[3],
+            'statusCode': int.tryParse(f[4]),
+            'status': f[5],
+            'durationMs': int.tryParse(f[6]),
+            'error': f[7],
+            'requestHeaders': f[8],
+            'requestBody': f[9],
+            'responseHeaders': f[10],
+            'responseBody': f[11],
+            'initiator': f[12],
+            'initiatorStack': f[13],
+            'requestBodyChars': int.tryParse(f[14]),
+            'responseBodyChars': int.tryParse(f[15]),
+            'truncated': f[16] == '1',
+          });
+        }
+        final sb = StringBuffer();
+        for (final e in items) {
+          sb.write('${e['method']} ${e['statusCode'] ?? '-'} '
+              '${e['durationMs'] ?? '-'}ms ${e['url']}\n');
+          sb.write('  时间: ${e['time']}\n');
+          if ((e['initiator'] as String).isNotEmpty) {
+            sb.write('  发起: ${e['initiator']}\n');
+          }
+          if ((e['initiatorStack'] as String).isNotEmpty) {
+            final lines = (e['initiatorStack'] as String).split('\n');
+            sb.write('  发起栈: ${_short(lines.first, 200)}\n');
+          }
+          if ((e['requestHeaders'] as String).isNotEmpty) {
+            sb.write('  请求头: ${_short(e['requestHeaders'] as String)}\n');
+          }
+          if ((e['requestBody'] as String).isNotEmpty) {
+            sb.write('  请求体: ${_short(e['requestBody'] as String)}\n');
+          }
+          if ((e['responseHeaders'] as String).isNotEmpty) {
+            sb.write('  响应头: ${_short(e['responseHeaders'] as String)}\n');
+          }
+          if ((e['responseBody'] as String).isNotEmpty) {
+            sb.write('  响应体: ${_short(e['responseBody'] as String)}\n');
+          }
+          if ((e['error'] as String).isNotEmpty) {
+            sb.write('  错误: ${e['error']}\n');
+          }
+        }
+        return McpToolResult.text(sb.toString().trimRight(),
+            structured: <String, Object?>{
+              'count': items.length,
+              'items': items,
+            });
+      },
+    );
+
 McpTool _consoleTool() => McpTool(
       name: 'xbume_console',
       title: '读取 app 日志',
@@ -865,6 +977,448 @@ McpTool _consoleTool() => McpTool(
             structured: <String, Object?>{
               'count': items.length,
               'items': items,
+            });
+      },
+    );
+
+McpTool _exceptionsTool() => McpTool(
+      name: 'xbume_exceptions',
+      title: '读取结构化异常',
+      description: '读取 app 内 FlutterError / PlatformError 的结构化缓冲：类型、摘要、库、'
+          '上下文、栈与重复次数。比 xbume_console(level:"error") 多出类型/库/首帧/合并计数，'
+          '适合回答「这个报错是什么、在哪抛的、发生几次」。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'kind': prop('string', '异常来源',
+            enumValues: <String>['flutter', 'platform', 'app', 'all']),
+        'typeContains': prop('string', '异常类型包含（如 TypeError / Exception）'),
+        'keyword': prop('string', '摘要/上下文/栈包含的关键字'),
+        'sinceMs': prop('integer', '只看该时间戳（毫秒）之后的记录'),
+        'limit': prop('integer', '最多返回条数（默认 20，取最新）', defaultValue: 20),
+      }),
+      handler: (ctx, args) async {
+        final s = await _session(ctx, args);
+        final limit = (optionalInt(args, 'limit') ?? 20).clamp(1, 100);
+        String raw;
+        try {
+          raw = await s.client.evalStringOn(
+            kLibXbUme,
+            exceptionsExpr(
+              kind: optionalString(args, 'kind'),
+              typeContains: optionalString(args, 'typeContains'),
+              keyword: optionalString(args, 'keyword'),
+              sinceMs: optionalInt(args, 'sinceMs'),
+              limit: limit,
+            ),
+          );
+        } catch (e) {
+          final m = e.toString();
+          if (m.contains('exceptions') || m.contains('NoSuchMethod')) {
+            throw McpToolException('当前 app 的 xb_ume 还没有异常缓冲（版本较旧）',
+                hint: '升级 xb_ume 到带 XBUmeExceptionItem 的版本后重启 app（热重载可能不生效）');
+          }
+          throw McpToolException('读取异常失败：$m');
+        }
+        final items = <Map<String, Object?>>[];
+        for (final row in raw.split('\u0003')) {
+          if (row.isEmpty) continue;
+          final f = row.split('\u0001');
+          if (f.length < 9) continue;
+          items.add(<String, Object?>{
+            'time': f[0],
+            'timestampMs': int.tryParse(f[1]),
+            'kind': f[2],
+            'type': f[3],
+            'count': int.tryParse(f[4]),
+            'message': f[5],
+            'library': f[6],
+            'context': f[7],
+            'stack': f[8],
+          });
+        }
+        final sb = StringBuffer();
+        if (items.isEmpty) {
+          sb.write('没有匹配的异常记录。');
+        } else {
+          for (final e in items) {
+            final times = (e['count'] as int?) ?? 1;
+            sb.write('[${e['time']}] ${e['kind']} ${e['type']}'
+                '${times > 1 ? ' ×$times' : ''}: ${e['message']}\n');
+            if ((e['context'] as String).isNotEmpty) {
+              sb.write('  上下文: ${_short(e['context'] as String, 200)}\n');
+            }
+            if ((e['library'] as String).isNotEmpty) {
+              sb.write('  库: ${e['library']}\n');
+            }
+            if ((e['stack'] as String).isNotEmpty) {
+              final frame = (e['stack'] as String).split('\n').first;
+              sb.write('  首帧: ${_short(frame, 200)}\n');
+            }
+          }
+        }
+        return McpToolResult.text(sb.toString().trimRight(),
+            structured: <String, Object?>{
+              'count': items.length,
+              'items': items,
+            });
+      },
+    );
+
+/// 时间轴的文本时间戳：ISO 串截到毫秒（不依赖本地时区转换）。
+String _timeShort(Object? iso) {
+  final s = (iso ?? '').toString();
+  return s.length >= 23 ? s.substring(11, 23) : s;
+}
+
+McpTool _timelineTool() => McpTool(
+      name: 'xbume_timeline',
+      title: '按时间合并诊断事件',
+      description: '把路由、网络、日志、异常四类事件按时间合并成一条流（app 侧缓冲各取最近若干条），'
+          '用来回答「用户点了一下之后紧接着发生了什么」。可先用 xbume_timeline 定位异常时间点，'
+          '再用 xbume_exceptions / xbume_network_detail 看细节。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'kinds': arrayProp('事件类型过滤（route/net/log/exception，省略=全部）', 'string'),
+        'keyword': prop('string', '关键字（匹配 URL、路由名、日志文本、异常摘要）'),
+        'sinceMs': prop('integer', '只看该时间戳（毫秒）之后的记录'),
+        'limit': prop('integer', '最多返回条数（默认 60）', defaultValue: 60),
+      }),
+      handler: (ctx, args) async {
+        final s = await _session(ctx, args);
+        final limit = (optionalInt(args, 'limit') ?? 60).clamp(1, 300);
+        const allowed = <String>{'route', 'net', 'log', 'exception'};
+        final kinds = <String>{};
+        final rawKinds = args['kinds'];
+        if (rawKinds is List) {
+          for (final k in rawKinds) {
+            final v = k.toString().trim().toLowerCase();
+            if (v.isEmpty || v == 'all') continue;
+            if (!allowed.contains(v)) {
+              throw McpToolException('kinds 只支持 route/net/log/exception 或 all');
+            }
+            kinds.add(v);
+          }
+        }
+        final raw = await s.client.evalStringOn(
+          kLibXbUme,
+          timelineExpr(sinceMs: optionalInt(args, 'sinceMs'), limit: limit),
+        );
+        final events = <Map<String, Object?>>[];
+        for (final row in raw.split('\u0003')) {
+          if (row.isEmpty) continue;
+          final f = row.split('\u0001');
+          if (f.length < 6) continue;
+          final ts = int.tryParse(f[1]) ?? 0;
+          final t = f[0];
+          if (kinds.isNotEmpty && !kinds.contains(t)) continue;
+          final Map<String, Object?> item;
+          switch (t) {
+            case 'route' when f.length >= 7:
+              item = <String, Object?>{
+                't': t,
+                'ts': ts,
+                'time': f[2],
+                'action': f[3],
+                'name': f[4],
+                'prev': f[5],
+                'phase': f[6],
+              };
+            case 'net' when f.length >= 9:
+              item = <String, Object?>{
+                't': t,
+                'ts': ts,
+                'time': f[2],
+                'method': f[3],
+                'statusCode': int.tryParse(f[4]),
+                'durationMs': int.tryParse(f[5]),
+                'status': f[6],
+                'url': f[7],
+                'error': f[8],
+              };
+            case 'log' when f.length >= 6:
+              item = <String, Object?>{
+                't': t,
+                'ts': ts,
+                'time': f[2],
+                'level': f[3],
+                'tag': f[4],
+                'message': f[5],
+              };
+            case 'exception' when f.length >= 7:
+              item = <String, Object?>{
+                't': t,
+                'ts': ts,
+                'time': f[2],
+                'kind': f[3],
+                'type': f[4],
+                'count': int.tryParse(f[5]),
+                'message': f[6],
+              };
+            default:
+              continue;
+          }
+          events.add(item);
+        }
+        final keyword = optionalString(args, 'keyword');
+        var filtered = keyword == null || keyword.isEmpty
+            ? events
+            : events
+                .where((e) => jsonEncode(e).contains(keyword))
+                .toList(growable: false);
+        filtered.sort((a, b) => (a['ts'] as int).compareTo(b['ts'] as int));
+        final capped = filtered.length > limit
+            ? filtered.sublist(filtered.length - limit)
+            : filtered;
+        final sb = StringBuffer();
+        if (capped.isEmpty) {
+          sb.write('没有匹配的事件。');
+        } else {
+          for (final e in capped) {
+            final at = _timeShort(e['time']);
+            switch (e['t']) {
+              case 'route':
+                final prev = e['prev'] as String;
+                sb.write('$at route ${e['action']} ${e['name']}'
+                    '${prev.isEmpty ? '' : ' ← $prev'}\n');
+              case 'net':
+                sb.write('$at net   ${e['statusCode'] ?? '-'} '
+                    '${e['durationMs'] ?? '-'}ms ${e['method']} ${e['url']}'
+                    '${(e['error'] as String).isEmpty ? '' : ' ⚠ ${e['error']}'}\n');
+              case 'log':
+                sb.write('$at log   ${e['level']} [${e['tag']}] ${e['message']}\n');
+              case 'exception':
+                final times = (e['count'] as int?) ?? 1;
+                sb.write('$at exc   ${e['kind']} ${e['type']}'
+                    '${times > 1 ? ' ×$times' : ''}: ${e['message']}\n');
+            }
+          }
+        }
+        return McpToolResult.text(sb.toString().trimRight(),
+            structured: <String, Object?>{
+              'count': capped.length,
+              'items': capped,
+            });
+      },
+    );
+
+/// 解析 eval 的库上下文：完整 uri 直用；否则按 uri 子串匹配（业务库优先）。
+Future<String> _resolveEvalLib(VmClient vm, String? wanted) async {
+  final w = (wanted ?? '').trim();
+  if (w.isNotEmpty) {
+    if (w.startsWith('package:') || w.startsWith('dart:') || w.contains('://')) {
+      return w;
+    }
+    final iso = await vm.rawRpc(
+        'getIsolate', <String, Object?>{'isolateId': await vm.isolateId()});
+    final uris = <String>[];
+    for (final lib in (iso['libraries'] as List? ?? const <Object?>[])) {
+      if (lib is Map && lib['uri'] != null) uris.add(lib['uri'].toString());
+    }
+    final hit = uris.where((u) => u.contains(w)).toList()
+      ..sort((a, b) => _libRank(a).compareTo(_libRank(b)));
+    if (hit.isEmpty) {
+      throw McpToolException('没有匹配「$w」的库',
+          hint: '可用库示例：${uris.take(10).join('、')}');
+    }
+    return hit.first;
+  }
+  // 默认：xb_ume core（业务工具都在这个上下文），不可用时退到 dart:io。
+  for (final c in <String>[kLibXbUme, 'dart:io']) {
+    try {
+      await vm.libraryId(c);
+      return c;
+    } catch (_) {}
+  }
+  throw McpToolException('找不到可用的求值库上下文',
+      hint: 'app 未加载 xb_ume 或 dart:io；用 lib 参数指定业务库（如 main.dart）');
+}
+
+/// 业务库 0 < dart: 1 < Flutter / pub-cache 2。
+int _libRank(String uri) {
+  if (uri.startsWith('dart:')) return 1;
+  if (uri.startsWith('package:flutter/') || uri.contains('/.pub-cache/')) {
+    return 2;
+  }
+  return 0;
+}
+
+/// VM 内部类名归一化（模型更容易认）。
+String _displayClass(String name) {
+  const map = <String, String>{
+    '_Smi': 'int',
+    '_Mint': 'int',
+    '_BigIntImpl': 'BigInt',
+    '_Double': 'double',
+    '_OneByteString': 'String',
+    '_TwoByteString': 'String',
+    '_GrowableList': 'List',
+    '_List': 'List',
+    '_LinkedHashMap': 'Map',
+    '_Map': 'Map',
+    '_HashSet': 'Set',
+  };
+  return map[name] ?? name;
+}
+
+McpTool _evalTool() => McpTool(
+      name: 'xbume_eval',
+      title: '在 app 内求值一条表达式',
+      description: '在 app 的指定库上下文执行一条 Dart 表达式，返回类型、类名与值。'
+          '用于读私有字段/单例状态、调方法或改状态（如 XBUme.controller.clearExceptions()），'
+          '补上「看事件」看不到的运行时状态。需要 MCP 服务以 --allow-eval 启动；'
+          '只支持单条表达式，不能是语句块。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'expr': prop('string', 'Dart 表达式（单条；如 XBUme.controller.routes.length）'),
+        'lib': prop('string',
+            '求值所用库：完整 uri 或子串（如 main.dart）；省略时用 xb_ume core，失败回退 dart:io'),
+        'maxChars': prop('integer', '返回值的最大字符数（默认 4000）',
+            defaultValue: 4000),
+      }, <String>['expr']),
+      handler: (ctx, args) async {
+        if (!ctx.allowEval) {
+          throw McpToolException('xbume_eval 未启用',
+              hint: '启动 MCP 时加 --allow-eval（GUI 托管的服务需在启动参数里加）');
+        }
+        final expr =
+            requireString(args, 'expr', hint: '例如 XBUme.controller.logs.length');
+        if (expr.length > 4000) {
+          throw McpToolException('表达式过长（${expr.length} 字符，上限 4000）');
+        }
+        final s = await _session(ctx, args);
+        final vm = s.client;
+        final uri = await _resolveEvalLib(vm, optionalString(args, 'lib'));
+        Map<String, Object?> r;
+        try {
+          r = await vm.rawRpc('evaluate', <String, Object?>{
+            'isolateId': await vm.isolateId(),
+            'targetId': await vm.libraryId(uri),
+            'expression': expr,
+          });
+        } catch (e) {
+          final m = e.toString();
+          if (m.contains('ompilation')) {
+            throw McpToolException('表达式无法编译：$m',
+                hint: '确认是单条表达式且符号在 $uri 上下文可见；鸿蒙 Flutter 引擎不支持表达式求值');
+          }
+          throw McpToolException('求值失败：$m');
+        }
+        final type = (r['type'] ?? '').toString();
+        final rawClass = r['class'] is Map
+            ? ((r['class'] as Map)['name'] ?? '').toString()
+            : '';
+        final cls = _displayClass(rawClass);
+        if (type == 'Error' || type == '@Error') {
+          final message =
+              (r['message'] ?? r['valueAsString'] ?? '未知错误').toString();
+          final compile = message.startsWith('error:');
+          return McpToolResult.text(
+              '${compile ? '表达式编译失败' : '求值抛出异常'}：$message',
+              structured: <String, Object?>{
+                'ok': false,
+                'expression': expr,
+                'library': uri,
+                'kind': compile ? 'compile' : 'runtime',
+                'error': message,
+              });
+        }
+        final rawValue = (r['valueAsString'] ?? '').toString();
+        final maxChars =
+            (optionalInt(args, 'maxChars') ?? 4000).clamp(200, 20000);
+        final cut = rawValue.length > maxChars;
+        final shown = cut ? '${rawValue.substring(0, maxChars)}…' : rawValue;
+        final total = r['length'] is int ? r['length'] as int : rawValue.length;
+        final vmTruncated = r['valueAsStringIsTruncated'] == true;
+        final kind = cls.isEmpty ? type : '$type($cls)';
+        final sb = StringBuffer()
+          ..write('`$expr` = ${shown.isEmpty ? '(空)' : shown}\n')
+          ..write('库 $uri · $kind');
+        if (vmTruncated || cut) sb.write(' · 已截断，完整长度 $total');
+        if (vmTruncated) {
+          sb.write('\n值被 VM 截断，建议缩小表达式（如 .length 或 .substring(0,500)）');
+        }
+        return McpToolResult.text(sb.toString(),
+            structured: <String, Object?>{
+              'ok': true,
+              'expression': expr,
+              'library': uri,
+              'type': type,
+              'className': cls,
+              'value': shown,
+              'truncated': vmTruncated || cut,
+              'length': total,
+            });
+      },
+    );
+
+McpTool _hotReloadTool() => McpTool(
+      name: 'xbume_hot_reload',
+      title: '触发热重载 / 热重启',
+      description: '向本服务通过 xbume_app_launch(via:"flutter-run") 拉起的 flutter run '
+          '发送 r（热重载）或 R（热重启），等输出里的完成标记后返回；编译错误原样带回。'
+          '只碰自己拉起的进程；热重启后 isolate 会更换，工具会自动清掉 isolate 缓存。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'pid': prop('integer', 'flutter run 进程号（多会话时指定；默认按会话端口反查）'),
+        'mode': prop('string', 'reload（热重载，默认）或 restart（热重启）',
+            enumValues: <String>['reload', 'restart']),
+        'timeoutMs': prop('integer', '等待完成标记的超时（毫秒，默认 60000）',
+            defaultValue: 60000),
+      }),
+      handler: (ctx, args) async {
+        final restart =
+            (optionalString(args, 'mode') ?? 'reload').toLowerCase() == 'restart';
+        final timeout = Duration(
+            milliseconds:
+                (optionalInt(args, 'timeoutMs') ?? 60000).clamp(5000, 300000));
+        var pid = optionalInt(args, 'pid');
+        if (pid == null) {
+          final s = await _session(ctx, args);
+          pid = ctx.launcher.pidForPort(s.port);
+          if (pid == null && ctx.launcher.live.length == 1) {
+            pid = ctx.launcher.live.single.pid;
+          }
+          if (pid == null) {
+            throw McpToolException('当前会话不是由本服务拉起的 flutter run，无法发送热重载',
+                hint: '用 xbume_app_launch(via:"flutter-run") 启动会话，或传 pid=<flutter run 进程号>；'
+                    '也可在 flutter run 窗口手动按 r');
+          }
+        }
+        final HotReloadResult r;
+        try {
+          r = await ctx.launcher.hotReload(pid, restart: restart, timeout: timeout);
+        } on DeviceCommandError catch (e) {
+          throw McpToolException(e.message, hint: '命令：${e.command}');
+        }
+        if (r.ok && restart) {
+          // 热重启换了 isolate：不清缓存的话后续 eval / 路由会拿着旧 isolateId 报错。
+          final ws = ctx.launcher.byPid(pid)?.wsUri;
+          final port = ws == null ? null : Uri.tryParse(ws)?.port;
+          if (port != null) {
+            for (final s in ctx.sessions.all) {
+              if (s.port == port) s.client.resetIsolateCache();
+            }
+          }
+        }
+        final modeName = restart ? '热重启' : '热重载';
+        final tail = r.lines.isEmpty
+            ? ''
+            : '\n最近输出：\n${r.lines.take(20).join('\n')}';
+        final text = r.ok
+            ? '$modeName完成（pid ${r.pid}，${r.elapsedMs}ms）：${r.message}'
+            : '$modeName未完成（pid ${r.pid}，${r.elapsedMs}ms）：${r.message}$tail';
+        return McpToolResult.text(text,
+            structured: <String, Object?>{
+              'ok': r.ok,
+              'mode': restart ? 'restart' : 'reload',
+              'pid': r.pid,
+              'elapsedMs': r.elapsedMs,
+              'marker': r.message,
+              'lines': r.lines,
             });
       },
     );

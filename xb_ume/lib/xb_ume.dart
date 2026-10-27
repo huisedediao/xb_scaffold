@@ -7,6 +7,7 @@ export 'src/core/xb_ume_controller.dart';
 export 'src/core/xb_ume_plugin.dart';
 export 'src/core/xb_ume_route_observer.dart';
 export 'src/core/xb_ume_storage_adapter.dart';
+export 'src/models/xb_ume_exception_item.dart';
 export 'src/models/xb_ume_frame_item.dart';
 export 'src/models/xb_ume_log_item.dart';
 export 'src/models/xb_ume_network_item.dart';

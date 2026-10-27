@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../config/xb_ume_config.dart';
+import '../models/xb_ume_exception_item.dart';
 import '../models/xb_ume_log_item.dart';
 import '../persistence/xb_ume_persistence.dart';
 import '../persistence/xb_ume_persistence_factory.dart';
@@ -125,11 +126,22 @@ class XBUmeBinding {
     if (config.captureFlutterError) {
       _originFlutterError = FlutterError.onError;
       FlutterError.onError = (FlutterErrorDetails details) {
+        final message = details.exceptionAsString();
         controller.addLog(
           level: XBUmeLogLevel.error,
           tag: 'FlutterError',
-          message: details.exceptionAsString(),
+          message: message,
           stack: details.stack?.toString(),
+        );
+        // 日志只有一行文本；结构性字段（类型/库/上下文/首帧）另存一份，
+        // 供 MCP xbume_exceptions 直接读取，不必再正则反解析。
+        controller.addException(
+          kind: XBUmeExceptionKind.flutter,
+          error: details.exception,
+          message: message,
+          stack: details.stack,
+          library: details.library,
+          context: details.context?.toString(),
         );
         _originFlutterError?.call(details);
       };
@@ -144,6 +156,11 @@ class XBUmeBinding {
           tag: 'PlatformError',
           message: error.toString(),
           stack: stackTrace.toString(),
+        );
+        controller.addException(
+          kind: XBUmeExceptionKind.platform,
+          error: error,
+          stack: stackTrace,
         );
         if (_originPlatformError != null) {
           return _originPlatformError!(error, stackTrace);

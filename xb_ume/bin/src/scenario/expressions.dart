@@ -356,17 +356,155 @@ String networkExpr({int? sinceMs, int limit = 50}) {
       "return out.toString(); })()";
 }
 
-/// 单条网络详情（按 url 精确 + 时间最近的记录）。
-/// 输出：method\u0001url\u0001reqHeaders\u0001reqBody\u0001respHeaders\u0001respBody\u0001status\u0001duration
-String networkDetailExpr(String url) {
-  final u = escapeEvalString(url);
-  return "(() { final n = XBUme.controller.network; final sep = String.fromCharCode(1); "
+/// 单条（或多条）网络详情（xb_ume core 上下文）。
+///
+/// 匹配：`id` 精确优先；否则按 `urlContains`（可再叠加 method）从新到旧找。
+/// 输出每行（行 \u0003 / 字段 \u0001 分隔）：
+///   id, time, method, url, statusCode, status, durationMs, error,
+///   reqHeaders, reqBody, respHeaders, respBody, initiator, initiatorStack,
+///   reqBodyLength, respBodyLength, truncated(0/1)
+String networkDetailExpr({
+  String? id,
+  String? urlContains,
+  String? method,
+  int maxChars = 2000,
+  int limit = 1,
+}) {
+  final conds = <String>[];
+  if (id != null && id.isNotEmpty) {
+    conds.add("e.id == '${escapeEvalString(id)}'");
+  }
+  if (urlContains != null && urlContains.isNotEmpty) {
+    conds.add("e.url.contains('${escapeEvalString(urlContains)}')");
+  }
+  if (method != null && method.isNotEmpty) {
+    conds.add(
+        "e.method.toUpperCase() == '${escapeEvalString(method.toUpperCase())}'");
+  }
+  final cond = conds.isEmpty ? '' : 'if (!(${conds.join(' && ')})) continue; ';
+  return "(() { final n = XBUme.controller.network; "
+      "final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
+      "final out = StringBuffer(); var hits = 0; "
       "String clean(Object? s) { final t = (s ?? '').toString(); "
-      "return t.replaceAll(String.fromCharCode(1), ' ').replaceAll(String.fromCharCode(3), ' '); } "
-      "for (final e in n.reversed) { if (e.url.toString() == '$u') { "
-      "return clean(e.method) + sep + clean(e.url) + sep + clean(e.requestHeaders) + sep "
-      "+ clean(e.requestBody) + sep + clean(e.responseHeaders) + sep + clean(e.responseBody) + sep "
-      "+ clean(e.statusCode) + sep + clean(e.durationMs); } } return 'NOT_FOUND'; })()";
+      "return t.replaceAll(String.fromCharCode(1), ' ').replaceAll(String.fromCharCode(2), ' ')"
+      ".replaceAll(String.fromCharCode(3), ' '); } "
+      "String cut(Object? s) { var t = clean(s); "
+      "if (t.length > $maxChars) { t = t.substring(0, $maxChars) + '...<clipped>'; } return t; } "
+      "String kv(Object? m) { if (m == null) return ''; if (m is Map) { "
+      "final sb = StringBuffer(); m.forEach((k, v) { if (sb.isNotEmpty) { sb.write('; '); } "
+      "sb.write(k); sb.write(': '); sb.write(clean(v)); }); return sb.toString(); } "
+      "return clean(m); } "
+      "for (final e in n.reversed) { $cond"
+      "out.write(e.id); out.write(sep); out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(clean(e.method)); out.write(sep); out.write(clean(e.url)); out.write(sep); "
+      "out.write((e.statusCode ?? '').toString()); out.write(sep); out.write(e.status.name); out.write(sep); "
+      "out.write((e.durationMs ?? '').toString()); out.write(sep); out.write(clean(e.error)); out.write(sep); "
+      "out.write(kv(e.requestHeaders)); out.write(sep); out.write(cut(e.requestBody)); out.write(sep); "
+      "out.write(kv(e.responseHeaders)); out.write(sep); out.write(cut(e.responseBody)); out.write(sep); "
+      "out.write(clean(e.initiator)); out.write(sep); out.write(cut(e.initiatorStack)); out.write(sep); "
+      "final rq = clean(e.requestBody); final rp = clean(e.responseBody); "
+      "out.write(rq.length.toString()); out.write(sep); out.write(rp.length.toString()); out.write(sep); "
+      "out.write((rq.length > $maxChars || rp.length > $maxChars) ? '1' : '0'); out.write(row); "
+      "hits++; if (hits >= $limit) break; } "
+      "return hits == 0 ? 'NOT_FOUND' : out.toString(); })()";
+}
+
+/// 结构化异常（xb_ume core 的 XBUme.controller.exceptions）。
+/// 输出每行：time\u0001ts\u0001kind\u0001type\u0001count\u0001message\u0001library\u0001context\u0001stack\u0003
+String exceptionsExpr({
+  String? kind,
+  String? typeContains,
+  String? keyword,
+  int? sinceMs,
+  int limit = 20,
+}) {
+  final conds = <String>[];
+  if (kind != null && kind.isNotEmpty && kind != 'all') {
+    conds.add("e.kind.name == '${escapeEvalString(kind)}'");
+  }
+  if (typeContains != null && typeContains.isNotEmpty) {
+    conds.add("e.type.contains('${escapeEvalString(typeContains)}')");
+  }
+  if (keyword != null && keyword.isNotEmpty) {
+    final k = escapeEvalString(keyword);
+    conds.add("(e.message.contains('$k') || (e.context ?? '').contains('$k') "
+        "|| (e.stack ?? '').contains('$k'))");
+  }
+  if (sinceMs != null) {
+    conds.add('e.time.millisecondsSinceEpoch >= $sinceMs');
+  }
+  final where = conds.isEmpty ? '' : '.where((e) => ${conds.join(' && ')}) ';
+  return "(() { final x = XBUme.controller.exceptions$where.toList(); "
+      "final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
+      "final out = StringBuffer(); "
+      "final start = x.length > $limit ? x.length - $limit : 0; "
+      "String clean(Object? s) { final t = (s ?? '').toString(); "
+      "return t.replaceAll(String.fromCharCode(1), ' ').replaceAll(String.fromCharCode(2), ' ')"
+      ".replaceAll(String.fromCharCode(3), ' '); } "
+      "String cut(Object? s, int max) { var t = clean(s); "
+      "if (t.length > max) { t = t.substring(0, max) + '...<clipped>'; } return t; } "
+      "for (var i = start; i < x.length; i++) { final e = x[i]; "
+      "out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(e.time.millisecondsSinceEpoch.toString()); out.write(sep); "
+      "out.write(e.kind.name); out.write(sep); out.write(clean(e.type)); out.write(sep); "
+      "out.write(e.count.toString()); out.write(sep); out.write(cut(e.message, 1200)); out.write(sep); "
+      "out.write(clean(e.library)); out.write(sep); out.write(cut(e.context, 300)); out.write(sep); "
+      "out.write(cut(e.stack, 4000)); out.write(row); } "
+      "return out.toString(); })()";
+}
+
+/// 时间轴聚合（xb_ume core）：路由 + 网络 + 日志 + 异常四类事件合并输出。
+/// 每行：type\u0001ts\u0001iso\u0001...（字段随类型不同，见各段注释）\u0003
+/// 异常段包在 try/catch 里：老版本 app（无 exceptions 缓冲）仍能出其余三类。
+String timelineExpr({int? sinceMs, int limit = 60}) {
+  final floor = sinceMs ?? 0;
+  return "(() { final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
+      "final out = StringBuffer(); "
+      "String clean(Object? s) { final t = (s ?? '').toString(); "
+      "return t.replaceAll(String.fromCharCode(1), ' ').replaceAll(String.fromCharCode(2), ' ')"
+      ".replaceAll(String.fromCharCode(3), ' '); } "
+      "String cut(Object? s, int max) { var t = clean(s); "
+      "if (t.length > max) { t = t.substring(0, max) + '...<clipped>'; } return t; } "
+      // 路由：type, ts, iso, action, name, prev, phase
+      "final rl = XBUme.controller.routes; "
+      "final rs = rl.length > $limit ? rl.length - $limit : 0; "
+      "for (var i = rs; i < rl.length; i++) { final e = rl[i]; "
+      "if (e.time.millisecondsSinceEpoch < $floor) continue; "
+      "out.write('route'); out.write(sep); out.write(e.time.millisecondsSinceEpoch.toString()); "
+      "out.write(sep); out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(e.action.name); out.write(sep); out.write(cut(e.routeName, 200)); out.write(sep); "
+      "out.write(cut(e.previousRouteName, 200)); out.write(sep); out.write(e.phase); out.write(row); } "
+      // 网络：type, ts, iso, method, code, dur, status, url, error
+      "final nl = XBUme.controller.network; "
+      "final ns = nl.length > $limit ? nl.length - $limit : 0; "
+      "for (var i = ns; i < nl.length; i++) { final e = nl[i]; "
+      "if (e.time.millisecondsSinceEpoch < $floor) continue; "
+      "out.write('net'); out.write(sep); out.write(e.time.millisecondsSinceEpoch.toString()); "
+      "out.write(sep); out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(clean(e.method)); out.write(sep); out.write((e.statusCode ?? '').toString()); "
+      "out.write(sep); out.write((e.durationMs ?? '').toString()); out.write(sep); "
+      "out.write(e.status.name); out.write(sep); out.write(cut(e.url, 300)); out.write(sep); "
+      "out.write(clean(e.error)); out.write(row); } "
+      // 日志：type, ts, iso, level, tag, message
+      "final ll = XBUme.controller.logs; "
+      "final ls = ll.length > $limit ? ll.length - $limit : 0; "
+      "for (var i = ls; i < ll.length; i++) { final e = ll[i]; "
+      "if (e.time.millisecondsSinceEpoch < $floor) continue; "
+      "out.write('log'); out.write(sep); out.write(e.time.millisecondsSinceEpoch.toString()); "
+      "out.write(sep); out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(e.level.name); out.write(sep); out.write(clean(e.tag)); out.write(sep); "
+      "out.write(cut(e.message, 300)); out.write(row); } "
+      // 异常：type, ts, iso, kind, excType, count, message
+      "try { final xl = XBUme.controller.exceptions; "
+      "final xs = xl.length > $limit ? xl.length - $limit : 0; "
+      "for (var i = xs; i < xl.length; i++) { final e = xl[i]; "
+      "if (e.time.millisecondsSinceEpoch < $floor) continue; "
+      "out.write('exception'); out.write(sep); out.write(e.time.millisecondsSinceEpoch.toString()); "
+      "out.write(sep); out.write(e.time.toIso8601String()); out.write(sep); "
+      "out.write(e.kind.name); out.write(sep); out.write(clean(e.type)); out.write(sep); "
+      "out.write(e.count.toString()); out.write(sep); out.write(cut(e.message, 300)); out.write(row); } "
+      "} catch (_) {} "
+      "return out.toString(); })()";
 }
 
 /// app 内 console 记录（XBUme.controller.logs）。

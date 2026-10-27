@@ -1,0 +1,91 @@
+// 「AI 调试模式」的指令生成与项目校验：
+// - 指令里必须带项目路径/设备/app_launch 的 cwd（否则 AI 会去 ~/.xb_ume_ide 里跑 flutter run）
+// - eval 行只在服务真的开了 eval 时出现（避免 AI 调用不存在的工具）
+// - GUI 的「AI 调试」Tab 与命令共用同一份 prompt.dart，前端只能做源码级断言
+library;
+
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+import '../bin/src/ai/prompt.dart';
+
+void main() {
+  group('resolveProjectDir', () {
+    test('接受含 pubspec.yaml 的目录', () {
+      final dir = Directory.systemTemp.createTempSync('xb_ai_proj_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      File('${dir.path}/pubspec.yaml').writeAsStringSync('name: demo\n');
+      expect(resolveProjectDir(dir.path), dir.absolute.path);
+    });
+
+    test('拒绝没有 pubspec.yaml 的目录并说明原因', () {
+      final dir = Directory.systemTemp.createTempSync('xb_ai_empty_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      expect(
+        () => resolveProjectDir(dir.path),
+        throwsA(isA<FormatException>().having(
+            (e) => e.message, 'message', contains('pubspec.yaml'))),
+      );
+    });
+  });
+
+  group('buildAiPrompt', () {
+    const project = '/tmp/my_flutter_app';
+    const device = 'emulator-5554';
+
+    test('写死项目与设备，并明确 cwd 交给 app_launch', () {
+      final p = buildAiPrompt(
+        projectDir: project,
+        deviceId: device,
+        hasEval: true,
+      );
+      expect(p, contains(project));
+      expect(p, contains(device));
+      expect(p, contains('xbume_app_launch'));
+      expect(p, contains('"cwd": "$project"'));
+      // 热重载与复跑是闭环的关键，必须在指令里。
+      expect(p, contains('xbume_hot_reload'));
+      expect(p, contains('"reload"'));
+      expect(p, contains('"restart"'));
+      expect(p, contains('xbume_timeline'));
+    });
+
+    test('eval 未开启时不出现 xbume_eval', () {
+      final p = buildAiPrompt(
+        projectDir: project,
+        deviceId: device,
+        hasEval: false,
+      );
+      expect(p, isNot(contains('xbume_eval')));
+      expect(p, contains('xbume_hot_reload'));
+    });
+  });
+
+  group('aiClientConfig', () {
+    test('HTTP 配置带 token 头', () {
+      final c = aiClientConfig(
+          url: 'http://127.0.0.1:46140/mcp', token: 'abc123');
+      expect(c, contains('"type": "http"'));
+      expect(c, contains('http://127.0.0.1:46140/mcp'));
+      expect(c, contains('X-XBUME-Token'));
+      expect(c, contains('abc123'));
+    });
+  });
+
+  group('GUI AI 调试 Tab（源码断言）', () {
+    test('前端与后端接口都在 ide_gui.dart 里', () {
+      final src = File('bin/ide_gui.dart').readAsStringSync();
+      // Tab 与页面。
+      expect(src, contains('data-tab="ai"'));
+      expect(src, contains('id="page-ai"'));
+      expect(src, contains('/api/ai/setup'));
+      expect(src, contains('/api/ai/config'));
+      // 一键开启必须强制带 eval，不能依赖卡片上的勾选。
+      expect(src, contains('startMcp(forceEval: true)'));
+      expect(src, contains("if (forceEval || readMcpAllowEval()) '--allow-eval'"));
+      // 启动前先判断「服务是不是自己拉起的」，不猜进程。
+      expect(src, contains('不是工具箱启动的'));
+    });
+  });
+}

@@ -19,6 +19,8 @@ executables:
   xb_ume: run
   # 全局 activate 后可用 `xb_ume_mcp`（bin/mcp.dart）作为 MCP 服务。
   xb_ume_mcp: mcp
+  # 全局 activate 后可用 `xb_ume_ai`（bin/ai.dart）：一键准备 AI 调试模式。
+  xb_ume_ai: ai
 
 dependencies:
   flutter:

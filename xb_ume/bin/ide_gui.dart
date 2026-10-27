@@ -30,6 +30,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'src/ai/prompt.dart';
+
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
 const String kDaemonStatusToken = 'xbume-ide-status';
@@ -433,6 +435,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final status = await probeMcpStatus();
       // 启停能力与自动开关随探测一起下发：卡片据此决定显示「启动」还是「停止」。
       status['autoStart'] = readMcpAutoStart();
+      status['allowEval'] = readMcpAllowEval();
       status['launchable'] =
           File('$_home/.xb_ume_ide/mcp.dart').existsSync();
       final rec = readMcpPidRecord();
@@ -468,6 +471,35 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.write(
         jsonEncode(<String, Object?>{'ok': true, 'autoStart': on}),
       );
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/mcp/eval' && req.method == 'POST') {
+      // 只写配置：--allow-eval 是启动参数，正在跑的进程不会因此改变，
+      // 前端据此提示「重启服务后生效」。「随工具箱启动」下次拉起时自动带上。
+      final on = (req.uri.queryParameters['on'] ?? '1') == '1';
+      await writeMcpAllowEval(on);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+        jsonEncode(<String, Object?>{'ok': true, 'allowEval': on}),
+      );
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/config') {
+      final cfg = _guiReadConfigRaw();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'projectDir': cfg['aiProjectDir'] ?? '',
+        'device': cfg['aiDevice'] ?? '',
+      }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/ai/setup' && req.method == 'POST') {
+      final r = await _aiSetup(await _readBodyText(req));
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(r));
       await req.response.close();
       return;
     }
@@ -9114,15 +9146,31 @@ Map<String, Object?> readMcpPidRecord() {
   return const <String, Object?>{};
 }
 
+/// 写回 config.json（读-改-写，保留其他配置键）。
+void _guiWriteConfigRaw(Map<String, Object?> cfg) {
+  final file = File('$_home/.xb_ume_ide/config.json');
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
+}
+
 /// 「随工具箱启动」开关（config.json 的 mcpAutoStart，默认关）。
 bool readMcpAutoStart() => _guiReadConfigRaw()['mcpAutoStart'] == true;
 
 Future<void> writeMcpAutoStart(bool on) async {
   final cfg = _guiReadConfigRaw();
   cfg['mcpAutoStart'] = on;
-  final file = File('$_home/.xb_ume_ide/config.json');
-  file.parent.createSync(recursive: true);
-  file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
+  _guiWriteConfigRaw(cfg);
+}
+
+/// 「允许 eval」开关（config.json 的 mcpAllowEval，默认关）。
+/// 开启后工具箱拉起的 MCP 会多带 --allow-eval，多出 xbume_eval：
+/// 能在 app 进程里求值任意表达式（可读可改运行时状态），默认不给。
+bool readMcpAllowEval() => _guiReadConfigRaw()['mcpAllowEval'] == true;
+
+Future<void> writeMcpAllowEval(bool on) async {
+  final cfg = _guiReadConfigRaw();
+  cfg['mcpAllowEval'] = on;
+  _guiWriteConfigRaw(cfg);
 }
 
 /// 读 token；不存在就先生成（规则与 mcp.dart 的 ensureToken 一致）。
@@ -9160,7 +9208,9 @@ Future<bool> _mcpPortFree(int port) async {
 /// 启动 MCP HTTP 服务（后台子进程，部署副本 ~/.xb_ume_ide/mcp.dart）。
 /// 启动时开放全部工具组（core + diagnose + run-safe + act + device-write）；
 /// 装包/卸包/停进程这些高危工具自身仍强制 confirm: true。
-Future<Map<String, Object?>> startMcp() async {
+///
+/// [forceEval] 为 true 时无论配置如何都带 --allow-eval（「AI 调试」一键开启用）。
+Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
   final current = await probeMcpStatus();
   if (current['running'] == true) {
     return <String, Object?>{
@@ -9205,6 +9255,9 @@ Future<Map<String, Object?>> startMcp() async {
         'all',
         '--log-file',
         log.path,
+        // 默认不给 eval：它能读写 app 运行时状态，要用户在卡片上显式勾选。
+        // forceEval 只用于「AI 调试」一键开启（用户点按钮即视为授权）。
+        if (forceEval || readMcpAllowEval()) '--allow-eval',
       ],
       workingDirectory: '$_home/.xb_ume_ide',
       mode: ProcessStartMode.detached,
@@ -9273,6 +9326,95 @@ Future<Map<String, Object?>> stopMcp() async {
   };
 }
 
+/// 「AI 调试」一键开启：把项目目录/设备变成一条可粘给 AI 的指令，
+/// 并保证 MCP 服务处于「带 eval」状态（不一致就只重启自己记录的进程）。
+///
+/// 不在这里拉 app：拉起由 AI 调 xbume_app_launch 完成，
+/// 这样 flutter run 的 stdin 才在 MCP 进程手里，热重载才能用。
+Future<Map<String, Object?>> _aiSetup(String body) async {
+  Map<String, Object?> j = const <String, Object?>{};
+  try {
+    final d = body.isEmpty ? null : jsonDecode(body);
+    if (d is Map) j = d.map((k, v) => MapEntry(k.toString(), v));
+  } catch (_) {
+    return <String, Object?>{'ok': false, 'message': '请求体不是合法 JSON'};
+  }
+
+  final rawDir = '${j['dir'] ?? ''}'.trim();
+  if (rawDir.isEmpty) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '请先填写项目目录（Flutter 项目根，含 pubspec.yaml）',
+    };
+  }
+  final String projectDir;
+  try {
+    projectDir = resolveProjectDir(rawDir);
+  } on FormatException catch (e) {
+    return <String, Object?>{'ok': false, 'message': e.message};
+  }
+
+  var device = '${j['device'] ?? ''}'.trim();
+  if (device.isEmpty) device = await guessDevice() ?? '';
+  if (device.isEmpty) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '无法自动选择设备（有多台或没有可用设备），请填写设备 id',
+      'devices': await listDeviceChoices(),
+    };
+  }
+
+  final st = await probeMcpStatus();
+  if (st['running'] == true && st['mode'] == 'stdio') {
+    return <String, Object?>{
+      'ok': false,
+      'message': '检测到 stdio 模式的 MCP 进程（由 AI 客户端拉起），参数不归工具箱管；'
+          '请在客户端配置里加 --allow-eval，或先退出客户端的这个 MCP 再点一键开启',
+    };
+  }
+  Map<String, Object?> mcp;
+  if (st['running'] == true && st['hasEval'] == true) {
+    mcp = st;
+  } else if (st['running'] == true) {
+    // 在跑但没开 eval：只重启有 pid 记录的进程。
+    if (readMcpPidRecord()['pid'] == null) {
+      return <String, Object?>{
+        'ok': false,
+        'message': '端口 ${st['port']} 上的 MCP 不是工具箱启动的、且没开 eval；'
+            '请手动停止它后重试',
+      };
+    }
+    await stopMcp();
+    mcp = await startMcp(forceEval: true);
+  } else {
+    mcp = await startMcp(forceEval: true);
+  }
+  if (mcp['ok'] == false) return mcp;
+
+  final prompt = buildAiPrompt(
+    projectDir: projectDir,
+    deviceId: device,
+    hasEval: mcp['hasEval'] == true,
+  );
+  final config = aiClientConfig(
+    url: '${mcp['url'] ?? ''}',
+    token: readMcpToken(),
+  );
+  final cfg = _guiReadConfigRaw();
+  cfg['aiProjectDir'] = projectDir;
+  cfg['aiDevice'] = device;
+  _guiWriteConfigRaw(cfg);
+
+  return <String, Object?>{
+    'ok': true,
+    'projectDir': projectDir,
+    'deviceId': device,
+    'mcp': mcp,
+    'prompt': prompt,
+    'config': config,
+  };
+}
+
 /// 对 http://127.0.0.1:<port>/mcp 发一条 JSON-RPC，返回响应 JSON；失败返回 null。
 Future<Map<String, Object?>?> _mcpPost(
   HttpClient hc,
@@ -9324,7 +9466,11 @@ Future<Map<String, Object?>?> _probeMcpHttp(int port, String token) async {
       'params': <String, Object?>{},
     });
     final tools = (list?['result'] as Map?)?['tools'];
-    if (tools is List) count = tools.length;
+    var hasEval = false;
+    if (tools is List) {
+      count = tools.length;
+      hasEval = tools.any((t) => t is Map && t['name'] == 'xbume_eval');
+    }
     final info = result['serverInfo'];
     return <String, Object?>{
       'running': true,
@@ -9335,6 +9481,7 @@ Future<Map<String, Object?>?> _probeMcpHttp(int port, String token) async {
       'serverName': info is Map ? '${info['name'] ?? ''}' : '',
       'serverVersion': info is Map ? '${info['version'] ?? ''}' : '',
       'toolCount': count,
+      'hasEval': hasEval,
     };
   } finally {
     hc.close(force: true);
@@ -10848,6 +10995,7 @@ const String guiHtml = r'''
   <h1>xb_ume 工具箱</h1>
   <div class="tabs">
     <div class="tab active" data-tab="daemon">守护进程</div>
+    <div class="tab" data-tab="ai">AI 调试</div>
     <div class="tab" data-tab="logs">日志</div>
     <div class="tab" data-tab="timeline">时间轴</div>
     <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
@@ -10882,13 +11030,38 @@ const String guiHtml = r'''
       <div id="daemon-status" class="muted">查询中…</div>
     </div>
     <div class="card">
-      <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button id="mcp-toggle" onclick="toggleMcp(this)">启动</button><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button><label class="chk" style="margin-left:6px" title="勾选后再打开工具箱会自动拉起 MCP HTTP 服务（默认 46140）；取消勾选不会停掉正在运行的服务"><input type="checkbox" id="mcp-auto" onchange="setMcpAuto(this)">随工具箱启动</label></div>
+      <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button id="mcp-toggle" onclick="toggleMcp(this)">启动</button><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button><label class="chk" style="margin-left:6px" title="勾选后再打开工具箱会自动拉起 MCP HTTP 服务（默认 46140）；取消勾选不会停掉正在运行的服务"><input type="checkbox" id="mcp-auto" onchange="setMcpAuto(this)">随工具箱启动</label><label class="chk" style="margin-left:6px" title="勾选后启动的 MCP 多开放 xbume_eval：可在 app 进程内求值任意表达式（能读写运行时状态），改了需重启服务才生效"><input type="checkbox" id="mcp-eval" onchange="setMcpEval(this)">允许 eval</label></div>
       <div id="mcp-detail" class="muted" style="margin-top:4px">让 Qoder / Cursor / Claude Code 直接驱动本机调试会话（会话发现、找组件、点击、场景、设备）；工具清单与配置示例见 MCP_GUIDE.md</div>
     </div>
     <div class="card">
       <div class="row"><b>IDE 优先级</b><button onclick="resetIdeOrder()">恢复默认</button><button onclick="openConfig()">打开配置文件</button></div>
       <ul id="ide-order-list" class="ide-list"></ul>
       <div id="ide-order-tip" class="muted" style="margin-top:4px">拖动 ☰ 调整优先级，松手即保存；进入本页会自动扫描已安装的 IDE，新装的追加到列表末尾；未安装的自动跳过</div>
+    </div>
+  </section>
+  <section class="page" id="page-ai">
+    <div class="card">
+      <div class="row">
+        <b>AI 自动调试</b>
+        <span id="ai-status" class="muted">未就绪</span>
+        <button class="primary" onclick="aiSetup(this)">一键开启</button>
+        <button onclick="aiCopyPrompt(this)">复制 AI 指令</button>
+        <button onclick="aiCopyConfig(this)">复制 MCP 配置</button>
+      </div>
+      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:nowrap">
+        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="Flutter 项目根目录（含 pubspec.yaml）">项目目录
+          <input id="ai-dir" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px">
+        </label>
+        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto;margin-right:0" title="留空则自动选：唯一手机 > macOS 桌面">设备
+          <input id="ai-device" placeholder="留空=自动" style="width:180px;margin-left:6px">
+        </label>
+      </div>
+      <div class="muted" style="margin-top:8px;line-height:1.6">
+        点「一键开启」会：启动带 <code>xbume_eval</code> 的 MCP（已在跑就复用，参数不一致只重启自己记录的那个）
+        → 生成一段指令并自动复制。把指令粘给 AI，它会自己 <code>xbume_app_launch</code> 拉起 app、
+        复现现场、定位到源码行、改代码、热重载、复跑验证。
+      </div>
+      <pre id="ai-prompt" style="white-space:pre-wrap;max-height:calc(100vh - 400px);min-height:180px;overflow:auto;font-size:12px;line-height:1.55;margin:10px 0 0">点「一键开启」后，这里会出现可直接粘给 AI 的指令</pre>
     </div>
   </section>
   <section class="page" id="page-logs">
@@ -11327,31 +11500,38 @@ function connect() {
   };
 }
 connect();
-document.querySelectorAll('.tab').forEach(function(t){
-  t.onclick = function(){
-    var prevTab = document.querySelector('.tab.active');
-    if (prevTab && prevTab.dataset.tab === 'timeline' && t.dataset.tab !== 'timeline') tlHide();
-    if (prevTab && prevTab.dataset.tab === 'perf' && t.dataset.tab !== 'perf') pfStop();
-    document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('active'); });
-    document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
-    t.classList.add('active');
-    document.getElementById('page-' + t.dataset.tab).classList.add('active');
-    if (t.dataset.tab === 'daemon') { refreshDaemon(); refreshMcp(); loadIdeOrder(); }
-    else if (t.dataset.tab === 'timeline') tlShow();
-    else if (t.dataset.tab === 'sandbox') sbRefresh();
-    else if (t.dataset.tab === 'db') dbRefresh();
-    else if (t.dataset.tab === 'routes') rtRefresh();
-    else if (t.dataset.tab === 'network') nwRefresh();
-    else if (t.dataset.tab === 'storage') stRefresh();
-    else if (t.dataset.tab === 'status') cnScan();
-    else if (t.dataset.tab === 'instances') inRefresh();
-    else if (t.dataset.tab === 'shot') { shRefresh(); shScnRefresh(); shRecStat(); }
-    else if (t.dataset.tab === 'perf') pfShow();
-    else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
-    else if (t.dataset.tab === 'compare') cmpLoad();
-    else if (t.dataset.tab === 'wtree') wtLoad();
-    else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
-  };
+function showTab(t){
+  var prevTab = document.querySelector('.tab.active');
+  if (prevTab && prevTab.dataset.tab === 'timeline' && t.dataset.tab !== 'timeline') tlHide();
+  if (prevTab && prevTab.dataset.tab === 'perf' && t.dataset.tab !== 'perf') pfStop();
+  document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('active'); });
+  document.querySelectorAll('.page').forEach(function(x){ x.classList.remove('active'); });
+  t.classList.add('active');
+  document.getElementById('page-' + t.dataset.tab).classList.add('active');
+  if (t.dataset.tab === 'daemon') { refreshDaemon(); refreshMcp(); loadIdeOrder(); }
+  else if (t.dataset.tab === 'ai') aiShow();
+  else if (t.dataset.tab === 'timeline') tlShow();
+  else if (t.dataset.tab === 'sandbox') sbRefresh();
+  else if (t.dataset.tab === 'db') dbRefresh();
+  else if (t.dataset.tab === 'routes') rtRefresh();
+  else if (t.dataset.tab === 'network') nwRefresh();
+  else if (t.dataset.tab === 'storage') stRefresh();
+  else if (t.dataset.tab === 'status') cnScan();
+  else if (t.dataset.tab === 'instances') inRefresh();
+  else if (t.dataset.tab === 'shot') { shRefresh(); shScnRefresh(); shRecStat(); }
+  else if (t.dataset.tab === 'perf') pfShow();
+  else if (t.dataset.tab === 'auto') { auLoad(); aiPoll(); aiGoalsLoad(); } // aiPoll 仅拉取渲染，不启动任务；页面重载后恢复报告
+  else if (t.dataset.tab === 'compare') cmpLoad();
+  else if (t.dataset.tab === 'wtree') wtLoad();
+  else if (t.dataset.tab === 'exc') { document.getElementById('exc-overlay').style.display = 'none'; excBadge(); excRefresh(); }
+}
+document.querySelectorAll('.tab').forEach(function(t){ t.onclick = function(){ showTab(t); }; });
+// 深链：#ai 直接落在这个 Tab（文档、脚本、截图都用同一个入口）。
+window.addEventListener('load', function(){
+  var want = (location.hash || '').replace(/^#/, '');
+  if (!want) return;
+  var t = document.querySelector('.tab[data-tab="' + want + '"]');
+  if (t) showTab(t);
 });
 function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 // -- 异常 Tab -------------------------------------------------------------
@@ -13420,6 +13600,8 @@ function mcpApplyStatus(d, force){
   var btn = document.getElementById('mcp-toggle');
   var auto = document.getElementById('mcp-auto');
   if (auto) auto.checked = d.autoStart === true;
+  var ev = document.getElementById('mcp-eval');
+  if (ev) ev.checked = d.allowEval === true;
   if (btn) {
     if (d.running && d.mode === 'http') {
       btn.textContent = '停止';
@@ -13453,7 +13635,9 @@ function mcpApplyStatus(d, force){
     if (!mcpConfigShown || force) {
       det.innerHTML = '地址 <code>' + esc(d.url) + '</code>（仅本机回环，需 token）；协议 '
         + esc(d.protocolVersion || '未知')
-        + '；已开放全部工具组（含装包/卸包/停进程，高危操作仍需 confirm）；日志 logs/mcp.log';
+        + '；已开放全部工具组（含装包/卸包/停进程，高危操作仍需 confirm）'
+        + (d.allowEval ? '；已开启 eval' : '')
+        + '；日志 logs/mcp.log';
     }
   } else {
     el.innerHTML = '<span class="ok">运行中</span> · stdio · pid ' + (d.pids || []).join(', ');
@@ -13497,6 +13681,99 @@ function setMcpAuto(cb){
       }
     })
     .catch(function(){ if (cb) cb.checked = !on; });
+}
+function setMcpEval(cb){
+  var on = !!(cb && cb.checked);
+  fetch('/api/mcp/eval?on=' + (on ? '1' : '0'), { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok !== true) { if (cb) cb.checked = !on; return; }
+      if (mcpStatus) mcpStatus.allowEval = !!d.allowEval;
+      // --allow-eval 只在拉起时读取：正在跑的服务要重启才会变，说清楚。
+      if (mcpStatus && mcpStatus.running && mcpStatus.mode === 'http') {
+        var det = document.getElementById('mcp-detail');
+        if (det) det.innerHTML = '<span class="bad">已保存</span>：'
+          + (on ? '点「停止」再「启动」后 <code>xbume_eval</code> 才可用'
+                : '当前进程仍开放 <code>xbume_eval</code>，重启服务后关闭');
+      }
+    })
+    .catch(function(){ if (cb) cb.checked = !on; });
+}
+// ── AI 调试 ──
+var aiPromptText = '';
+var aiConfigText = '';
+function aiShow(){
+  fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
+    var dir = document.getElementById('ai-dir');
+    var dev = document.getElementById('ai-device');
+    if (dir && !dir.value) dir.value = d.projectDir || '';
+    if (dev && !dev.value) dev.value = d.device || '';
+  }).catch(function(){});
+  refreshMcp();
+}
+function aiSetup(btn){
+  var dir = (document.getElementById('ai-dir').value || '').trim();
+  var dev = (document.getElementById('ai-device').value || '').trim();
+  var st = document.getElementById('ai-status');
+  var pre = document.getElementById('ai-prompt');
+  if (btn) { btn.disabled = true; btn.textContent = '准备中…'; }
+  if (st) st.textContent = '正在准备 MCP 与指令…';
+  fetch('/api/ai/setup', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({dir: dir, device: dev})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (btn) { btn.disabled = false; btn.textContent = '一键开启'; }
+    if (d.ok !== true) {
+      if (st) st.innerHTML = '<span class="bad">未就绪</span>';
+      if (pre) pre.textContent = d.message || '准备失败';
+      return;
+    }
+    aiPromptText = d.prompt || '';
+    aiConfigText = d.config || '';
+    if (pre) pre.textContent = aiPromptText;
+    var m = d.mcp || {};
+    if (st) st.innerHTML = '<span class="ok">已就绪</span> · ' + (m.toolCount || 0)
+      + ' 个工具 · eval ' + (m.hasEval ? '已开' : '未开');
+    // 下一步就是粘给 AI，所以直接写剪贴板。
+    var done = function(ok){
+      if (st) st.innerHTML += ok ? ' · 指令已复制'
+        : ' · <span class="bad">浏览器拦了剪贴板，请点「复制 AI 指令」手动全选</span>';
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(aiPromptText).then(function(){ done(true); },
+        function(){ done(false); });
+    } else { done(false); }
+    refreshMcp(true);
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = '一键开启'; }
+    if (st) st.innerHTML = '<span class="bad">请求失败</span>';
+    if (pre) pre.textContent = String(e);
+  });
+}
+function aiCopyPrompt(btn){
+  if (!aiPromptText) {
+    var pre = document.getElementById('ai-prompt');
+    aiPromptText = pre ? pre.textContent : '';
+  }
+  if (!aiPromptText) return;
+  navigator.clipboard.writeText(aiPromptText).then(function(){
+    if (btn) { var t = btn.textContent; btn.textContent = '已复制';
+      setTimeout(function(){ btn.textContent = t; }, 1200); }
+  }, function(){
+    if (btn) { var t = btn.textContent; btn.textContent = '被拦，请手动全选';
+      setTimeout(function(){ btn.textContent = t; }, 1600); }
+  });
+}
+function aiCopyConfig(btn){
+  if (!aiConfigText) return;
+  navigator.clipboard.writeText(aiConfigText).then(function(){
+    if (btn) { var t = btn.textContent; btn.textContent = '已复制';
+      setTimeout(function(){ btn.textContent = t; }, 1200); }
+  }, function(){
+    if (btn) { var t = btn.textContent; btn.textContent = '被拦，请手动全选';
+      setTimeout(function(){ btn.textContent = t; }, 1600); }
+  });
 }
 function mcpConfigText(token){
   var d = mcpStatus || {};

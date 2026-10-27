@@ -511,6 +511,14 @@ xb_ume run login-remote --uri 65296 --continue-on-fail --shot-every-step --repor
 
 xb_ume 自带 MCP 服务（`bin/mcp.dart`，零新增依赖），把「进程内白盒」能力交给 AI 助手：按 Widget 树找组件（带 `ref` 与源码位置）、注入真实手势、读路由栈/网络/日志、跑场景；需要装包/起停/按键时切到设备后端。
 
+不想读这一节？用「AI 调试」入口，一条命令就把「带 `xbume_eval` 的 MCP + 可直接粘给 AI 的指令」准备好，指令自动进剪贴板（GUI 里是「AI 调试」Tab 的一键开启）：
+
+```bash
+dart run xb_ume:ai     # 在 Flutter 项目根目录执行；--print-only 只看不动服务
+```
+
+AI 拿到指令会自己 `xbume_app_launch` 拉起 app、定位源码、改代码、热重载、复跑验证；你只需一次性把 MCP 地址填进 AI 客户端。细节见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+
 ```bash
 # stdio：由 Qoder / Cursor / Claude Code 作为子进程拉起（推荐）
 dart run xb_ume:mcp
@@ -532,11 +540,13 @@ dart run xb_ume:mcp --http 46140
 }
 ```
 
-默认暴露 20 个工具（core 14 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络、日志、场景运行与报告、设备发现与启动。按键/原生点击需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。
+默认暴露 24 个工具（core 18 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 `flutter run` 发热重载/热重启。按键/原生点击需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
 
-GUI「守护进程」页的「MCP 服务」卡片可直接启停：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `logs/mcp.log`），点「停止」结束；勾上「随工具箱启动」后每次打开工具箱自动拉起（默认关）。卡片同时展示运行状态/端口/工具数，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
+GUI「守护进程」页的「MCP 服务」卡片可直接启停：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `logs/mcp.log`），点「停止」结束；勾上「随工具箱启动」后每次打开工具箱自动拉起（默认关），勾上「允许 eval」则启动参数额外带 `--allow-eval`（改完重启服务生效）。卡片同时展示运行状态/端口/工具数，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
 
-工具清单与参数、五个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+「AI 调试」Tab 不需要动上面任何一个开关：它按需保证服务带 `xbume_eval` 在跑（已在跑就复用，参数不一致只重启自己 pid 记录的那个），然后把指令写进剪贴板、把 `http://127.0.0.1:<gui 端口>/#ai` 作为固定深链。
+
+工具清单与参数、七个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
 
 ## 常见问题
 

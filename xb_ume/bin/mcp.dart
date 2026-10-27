@@ -10,7 +10,7 @@
 //   --uri <port|ws-url>      手工指定会话（跳过自动发现，可重复）
 //   --tool-groups <list>     all 或逗号分隔的组名：act,device-write（其余组为预留）
 //   --no-tool-groups         只暴露核心工具（关掉默认开启的 diagnose / run-safe）
-//   --allow-eval             预留开关：eval 类工具尚未提供（见 MCP_GUIDE 已知缺口）
+//   --allow-eval             启用 xbume_eval（默认关；可读/改 app 内运行时状态）
 //   --device-backend <list>  设备后端：auto（默认）/ adb,hdc,simctl,idevice / mobile-mcp
 //   -h, --help               帮助
 //   --version                版本
@@ -40,13 +40,14 @@ xb_ume MCP 服务
   --uri <port|ws-url>      手工指定 VM service 会话（跳过自动发现，可重复）
   --tool-groups <list>     all 或逗号分隔：act,device-write（inspect/ai/ide 预留）
   --no-tool-groups         只暴露核心工具
-  --allow-eval             预留开关：eval 类工具尚未提供
+  --allow-eval             启用 xbume_eval（默认关；可读/改 app 内运行时状态）
   --device-backend <list>  设备后端：auto / adb,hdc,simctl,idevice / mobile-mcp
   --log-file <path>        额外把启动与运日志追加写入文件（GUI 后台拉起时排障用）
   -h, --help               显示帮助
   --version                显示版本
 
-默认工具 20 个（core 14 + diagnose 3 + run-safe 3）；有副作用的组需显式开启。
+默认工具 24 个（core 18 + diagnose 3 + run-safe 3）；有副作用的组需显式开启。
+加 --allow-eval 多出 xbume_eval（25 个）。
 HTTP 模式 token 首次运行生成在 \$XB_UME_HOME/mcp.token。
 ''';
 
@@ -239,7 +240,10 @@ Future<void> main(List<String> argv) async {
     devices: devices,
     deviceBackend: args.deviceBackend,
   );
-  final all = <McpTool>[...coreTools(), ...deviceTools()];
+  final all = <McpTool>[
+    ...coreTools(allowEval: args.allowEval),
+    ...deviceTools(),
+  ];
   final enabled = all.where((t) => groups.contains(t.group)).toList();
   final server = McpServer(
     ctx: ctx,

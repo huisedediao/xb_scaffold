@@ -21,6 +21,9 @@ class XBUmeConfig {
   final int maxPerformanceRecords;
   final int maxNetworkRecords;
 
+  /// 结构化异常（FlutterError / PlatformError）环形缓冲容量。
+  final int maxExceptionRecords;
+
   final int networkBodyMaxLength;
   final int maxInspectorNodes;
   final Duration performanceUiUpdateInterval;
@@ -63,6 +66,7 @@ class XBUmeConfig {
     this.maxRouteRecords = 300,
     this.maxPerformanceRecords = 600,
     this.maxNetworkRecords = 300,
+    this.maxExceptionRecords = 200,
     this.networkBodyMaxLength = 65536,
     this.maxInspectorNodes = 1500,
     this.performanceUiUpdateInterval = const Duration(milliseconds: 240),
@@ -114,6 +118,7 @@ class XBUmeConfig {
     int? maxRouteRecords,
     int? maxPerformanceRecords,
     int? maxNetworkRecords,
+    int? maxExceptionRecords,
     int? networkBodyMaxLength,
     int? maxInspectorNodes,
     Duration? performanceUiUpdateInterval,
@@ -147,6 +152,7 @@ class XBUmeConfig {
       maxPerformanceRecords:
           maxPerformanceRecords ?? this.maxPerformanceRecords,
       maxNetworkRecords: maxNetworkRecords ?? this.maxNetworkRecords,
+      maxExceptionRecords: maxExceptionRecords ?? this.maxExceptionRecords,
       networkBodyMaxLength: networkBodyMaxLength ?? this.networkBodyMaxLength,
       maxInspectorNodes: maxInspectorNodes ?? this.maxInspectorNodes,
       performanceUiUpdateInterval:
