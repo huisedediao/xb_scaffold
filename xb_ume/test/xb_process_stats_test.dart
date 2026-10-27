@@ -46,4 +46,13 @@ void main() {
     expect(s['cpuScope'], anyOf('core', 'total'));
     expect(s['platform'], isNotEmpty);
   });
+
+  test('windowsCpuNsFromFileTime 按 100ns 换算成纳秒', () {
+    // GetProcessTimes 的 kernel/user 都是 FILETIME（100ns）；1s = 10_000_000。
+    expect(windowsCpuNsFromFileTime(0, 0), 0);
+    expect(windowsCpuNsFromFileTime(10000000, 0), 1000000000);
+    expect(windowsCpuNsFromFileTime(10000000, 5000000), 1500000000);
+    // 异常值（负）按 0 处理，不把负数传给上层换算百分比。
+    expect(windowsCpuNsFromFileTime(-1, -1), 0);
+  });
 }

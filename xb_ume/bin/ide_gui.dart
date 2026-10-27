@@ -486,21 +486,98 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/api/fs/dirs') {
+      // 「AI 调试」页的项目目录选择器：浏览器拿不到本地绝对路径（file 选择框只给
+      // 相对名），所以由后台在这台机器上列子目录，前端只负责展示与跳转。
+      // 只列目录、不读文件内容；空 path 从用户主目录开始。
+      final q = (req.uri.queryParameters['path'] ?? '').trim();
+      req.response.headers.contentType = ContentType.json;
+      try {
+        final start = q.isEmpty ? _home : q;
+        if (!Directory(start).existsSync()) {
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': false,
+            'message': '目录不存在或不可读：$start',
+          }));
+          await req.response.close();
+          return;
+        }
+        // 归一符号链接：macOS 的 /tmp → /private/tmp，否则来回点会攒出一串等价路径。
+        final cur = Directory(start).resolveSymbolicLinksSync();
+        final entries = <Map<String, Object?>>[];
+        try {
+          for (final e in Directory(cur).listSync(followLinks: false)) {
+            if (e is! Directory) continue;
+            final name = e.path.split(Platform.pathSeparator).last;
+            // 隐藏目录（.git / .dart_tool / .gradle …）对挑项目根没帮助，全跳过。
+            if (name.isEmpty || name.startsWith('.')) continue;
+            entries.add(<String, Object?>{
+              'name': name,
+              'path': e.path,
+              'flutter': File(
+                '${e.path}${Platform.pathSeparator}pubspec.yaml',
+              ).existsSync(),
+            });
+            if (entries.length >= 500) break;
+          }
+        } catch (e) {
+          // 单个子目录没权限不该让整层失败：已读到的照常返回。
+          _vmSelLog('fs', 'list $cur: $e');
+        }
+        // Flutter 项目排前面（选这个目录就是为了挑项目根），其余按名字。
+        int rank(Map<String, Object?> m) => m['flutter'] == true ? 0 : 1;
+        entries.sort((a, b) {
+          final d = rank(a) - rank(b);
+          if (d != 0) return d;
+          return '${a['name']}'.toLowerCase().compareTo(
+            '${b['name']}'.toLowerCase(),
+          );
+        });
+        final up = Directory(cur).parent.path;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'path': cur,
+          'parent': up == cur ? '' : up,
+          'flutter': File(
+            '$cur${Platform.pathSeparator}pubspec.yaml',
+          ).existsSync(),
+          'entries': entries,
+        }));
+      } catch (e) {
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'message': '$e',
+        }));
+      }
+      await req.response.close();
+      return;
+    }
     if (path == '/api/ai/config') {
       final cfg = _guiReadConfigRaw();
       final recent = <String>[
         for (final e in (cfg['aiRecentDirs'] as List? ?? const <Object?>[]))
           if ('$e'.trim().isNotEmpty) '$e'.trim(),
       ];
-      // macOS 桌面不在设备发现结果里，但它是 AI 调试最常用的目标。
+      // 桌面端不在设备发现结果里（发现只扫 adb/hdc/simctl/idevice），但它是
+      // AI 调试最常用的目标：`flutter run -d macos` / `-d windows`。
       final devs = <Map<String, String>>[...state.devices];
-      if (Platform.isMacOS && !devs.any((d) => d['id'] == 'macos')) {
-        devs.add(<String, String>{
-          'id': 'macos',
-          'name': 'macOS 桌面',
-          'state': '本机',
-          'platform': 'macos',
-        });
+      final desktop = Platform.isMacOS
+          ? <String, String>{
+              'id': 'macos',
+              'name': 'macOS 桌面',
+              'state': '本机',
+              'platform': 'macos',
+            }
+          : Platform.isWindows
+              ? <String, String>{
+                  'id': 'windows',
+                  'name': 'Windows 桌面',
+                  'state': '本机',
+                  'platform': 'windows',
+                }
+              : null;
+      if (desktop != null && !devs.any((d) => d['id'] == desktop['id'])) {
+        devs.add(desktop);
       }
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
@@ -8426,7 +8503,8 @@ Future<DbRunResult> dbRunSqlite(
   try {
     proc = await Process.start('sqlite3', args);
   } on ProcessException catch (e) {
-    throw '无法启动 sqlite3 命令行（${e.message}）：请安装 sqlite3 并加入 PATH（macOS 自带）';
+    throw '无法启动 sqlite3 命令行（${e.message}）：请安装 sqlite3 并加入 PATH'
+        '（macOS 自带；Windows 可 winget install SQLite.SQLite）';
   }
   final out = BytesBuilder(copy: false);
   var truncated = false;
@@ -9218,10 +9296,12 @@ String ensureMcpToken() {
     final f = File('$_home/.xb_ume_ide/mcp.token');
     f.parent.createSync(recursive: true);
     f.writeAsStringSync(token);
-    // token 是本地共享密钥，收紧到仅当前用户可读。
-    try {
-      Process.runSync('chmod', <String>['600', f.path]);
-    } catch (_) {}
+    // token 是本地共享密钥，收紧到仅当前用户可读（Windows 无 POSIX 权限，跳过）。
+    if (!Platform.isWindows) {
+      try {
+        Process.runSync('chmod', <String>['600', f.path]);
+      } catch (_) {}
+    }
   } catch (_) {
     // 写不了就交给服务端自己生成。
   }
@@ -11095,7 +11175,8 @@ const String guiHtml = r'''
           <input id="ai-dir" list="ai-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px">
           <datalist id="ai-dir-list"></datalist>
         </label>
-        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto;margin-right:0" title="app 要跑在哪台设备（AI 自己 flutter run -d 它）；留空自动：唯一手机 > macOS 桌面">设备
+        <button onclick="aiPickDir()" style="flex:0 0 auto;margin-left:6px;padding:6px 10px" title="浏览本机目录挑项目根（浏览器给不了绝对路径，这里由后台列目录）">选择…</button>
+        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto;margin-right:0" title="app 要跑在哪台设备（AI 自己 flutter run -d 它）；留空自动：唯一手机 > 桌面">设备
           <select id="ai-device" style="width:210px;margin-left:6px"></select>
         </label>
       </div>
@@ -11110,6 +11191,23 @@ const String guiHtml = r'''
         AI 调试不复用它——它要自己 <code>flutter run</code> 拉起 app，才有热重载所需的 stdin 句柄。
       </div>
       <pre id="ai-prompt" style="white-space:pre-wrap;max-height:calc(100vh - 400px);min-height:180px;overflow:auto;font-size:12px;line-height:1.55;margin:10px 0 0">点「一键开启」后，这里会出现可直接粘给 AI 的指令</pre>
+    </div>
+    <div id="ai-dir-pick" style="display:none;position:fixed;inset:0;z-index:120;background:rgba(3,7,12,.62)" onclick="if(event.target===this)aiPickClose()">
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(780px,92vw);max-height:80vh;display:flex;flex-direction:column;background:#0f1620;border:1px solid #223041;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+        <div class="row" style="padding:10px 12px;gap:6px;border-bottom:1px solid #223041;flex-wrap:nowrap">
+          <b style="white-space:nowrap">选择项目目录</b>
+          <button onclick="aiPickUp()" id="ai-pick-up" style="padding:4px 9px" title="上一级">↑ 上级</button>
+          <button onclick="aiPickLoad('')" style="padding:4px 9px" title="回到用户主目录">主目录</button>
+          <input id="ai-pick-path" placeholder="绝对路径，回车跳转" style="flex:1;min-width:0;width:0;font-size:12px" onkeydown="if(event.key==='Enter')aiPickLoad(this.value)">
+          <button onclick="aiPickClose()" style="padding:4px 9px" title="关闭（Esc）">✕</button>
+        </div>
+        <div id="ai-pick-cand" class="row" style="padding:6px 12px;gap:6px;flex-wrap:wrap;border-bottom:1px solid #223041"></div>
+        <div id="ai-pick-list" style="flex:1;overflow:auto;padding:4px 6px"></div>
+        <div class="row" style="padding:10px 12px;gap:8px;border-top:1px solid #223041;flex-wrap:nowrap">
+          <span id="ai-pick-tip" class="muted" style="flex:1;min-width:0;font-size:12px"></span>
+          <button class="primary" onclick="aiPickChoose()">选定此目录</button>
+        </div>
+      </div>
     </div>
   </section>
   <section class="page" id="page-logs">
@@ -11399,7 +11497,7 @@ const String guiHtml = r'''
       <div class="hd"><b id="pf-proc-k">进程内存构成</b><span id="pf-proc-stat"></span></div>
       <div id="pf-proc"><span class="muted">暂无数据</span></div>
     </div>
-    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：CPU 优先用 app 端服务扩展 <code>ext.xbume.processStats</code>（<code>getrusage</code> / <code>/proc</code> 读整进程 user+sys CPU 时间，含全部线程）；iOS/macOS 按 Xcode 调试导航器口径（单核占满 100%，多核可超 100%），Android / OHOS 按 Android Studio / DevEco Profiler 口径（以全部核心容量合计为 100%）。旧版 SDK 未注册扩展时回退 VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate）。进程内存：Android / OHOS 取 <code>/proc/self/smaps</code> 的 PSS（与 Android Studio 的 Total、DevEco Memory 泳道的 PSS 同源；分类按 dumpsys App Summary / DevEco 内存类型拆分；GPU memtrack 显存在 app 内不可读，可能与官方差一个 GL/Graph 值），iOS/macOS 取 <code>phys_footprint</code>（Xcode 内存 gauge 口径）；都不可用时回退 <code>getProcessMemoryUsage</code>。堆来自 <code>getMemoryUsage</code>（Dart 堆与堆外内存）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
+    <div class="muted" style="margin-top:6px;font-size:12px">数据来源：CPU 优先用 app 端服务扩展 <code>ext.xbume.processStats</code>（<code>getrusage</code> / <code>/proc</code> / <code>GetProcessTimes</code> 读整进程 user+sys CPU 时间，含全部线程）；iOS/macOS 按 Xcode 调试导航器口径（单核占满 100%，多核可超 100%），Windows 按任务管理器口径（以全部核心容量合计为 100%），Android / OHOS 按 Android Studio / DevEco Profiler 口径（以全部核心容量合计为 100%）。旧版 SDK 未注册扩展时回退 VM service <code>getCpuSamples</code>（窗口内采样数 × 采样周期 / 窗口时长，Idle 不计入；只反映 Dart 主 isolate）。进程内存：Android / OHOS 取 <code>/proc/self/smaps</code> 的 PSS（与 Android Studio 的 Total、DevEco Memory 泳道的 PSS 同源；分类按 dumpsys App Summary / DevEco 内存类型拆分；GPU memtrack 显存在 app 内不可读，可能与官方差一个 GL/Graph 值），iOS/macOS 取 <code>phys_footprint</code>（Xcode 内存 gauge 口径），Windows 取 <code>GetProcessMemoryInfo</code> 的 WorkingSetSize（任务管理器「内存」同源）；都不可用时回退 <code>getProcessMemoryUsage</code>。堆来自 <code>getMemoryUsage</code>（Dart 堆与堆外内存）；仅 debug 模式可用。离开本页或点「暂停」停止采集，避免持续占用调试通道。</div>
   </section>
   <section class="page" id="page-wtree">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -11526,7 +11624,7 @@ document.addEventListener('visibilitychange', function(){ clog('页面' + (docum
 var lastDaemonRunning = null;
 var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
-var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机' };
+var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机', windows: 'Windows', macos: 'macOS' };
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws?token=' + encodeURIComponent(XBUME_TOKEN));
   ws.onopen = function(){ document.getElementById('wsdot').classList.add('on'); };
@@ -13750,8 +13848,9 @@ function setMcpEval(cb){
 // ── AI 调试 ──
 var aiPromptText = '';
 var aiConfigText = '';
-// 最近一次从 /api/ai/config 拉到的会话项目根（成功后刷新候选时继续保留）。
+// 最近一次从 /api/ai/config 拉到的会话项目根与最近目录（成功后刷新候选时继续保留）。
 var aiSessionDirs = [];
+var aiRecentDirs = [];
 // 项目目录候选 = 当前已存目录 + 会话反推的项目根 + 最近用过（去重，保持顺序）。
 function aiFillDirs(sessionDirs, recent, current){
   var list = [];
@@ -13768,10 +13867,12 @@ function aiFillDevices(list, cur, fallback){
   var sel = document.getElementById('ai-device');
   if (!sel) return;
   var prev = sel.value;
-  var html = '<option value="">自动（唯一手机 > macOS 桌面）</option>';
+  var html = '<option value="">自动（唯一手机 > 桌面）</option>';
   (list || []).forEach(function(d){
-    // 桌面端已是带平台名的名字（「macOS 桌面」），不再加前缀。
-    var prefix = (d.id === 'macos' || d.platform === 'macos')
+    // 桌面端已是带平台名的名字（「macOS 桌面」/「Windows 桌面」），不再加前缀。
+    var isDesktop = d.id === 'macos' || d.id === 'windows'
+      || d.platform === 'macos' || d.platform === 'windows';
+    var prefix = isDesktop
       ? ''
       : (platformNames[d.platform] || d.platform || '') + ' · ';
     var lbl = prefix + (d.name || d.id) + (d.state ? '（' + d.state + '）' : '');
@@ -13785,11 +13886,104 @@ function aiFillDevices(list, cur, fallback){
 function aiShow(){
   fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
     aiSessionDirs = d.sessionDirs || [];
-    aiFillDirs(aiSessionDirs, d.recentDirs, d.projectDir);
+    aiRecentDirs = d.recentDirs || [];
+    aiFillDirs(aiSessionDirs, aiRecentDirs, d.projectDir);
     aiFillDevices(d.devices, d.device, d.selectedDevice);
   }).catch(function(){});
   refreshMcp();
 }
+// ── 项目目录选择器 ──
+// 浏览器自己的 <input type=file webkitdirectory> 只给相对路径，拿不到能当 cwd 的
+// 绝对路径，所以改成后台列子目录、前端点选。只列目录，不读文件内容。
+var aiPickCur = '';    // 当前浏览到的目录
+var aiPickParent = ''; // 上一级（根目录为空）
+function aiPickDir(){
+  var inp = document.getElementById('ai-dir');
+  var ov = document.getElementById('ai-dir-pick');
+  if (ov) ov.style.display = 'block';
+  aiPickLoad(inp ? (inp.value || '').trim() : '');
+}
+function aiPickClose(){
+  var ov = document.getElementById('ai-dir-pick');
+  if (ov) ov.style.display = 'none';
+}
+function aiPickUp(){ if (aiPickParent) aiPickLoad(aiPickParent); }
+function aiPickChoose(){
+  var inp = document.getElementById('ai-dir');
+  if (inp && aiPickCur) inp.value = aiPickCur;
+  aiPickClose();
+}
+function aiPickLoad(p){
+  var list = document.getElementById('ai-pick-list');
+  var tip = document.getElementById('ai-pick-tip');
+  if (list) list.innerHTML = '<div class="muted" style="padding:10px 12px">读取中…</div>';
+  fetch('/api/fs/dirs?path=' + encodeURIComponent(p || ''))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok !== true) {
+        if (list) list.innerHTML = '<div class="bad" style="padding:10px 12px">'
+          + esc(d.message || '读取失败') + '</div>';
+        return;
+      }
+      aiPickCur = d.path || '';
+      aiPickParent = d.parent || '';
+      var pi = document.getElementById('ai-pick-path');
+      if (pi) pi.value = aiPickCur;
+      var up = document.getElementById('ai-pick-up');
+      if (up) up.disabled = !aiPickParent;
+      if (tip) tip.innerHTML = d.flutter === true
+        ? '<span class="ok">此目录含 pubspec.yaml，可直接选定</span>'
+        : '此目录没有 pubspec.yaml（不是 Flutter 项目根，可继续进子目录找）';
+      aiPickCand();
+      var rows = d.entries || [];
+      if (!rows.length) {
+        if (list) list.innerHTML = '<div class="muted" style="padding:10px 12px">没有子目录</div>';
+        return;
+      }
+      if (list) list.innerHTML = rows.map(function(e){
+        var badge = e.flutter
+          ? '<span class="ok" style="font-size:11px;margin-left:8px;white-space:nowrap">Flutter</span>' : '';
+        return '<div class="ai-pick-row" data-path="' + esc(e.path) + '"'
+          + ' style="display:flex;align-items:center;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px"'
+          + ' onclick="aiPickLoad(this.dataset.path)" title="' + esc(e.path) + '">'
+          + '<span style="margin-right:8px;opacity:.65">📁</span>'
+          + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+          + esc(e.name) + '</span>' + badge + '</div>';
+      }).join('');
+      Array.prototype.forEach.call(list.querySelectorAll('.ai-pick-row'), function(el){
+        el.onmouseenter = function(){ el.style.background = '#16202b'; };
+        el.onmouseleave = function(){ el.style.background = 'transparent'; };
+      });
+    })
+    .catch(function(e){
+      if (list) list.innerHTML = '<div class="bad" style="padding:10px 12px">'
+        + esc(String(e)) + '</div>';
+    });
+}
+// 快捷候选：调试会话反推的项目根 + 最近用过的目录，点一下直接跳过去。
+function aiPickCand(){
+  var box = document.getElementById('ai-pick-cand');
+  if (!box) return;
+  var list = [];
+  aiSessionDirs.concat(aiRecentDirs).forEach(function(p){
+    if (p && list.indexOf(p) < 0) list.push(p);
+  });
+  list = list.slice(0, 6);
+  if (!list.length) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  box.innerHTML = '<span class="muted" style="font-size:12px;white-space:nowrap;align-self:center">会话/最近</span>'
+    + list.map(function(p){
+        var name = p.split(/[\\\/]/).pop() || p;
+        return '<button data-p="' + esc(p) + '" title="' + esc(p) + '"'
+          + ' style="padding:3px 9px;font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"'
+          + ' onclick="aiPickLoad(this.dataset.p)">' + esc(name) + '</button>';
+      }).join('');
+}
+document.addEventListener('keydown', function(e){
+  if (e.key !== 'Escape') return;
+  var ov = document.getElementById('ai-dir-pick');
+  if (ov && ov.style.display === 'block') aiPickClose();
+});
 function aiSetup(btn){
   var dir = (document.getElementById('ai-dir').value || '').trim();
   var dev = (document.getElementById('ai-device').value || '').trim();
@@ -13812,7 +14006,8 @@ function aiSetup(btn){
     aiConfigText = d.config || '';
     if (pre) pre.textContent = aiPromptText;
     // 成功后刷新候选（新目录置顶；会话反推的候选不丢），设备按后端最终值回填。
-    aiFillDirs(aiSessionDirs, d.recentDirs, d.projectDir);
+    aiRecentDirs = d.recentDirs || aiRecentDirs;
+    aiFillDirs(aiSessionDirs, aiRecentDirs, d.projectDir);
     var devSel = document.getElementById('ai-device');
     if (devSel) devSel.value = d.deviceId || '';
     var m = d.mcp || {};
@@ -13980,6 +14175,7 @@ function pfCpuLabel(plat, scope){
   if (scope === 'total') {
     if (plat === 'android') return 'CPU（整进程 · Android Studio 口径）';
     if (plat === 'ohos') return 'CPU（整进程 · DevEco 口径）';
+    if (plat === 'windows') return 'CPU（整进程 · 任务管理器口径）';
     return 'CPU（整进程 · 全核容量）';
   }
   if (plat === 'ios' || plat === 'macos') return 'CPU（整进程 · Xcode 口径）';
@@ -13992,6 +14188,7 @@ function pfMemLabel(plat, pss, fp){
     return '进程内存（PSS）';
   }
   if (fp) return '进程内存（footprint · Xcode 口径）';
+  if (plat === 'windows') return '进程内存（WorkingSet）';
   return '进程内存';
 }
 function pfApply(d, ms){

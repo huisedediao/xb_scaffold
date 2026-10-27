@@ -55,6 +55,34 @@ String resolvePathForCompare(String path) {
   }
 }
 
+/// 从 `Get-CimInstance Win32_Process` 的 CSV（列序 `ProcessId,ParentProcessId`）
+/// 里求 [root] 的整棵子树（不含 root 自己）。
+///
+/// 拆成纯函数便于在非 Windows 机器上单测；深度上限 6 层防环。
+List<int> parseDescendantPids(String csv, int root) {
+  final childrenOf = <int, List<int>>{};
+  for (final line in csv.split('\n')) {
+    final cols = line.split(',');
+    if (cols.length < 2) continue;
+    final child = int.tryParse(cols[0].replaceAll('"', '').trim());
+    final parent = int.tryParse(cols[1].replaceAll('"', '').trim());
+    if (child == null || parent == null) continue;
+    childrenOf.putIfAbsent(parent, () => <int>[]).add(child);
+  }
+  final out = <int>[];
+  void walk(int p, int depth) {
+    if (depth > 6) return;
+    for (final c in childrenOf[p] ?? const <int>[]) {
+      if (c <= 1 || c == root || out.contains(c)) continue;
+      out.add(c);
+      walk(c, depth + 1);
+    }
+  }
+
+  walk(root, 0);
+  return out;
+}
+
 /// 一次 flutter run 的结果。
 class LaunchResult {
   LaunchResult({
@@ -290,7 +318,9 @@ class FlutterRunLauncher {
         flutter,
         <String>['run', '-d', device, if (target != null && target.isNotEmpty) ...<String>['--target', target]],
         workingDirectory: workdir,
-        runInShell: false,
+        // Windows 上 flutter 是 flutter.bat：CreateProcess 不能直接执行批处理，
+        // 必须走 cmd；其他平台（或原生 .exe）保持直启。
+        runInShell: needsShellOnWindows(flutter),
       );
     } on ProcessException catch (e) {
       await sink.close();
@@ -484,7 +514,9 @@ class FlutterRunLauncher {
   /// 先 SIGTERM，3 秒后 SIGKILL；子进程必须在杀父进程**之前**取快照，
   /// 否则 parent 退出后它们会被 init 收养，无从得知归属。
   Future<StopResult> stop(int pid) async {
-    final children = _childrenOf(pid);
+    final children = Platform.isWindows
+        ? await _descendantsOnWindows(pid)
+        : _childrenOf(pid);
     final alive = Process.killPid(pid, ProcessSignal.sigterm);
     if (!alive) {
       _live.remove(pid)?.dispose();
@@ -513,7 +545,6 @@ class FlutterRunLauncher {
 
   /// 直接子进程（ps -axo pid,ppid）。
   List<int> _childrenOf(int pid) {
-    if (Platform.isWindows) return const <int>[];
     try {
       final r = Process.runSync('ps', <String>['-axo', 'pid,ppid']);
       if (r.exitCode != 0) return const <int>[];
@@ -532,7 +563,41 @@ class FlutterRunLauncher {
     }
   }
 
+  /// Windows 上没有 ps：一次 PowerShell 取全表（pid,ppid），本地求整棵子树。
+  ///
+  /// `flutter.bat` 会经 cmd 再拉起 dart（flutter_tools），app 本体是孙进程，
+  /// 只取一层会漏掉 app，所以这里递归到底。
+  Future<List<int>> _descendantsOnWindows(int pid) async {
+    try {
+      final r = await Process.run('powershell', <String>[
+        '-NoProfile',
+        '-Command',
+        'Get-CimInstance Win32_Process | '
+            'Select-Object ProcessId,ParentProcessId | '
+            'ConvertTo-Csv -NoTypeInformation',
+      ]);
+      if (r.exitCode != 0) return const <int>[];
+      return parseDescendantPids('${r.stdout}', pid);
+    } catch (_) {
+      return const <int>[];
+    }
+  }
+
   bool _isAlive(int pid) {
+    if (Platform.isWindows) {
+      // Windows 没有 kill -0：用 tasklist 精确查 pid。注意找不到时 tasklist
+      // 的退出码仍可能是 0（只打印「信息: 没有运行的任务…」），必须看输出里
+      // 有没有这个 pid。
+      try {
+        final r = Process.runSync(
+          'tasklist',
+          <String>['/FI', 'PID eq $pid', '/NH'],
+        );
+        return '${r.stdout}'.contains('$pid');
+      } catch (_) {
+        return false;
+      }
+    }
     final r = Process.runSync('kill', <String>['-0', '$pid']);
     return r.exitCode == 0;
   }

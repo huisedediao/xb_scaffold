@@ -316,10 +316,12 @@ String ensureToken() {
         rnd.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     f.parent.createSync(recursive: true);
     f.writeAsStringSync(token);
-    // token 是本地共享密钥，收紧到仅当前用户可读。
-    try {
-      Process.runSync('chmod', <String>['600', f.path]);
-    } catch (_) {}
+    // token 是本地共享密钥，收紧到仅当前用户可读（Windows 无 POSIX 权限，跳过）。
+    if (!Platform.isWindows) {
+      try {
+        Process.runSync('chmod', <String>['600', f.path]);
+      } catch (_) {}
+    }
     return token;
   } catch (_) {
     return '';

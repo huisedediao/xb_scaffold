@@ -37,6 +37,15 @@ class CmdResult {
   String toString() => 'CmdResult(code=$code, out=${stdout.length}B)';
 }
 
+/// Windows 上 `.bat` / `.cmd`（flutter.bat、npx.cmd 等）必须经 cmd 执行：
+/// CreateProcess 不能直接跑批处理。其他可执行文件保持直启，避免多一层 shell
+/// 把带空格/特殊字符的参数再拆一遍。
+bool needsShellOnWindows(String exe) {
+  if (!Platform.isWindows) return false;
+  final lower = exe.toLowerCase();
+  return lower.endsWith('.bat') || lower.endsWith('.cmd');
+}
+
 /// 执行命令；超时自动 kill，返回 code=-1。
 Future<CmdResult> runCmd(
   String exe,
@@ -52,7 +61,7 @@ Future<CmdResult> runCmd(
       args,
       workingDirectory: workingDirectory,
       environment: environment,
-      runInShell: false,
+      runInShell: needsShellOnWindows(exe),
     );
   } on ProcessException catch (e) {
     return CmdResult(127, '', '${e.message}${e.errorCode == 0 ? '' : '(${e.errorCode})'}');

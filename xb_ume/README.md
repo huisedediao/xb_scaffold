@@ -57,7 +57,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | iOS | ✅ | ✅（仅 macOS 电脑；真机需 libimobiledevice） | ✅ | ✅ 单核 CPU + footprint | ✅ |
 | 鸿蒙 OHOS | ✅ | ✅（hdc） | ✅ | ✅ 全核 CPU + PSS² | ❌ |
 | macOS | ✅ | ✅ | ✅ | ✅ 单核 CPU + footprint | ✅ |
-| Windows | ✅ | ✅ | ✅ | ❌ 回退 isolate CPU / VM 内存分桶 | ✅ |
+| Windows | ✅ | ✅ | ✅ | ✅ 全核 CPU + WorkingSet | ✅ |
 | Linux | ✅ | ⚠️ 无一键安装：源码目录运行 `dart bin/ide_gui.dart` | ✅（`--daemon`） | ✅ 单核 CPU + PSS（/proc 可读时） | ✅ |
 | Web | ✅ | ❌ | ❌ | ❌ | ❌ |
 
@@ -154,7 +154,7 @@ XBUmeBinding.ensureInitialized(
 ```bash
 flutter pub get
 
-# macOS / Windows：部署守护进程 + GUI，并注册登录自启（崩溃自拉起）
+# macOS / Windows：部署守护进程 + GUI，并注册登录自启（macOS 额外崩溃自拉起）
 dart run xb_ume:ide --install
 
 # 打开 GUI 工具箱（自动打开浏览器）

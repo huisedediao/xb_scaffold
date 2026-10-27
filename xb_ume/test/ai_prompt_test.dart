@@ -97,6 +97,14 @@ void main() {
       expect(src, contains("'sessionDirs': state.sessionProjectRoots"));
       expect(src, contains("cfg['aiRecentDirs']"));
       expect(src, contains('projectRoot = root'));
+      // 项目目录可直接选：后台列目录（浏览器拿不到绝对路径），前端只负责跳转/选定。
+      expect(src, contains("path == '/api/fs/dirs'"));
+      expect(src, contains("queryParameters['path']"));
+      expect(src, contains('listSync(followLinks: false)'));
+      expect(src, contains('id="ai-dir-pick"'));
+      expect(src, contains('function aiPickDir()'));
+      expect(src, contains('function aiPickChoose()'));
+      expect(src, contains("aiPickLoad(this.dataset.path)"));
     });
   });
 }

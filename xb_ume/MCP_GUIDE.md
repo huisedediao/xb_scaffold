@@ -409,13 +409,13 @@ dart run xb_ume:run ~/.xb_ume_ide/scenarios/login.json --uri 52111 --json
 
 - `—` 是后端边界，不是 bug。调用时返回 `unsupported: true` 与原因，模型应改道（例如
   iOS 模拟器没有 pressKey，改用 `xbume_tap`/`xbume_navigate`）。
-- `idevice` 依赖本机 `idevice_id` / `ideviceinstaller` / `idevicecrashreport`（brew 安装）。
-  缺哪个就少哪个能力，`xbume_devices` 会列出来。
+- `idevice` 依赖本机 `idevice_id` / `ideviceinstaller` / `idevicecrashreport`（macOS 用 brew 安装；
+  Windows 需自行下载 libimobiledevice 工具集并加进 PATH）。缺哪个就少哪个能力，`xbume_devices` 会列出来。
 - `mobile-mcp` 是可选适配器：需要 Node 18+ 与 `npx`，首次调用会
   `npx -y @mobilenext/mobile-mcp@latest --listen 46150`（可能触发外网下载）。
   探测不到就整体降级为不可用并给出 reason，不影响其他后端。
-- macOS 桌面 app 没有 adb/hdc/simctl 概念，装包/起进程走 `xbume_app_launch` 的
-  `via=flutter-run` 分支（`flutter run -d macos`）。
+- 桌面 app（macOS / Windows）没有 adb/hdc/simctl 概念，装包/起进程走 `xbume_app_launch` 的
+  `via=flutter-run` 分支（`flutter run -d macos` / `-d windows`）。
 
 ---
 
@@ -474,3 +474,15 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 - **mobile-mcp 能力是「探测到的」而非保证的**：适配器版本变化会改变可用工具集，
   以 `xbume_devices` 返回的 capabilities 为准。
 - **HTTP 传输不提供 SSE 流**：`GET /mcp` 返回 405。需要流式通知的客户端请用 stdio。
+- **Windows 上「同设备同目录防顶掉」体检不生效**：启动前扫本机 `flutter run` 依赖
+  `ps` + `lsof -d cwd`，Windows 没有这两个命令，扫描结果固定为空表，
+  `xbume_app_launch` 不会拦「已有同设备同目录的 flutter run」。要复用会话请自己先
+  `xbume_sessions` → `xbume_use_session`，否则重装包会顶掉 IDE 那个会话。
+- **Windows 没有 LaunchAgent 的 KeepAlive**：`--install` 在 Windows 写 HKCU 注册表
+  Run 键（登录自启），daemon 崩溃后不会被拉起；macOS 的 LaunchAgent 才会。
+  Windows 的 daemon 日志在 `~/.xb_ume_ide/daemon.log`。
+- **iOS 专属能力的宿主限制**：模拟器（`simctl`）与 `idevice*` 系后端依赖 macOS 工具链；
+  偏好设置 plist 编辑用本机 `plutil` 转换。在 Windows 上这些入口会回「不支持」或
+  报找不到工具，不影响 Android / 鸿蒙 / Windows 桌面链路。
+- **sqlite3 查询依赖本机命令行**：macOS 自带；Windows 需自行安装并加入 PATH
+  （`winget install SQLite.SQLite`），缺失时 GUI 会明确报错而不是空白。

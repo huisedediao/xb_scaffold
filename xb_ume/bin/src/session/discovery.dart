@@ -195,7 +195,8 @@ Future<List<int>> loopbackListeningPorts() async {
       const <String>['-nP', '-iTCP', '-sTCP:LISTEN'],
     );
   }
-  final pattern = RegExp(r'(?:127\.0\.0\.1|\*|\[::1\]):(\d+)\s');
+  // Windows 的通配绑定是 0.0.0.0 / [::]（lsof 是 *），一并接受。
+  final pattern = RegExp(r'(?:127\.0\.0\.1|0\.0\.0\.0|\*|\[::1?\]):(\d+)\s');
   for (final line in output.split('\n')) {
     if (Platform.isWindows && !line.contains('LISTENING')) continue;
     final match = pattern.firstMatch(line);

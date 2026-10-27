@@ -51,4 +51,30 @@ void main() {
       expect(resolvePathForCompare(missing), File(missing).absolute.path);
     });
   });
+
+  group('parseDescendantPids（Windows 停止时找 app 进程）', () {
+    // Get-CimInstance Win32_Process | Select ProcessId,ParentProcessId | ConvertTo-Csv
+    const csv = '\r\n'
+        '"ProcessId","ParentProcessId"\r\n'
+        '"100","10"\r\n' // cmd /c flutter.bat
+        '"200","100"\r\n' // dart.exe（flutter_tools）
+        '"300","200"\r\n' // app.exe
+        '"400","11"\r\n'; // 另一棵树的进程
+
+    test('递归到底：cmd → dart → app 都能取到', () {
+      expect(parseDescendantPids(csv, 10), <int>[100, 200, 300]);
+    });
+
+    test('不含 root 自己，也不把别的树的进程算进来', () {
+      final pids = parseDescendantPids(csv, 10);
+      expect(pids, isNot(contains(10)));
+      expect(pids, isNot(contains(400)));
+      expect(parseDescendantPids(csv, 100), <int>[200, 300]);
+      expect(parseDescendantPids(csv, 300), isEmpty);
+    });
+
+    test('表头与非数字行被跳过，不抛异常', () {
+      expect(parseDescendantPids('garbage\n\n', 10), isEmpty);
+    });
+  });
 }

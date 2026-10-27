@@ -14,6 +14,16 @@ typedef _GetPidNative = Int32 Function();
 typedef _GetPidDart = int Function();
 typedef _MallocNative = Pointer<Uint8> Function(IntPtr);
 typedef _MallocDart = Pointer<Uint8> Function(int);
+// Windows：kernel32!GetProcessTimes + psapi!GetProcessMemoryInfo（全进程口径）。
+typedef _GetCurrentProcessNative = IntPtr Function();
+typedef _GetCurrentProcessDart = int Function();
+typedef _GetProcessTimesNative = Int32 Function(
+    IntPtr, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _GetProcessTimesDart = int Function(
+    int, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _GetProcessMemoryInfoNative = Int32 Function(
+    IntPtr, Pointer<Void>, Uint32);
+typedef _GetProcessMemoryInfoDart = int Function(int, Pointer<Void>, int);
 
 _GetRusageDart? _getrusage;
 _ProcPidRusageDart? _procPidRusage;
@@ -22,6 +32,19 @@ Pointer<Uint8>? _rusageBuf;
 Pointer<Uint8>? _procBuf;
 bool _appleReady = false;
 bool _extensionInstalled = false;
+_GetCurrentProcessDart? _getCurrentProcess;
+_GetProcessTimesDart? _getProcessTimes;
+_GetProcessMemoryInfoDart? _getProcessMemoryInfo;
+Pointer<Uint8>? _winTimesBuf;
+Pointer<Uint8>? _winMemBuf;
+bool _windowsReady = false;
+
+/// Windows 的 FILETIME 是 100 纳秒计数（user+sys 分别给出）；换算成纳秒。
+/// 拆成纯函数便于在非 Windows 机器上单测。
+int windowsCpuNsFromFileTime(int kernel100ns, int user100ns) {
+  final total = kernel100ns + user100ns;
+  return total <= 0 ? 0 : total * 100;
+}
 
 /// 注册 `ext.xbume.processStats`：GUI 每次轮询调用一次，返回 JSON 字符串。
 void installProcessStatsExtension(Map<String, Object?> Function() sample) {
@@ -44,11 +67,81 @@ void installProcessStatsExtension(Map<String, Object?> Function() sample) {
 
 XBUmeProcessUsage? readProcessUsage() {
   if (Platform.isIOS || Platform.isMacOS) return _appleUsage();
+  if (Platform.isWindows) return _windowsUsage();
   final os = Platform.operatingSystem;
   if (Platform.isAndroid || Platform.isLinux || os == 'ohos') {
     return _procUsage();
   }
   return null;
+}
+
+/// Windows：`GetProcessTimes` 取 kernel+user（FILETIME，100ns）；
+/// `GetProcessMemoryInfo` 取 WorkingSetSize（与任务管理器「内存(专用工作集)
+/// 接近」）；两者任一失败只降级该项。
+XBUmeProcessUsage? _windowsUsage() {
+  _initWindows();
+  int? cpuNs;
+  final times = _getProcessTimes;
+  final cur = _getCurrentProcess;
+  final tbuf = _winTimesBuf;
+  if (times != null && cur != null && tbuf != null) {
+    // FILETIME[4]：creation / exit / kernel / user，每个 8 字节。
+    final q = tbuf.cast<Uint64>();
+    if (times(cur(), q, q + 1, q + 2, q + 3) != 0) {
+      cpuNs = windowsCpuNsFromFileTime(q[2], q[3]);
+      if (cpuNs == 0) cpuNs = null;
+    }
+  }
+  int? rss;
+  final memInfo = _getProcessMemoryInfo;
+  final mbuf = _winMemBuf;
+  if (memInfo != null && cur != null && mbuf != null) {
+    // PROCESS_MEMORY_COUNTERS：cb(4) + PageFaultCount(4) + 8 个指针宽的
+    // SIZE_T，cb 必须等于结构体实际大小（调用方负责填）。WorkingSetSize 是
+    // 第 2 个 SIZE_T（偏移 8 + 指针宽度）；Flutter 桌面 Windows 只有 x64，
+    // 32 位下读法不同，直接跳过该项降级到 _currentRss()。
+    final ptrSize = sizeOf<IntPtr>();
+    final cb = 8 + 8 * ptrSize;
+    mbuf.cast<Uint32>()[0] = cb;
+    if (memInfo(cur(), mbuf.cast(), cb) != 0 && ptrSize == 8) {
+      final ws = mbuf.cast<Uint64>()[2];
+      if (ws > 0) rss = ws;
+    }
+  }
+  rss ??= _currentRss();
+  if (cpuNs == null && rss == null) return null;
+  return XBUmeProcessUsage(
+    cpuNs: cpuNs,
+    rss: rss,
+    cpuCores: Platform.numberOfProcessors,
+    // 与任务管理器同口径：100% = 全部核心容量合计（不是单核）。
+    cpuScope: 'total',
+    platform: 'windows',
+  );
+}
+
+void _initWindows() {
+  if (_windowsReady) return;
+  _windowsReady = true;
+  try {
+    final kernel32 = DynamicLibrary.open('kernel32.dll');
+    _getCurrentProcess = kernel32.lookupFunction<_GetCurrentProcessNative,
+        _GetCurrentProcessDart>('GetCurrentProcess');
+    _getProcessTimes = kernel32.lookupFunction<_GetProcessTimesNative,
+        _GetProcessTimesDart>('GetProcessTimes');
+  } catch (_) {}
+  try {
+    final psapi = DynamicLibrary.open('psapi.dll');
+    _getProcessMemoryInfo = psapi.lookupFunction<_GetProcessMemoryInfoNative,
+        _GetProcessMemoryInfoDart>('GetProcessMemoryInfo');
+  } catch (_) {}
+  try {
+    // msvcrt 的 malloc 用来给 FFI 结构体准备缓冲区（进程生命周期内复用）。
+    final crt = DynamicLibrary.open('msvcrt.dll');
+    final malloc = crt.lookupFunction<_MallocNative, _MallocDart>('malloc');
+    _winTimesBuf = malloc(64);
+    _winMemBuf = malloc(72);
+  } catch (_) {}
 }
 
 /// iOS/macOS：`getrusage(RUSAGE_SELF)` 取 user+sys（timeval，微秒精度，无时间基

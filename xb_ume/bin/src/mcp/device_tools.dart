@@ -25,10 +25,13 @@ List<McpTool> deviceTools() => <McpTool>[
       _crashGetTool(),
     ];
 
+/// 本机桌面设备在 `flutter devices` 里的名字（macOS：macos / Windows：windows）。
+final String _desktopDevice = Platform.isWindows ? 'windows' : 'macos';
+
 Map<String, Object?> _deviceIdProp({String extra = ''}) => prop(
       'string',
       '设备 id（xbume_devices 返回的 id：Android 序列号 / iOS UDID / hdc connect key；'
-          'flutter-run 模式下用 flutter 设备名，如 macos）$extra',
+          'flutter-run 模式下用 flutter 设备名，如 $_desktopDevice）$extra',
     );
 
 /// 把后端异常统一转成结构化结果。
@@ -127,7 +130,7 @@ McpTool _appLaunchTool() => McpTool(
           '自动选为当前会话；via=adb/simctl/hdc 只启动已安装的包（需要 packageId）。',
       group: ToolGroup.core,
       inputSchema: toolSchema(<String, Object?>{
-        'deviceId': _deviceIdProp(extra: '；via=flutter-run 时可用 macos'),
+        'deviceId': _deviceIdProp(extra: '；via=flutter-run 时可用 $_desktopDevice'),
         'via': prop('string', 'flutter-run | adb | simctl | hdc',
             defaultValue: 'flutter-run'),
         'packageId': prop(
@@ -145,7 +148,7 @@ McpTool _appLaunchTool() => McpTool(
       ]),
       handler: (ctx, args) async {
         final deviceId = requireString(args, 'deviceId',
-            hint: '先调用 xbume_devices；macOS 桌面可用 macos');
+            hint: '先调用 xbume_devices；桌面可用 $_desktopDevice');
         final via =
             (optionalString(args, 'via') ?? 'flutter-run').toLowerCase();
         final timeout = Duration(

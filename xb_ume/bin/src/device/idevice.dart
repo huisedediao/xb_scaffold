@@ -31,7 +31,9 @@ class IDeviceBridge extends DeviceBridge {
 
   @override
   String? get unavailableReason => _idExe == null
-      ? '未找到 idevice_id（brew install libimobiledevice）'
+      ? (Platform.isWindows
+          ? '未找到 idevice_id（Windows 需自行安装 libimobiledevice 并加入 PATH）'
+          : '未找到 idevice_id（brew install libimobiledevice）')
       : (_installerExe == null ? '未找到 ideviceinstaller，装包/卸包不可用' : null);
 
   @override

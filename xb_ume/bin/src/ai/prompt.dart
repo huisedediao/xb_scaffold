@@ -25,7 +25,7 @@ String resolveProjectDir(String raw) {
   return dir;
 }
 
-/// 推荐设备：唯一 adb/hdc 设备优先，其次 macOS 桌面，最后第一台可用设备。
+/// 推荐设备：唯一 adb/hdc 设备优先，其次本机桌面（macOS / Windows），最后第一台可用设备。
 ///
 /// 返回 null 表示选不出来（多台手机/无任何设备），调用方应让用户显式指定。
 Future<String?> guessDevice() async {
@@ -38,6 +38,9 @@ Future<String?> guessDevice() async {
     if (phones.length == 1) return phones.single.id;
     if (phones.length > 1) return null; // 多台手机不替用户猜
     if (Platform.isMacOS) return 'macos';
+    // Windows 桌面同样是合法目标（`flutter run -d windows`），与 macOS 对等
+    // 优先于「首个可用设备」（可能是状态异常的手机）。
+    if (Platform.isWindows) return 'windows';
     if (devices.isNotEmpty) return devices.first.id;
     return null;
   } finally {

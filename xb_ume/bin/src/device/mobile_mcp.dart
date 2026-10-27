@@ -67,7 +67,8 @@ class MobileMcpBridge extends DeviceBridge {
       _proc = await Process.start(
         exe,
         <String>['-y', '@mobilenext/mobile-mcp@latest', '--listen', '$port'],
-        runInShell: false,
+        // Windows 上 npx 是 npx.cmd：CreateProcess 不能直接执行批处理。
+        runInShell: needsShellOnWindows(exe),
       );
     } on ProcessException catch (e) {
       _startError = '启动 mobile-mcp 失败：${e.message}';

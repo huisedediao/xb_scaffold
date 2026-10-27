@@ -126,7 +126,7 @@ GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 
 **使用步骤**：
 
 1. 打开 Tab（或直接访问 `http://127.0.0.1:<gui 端口>/#ai`，深链与手动点击行为一致）；
-2. 「项目目录」从下拉候选里选（候选 = 当前已连接的调试会话反推的项目根 + 最近用过的目录），也可直接粘路径；只需选一次，之后记在 `config.json` 的 `aiProjectDir` / `aiRecentDirs`。「设备」是下拉选择：自动（唯一手机 > macOS 桌面 > 首个可用）/ 具体手机 / macOS 桌面，默认跟随右上角设备选择器；
+2. 「项目目录」可以直接选：点输入框旁的「选择…」弹出目录选择器，从本机目录里点进去找项目根（Flutter 项目带标记并排在前面，底部会提示当前目录有没有 `pubspec.yaml`），确认后点「选定此目录」；也可以从下拉候选里选（候选 = 当前已连接的调试会话反推的项目根 + 最近用过的目录），或直接粘路径。只需选一次，之后记在 `config.json` 的 `aiProjectDir` / `aiRecentDirs`。「设备」是下拉选择：自动（唯一手机 > 本机桌面 > 首个可用）/ 具体手机 / 本机桌面（macOS 为 `macOS 桌面`，Windows 为 `Windows 桌面`），默认跟随右上角设备选择器；
 3. 点「一键开启」→ 状态变成 `已就绪 · N 个工具 · eval 已开 · 指令已复制`；
 4. 「复制 AI 指令」随时再取；「复制 MCP 配置」生成当前服务的客户端配置（HTTP 自动带 token），第一次接 AI 客户端时粘它。
 
@@ -137,7 +137,7 @@ GUI 只监听 `127.0.0.1`，并校验 `Host` / `Origin`，防止任意网页或 
 - 服务已在跑且带 eval：直接复用，不重启；
 - 在跑但没有 eval：只重启**自己 pid 记录的那个**（`~/.xb_ume_ide/mcp.pid`）；不是工具箱拉起的服务会明确拒绝，让你手动处理；
 - 没在跑：后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all --allow-eval`（不改 `config.json` 的 `mcpAllowEval`）；
-- **不代劳拉起 app**：指令里写明让 AI 调 `xbume_app_launch(via: "flutter-run", cwd: "<项目路径>")`——flutter run 的 stdin 在 MCP 进程手里，`xbume_hot_reload` 才有句柄；外部终端里已在跑的 `flutter run` 不归它管；
+- **不代劳拉起 app**：指令里写明让 AI 调 `xbume_app_launch(via: "flutter-run", cwd: "<项目路径>")`——flutter run 的 stdin 在 MCP 进程手里，`xbume_hot_reload` 才有句柄；外部终端里已在跑的 `flutter run` 怎么处理见下一条；
 - **不会默默顶掉 IDE 的会话**：`xbume_app_launch` 发现**同设备 + 同目录**已有 `flutter run`（比如 IDE 里起的）时**默认拒绝启动**并报出那个 pid——继续会在手机上重装包、IDE 报「Lost connection」。要么复用现有会话（`xbume_sessions` → `xbume_use_session`，无热重载），要么明确传 `force: true`；
 - 剪贴板被浏览器策略拦下时，状态行会提示改用「复制 AI 指令」手动全选。
 

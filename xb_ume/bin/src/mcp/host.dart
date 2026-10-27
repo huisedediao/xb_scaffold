@@ -40,10 +40,13 @@ class McpHost {
       final tk = rnd.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
       f.parent.createSync(recursive: true);
       f.writeAsStringSync(tk);
-      try {
-        Process.runSync('chmod', <String>['600', f.path]);
-      } catch (_) {
-        // 权限收不紧不影响功能。
+      // Windows 无 POSIX 权限，跳过 chmod（用户目录 ACL 由系统兜底）。
+      if (!Platform.isWindows) {
+        try {
+          Process.runSync('chmod', <String>['600', f.path]);
+        } catch (_) {
+          // 权限收不紧不影响功能。
+        }
       }
       return tk;
     } catch (_) {

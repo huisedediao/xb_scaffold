@@ -28,7 +28,7 @@ xb_ume AI 调试模式
 
 选项：
   --dir, -C <path>     项目目录（默认当前目录，必须含 pubspec.yaml）
-  --device, -d <id>    设备 id（默认自动：唯一手机 > macOS 桌面）
+  --device, -d <id>    设备 id（默认自动：唯一手机 > 本机桌面）
   --print-only         只生成指令，不启动/不检查 MCP 服务
   --json               输出 JSON（给脚本用）
   -h, --help           显示帮助
@@ -103,7 +103,7 @@ Future<void> main(List<String> argv) async {
           lines.writeln('  ${d['id']}  (${d['backend']} · ${d['platform']})');
         }
       } else {
-        lines.writeln('没有检测到可用设备：先连手机（adb/hdc）或确认 macOS 桌面可用。');
+        lines.writeln('没有检测到可用设备：先连手机（adb/hdc）或确认本机桌面（macOS/Windows）可用。');
       }
       lines.write('用 --device <id> 指定。');
       stderr.writeln(lines.toString());
