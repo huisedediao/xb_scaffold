@@ -49,6 +49,10 @@ void main() {
       expect(p, contains('"reload"'));
       expect(p, contains('"restart"'));
       expect(p, contains('xbume_timeline'));
+      // 拉起前先看现成会话，不直接顶掉 IDE 的调试会话。
+      expect(p, contains('xbume_sessions'));
+      expect(p, contains('不能热重载'));
+      expect(p, contains('force: true'));
     });
 
     test('eval 未开启时不出现 xbume_eval', () {
@@ -86,6 +90,13 @@ void main() {
       expect(src, contains("if (forceEval || readMcpAllowEval()) '--allow-eval'"));
       // 启动前先判断「服务是不是自己拉起的」，不猜进程。
       expect(src, contains('不是工具箱启动的'));
+      // 项目目录可下拉选（候选 = 会话反推 + 最近用过），设备用下拉而非手填。
+      expect(src, contains('list="ai-dir-list"'));
+      expect(src, contains('id="ai-dir-list"'));
+      expect(src, contains('<select id="ai-device"'));
+      expect(src, contains("'sessionDirs': state.sessionProjectRoots"));
+      expect(src, contains("cfg['aiRecentDirs']"));
+      expect(src, contains('projectRoot = root'));
     });
   });
 }

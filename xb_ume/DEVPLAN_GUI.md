@@ -110,10 +110,11 @@
 ## P18 AI 调试零学习入口（一条命令 / 一个 Tab）`[x]`
 - 背景：P17 的「三前提」（会话必须 MCP 自己拉起、eval 要开开关、客户端要配 MCP）对新人学习成本太高；目标是「拿到就能用」，把前置知识全部内化到一次动作
 - 一个动作 = 确保带 `xbume_eval` 的 MCP 在跑 → 按项目目录 + 设备生成可粘给 AI 的指令 → 写剪贴板；已在跑就复用，在跑但缺 eval 且 pid 是自己的才重启，外部服务拒绝不动，且不改 `config.json` 的 `mcpAllowEval`
-- 不代劳拉起 app：指令让 AI 调 `xbume_app_launch(via: flutter-run, cwd: <项目>)`，flutter run 的 stdin 必须留在 MCP 进程里，`xbume_hot_reload` 才有句柄
+- 不代劳拉起 app：指令让 AI 调 `xbume_app_launch(via: flutter-run, cwd: <项目>)`，flutter run 的 stdin 必须留在 MCP 进程里，`xbume_hot_reload` 才有句柄；拉起前先 `xbume_sessions`，已有会话先问用户（手机上重装包会顶掉 IDE 的会话）
+- 不顶掉 IDE 会话：`xbume_app_launch` 启动前扫本机 flutter run（ps + lsof cwd），**同设备 + 同目录**已有时默认拒绝并给出 pid 与两条出路（复用现有会话无热重载 / `force: true`），路径符号链接归一；实测对外部会话命中、同设备异目录与异设备同目录均不误拦，MCP 端到端验证拒绝消息与放行路径
 - 交付两面：命令 `dart run xb_ume:ai`（`--dir` / `--device` / `--print-only` / `--json`，设备留空按「唯一手机 > macOS > 首个可用」推荐）；GUI 「AI 调试」Tab（`#ai` 深链，项目目录/设备持久化到 `aiProjectDir` / `aiDevice`）
 - 代码：`bin/src/ai/prompt.dart`（两边共用：目录校验、设备推荐、指令与客户端配置文本）、`bin/src/mcp/host.dart`（McpHost：46140-46149 握手探测 / 拉起 / 按 pid 停；包内脚本用 `Isolate.resolvePackageUri` 定位）、`bin/ai.dart`；GUI 侧 `startMcp({forceEval})` + `/api/ai/config|setup` + 页签切换重构为 `showTab()` 支持 `#<tab>` 深链
-- 交互细节：项目目录输入框自适应剩余宽度（长路径不再被截断）、指令预览区随窗口高度并可内部滚动、剪贴板被浏览器策略拦下时提示改用「复制 AI 指令」而不是静默失败
+- 交互细节：项目目录输入框自适应剩余宽度（长路径不再被截断）、指令预览区随窗口高度并可内部滚动、剪贴板被浏览器策略拦下时提示改用「复制 AI 指令」而不是静默失败；项目目录与设备改为「选」——目录用带候选的下拉输入框（候选 = 当前调试会话按库路径反推的项目根 + `aiRecentDirs` 最近 8 个；`_VmSession` 解析 `getIsolate` 时顺手存 `projectRoot`），设备用 `<select>`（自动 / 手机 / macOS 桌面，默认跟随右上角设备），两者与右上角「VM 会话」的区别写进页面说明
 - 验证（macOS example）：`--print-only` → 29 工具 / eval 未开；`dart run xb_ume:ai` 自动把 46140 从 29/无 eval 重启为 30/有 eval，`pbpaste` 校验剪贴板即指令；GUI `/api/ai/setup` 返回 ok + 30 工具；真实浏览器点「一键开启」→ `已就绪 · 30 个工具 · eval 已开 · 指令已复制`、`#ai-prompt` 1121 字符含项目路径与 `cwd`、console 0 错误；`flutter test` 252 → 258 项
 
 ## 进度记录

@@ -136,6 +136,9 @@ McpTool _appLaunchTool() => McpTool(
         'cwd': prop('string', 'flutter run 的工作目录（默认 MCP 服务进程的当前目录）'),
         'waitVm': prop('boolean', '是否等待 VM service（flutter-run 默认 true）',
             defaultValue: true),
+        'force': prop('boolean',
+            '同设备同目录已有 flutter run 时是否强行再起一个（会重装包并顶掉那个会话，手机上慎用）',
+            defaultValue: false),
         'timeoutMs': prop('integer', '等待超时（毫秒）', defaultValue: 180000),
       }, <String>[
         'deviceId'
@@ -156,6 +159,7 @@ McpTool _appLaunchTool() => McpTool(
               target: optionalString(args, 'target'),
               cwd: optionalString(args, 'cwd'),
               waitVm: optionalBool(args, 'waitVm', fallback: true),
+              force: optionalBool(args, 'force'),
               timeout: timeout,
             );
             String? sessionId;

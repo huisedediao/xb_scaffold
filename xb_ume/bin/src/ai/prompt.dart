@@ -80,13 +80,17 @@ String buildAiPrompt({
     ..writeln('项目：$projectDir')
     ..writeln('设备：$deviceId')
     ..writeln()
-    ..writeln('## 第一步：自己拉起 app（只做一次）')
-    ..writeln('调用 xbume_app_launch，参数：')
+    ..writeln('## 第一步：接上 app（只做一次）')
+    ..writeln('先调 xbume_sessions 看有没有现成会话：')
+    ..writeln('- 已列出这个项目的会话 → 停下来问我：复用现有会话（不能热重载），'
+        '还是重新拉起（会重启 app，手机上会顶掉 IDE 的调试会话），不要直接启动；')
+    ..writeln('- 没有可用会话 → 用 xbume_app_launch 启动，参数：')
     ..writeln(
         '{"deviceId": "$deviceId", "via": "flutter-run", "cwd": "$projectDir"}')
-    ..writeln('它会由 xb_ume 启动 flutter run 并把新会话设为当前。')
-    ..writeln('只有这种「自己拉起」的会话才支持后面的热重载，'
-        '外部终端里已经有 flutter run 的话先别管，用它新起的这个。')
+    ..writeln('它会由 xb_ume 启动 flutter run 并把新会话设为当前；'
+        '只有这种「自己拉起」的会话才支持后面的热重载。')
+    ..writeln('同设备同目录已有 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'
+        '由我决定复用还是加 force: true。')
     ..writeln()
     ..writeln('## 第二步：按需使用工具')
     ..writeln('- xbume_screenshot / xbume_find_widget / xbume_tap / xbume_input：'

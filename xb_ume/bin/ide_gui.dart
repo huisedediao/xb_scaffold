@@ -488,10 +488,29 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     }
     if (path == '/api/ai/config') {
       final cfg = _guiReadConfigRaw();
+      final recent = <String>[
+        for (final e in (cfg['aiRecentDirs'] as List? ?? const <Object?>[]))
+          if ('$e'.trim().isNotEmpty) '$e'.trim(),
+      ];
+      // macOS 桌面不在设备发现结果里，但它是 AI 调试最常用的目标。
+      final devs = <Map<String, String>>[...state.devices];
+      if (Platform.isMacOS && !devs.any((d) => d['id'] == 'macos')) {
+        devs.add(<String, String>{
+          'id': 'macos',
+          'name': 'macOS 桌面',
+          'state': '本机',
+          'platform': 'macos',
+        });
+      }
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'projectDir': cfg['aiProjectDir'] ?? '',
         'device': cfg['aiDevice'] ?? '',
+        // 候选项：当前调试会话反推的项目根 + 最近用过的目录。
+        'sessionDirs': state.sessionProjectRoots,
+        'recentDirs': recent,
+        'devices': devs,
+        'selectedDevice': state.selectedId ?? '',
       }));
       await req.response.close();
       return;
@@ -3953,6 +3972,16 @@ class GuiState {
   List<Map<String, String>> devices = <Map<String, String>>[];
   String? selectedId;
 
+  /// 已连接调试会话反推的项目根（供「AI 调试」页的项目目录候选）。
+  List<String> get sessionProjectRoots {
+    final out = <String>[];
+    for (final s in _vmSessions.values) {
+      final root = s.projectRoot;
+      if (root != null && root.isNotEmpty && !out.contains(root)) out.add(root);
+    }
+    return out;
+  }
+
   /// 日志环形缓冲（供 HTTP 导出接口读取）。
   List<Map<String, Object?>> get buffer => _buffer;
 
@@ -5026,6 +5055,10 @@ class _VmSession {
   /// 供会话选择器与日志行展示「这是哪个应用」。
   String? appName;
 
+  /// 该会话所属 Flutter 项目根（getIsolate 的 file:// 库反推），
+  /// 供「AI 调试」页把项目目录作为候选带出。
+  String? projectRoot;
+
   Future<void> connect() async {
     if (_connecting) return;
     _connecting = true;
@@ -5132,9 +5165,10 @@ class _VmSession {
             .where((u) => u.startsWith('file:///'))
             .toList()
             .cast<String>();
-        final projectRoot = projectRootForLibraries(fileUris);
-        if (projectRoot != null) {
-          _pkgRootsFor(projectRoot);
+        final root = projectRootForLibraries(fileUris);
+        if (root != null) {
+          projectRoot = root;
+          _pkgRootsFor(root);
         }
       }
       return;
@@ -9403,12 +9437,20 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
   final cfg = _guiReadConfigRaw();
   cfg['aiProjectDir'] = projectDir;
   cfg['aiDevice'] = device;
+  // 最近用过的项目目录（最多 8 条，去重后置顶）。
+  final recentDirs = <String>[
+    projectDir,
+    for (final e in (cfg['aiRecentDirs'] as List? ?? const <Object?>[]))
+      if ('$e'.trim().isNotEmpty && '$e'.trim() != projectDir) '$e'.trim(),
+  ].take(8).toList();
+  cfg['aiRecentDirs'] = recentDirs;
   _guiWriteConfigRaw(cfg);
 
   return <String, Object?>{
     'ok': true,
     'projectDir': projectDir,
     'deviceId': device,
+    'recentDirs': recentDirs,
     'mcp': mcp,
     'prompt': prompt,
     'config': config,
@@ -11049,17 +11091,23 @@ const String guiHtml = r'''
         <button onclick="aiCopyConfig(this)">复制 MCP 配置</button>
       </div>
       <div class="row" style="margin-top:8px;gap:10px;flex-wrap:nowrap">
-        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="Flutter 项目根目录（含 pubspec.yaml）">项目目录
-          <input id="ai-dir" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px">
+        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="Flutter 项目根目录（含 pubspec.yaml）。候选项来自当前调试会话反推的项目根与最近用过的目录，也可直接粘路径">项目目录
+          <input id="ai-dir" list="ai-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px">
+          <datalist id="ai-dir-list"></datalist>
         </label>
-        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto;margin-right:0" title="留空则自动选：唯一手机 > macOS 桌面">设备
-          <input id="ai-device" placeholder="留空=自动" style="width:180px;margin-left:6px">
+        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto;margin-right:0" title="app 要跑在哪台设备（AI 自己 flutter run -d 它）；留空自动：唯一手机 > macOS 桌面">设备
+          <select id="ai-device" style="width:210px;margin-left:6px"></select>
         </label>
       </div>
       <div class="muted" style="margin-top:8px;line-height:1.6">
         点「一键开启」会：启动带 <code>xbume_eval</code> 的 MCP（已在跑就复用，参数不一致只重启自己记录的那个）
         → 生成一段指令并自动复制。把指令粘给 AI，它会自己 <code>xbume_app_launch</code> 拉起 app、
         复现现场、定位到源码行、改代码、热重载、复跑验证。
+      </div>
+      <div class="muted" style="margin-top:6px;line-height:1.6;font-size:12px">
+        「项目目录」候选项来自：当前已连接的调试会话（按 app 库路径反推项目根）+ 最近用过的目录，也可直接粘路径；
+        「设备」默认跟随右上角设备选择器。注意右上角的 <b>VM 会话</b>是<b>已经在跑</b>的调试会话（日志/时间轴用），
+        AI 调试不复用它——它要自己 <code>flutter run</code> 拉起 app，才有热重载所需的 stdin 句柄。
       </div>
       <pre id="ai-prompt" style="white-space:pre-wrap;max-height:calc(100vh - 400px);min-height:180px;overflow:auto;font-size:12px;line-height:1.55;margin:10px 0 0">点「一键开启」后，这里会出现可直接粘给 AI 的指令</pre>
     </div>
@@ -13702,12 +13750,43 @@ function setMcpEval(cb){
 // ── AI 调试 ──
 var aiPromptText = '';
 var aiConfigText = '';
+// 最近一次从 /api/ai/config 拉到的会话项目根（成功后刷新候选时继续保留）。
+var aiSessionDirs = [];
+// 项目目录候选 = 当前已存目录 + 会话反推的项目根 + 最近用过（去重，保持顺序）。
+function aiFillDirs(sessionDirs, recent, current){
+  var list = [];
+  [current].concat(sessionDirs || [], recent || []).forEach(function(p){
+    if (p && list.indexOf(p) < 0) list.push(p);
+  });
+  var dl = document.getElementById('ai-dir-list');
+  if (dl) dl.innerHTML = list.map(function(p){ return '<option value="' + esc(p) + '"></option>'; }).join('');
+  var inp = document.getElementById('ai-dir');
+  if (inp && !inp.value) inp.value = current || list[0] || '';
+}
+// 设备下拉：自动 + 发现到的设备（含 macOS 桌面）；保留用户当前选择，其次配置，再次右上角设备。
+function aiFillDevices(list, cur, fallback){
+  var sel = document.getElementById('ai-device');
+  if (!sel) return;
+  var prev = sel.value;
+  var html = '<option value="">自动（唯一手机 > macOS 桌面）</option>';
+  (list || []).forEach(function(d){
+    // 桌面端已是带平台名的名字（「macOS 桌面」），不再加前缀。
+    var prefix = (d.id === 'macos' || d.platform === 'macos')
+      ? ''
+      : (platformNames[d.platform] || d.platform || '') + ' · ';
+    var lbl = prefix + (d.name || d.id) + (d.state ? '（' + d.state + '）' : '');
+    html += '<option value="' + esc(d.id) + '">' + esc(lbl) + '</option>';
+  });
+  sel.innerHTML = html;
+  var want = prev || cur || fallback || '';
+  sel.value = want;
+  if (sel.value !== want) sel.value = '';
+}
 function aiShow(){
   fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
-    var dir = document.getElementById('ai-dir');
-    var dev = document.getElementById('ai-device');
-    if (dir && !dir.value) dir.value = d.projectDir || '';
-    if (dev && !dev.value) dev.value = d.device || '';
+    aiSessionDirs = d.sessionDirs || [];
+    aiFillDirs(aiSessionDirs, d.recentDirs, d.projectDir);
+    aiFillDevices(d.devices, d.device, d.selectedDevice);
   }).catch(function(){});
   refreshMcp();
 }
@@ -13732,6 +13811,10 @@ function aiSetup(btn){
     aiPromptText = d.prompt || '';
     aiConfigText = d.config || '';
     if (pre) pre.textContent = aiPromptText;
+    // 成功后刷新候选（新目录置顶；会话反推的候选不丢），设备按后端最终值回填。
+    aiFillDirs(aiSessionDirs, d.recentDirs, d.projectDir);
+    var devSel = document.getElementById('ai-device');
+    if (devSel) devSel.value = d.deviceId || '';
     var m = d.mcp || {};
     if (st) st.innerHTML = '<span class="ok">已就绪</span> · ' + (m.toolCount || 0)
       + ' 个工具 · eval ' + (m.hasEval ? '已开' : '未开');

@@ -18,6 +18,43 @@ import '../paths.dart';
 import 'bridge.dart';
 import 'process.dart';
 
+/// 本机已在跑的 `flutter run`（非本服务拉起），用于启动前体检。
+class LocalFlutterRun {
+  LocalFlutterRun({required this.pid, this.device, required this.cwd});
+
+  final int pid;
+
+  /// 命令行里的 `-d` / `--device-id`；没有则为 null（自动选设备）。
+  final String? device;
+  final String cwd;
+}
+
+/// 解析 `flutter run` 命令行里的 `-d` / `--device-id` 值；没有则返回 null。
+///
+/// 只认带值的两种写法（`-d x` / `--device-id=x`），不猜默认设备。
+String? parseFlutterRunDevice(String commandLine) {
+  final parts = commandLine.split(RegExp(r'\s+'));
+  for (var i = 0; i < parts.length; i++) {
+    final p = parts[i];
+    if (p == '-d' || p == '--device-id') {
+      return i + 1 < parts.length ? parts[i + 1] : null;
+    }
+    if (p.startsWith('--device-id=')) {
+      return p.substring('--device-id='.length);
+    }
+  }
+  return null;
+}
+
+/// 路径比较用规范形式：能解析符号链接就解析（macOS 的 `/var` → `/private/var`）。
+String resolvePathForCompare(String path) {
+  try {
+    return Directory(path).resolveSymbolicLinksSync();
+  } catch (_) {
+    return File(path).absolute.path;
+  }
+}
+
 /// 一次 flutter run 的结果。
 class LaunchResult {
   LaunchResult({
@@ -121,15 +158,97 @@ class FlutterRunLauncher {
 
   LaunchHandle? byPid(int pid) => _live[pid];
 
+  /// 扫描本机正在跑的 `flutter run`（排除本服务自己拉起的），只读，不做任何 kill。
+  ///
+  /// 识别方式：命令行含 `flutter_tools.snapshot` 且其后第一个子命令是 `run`；
+  /// 设备取 `-d` / `--device-id`，工作目录取 `lsof -d cwd`。
+  List<LocalFlutterRun> localFlutterRuns() {
+    if (Platform.isWindows) return const <LocalFlutterRun>[];
+    final pids = <int>[];
+    final devices = <String?>[];
+    try {
+      final r = Process.runSync('ps', <String>['-axo', 'pid,command']);
+      if (r.exitCode != 0) return const <LocalFlutterRun>[];
+      for (final line in '${r.stdout}'.split('\n')) {
+        final t = line.trim();
+        final sp = t.indexOf(' ');
+        if (sp <= 0) continue;
+        final pid = int.tryParse(t.substring(0, sp));
+        if (pid == null || _live.containsKey(pid)) continue;
+        final cmd = t.substring(sp + 1);
+        final snap = cmd.indexOf('flutter_tools.snapshot');
+        if (snap < 0) continue;
+        final rest = cmd.substring(snap + 'flutter_tools.snapshot'.length).trim();
+        if (rest.isEmpty || rest.split(RegExp(r'\s+')).first != 'run') continue;
+        pids.add(pid);
+        devices.add(parseFlutterRunDevice(cmd));
+      }
+    } catch (_) {
+      return const <LocalFlutterRun>[];
+    }
+    if (pids.isEmpty) return const <LocalFlutterRun>[];
+    final cwds = _cwdsOf(pids);
+    final out = <LocalFlutterRun>[];
+    for (var i = 0; i < pids.length; i++) {
+      final cwd = cwds[pids[i]];
+      if (cwd == null || cwd.isEmpty) continue;
+      out.add(LocalFlutterRun(pid: pids[i], device: devices[i], cwd: cwd));
+    }
+    return out;
+  }
+
+  /// 同设备 + 同目录下已在运行的 flutter run（启动前体检用）。
+  ///
+  /// 只问「同一个 app 已经在这个设备上跑着」这种会互相顶掉的场景；
+  /// 同设备但不同目录不拦，交给调用方判断。
+  LocalFlutterRun? findConflict({
+    required String device,
+    required String cwd,
+  }) {
+    final target = resolvePathForCompare(cwd);
+    for (final r in localFlutterRuns()) {
+      if (r.device != device) continue;
+      if (resolvePathForCompare(r.cwd) != target) continue;
+      return r;
+    }
+    return null;
+  }
+
+  /// 批量取进程工作目录（pid → cwd）。lsof 不可用时返回空表。
+  Map<int, String> _cwdsOf(List<int> pids) {
+    final out = <int, String>{};
+    try {
+      final r = Process.runSync(
+        'lsof',
+        <String>['-a', '-p', pids.join(','), '-d', 'cwd', '-Fn'],
+      );
+      if (r.exitCode != 0) return out;
+      int? cur;
+      for (final line in '${r.stdout}'.split('\n')) {
+        final t = line.trim();
+        if (t.startsWith('p')) {
+          cur = int.tryParse(t.substring(1));
+        } else if (t.startsWith('n') && cur != null) {
+          out[cur] = t.substring(1);
+        }
+      }
+    } catch (_) {
+      // lsof 不可用：按无冲突处理。
+    }
+    return out;
+  }
+
   /// 启动 `flutter run -d <device>` 并等待 VM service 地址。
   ///
   /// [cwd] 默认当前工作目录（MCP server 由使用方指定工程目录启动）。
   /// [waitVm] 为 false 时只看进程是否起来，不等待调试端口（用于纯 UI 验证）。
+  /// [force] 为 true 时跳过「同设备同目录已有 flutter run」的体检。
   Future<LaunchResult> launch({
     required String device,
     String? target,
     String? cwd,
     bool waitVm = true,
+    bool force = false,
     Duration timeout = const Duration(seconds: 180),
   }) async {
     final flutter = findExecutable('flutter');
@@ -140,6 +259,21 @@ class FlutterRunLauncher {
     final workdir = (cwd == null || cwd.trim().isEmpty) ? Directory.current.path : cwd;
     if (!Directory(workdir).existsSync()) {
       throw DeviceCommandError('flutter-run', 'flutter run', '工作目录不存在：$workdir');
+    }
+    // 体检：同设备 + 同目录已有 flutter run 时默认不重复拉起（手机上重装包
+    // 会直接顶掉那个会话，IDE 会报 Lost connection to device）。
+    if (!force) {
+      final conflict = findConflict(device: device, cwd: workdir);
+      if (conflict != null) {
+        throw DeviceCommandError(
+          'flutter-run',
+          'flutter run -d $device',
+          '设备 $device 上已有 flutter run 正在同一目录跑（pid ${conflict.pid}，目录 ${conflict.cwd}）：'
+              '继续会在手机上重装包并顶掉它（IDE 会报 Lost connection to device）。'
+              '要复用现有会话直接 xbume_sessions → xbume_use_session（该会话不支持热重载）；'
+              '确认重新拉起请传 force: true。',
+        );
+      }
     }
     final logDir = Directory('${xbUmeHome()}/launch');
     if (!logDir.existsSync()) logDir.createSync(recursive: true);

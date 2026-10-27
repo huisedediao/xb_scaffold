@@ -28,10 +28,15 @@ dart run xb_ume:ai --dir ~/work/my_app --device macos
 dart run xb_ume:ai --print-only     # 服务现状不动，只输出指令
 ```
 
-GUI 里同一个东西叫「AI 调试」Tab：填项目目录（只需一次，之后记住）→ 点
+GUI 里同一个东西叫「AI 调试」Tab：项目目录从下拉里选（候选 = 当前调试会话反推的项目根、
+最近用过的目录，也可直接粘路径）→ 设备同样下拉选（默认跟随右上角设备）→ 点
 「一键开启」，状态栏出现 `已就绪 · N 个工具 · eval 已开 · 指令已复制` 就可以往下走了；
 旁边的「复制 AI 指令」「复制 MCP 配置」随时再取。深链
 `http://127.0.0.1:46129/#ai` 直达该页（端口以实际打开的为准）。
+
+注意右上角的「VM 会话」与这里无关：那是**已经在跑**的 app 会话（供日志/时间轴用），
+而 AI 调试要自己 `flutter run` 拉起 app（热重载才有 stdin 句柄）；但项目目录候选会
+从这些会话的库路径反推，不用手找。
 
 拿到指令后**把它粘给 AI 即可**，中间这几步它自己会做，所以不需要你学：
 
@@ -218,7 +223,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
-| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?` | `via=flutter-run` 顺带把新会话设为当前 |
+| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?`, `cwd?`, `force?` | `via=flutter-run` 顺带把新会话设为当前；**同设备同目录已有 `flutter run`（如 IDE 起的）时默认拒绝**（继续会重装包并顶掉那个会话），确认重起传 `force: true` |
 | `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 向本服务拉起的 `flutter run` 写 `r`/`R`：改完代码就地热重载/热重启，返回耗时与完成行；热重启会清 isolate 缓存 |
 | `xbume_eval` | `expr`, `lib?`, `maxChars?` | **需 `--allow-eval`**：在 app 进程内求值单行表达式，返回 `值` + 库 + 类型；编译错误与运行时异常分开报 |
 
@@ -446,7 +451,8 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
 | macOS 上自动化卡在导航 | app 在后台时帧会被冻结：`open -a <绝对路径>` 把它切到前台再跑。 |
-| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部终端或 IDE 的 `flutter run`；用 `xbume_app_launch(via: "flutter-run")` 重新拉起，或手动按 `r`。 |
+| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部终端或 IDE 的 `flutter run`；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（若同设备同目录已有进程会先报错误让你确认，见下），或手动按 `r`。 |
+| `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | IDE/终端已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。要复用就 `xbume_sessions` → `xbume_use_session`（无热重载）；确认重起传 `force: true`。 |
 | `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
 
 ---
@@ -461,8 +467,7 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
   `--tool-groups inspect` 之类只是允许但不会多出工具。
 - **性能/内存证据仍只在 GUI**：CPU、内存、帧耗时等采样没有进 MCP；
   `xbume_eval` 只能读到 `ProcessInfo` 之类的单点值，看趋势要去「性能」Tab。
-- **`xbume_hot_reload` 只作用于自己拉起的 `flutter run`**：不接管外部终端里的进程
-  （也不按名字杀进程），那种情况只能手动按 `r` / `R`。
+- **`xbume_hot_reload` 只作用于自己拉起的 `flutter run`**：不接管外部终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 在**同设备同目录**已有 `flutter run` 时默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
 - **`assertLog` 在 CLI/MCP 下跳过**：它依赖 GUI 的日志订阅上下文（`skip`，不算失败）。
 - **mobile-mcp 的常驻进程不由我们回收**：`mobilecli-* daemon` 若被适配器拉起，
   退出后可能仍在运行；需要时手动结束。xb_ume 只负责自己拉起的 `npx` 子进程。
