@@ -107,6 +107,10 @@ void main() {
       stack: '#0 main (file:///app.dart:1:1)',
       library: 'platform',
       context: 'async',
+      widget: 'Row',
+      widgetFile: '/Users/me/proj/lib/order_row.dart',
+      widgetLine: 42,
+      widgetColumn: 12,
       count: 4,
     );
     final back = XBUmeExceptionItem.fromJson(item.toJson());
@@ -118,6 +122,10 @@ void main() {
     expect(back.stack, item.stack);
     expect(back.library, item.library);
     expect(back.context, item.context);
+    expect(back.widget, 'Row');
+    expect(back.widgetFile, '/Users/me/proj/lib/order_row.dart');
+    expect(back.widgetLine, 42);
+    expect(back.widgetColumn, 12);
     expect(back.count, 4);
   });
 
@@ -149,5 +157,49 @@ void main() {
       binding.dispose();
       FlutterError.onError = origin;
     }
+  });
+
+  test('FlutterError 钩子从 informationCollector 抓错误 widget 位置', () {
+    final origin = FlutterError.onError;
+    FlutterError.onError = (FlutterErrorDetails details) {};
+    final binding = XBUmeBinding.ensureInitialized(
+      config: const XBUmeConfig(persistenceEnabled: false),
+    );
+    try {
+      FlutterError.onError!(FlutterErrorDetails(
+        exception: StateError('overflow'),
+        informationCollector: () => <DiagnosticsNode>[
+          DiagnosticsNode.message('The relevant error-causing widget was:'),
+          DiagnosticsNode.message(
+              'Row Row:file:///Users/me/proj/lib/order_row.dart:42:12'),
+        ],
+      ));
+      final item = binding.controller.exceptions.single;
+      expect(item.widget, 'Row');
+      expect(item.widgetFile, '/Users/me/proj/lib/order_row.dart');
+      expect(item.widgetLine, 42);
+      expect(item.widgetColumn, 12);
+    } finally {
+      binding.dispose();
+      FlutterError.onError = origin;
+    }
+  });
+
+  test('同签名合并时不丢错误 widget 位置', () {
+    final c = _controller();
+    for (var i = 0; i < 2; i++) {
+      c.addException(
+        error: StateError('boom'),
+        widget: 'Row',
+        widgetFile: '/Users/me/proj/lib/a.dart',
+        widgetLine: 7,
+        widgetColumn: 3,
+      );
+    }
+    final item = c.exceptions.single;
+    expect(item.count, 2);
+    expect(item.widget, 'Row', reason: 'copyWith 必须带上新字段，否则合并后位置丢了');
+    expect(item.widgetLine, 7);
+    c.dispose();
   });
 }

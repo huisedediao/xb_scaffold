@@ -157,6 +157,10 @@ class XBUmeController extends ChangeNotifier {
     String? message,
     String? library,
     String? context,
+    String? widget,
+    String? widgetFile,
+    int? widgetLine,
+    int? widgetColumn,
   }) {
     final now = DateTime.now();
     final type = error.runtimeType.toString();
@@ -181,6 +185,12 @@ class XBUmeController extends ChangeNotifier {
           stack: stackText,
           library: library,
           context: context == null ? null : _clip(context, max: 500),
+          widget: widget == null || widget.isEmpty ? null : _clip(widget, max: 200),
+          widgetFile: widgetFile == null || widgetFile.isEmpty
+              ? null
+              : _clip(widgetFile, max: 500),
+          widgetLine: widgetLine,
+          widgetColumn: widgetColumn,
         ),
       );
     }

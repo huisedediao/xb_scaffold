@@ -986,7 +986,8 @@ McpTool _exceptionsTool() => McpTool(
       title: '读取结构化异常',
       description: '读取 app 内 FlutterError / PlatformError 的结构化缓冲：类型、摘要、库、'
           '上下文、栈与重复次数。比 xbume_console(level:"error") 多出类型/库/首帧/合并计数，'
-          '适合回答「这个报错是什么、在哪抛的、发生几次」。',
+          '适合回答「这个报错是什么、在哪抛的、发生几次」。渲染 / build 类错误（如布局溢出）'
+          '还会给出出错的 widget、业务源码 file:line:column 与前后两行片段，可直接定位到代码。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
@@ -1025,6 +1026,12 @@ McpTool _exceptionsTool() => McpTool(
           if (row.isEmpty) continue;
           final f = row.split('\u0001');
           if (f.length < 9) continue;
+          // 后四段（widget 定位）是新增字段，旧 app 只回 9 段。
+          final widget = f.length > 9 ? f[9].trim() : '';
+          final file = f.length > 10 ? f[10].trim() : '';
+          final line = f.length > 11 ? int.tryParse(f[11].trim()) : null;
+          final column = f.length > 12 ? int.tryParse(f[12].trim()) : null;
+          final snippet = _readSourceSnippet(file, line);
           items.add(<String, Object?>{
             'time': f[0],
             'timestampMs': int.tryParse(f[1]),
@@ -1035,6 +1042,14 @@ McpTool _exceptionsTool() => McpTool(
             'library': f[6],
             'context': f[7],
             'stack': f[8],
+            if (widget.isNotEmpty) 'widget': widget,
+            if (file.isNotEmpty)
+              'source': <String, Object?>{
+                'file': file,
+                if (line != null) 'line': line,
+                if (column != null) 'column': column,
+                if (snippet != null) 'snippet': snippet,
+              },
           });
         }
         final sb = StringBuffer();
@@ -1051,6 +1066,17 @@ McpTool _exceptionsTool() => McpTool(
             if ((e['library'] as String).isNotEmpty) {
               sb.write('  库: ${e['library']}\n');
             }
+            final src = e['source'] as Map<String, Object?>?;
+            if (src != null) {
+              final at = src['line'] == null
+                  ? ''
+                  : ':${src['line']}${src['column'] == null ? '' : ':${src['column']}'}';
+              sb.write('  位置: ${e['widget'] ?? '?'} @ ${src['file']}$at\n');
+              final snippet = src['snippet'] as String?;
+              if (snippet != null && snippet.isNotEmpty) {
+                sb.write('$snippet\n');
+              }
+            }
             if ((e['stack'] as String).isNotEmpty) {
               final frame = (e['stack'] as String).split('\n').first;
               sb.write('  首帧: ${_short(frame, 200)}\n');
@@ -1064,6 +1090,30 @@ McpTool _exceptionsTool() => McpTool(
             });
       },
     );
+
+/// 读异常定位行的上下文（±2 行），让 AI 不用再单独读文件。
+///
+/// 路径来自 app 进程，是宿主机的绝对路径：真机调试时这台机器上通常没有源码
+/// （返回 null），桌面 / 模拟器下才有。超过 512KB 的文件直接跳过，避免一次
+/// 异常读取把 MCP 响应拖慢。
+String? _readSourceSnippet(String file, int? line) {
+  if (file.isEmpty || line == null || line <= 0) return null;
+  try {
+    final f = File(file);
+    if (!f.existsSync() || f.lengthSync() > 512 * 1024) return null;
+    final lines = f.readAsLinesSync();
+    if (line > lines.length) return null;
+    final from = line - 2 < 1 ? 1 : line - 2;
+    final to = line + 2 > lines.length ? lines.length : line + 2;
+    final sb = StringBuffer();
+    for (var i = from; i <= to; i++) {
+      sb.writeln('${i == line ? '>' : ' '} $i | ${lines[i - 1]}');
+    }
+    return sb.toString().trimRight();
+  } catch (_) {
+    return null;
+  }
+}
 
 /// 时间轴的文本时间戳：ISO 串截到毫秒（不依赖本地时区转换）。
 String _timeShort(Object? iso) {

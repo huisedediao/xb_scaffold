@@ -410,7 +410,11 @@ String networkDetailExpr({
 }
 
 /// 结构化异常（xb_ume core 的 XBUme.controller.exceptions）。
-/// 输出每行：time\u0001ts\u0001kind\u0001type\u0001count\u0001message\u0001library\u0001context\u0001stack\u0003
+/// 输出每行：time\u0001ts\u0001kind\u0001type\u0001count\u0001message\u0001library\u0001context\u0001stack
+/// \u0001widget\u0001widgetFile\u0001widgetLine\u0001widgetColumn\u0003
+///
+/// 后四个字段读 `toJson()`：旧版本 app 的 item 没有这些键，取空串即可，
+/// 直接点属性会让 eval 抛 NoSuchMethod 把整次读取打挂。
 String exceptionsExpr({
   String? kind,
   String? typeContains,
@@ -443,13 +447,17 @@ String exceptionsExpr({
       ".replaceAll(String.fromCharCode(3), ' '); } "
       "String cut(Object? s, int max) { var t = clean(s); "
       "if (t.length > max) { t = t.substring(0, max) + '...<clipped>'; } return t; } "
-      "for (var i = start; i < x.length; i++) { final e = x[i]; "
+      "for (var i = start; i < x.length; i++) { final e = x[i]; final j = e.toJson(); "
       "out.write(e.time.toIso8601String()); out.write(sep); "
       "out.write(e.time.millisecondsSinceEpoch.toString()); out.write(sep); "
       "out.write(e.kind.name); out.write(sep); out.write(clean(e.type)); out.write(sep); "
       "out.write(e.count.toString()); out.write(sep); out.write(cut(e.message, 1200)); out.write(sep); "
       "out.write(clean(e.library)); out.write(sep); out.write(cut(e.context, 300)); out.write(sep); "
-      "out.write(cut(e.stack, 4000)); out.write(row); } "
+      "out.write(cut(e.stack, 4000)); out.write(sep); "
+      "out.write(clean(j['widget'])); out.write(sep); "
+      "out.write(clean(j['widgetFile'])); out.write(sep); "
+      "out.write((j['widgetLine'] ?? '').toString()); out.write(sep); "
+      "out.write((j['widgetColumn'] ?? '').toString()); out.write(row); } "
       "return out.toString(); })()";
 }
 

@@ -21,6 +21,10 @@ class XBUmeExceptionItem {
     this.stack,
     this.library,
     this.context,
+    this.widget,
+    this.widgetFile,
+    this.widgetLine,
+    this.widgetColumn,
     this.count = 1,
   });
 
@@ -49,6 +53,18 @@ class XBUmeExceptionItem {
   /// 框架给的上下文，如 `While building ListView`。
   final String? context;
 
+  /// 错误相关 widget 的类型，如 `Row`。来自 informationCollector，仅 debug。
+  final String? widget;
+
+  /// 该 widget 的源码绝对路径（`file:///` 已还原）。仅 debug。
+  final String? widgetFile;
+
+  /// 该 widget 的源码行号（1 基）。仅 debug。
+  final int? widgetLine;
+
+  /// 该 widget 的源码列号（1 基）。仅 debug。
+  final int? widgetColumn;
+
   /// 相同签名的合并次数。
   final int count;
 
@@ -66,6 +82,10 @@ class XBUmeExceptionItem {
       stack: stack,
       library: library,
       context: context,
+      widget: widget,
+      widgetFile: widgetFile,
+      widgetLine: widgetLine,
+      widgetColumn: widgetColumn,
       count: count ?? this.count,
     );
   }
@@ -81,6 +101,10 @@ class XBUmeExceptionItem {
       'stack': stack,
       'library': library,
       'context': context,
+      'widget': widget,
+      'widgetFile': widgetFile,
+      'widgetLine': widgetLine,
+      'widgetColumn': widgetColumn,
       'count': count,
     };
   }
@@ -99,6 +123,10 @@ class XBUmeExceptionItem {
       stack: json['stack'] as String?,
       library: json['library'] as String?,
       context: json['context'] as String?,
+      widget: json['widget'] as String?,
+      widgetFile: json['widgetFile'] as String?,
+      widgetLine: (json['widgetLine'] as num?)?.toInt(),
+      widgetColumn: (json['widgetColumn'] as num?)?.toInt(),
       count: (json['count'] as num?)?.toInt() ?? 1,
     );
   }

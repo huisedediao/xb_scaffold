@@ -19,6 +19,7 @@ import '../plugins/route/xb_ume_route_plugin.dart';
 import '../plugins/storage/xb_ume_storage_plugin.dart';
 import 'xb_process_stats.dart';
 import 'xb_ume_controller.dart';
+import 'xb_ume_error_source.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_route_observer.dart';
 
@@ -127,6 +128,9 @@ class XBUmeBinding {
       _originFlutterError = FlutterError.onError;
       FlutterError.onError = (FlutterErrorDetails details) {
         final message = details.exceptionAsString();
+        // 渲染/build 错误自带「错误 widget → 源码位置」，仅在 debug 下由
+        // informationCollector 提供；存下来供 MCP 直接给出 file:line。
+        final source = _errorSourceOf(details);
         controller.addLog(
           level: XBUmeLogLevel.error,
           tag: 'FlutterError',
@@ -142,6 +146,10 @@ class XBUmeBinding {
           stack: details.stack,
           library: details.library,
           context: details.context?.toString(),
+          widget: source?.widgetType,
+          widgetFile: source?.file,
+          widgetLine: source?.line,
+          widgetColumn: source?.column,
         );
         _originFlutterError?.call(details);
       };
@@ -228,5 +236,31 @@ class XBUmeBinding {
 
     controller.dispose();
     _instance = null;
+  }
+}
+
+/// 从 `informationCollector` 里抠出「错误相关 widget → 源码位置」。
+///
+/// collector 里的那一条是 `DiagnosticsDebugCreator`，`toString()` 形如
+/// `Row Row:file:///.../order_row.dart:42:12`；把整段拼起来交给纯函数解析。
+/// 取不到时退回 `details.toString()`（含同一段，但混着栈，只作兜底）。
+XBUmeErrorSource? _errorSourceOf(FlutterErrorDetails details) {
+  try {
+    final collect = details.informationCollector;
+    if (collect != null) {
+      final buffer = StringBuffer();
+      for (final node in collect()) {
+        buffer.writeln(node.toString());
+      }
+      final hit = XBUmeErrorSource.parse(buffer.toString());
+      if (hit != null) return hit;
+    }
+  } catch (_) {
+    // collector 在部分错误里会抛（节点已失效），直接走兜底。
+  }
+  try {
+    return XBUmeErrorSource.parse(details.toString());
+  } catch (_) {
+    return null;
   }
 }

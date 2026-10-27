@@ -112,6 +112,12 @@ void main() {
     expect(e, contains('e.time.millisecondsSinceEpoch >= 1700000000000'));
     expect(e, contains('e.count'));
     expect(e, contains('e.stack'));
+    // 错误 widget 位置走 toJson：旧 app 的 item 没有这些键，点属性会抛 NoSuchMethod。
+    expect(e, contains('e.toJson()'));
+    expect(e, contains("j['widget']"));
+    expect(e, contains("j['widgetFile']"));
+    expect(e, contains("j['widgetLine']"));
+    expect(e, contains("j['widgetColumn']"));
   });
 
   test('时间轴聚合四类事件，异常段对旧 app 兜底', () {

@@ -219,7 +219,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_network` | `urlContains?`, `method?`, `minStatus?`, `withinLastMs?`, `limit?` | app 内 xb_ume 拦截记录（需 app 接入 Network 模块） |
 | `xbume_network_detail` | `id?` 或 `urlContains`(+`method?`), `maxChars?`, `limit?` | 完整请求/响应头、body、发起点调用栈（敏感头已 `***` 脱敏）；答「这个 500 返回了什么」 |
 | `xbume_console` | `level?`, `keyword?`, `sinceMs?`, `limit?` | app 内 xb_ume 日志 |
-| `xbume_exceptions` | `kind?`(flutter/platform/app/all), `typeContains?`, `keyword?`, `sinceMs?`, `limit?` | 结构化异常：类型 / 摘要 / 库 / 上下文 / 栈 / 重复次数（比日志多出结构与合并计数） |
+| `xbume_exceptions` | `kind?`(flutter/platform/app/all), `typeContains?`, `keyword?`, `sinceMs?`, `limit?` | 结构化异常：类型 / 摘要 / 库 / 上下文 / 栈 / 重复次数（比日志多出结构与合并计数）；渲染 / build 类错误额外给 `widget` 与 `source{file,line,column,snippet}`——直接指出出错的组件与业务源码位置，`snippet` 是 daemon 读的源码 ±2 行（真机调试时源码不在本机则只给路径） |
 | `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
@@ -300,7 +300,8 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 > 点「提交」后报错了，帮我看看是哪个异常、发生在哪一行，顺带把之前那次 500 的返回体贴出来。
 
 `xbume_timeline`（把点击后的路由/网络/日志/异常按时间排开，找到出错时刻）→
-`xbume_exceptions`（拿到类型/库/上下文/首帧）→ `xbume_network_detail`（按 id 或
+`xbume_exceptions`（拿到类型/库/上下文/首帧；渲染类错误直接给 `widget` + `file:line:column`
+与源码片段，不用再让 AI 猜是哪个组件）→ `xbume_network_detail`（按 id 或
 URL 片段取完整响应体）。
 
 **⑦ 改代码 → 热重载 → 复跑**
