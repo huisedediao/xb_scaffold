@@ -55,6 +55,7 @@ class AdbBridge extends DeviceBridge {
           DeviceCapability.tapNative,
           DeviceCapability.crashList,
           DeviceCapability.crashGet,
+          DeviceCapability.keepAwake,
         }
       : <DeviceCapability>{};
 
@@ -140,6 +141,15 @@ class AdbBridge extends DeviceBridge {
   }
 
   @override
+  Future<String> keepAwake(String deviceId, bool on) async {
+    final r = await _run(deviceId, adbKeepAwakeArgs(on));
+    requireOk(r, backend, 'adb shell svc power stayon');
+    return on
+        ? '已开启插电常亮（拔线后自动恢复休眠；不修改系统熄屏时间）'
+        : '已关闭插电常亮';
+  }
+
+  @override
   Future<List<CrashReport>> crashList(
     String deviceId, {
     String? packageId,
@@ -169,6 +179,12 @@ class AdbBridge extends DeviceBridge {
         backend, 'crashGet', '没有崩溃记录 $crashId${ids.isEmpty ? '' : '，可用：$ids'}');
   }
 }
+
+/// Android 常亮：`svc power stayon true` 同时置 AC/USB/Wireless 三个位，
+/// 只在插电时生效，拔线自动恢复；不碰 `screen_off_timeout`，避免悄改用户
+/// 系统设置（那是持久生效的）。
+List<String> adbKeepAwakeArgs(bool on) =>
+    <String>['shell', 'svc', 'power', 'stayon', on ? 'true' : 'false'];
 
 /// 解析 `adb devices -l`。
 ///

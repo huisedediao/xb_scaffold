@@ -19,6 +19,9 @@ enum DeviceCapability {
   tapNative,
   crashList,
   crashGet,
+
+  /// 调试期间保持屏幕常亮（防长场景 / AI 循环中途熄屏）。
+  keepAwake,
 }
 
 /// 可注入的按键（各后端自行映射到平台键码）。
@@ -198,6 +201,13 @@ abstract class DeviceBridge {
 
   Future<String> crashGet(String deviceId, String crashId) =>
       _unsupported(DeviceCapability.crashGet);
+
+  /// 调试期间保持屏幕常亮；返回可读说明（命令输出 / 生效范围）。
+  ///
+  /// 只做运行时覆盖，不写系统设置、不需要 root：[on] 为 false 时恢复
+  /// 系统默认熄屏行为。
+  Future<String> keepAwake(String deviceId, bool on) =>
+      _unsupported(DeviceCapability.keepAwake);
 
   /// 释放后端持有的资源（子进程 / 长连接）。进程内后端无需实现。
   Future<void> dispose() async {}

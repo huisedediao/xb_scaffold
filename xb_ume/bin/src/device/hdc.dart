@@ -48,6 +48,7 @@ class HdcBridge extends DeviceBridge {
           DeviceCapability.launch,
           DeviceCapability.terminate,
           DeviceCapability.pressKey,
+          DeviceCapability.keepAwake,
         }
       : <DeviceCapability>{};
 
@@ -107,7 +108,34 @@ class HdcBridge extends DeviceBridge {
     final r = await _run(deviceId, <String>['shell', 'input', 'keyevent', '$code']);
     requireOk(r, backend, 'hdc shell input keyevent');
   }
+
+  @override
+  Future<String> keepAwake(String deviceId, bool on) async {
+    final r = await _run(deviceId, hdcKeepAwakeArgs(on));
+    requireOk(r, backend, 'hdc shell power-shell timeout');
+    final text = oneLine('${r.stdout}\n${r.stderr}');
+    // 旧固件可能没有 timeout 子命令，或 PowerManagerService 拒绝；退出码
+    // 仍是 0，只能看输出，不能当成功。
+    final lower = text.toLowerCase();
+    if (lower.contains('error') ||
+        lower.contains('fail') ||
+        lower.contains('not found')) {
+      throw DeviceCommandError(backend, 'hdc shell power-shell timeout', text);
+    }
+    if (text.isNotEmpty) return text;
+    return on ? '已覆盖熄屏时间（≈24.8 天）' : '已恢复系统熄屏时间';
+  }
 }
+
+/// 鸿蒙常亮：`power-shell timeout -o <ms>` 覆盖熄屏时间，`-r` 恢复。
+///
+/// HarmonyOS 的「设置 → 休眠」最多 10 分钟，shell 里又没有 Android 的
+/// `settings`；`power-shell timeout` 直接改 PowerManagerService 的运行时
+/// 覆盖值，不需要 root。覆盖值只在内存里：手机重启或 powmgr 进程重启后失效。
+/// 取 int32 上限 2147483647ms（≈24.8 天），足够覆盖一次调试会话。
+List<String> hdcKeepAwakeArgs(bool on) => on
+    ? <String>['shell', 'power-shell', 'timeout', '-o', '2147483647']
+    : <String>['shell', 'power-shell', 'timeout', '-r'];
 
 /// 解析 `hdc list targets`：每行一个 connect key，可能附带状态。
 ///

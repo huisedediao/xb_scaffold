@@ -31,6 +31,10 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'src/ai/prompt.dart';
+// 只取常亮命令构造器：这两个文件里的 parseAdbDevices / parseHdcTargets
+// 与本文件同名的本地解析器签名不同，不能整包导入。
+import 'src/device/adb.dart' show adbKeepAwakeArgs;
+import 'src/device/hdc.dart' show hdcKeepAwakeArgs;
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
@@ -483,6 +487,77 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.write(
         jsonEncode(<String, Object?>{'ok': true, 'allowEval': on}),
       );
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/keepawake' && req.method == 'POST') {
+      // 调试期间保持屏幕常亮（防长场景 / AI 循环中途熄屏）。
+      // 只做运行时覆盖，不写系统设置、不需要 root：
+      //   hdc  → power-shell timeout -o|-r（手机重启 / powmgr 重启后失效）
+      //   adb  → svc power stayon true|false（仅充电时生效）
+      req.response.headers.contentType = ContentType.json;
+      Map<dynamic, dynamic>? body;
+      try {
+        final raw = await _readBodyText(req);
+        final j = raw.isEmpty ? null : jsonDecode(raw);
+        if (j is Map) body = j;
+      } catch (_) {}
+      final deviceId = (body?['deviceId'] ?? '').toString().trim();
+      final on = body?['on'] == true;
+      Map<String, String>? target;
+      for (final d in state.devices) {
+        if (d['id'] == deviceId) {
+          target = d;
+          break;
+        }
+      }
+      final platform = target?['platform'] ?? '';
+      if (deviceId.isEmpty || target == null ||
+          (platform != 'ohos' && platform != 'android')) {
+        req.response.statusCode = HttpStatus.badRequest;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'message': deviceId.isEmpty
+              ? '缺少 deviceId'
+              : (target == null
+                  ? '设备不在当前列表：$deviceId'
+                  : '该设备不支持常亮（仅 Android / 鸿蒙）'),
+        }));
+        await req.response.close();
+        return;
+      }
+      final args = platform == 'ohos'
+          ? <String>[
+              '-t',
+              deviceId,
+              ...hdcKeepAwakeArgs(on),
+            ]
+          : <String>['-s', deviceId, ...adbKeepAwakeArgs(on)];
+      try {
+        final r = await _runTool(platform == 'ohos' ? 'hdc' : 'adb', args);
+        final text = '${r.stdout}\n${r.stderr}'.trim();
+        final lower = text.toLowerCase();
+        // hdc 的 power-shell 对不支持的子命令也返回 0，只能看输出。
+        if (r.exitCode != 0 ||
+            lower.contains('error') ||
+            lower.contains('fail')) {
+          req.response.statusCode = HttpStatus.badGateway;
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': false,
+            'message': text.isEmpty ? '命令失败（退出码 ${r.exitCode}）' : text,
+          }));
+        } else {
+          state.setKeepAwakeLocal(deviceId, on);
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': true,
+            'on': on,
+            'detail': text,
+          }));
+        }
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        req.response.write(jsonEncode(<String, Object?>{'ok': false, 'message': '$e'}));
+      }
       await req.response.close();
       return;
     }
@@ -4049,6 +4124,29 @@ class GuiState {
   List<Map<String, String>> devices = <Map<String, String>>[];
   String? selectedId;
 
+  /// 由本工具箱开启了屏幕常亮的设备 id。
+  ///
+  /// 只代表「本进程发过开启命令」：hdc 的覆盖值在手机重启 / powmgr 重启后
+  /// 失效，GUI 重启后这里也会清空，前端以本集合为准（重启后重新勾一次即可，
+  /// 命令幂等）。设备掉线时在 [poll] 里一并移除。
+  final Set<String> _keepAwake = <String>{};
+
+  List<String> get keepAwakeIds => _keepAwake.toList(growable: false);
+
+  /// 记录常亮状态并把设备列表重新推给所有前端。
+  void setKeepAwakeLocal(String deviceId, bool on) {
+    if (on) {
+      _keepAwake.add(deviceId);
+    } else {
+      _keepAwake.remove(deviceId);
+    }
+    broadcast(<String, Object?>{
+      'type': 'devices',
+      'devices': devices,
+      'keepAwake': keepAwakeIds,
+    });
+  }
+
   /// 已连接调试会话反推的项目根（供「AI 调试」页的项目目录候选）。
   List<String> get sessionProjectRoots {
     final out = <String>[];
@@ -4132,8 +4230,14 @@ class GuiState {
       } catch (e) {
         print('[xbume-gui] 设备发现异常: $e');
       }
-      broadcast(<String, Object?>{'type': 'devices', 'devices': devices});
       final ids = devices.map((d) => d['id'] ?? '').toSet();
+      // 设备拔掉后不再保留常亮标记（重新插上时重新勾一次，命令幂等）。
+      _keepAwake.removeWhere((id) => !ids.contains(id));
+      broadcast(<String, Object?>{
+        'type': 'devices',
+        'devices': devices,
+        'keepAwake': keepAwakeIds,
+      });
       for (final device in devices) {
         await _ensureDeviceLogSource(device);
       }
@@ -4966,6 +5070,7 @@ class GuiState {
       'type': 'snapshot',
       'devices': devices,
       'selected': selectedId,
+      'keepAwake': keepAwakeIds,
       'items': _buffer,
       'exceptions': _exceptions,
     }));
@@ -11140,6 +11245,7 @@ const String guiHtml = r'''
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
     <select id="hdrdev" onchange="selectDevice(this.value)"></select>
+    <label class="chk" id="hdr-awake-wrap" style="display:none" title="调试期间保持屏幕常亮（防长场景 / AI 循环中途熄屏）：鸿蒙覆盖熄屏时间（≈24.8 天，手机重启后失效）；Android 仅充电时生效。只改运行时状态，不写系统设置"><input type="checkbox" id="hdr-awake" onchange="setKeepAwake(this.checked)">常亮</label>
     <button onclick="refreshAll()" title="立即扫描设备并刷新调试会话状态">刷新</button>
     <div id="wsdot" title="页面连接状态"></div>
   </div>
@@ -11611,6 +11717,8 @@ var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).con
   };
 })();
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
+// 已开启屏幕常亮的设备 id（后端下发；GUI 重启后清空，重新勾一次即可，命令幂等）
+var keepAwakeSet = {};
 var fpBySource = {}, vmMiss = 0; // 会话指纹映射与瞬断容忍计数
 // 所选会话指纹持久化：localStorage 存 fp，刷新/重开浏览器后自动选回同一会话；
 // 手动选「未选择会话」才清除（saveVmFp/removeVmFp）
@@ -11631,8 +11739,8 @@ function connect() {
   ws.onclose = function(){ document.getElementById('wsdot').classList.remove('on'); setTimeout(connect, 1500); };
   ws.onmessage = function(e){
     var msg = JSON.parse(e.data);
-    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); if (tlOnTab()) tlSchedule(); }
-    else if (msg.type === 'devices') { devices = msg.devices; renderHdrDev(); }
+    if (msg.type === 'snapshot') { devices = msg.devices; selected = msg.selected; applyKeepAwake(msg.keepAwake); logs = msg.items; excItems = msg.exceptions || []; excBadge(); renderHdrDev(); renderLogs(); refreshDaemon(); if (tlOnTab()) tlSchedule(); }
+    else if (msg.type === 'devices') { devices = msg.devices; applyKeepAwake(msg.keepAwake); renderHdrDev(); }
     else if (msg.type === 'logs') { msg.items.forEach(function(l){ l._seq = ++logSeq; }); logs = logs.concat(msg.items); trimLogs(); if (!paused) logFlushNew(); if (tlOnTab()) tlSchedule(); }
     else if (msg.type === 'cleared') { logs = []; renderLogs(); tlSchedule(); }
     else if (msg.type === 'exception') { excOnItem(msg.item); }
@@ -12916,6 +13024,37 @@ function renderHdrDev() {
       + (platformNames[d.platform] || d.platform) + ' · ' + esc(d.name) + '（' + esc(d.state) + '）</option>';
   });
   document.getElementById('hdrdev').innerHTML = html;
+  syncAwake();
+}
+// 常亮开关：只对 Android / 鸿蒙设备出现；勾选状态以后端下发的 keepAwake 为准
+function applyKeepAwake(list){
+  keepAwakeSet = {};
+  (list || []).forEach(function(id){ keepAwakeSet[id] = 1; });
+}
+function syncAwake(){
+  var wrap = document.getElementById('hdr-awake-wrap');
+  var cb = document.getElementById('hdr-awake');
+  var d = null;
+  for (var i = 0; i < devices.length; i++) {
+    if (devices[i].id === selected) { d = devices[i]; break; }
+  }
+  var ok = !!d && (d.platform === 'android' || d.platform === 'ohos');
+  wrap.style.display = ok ? '' : 'none';
+  cb.checked = ok && !!keepAwakeSet[d.id];
+}
+function setKeepAwake(on){
+  if (!selected) return;
+  var cb = document.getElementById('hdr-awake');
+  var id = selected;
+  cb.disabled = true;
+  fetch('/api/keepawake', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ deviceId: id, on: on }) })
+    .then(function(r){ return r.json().then(function(d){ return { ok: r.ok && d.ok !== false, message: d.message }; }); })
+    .catch(function(e){ return { ok: false, message: '' + e }; })
+    .then(function(res){
+      if (!res.ok) alert('设置屏幕常亮失败：' + (res.message || '未知错误'));
+      cb.disabled = false;
+      syncAwake();
+    });
 }
 function refreshDevices(){ ws.send(JSON.stringify({type:'refresh'})); }
 function refreshAll(){ refreshDevices(); refreshDaemon(); }

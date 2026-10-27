@@ -21,6 +21,7 @@ List<McpTool> deviceTools() => <McpTool>[
       _appTerminateTool(),
       _pressKeyTool(),
       _nativeTapTool(),
+      _keepAwakeTool(),
       _crashListTool(),
       _crashGetTool(),
     ];
@@ -434,6 +435,43 @@ McpTool _pressKeyTool() => McpTool(
                 'ok': true,
                 'key': key.name,
                 'deviceId': device.id
+              });
+        } on DeviceCommandError catch (e) {
+          _fail(e);
+        }
+      },
+    );
+
+McpTool _keepAwakeTool() => McpTool(
+      name: 'xbume_keep_awake',
+      title: '调试期间保持屏幕常亮',
+      description: '防止手机在长场景 / AI 循环中途熄屏（鸿蒙系统「休眠」最多 10 分钟）。'
+          'hdc：power-shell timeout -o 2147483647 覆盖熄屏时间，手机或 powermgr 重启后失效；'
+          'adb：svc power stayon true，只在充电时生效，拔线自动恢复。'
+          '只改运行时状态，不写系统设置、不需要 root；用完传 on: false 恢复。iOS 后端没有等价命令。',
+      group: ToolGroup.act,
+      inputSchema: toolSchema(<String, Object?>{
+        'deviceId': _deviceIdProp(),
+        'on': prop('boolean', 'true 保持常亮（默认）/ false 恢复系统熄屏',
+            defaultValue: true),
+      }, <String>['deviceId']),
+      handler: (ctx, args) async {
+        final on = optionalBool(args, 'on', fallback: true);
+        final (bridge, device) = await _requireDevice(ctx, args);
+        if (!bridge.supports(DeviceCapability.keepAwake)) {
+          return _unsupported(DeviceUnsupported(DeviceCapability.keepAwake,
+              bridge.backend, '该后端未声明 keepAwake 能力'));
+        }
+        try {
+          final msg = await bridge.keepAwake(device.id, on);
+          return McpToolResult.text(
+              '${on ? '已开启' : '已恢复'}屏幕常亮：$msg（${device.id}）',
+              structured: <String, Object?>{
+                'ok': true,
+                'deviceId': device.id,
+                'backend': bridge.backend,
+                'on': on,
+                'detail': msg,
               });
         } on DeviceCommandError catch (e) {
           _fail(e);

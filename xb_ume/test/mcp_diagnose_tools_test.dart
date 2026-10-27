@@ -33,8 +33,8 @@ void main() {
     }
     // 工具名唯一（server 按 name 分发）。
     expect(byName.length, all.length);
-    // 文档口径：core 18 + diagnose 3 + run-safe 3 + act 2 + device-write 3。
-    expect(all.length, 29, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
+    // 文档口径：core 18 + diagnose 3 + run-safe 3 + act 3 + device-write 3。
+    expect(all.length, 30, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
     // 热重载默认可用；eval 必须显式 --allow-eval。
     expect(byName['xbume_hot_reload']?.group, ToolGroup.core);
     expect(byName.containsKey('xbume_eval'), isFalse);
@@ -56,6 +56,8 @@ void main() {
         containsAll(<String>['sessionId', 'kinds', 'keyword', 'sinceMs', 'limit']));
     expect(props('xbume_hot_reload'),
         containsAll(<String>['sessionId', 'pid', 'mode', 'timeoutMs']));
+    expect(props('xbume_keep_awake'), containsAll(<String>['deviceId', 'on']));
+    expect(byName['xbume_keep_awake']?.group, ToolGroup.act);
     final evalTool = coreTools(allowEval: true)
         .firstWhere((t) => t.name == 'xbume_eval');
     expect((evalTool.inputSchema['properties'] as Map).keys,

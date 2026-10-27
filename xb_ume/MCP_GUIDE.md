@@ -103,8 +103,8 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 29 个工具（core 18 + diagnose 3 + run-safe 3 + act 2 + device-write 3）；
-  「AI 调试」入口另外带上 `xbume_eval`（共 30 个）：
+- 一次开全 30 个工具（core 18 + diagnose 3 + run-safe 3 + act 3 + device-write 3）；
+  「AI 调试」入口另外带上 `xbume_eval`（共 31 个）：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对
   本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
@@ -201,7 +201,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 ## 3. 工具清单
 
 工具名统一前缀 `xbume_`。默认暴露 **24 个**（core 18 + diagnose 3 + run-safe 3）；
-加 `--allow-eval` 再多个 `xbume_eval`（25 个），`--tool-groups all` 全开则是 29 / 30。
+加 `--allow-eval` 再多个 `xbume_eval`（25 个），`--tool-groups all` 全开则是 30 / 31。
 
 ### core（18 个）
 
@@ -243,12 +243,13 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_crash_list` | `deviceId`, `packageId?`, `limit?` | Android logcat crash 缓冲区 / iOS DiagnosticReports / idevicecrashreport |
 | `xbume_crash_get` | `deviceId`, `crashId` | 取原始日志（超 64KB 截断） |
 
-### act（2 个，需 `--tool-groups act`）
+### act（3 个，需 `--tool-groups act`）
 
 | 工具 | 主要参数 |
 | --- | --- |
 | `xbume_press_key` | `deviceId`, `key`（back/home/enter/delete/tab/escape/menu/appSwitch/volumeUp/volumeDown/power） |
 | `xbume_native_tap` | `deviceId`, `x`, `y`（屏幕物理像素） |
+| `xbume_keep_awake` | `deviceId`, `on?`（默认 true）—— 调试期间保持屏幕常亮。鸿蒙走 `power-shell timeout -o 2147483647`（≈24.8 天，手机或 powermgr 重启后失效）；Android 走 `svc power stayon true`（仅充电时生效，拔线自动恢复）；iOS 无等价命令，返回 unsupported |
 
 ### device-write（3 个，需 `--tool-groups device-write`，高危）
 
@@ -482,6 +483,7 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 - **Windows 没有 LaunchAgent 的 KeepAlive**：`--install` 在 Windows 写 HKCU 注册表
   Run 键（登录自启），daemon 崩溃后不会被拉起；macOS 的 LaunchAgent 才会。
   Windows 的 daemon 日志在 `~/.xb_ume_ide/daemon.log`。
+- **`xbume_keep_awake` 依赖设备端命令**：鸿蒙走 `power-shell timeout`，个别旧固件没有这个子命令（`power-shell` 对不认识的子命令仍返回 0，所以只能按输出里的 error / fail / not found 判失败）；遇到时改用应用内 `setWindowKeepScreenOn`（ArkTS，需重新编包，仅 app 前台生效）或 DevEco 的「屏幕常亮」。Android 的 `svc power stayon` 只在插电时生效，拔线自动恢复；两边改的都是运行时状态，不做持久化。
 - **iOS 专属能力的宿主限制**：模拟器（`simctl`）与 `idevice*` 系后端依赖 macOS 工具链；
   偏好设置 plist 编辑用本机 `plutil` 转换。在 Windows 上这些入口会回「不支持」或
   报找不到工具，不影响 Android / 鸿蒙 / Windows 桌面链路。
