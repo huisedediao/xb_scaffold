@@ -79,6 +79,21 @@ version: 1.0.0
     });
   });
 
+  group('bindProjectRoot', () {
+    test('显式根优先，其次是认领到的 cwd，并归一化尾斜杠', () {
+      expect(bindProjectRoot('/p/a', '/p/b'), '/p/a');
+      expect(bindProjectRoot('  /p/a/  ', null), '/p/a');
+      expect(bindProjectRoot('', '/p/b'), '/p/b');
+      expect(bindProjectRoot(null, '/p/b/'), '/p/b');
+    });
+
+    test('都拿不到就回 null：不沿用上一个会话的项目根', () {
+      // 接入别的项目时若回退旧根，断点会记到旧项目、又反向恢复旧清单。
+      expect(bindProjectRoot(null, null), isNull);
+      expect(bindProjectRoot('   ', ''), isNull);
+    });
+  });
+
   group('JSON 序列化', () {
     test('断点：带条件与本机路径', () {
       final json = debugBreakpointJson(

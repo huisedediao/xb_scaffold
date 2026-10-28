@@ -107,6 +107,20 @@ List<String> savedAllDirs(Iterable<String> dirs, String? current) {
   return out;
 }
 
+/// 这次会话归属的项目根：显式给的（启动时的 cwd、会话列表里的 projectRoot）
+/// 优先，其次是这次认领到的 flutter run 的 cwd。
+///
+/// **不**回退到上一个会话的项目根：接入别的项目（IDE 里的会话、daemon 没反
+/// 推出根）时若沿用旧根，会把新项目的断点记到上一个项目名下、又反向恢复旧
+/// 项目的断点，两个项目的清单就串了。拿不到根宁可这次不落盘。
+String? bindProjectRoot(String? explicit, String? handleCwd) {
+  for (final raw in <String?>[explicit, handleCwd]) {
+    final s = raw?.trim() ?? '';
+    if (s.isNotEmpty) return BreakpointStore.normalizeRoot(s);
+  }
+  return null;
+}
+
 Map<String, Object?> debugVarJson(DebugVar v) => <String, Object?>{
       'name': v.name,
       'value': v.value,
@@ -547,7 +561,8 @@ class DebugHub {
     _message = '已加断点 ${_short(bp.scriptUri ?? path)}:${bp.line ?? line}'
         '${bp.resolved ? '' : '（待解析）'}'
         '${bp.condition == null ? '' : ' if ${bp.condition}'}'
-        '${bp.logMessage == null ? '' : ' log ${bp.logMessage}'}';
+        '${bp.logMessage == null ? '' : ' log ${bp.logMessage}'}'
+        '${root == null ? '（没识别出项目根，这次断点不会记住）' : ''}';
     return <String, Object?>{'breakpoint': debugBreakpointJson(bp, localPath: path)};
   }
 
@@ -688,10 +703,7 @@ class DebugHub {
     _pendingOut.clear();
     _handle = h;
     _wsUri = wsUri;
-    final root = _str(projectRoot) ?? h?.cwd ?? _projectRoot;
-    _projectRoot = (root == null || root.trim().isEmpty)
-        ? null
-        : BreakpointStore.normalizeRoot(root);
+    _projectRoot = bindProjectRoot(projectRoot, h?.cwd);
     _packageName = _str(packageName) ?? readPubspecName(_projectRoot ?? '');
     final client = DebugClient(
       wsUri,
