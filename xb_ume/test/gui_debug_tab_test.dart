@@ -46,7 +46,7 @@ void main() {
       expect(html.contains('function dbgSamePort('), isTrue);
     });
 
-    test('断点卡片接上日志表达式与「全部项目」总览', () {
+    test('断点卡片接上日志表达式、全部项目总览与就地编辑', () {
       const html = gui.guiHtml;
       for (final fn in <String>[
         'id="dbg-bp-log"',
@@ -55,6 +55,10 @@ void main() {
         'function dbgRenderSavedAll(',
         'savedAll',
         'function dbgForgetDirAt(',
+        'id="dbg-bp-add"',
+        'function dbgEditBp(',
+        'function dbgCancelBpEdit(',
+        'updateBreakpoint',
       ]) {
         expect(html.contains(fn), isTrue, reason: fn);
       }

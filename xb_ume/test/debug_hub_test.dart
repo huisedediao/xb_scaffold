@@ -331,5 +331,19 @@ version: 1.0.0
       expect(d['cleared'], 1);
       expect(storeHub.store.load(root), isEmpty);
     });
+
+    test('updateBreakpoint：缺 id / 没连会话都给出可读错误', () async {
+      final noId =
+          await storeHub.handle('updateBreakpoint', const <String, Object?>{});
+      expect(noId['ok'], isFalse);
+      expect('${noId['error']}', contains('断点 id'));
+
+      final noSession = await storeHub.handle(
+        'updateBreakpoint',
+        <String, Object?>{'id': 'breakpoints/1', 'condition': 'x > 1'},
+      );
+      expect(noSession['ok'], isFalse);
+      expect('${noSession['error']}', contains('未连接调试会话'));
+    });
   });
 }

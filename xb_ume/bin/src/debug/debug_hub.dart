@@ -308,6 +308,8 @@ class DebugHub {
         return _addBreakpoint(a);
       case 'removeBreakpoint':
         return _removeBreakpoint(a);
+      case 'updateBreakpoint':
+        return _updateBreakpoint(a);
       case 'toggleBreakpoint':
         return _toggleBreakpoint(a);
       case 'listBreakpoints':
@@ -559,6 +561,41 @@ class DebugHub {
     _syncSavedBreakpoint(client, bp);
     _message = '已删除断点 $id';
     return const <String, Object?>{};
+  }
+
+  /// 改断点的条件 / 日志表达式：位置不变，只改客户端登记并覆盖落盘清单。
+  Future<Map<String, Object?>> _updateBreakpoint(
+      Map<String, Object?> a) async {
+    final id = _str(a['id']);
+    if (id == null) throw DebugException('缺少断点 id');
+    final client = _requireClient();
+    final bp = client.updateBreakpoint(
+      id,
+      condition: _str(a['condition']),
+      logMessage: _str(a['logMessage']),
+    );
+    final root = _projectRoot;
+    final uri = bp.scriptUri;
+    final local = uri == null ? null : client.localPathOf(uri);
+    if (root != null && local != null && bp.line != null) {
+      store.add(
+        root,
+        SavedBreakpoint(
+          path: BreakpointStore.relativePathOf(root, local),
+          line: bp.line!,
+          column: bp.column,
+          condition: bp.condition,
+          logMessage: bp.logMessage,
+          enabled: bp.enabled,
+        ),
+      );
+    }
+    _message = '已更新断点 ${_short(bp.scriptUri ?? id)}:${bp.line ?? '?'}'
+        '${bp.condition == null ? '' : ' if ${bp.condition}'}'
+        '${bp.logMessage == null ? '' : ' log ${bp.logMessage}'}';
+    return <String, Object?>{
+      'breakpoint': debugBreakpointJson(bp, localPath: local),
+    };
   }
 
   Future<Map<String, Object?>> _toggleBreakpoint(

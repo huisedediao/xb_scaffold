@@ -702,6 +702,57 @@ class DebugClient {
     _owned.removeWhere((o) => o.id == breakpointId);
   }
 
+  /// 改条件 / 日志表达式（这两项 VM 不存，只在本客户端登记）。
+  ///
+  /// 空串 / 全空白等于清空该字段。位置不变：换文件或行号请删了重加（VM 断点
+  /// id 会变）。返回改后的断点。
+  DebugBreakpoint updateBreakpoint(
+    String breakpointId, {
+    String? condition,
+    String? logMessage,
+  }) {
+    final cur = _breakpoints[breakpointId];
+    if (cur == null) {
+      throw DebugException('断点不存在：$breakpointId（可能已被删除，刷新一下）');
+    }
+    final cond = _blankToNull(condition);
+    final log = _blankToNull(logMessage);
+    if (cond == null) {
+      _conditions.remove(breakpointId);
+    } else {
+      _conditions[breakpointId] = cond;
+    }
+    if (log == null) {
+      _logMessages.remove(breakpointId);
+    } else {
+      _logMessages[breakpointId] = log;
+    }
+    final merged = DebugBreakpoint(
+      id: cur.id,
+      scriptUri: cur.scriptUri,
+      line: cur.line,
+      column: cur.column,
+      resolved: cur.resolved,
+      enabled: cur.enabled,
+      condition: cond,
+      logMessage: log,
+    );
+    _breakpoints[breakpointId] = merged;
+    final i = _owned.indexWhere((o) => o.id == breakpointId);
+    if (i >= 0) {
+      final o = _owned[i];
+      _owned[i] = _OwnedBreakpoint(
+        id: o.id,
+        path: o.path,
+        line: o.line,
+        column: o.column,
+        condition: cond,
+        logMessage: log,
+      );
+    }
+    return merged;
+  }
+
   /// 启停断点（VM 的 setBreakpointState，不删断点）。
   Future<void> setBreakpointEnabled(String breakpointId, bool enabled) async {
     final raw = await rpc('setBreakpointState', <String, Object?>{

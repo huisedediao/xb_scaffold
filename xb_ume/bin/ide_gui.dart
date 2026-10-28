@@ -11439,7 +11439,8 @@ const String guiHtml = r'''
           <input id="dbg-bp-line" placeholder="行号" style="width:70px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
           <input id="dbg-bp-cond" placeholder="条件（可空）" style="flex:0 1 120px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
           <input id="dbg-bp-log" placeholder="日志表达式（命中不暂停，如 'i=$i'）" style="flex:1 1 200px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <button class="primary" onclick="dbgAddBp(this)">加断点</button>
+          <button class="primary" id="dbg-bp-add" onclick="dbgAddBp(this)">加断点</button>
+          <button id="dbg-bp-cancel" onclick="dbgCancelBpEdit()" style="display:none" title="放弃修改，回到新加断点">取消</button>
         </div>
         <div id="dbg-bps" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;gap:6px">
@@ -16744,6 +16745,7 @@ var dbgAttachList = [];    // 可接入的调试会话（/api/daemon）
 var dbgOutLines = [];      // 运行输出（前端最多留 2000 行）
 var dbgOutSeq = 0;         // 已渲染到的输出序号（旧的 status 快照不回退）
 var dbgToastTimer = null;
+var dbgEditBpId = '';      // 非空 = 正在改这条断点的条件 / 日志（位置不可改）
 
 function dbgEl(id){ return document.getElementById(id); }
 
@@ -17053,6 +17055,9 @@ function dbgRenderBps(){
   var el = dbgEl('dbg-bps');
   if (!el) return;
   var bps = (dbgSt.breakpoints || []).slice();
+  if (dbgEditBpId && !bps.some(function(b){ return b.id === dbgEditBpId; })) {
+    dbgCancelBpEdit(); // 编辑中的断点被删 / 换了会话：别让「保存修改」打到不存在的 id
+  }
   var n = dbgEl('dbg-bp-n');
   if (n) n.textContent = bps.length ? '（' + bps.length + ' 个）' : '';
   if (!bps.length) { el.innerHTML = '<div class="muted" style="padding:6px">还没有断点</div>'; return; }
@@ -17077,6 +17082,7 @@ function dbgRenderBps(){
       + '<span class="p" title="' + esc(p) + '">' + esc(name) + ':' + esc(b.line == null ? '?' : b.line) + '</span>'
       + cond
       + logm
+      + '<span class="x" title="改条件 / 日志表达式（位置不变）" onclick="dbgEditBp(\'' + id + '\')">✎</span>'
       + '<span class="x" title="' + (b.enabled === false ? '启用' : '停用') + '" onclick="dbgToggleBp(\'' + id + '\')">'
       + (b.enabled === false ? '○' : '●') + '</span>'
       + '<span class="x" title="删除" onclick="dbgDelBp(\'' + id + '\')">✕</span>'
@@ -17162,10 +17168,19 @@ function dbgFetchStack(){
 
 function dbgAddBp(btn){
   if (!dbgSt.attached) { dbgToast('还没连上调试会话：先「启动」或「接入」'); return; }
-  var path = (dbgEl('dbg-bp-path').value || '').trim();
-  var line = parseInt(dbgEl('dbg-bp-line').value, 10);
   var cond = (dbgEl('dbg-bp-cond').value || '').trim();
   var logMsg = (dbgEl('dbg-bp-log').value || '').trim();
+  if (dbgEditBpId) {
+    // 编辑态：位置不动，只提交条件 / 日志表达式（这两项 VM 不存，改的是客户端登记 + 落盘）。
+    var saving = dbgBusy(btn, '保存中…');
+    dbgOp('updateBreakpoint', {id: dbgEditBpId, condition: cond || null, logMessage: logMsg || null}).then(function(d){
+      saving();
+      if (d && d.ok) { dbgCancelBpEdit(); dbgLoadSaved(); }
+    }, saving);
+    return;
+  }
+  var path = (dbgEl('dbg-bp-path').value || '').trim();
+  var line = parseInt(dbgEl('dbg-bp-line').value, 10);
   if (!path) { dbgToast('先填源码路径（可相对项目根，如 lib/main.dart）'); return; }
   if (!line || line < 1) { dbgToast('行号从 1 开始'); return; }
   var done = dbgBusy(btn, '添加中…');
@@ -17177,6 +17192,39 @@ function dbgAddBp(btn){
       dbgLoadSaved();
     }
   }, done);
+}
+
+// 编辑断点的条件 / 日志表达式：回填到输入区，位置置只读（换位置请删了重加）。
+function dbgEditBp(id){
+  var b = null;
+  (dbgSt.breakpoints || []).forEach(function(x){ if (x.id === id) b = x; });
+  if (!b) { dbgToast('这条断点已不在清单里，先「刷新」'); return; }
+  dbgEditBpId = id;
+  dbgEl('dbg-bp-path').value = b.path || b.scriptUri || '';
+  dbgEl('dbg-bp-line').value = b.line == null ? '' : b.line;
+  dbgEl('dbg-bp-cond').value = b.condition || '';
+  dbgEl('dbg-bp-log').value = b.logMessage || '';
+  dbgEl('dbg-bp-path').readOnly = true;
+  dbgEl('dbg-bp-line').readOnly = true;
+  var add = dbgEl('dbg-bp-add');
+  if (add) add.textContent = '保存修改';
+  var cancel = dbgEl('dbg-bp-cancel');
+  if (cancel) cancel.style.display = '';
+  dbgToast('改完条件 / 日志表达式点「保存修改」；换位置请删除重加');
+}
+
+function dbgCancelBpEdit(){
+  if (!dbgEditBpId) return;
+  dbgEditBpId = '';
+  dbgEl('dbg-bp-cond').value = '';
+  dbgEl('dbg-bp-log').value = '';
+  dbgEl('dbg-bp-line').value = '';
+  dbgEl('dbg-bp-path').readOnly = false;
+  dbgEl('dbg-bp-line').readOnly = false;
+  var add = dbgEl('dbg-bp-add');
+  if (add) add.textContent = '加断点';
+  var cancel = dbgEl('dbg-bp-cancel');
+  if (cancel) cancel.style.display = 'none';
 }
 
 function dbgToggleBp(id){ dbgOp('toggleBreakpoint', {id: id}).then(dbgLoadSaved); }

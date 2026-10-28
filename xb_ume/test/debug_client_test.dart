@@ -678,6 +678,63 @@ void main() {
       expect(removed['breakpointId'], bp.id);
     });
 
+    test('updateBreakpoint：改条件 / 日志，空白即清空，热重启重下发带回最新登记', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        condition: 'x == 1',
+      );
+      final up = client.updateBreakpoint(bp.id, condition: 'x > 2', logMessage: 'x');
+      expect(up.id, bp.id);
+      expect(up.line, bp.line);
+      expect(up.condition, 'x > 2');
+      expect(up.logMessage, 'x');
+      expect(client.breakpoints.single.logMessage, 'x');
+
+      // 空白即清空（不换位置把条件 / 日志去掉）。
+      final cleared = client.updateBreakpoint(bp.id, condition: '   ', logMessage: '');
+      expect(cleared.condition, isNull);
+      expect(cleared.logMessage, isNull);
+
+      // 改回带日志，再模拟热重启：重下发要带最新登记（靠 _owned 同步）。
+      client.updateBreakpoint(bp.id, condition: 'x > 2', logMessage: 'x');
+      vm.onCall = (method, params) async {
+        if (method == 'getVM') {
+          return <String, Object?>{
+            'type': 'VM',
+            'isolates': <Object?>[
+              <String, Object?>{'id': 'isolates/2', 'name': 'main'},
+            ],
+          };
+        }
+        if (method == 'addBreakpointWithScriptUri') {
+          return <String, Object?>{
+            'type': 'Breakpoint',
+            'id': 'breakpoints/9',
+            'resolved': true,
+            'enabled': true,
+            'location': <String, Object?>{
+              'script': <String, Object?>{
+                'uri': (params['scriptUri'] ?? '') as String,
+              },
+              'line': params['line'],
+            },
+          };
+        }
+        return null;
+      };
+      client.resetIsolate();
+      final bps = await client.reapplyBreakpoints();
+      expect(bps.single.condition, 'x > 2');
+      expect(bps.single.logMessage, 'x');
+
+      expect(
+        () => client.updateBreakpoint('breakpoints/404', condition: 'x'),
+        throwsA(isA<DebugException>()),
+      );
+    });
+
     test('热重启后 resetIsolate + reapplyBreakpoints 重新下发', () async {
       await client.connect();
       await client.addBreakpoint(
