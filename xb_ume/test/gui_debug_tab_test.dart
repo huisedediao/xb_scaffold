@@ -29,6 +29,23 @@ void main() {
       }
     });
 
+    test('异常 / 网络定位行接上「一键下断点」', () {
+      // 异常栈帧 / 相关 Widget / 网络发起位置的「断点」链接。
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'excQuickBp(',
+        'excFrameQuickBp(',
+        'nwInitQuickBp(',
+        'function dbgQuickBp(',
+        'rememberBreakpoint',
+        'dbgPrefillBp(',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 位置不属于当前调试会话时不能默默下到错的会话上。
+      expect(html.contains('function dbgSamePort('), isTrue);
+    });
+
     test('接上三类 WebSocket 推送（事件/状态/输出）', () {
       const html = gui.guiHtml;
       // 少接任一条，界面就会「点得动但看不到变化」。

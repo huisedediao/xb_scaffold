@@ -318,6 +318,8 @@ class DebugHub {
         final n = store.clear(root);
         _message = n == 0 ? '没有记住的断点' : '已忘记 $n 个断点（下次连接不再自动恢复）';
         return <String, Object?>{'cleared': n};
+      case 'rememberBreakpoint':
+        return _rememberBreakpoint(a);
       case 'stack':
         final frames = await _requireClient().stack(limit: _int(a['limit']) ?? 32);
         return <String, Object?>{
@@ -458,6 +460,32 @@ class DebugHub {
   }
 
   // ---------------------------------------------------------------- 断点
+
+  /// 只写进落盘清单（不建 VM 断点）：异常栈帧 / 网络发起位置没连会话时
+  /// 「一键下断点」用它先记住，下次 start / attach 到同一项目自动重下。
+  Future<Map<String, Object?>> _rememberBreakpoint(
+      Map<String, Object?> a) async {
+    final raw = _str(a['path']);
+    if (raw == null) throw DebugException('缺少 path（源码文件路径）');
+    final line = _int(a['line']);
+    if (line == null || line < 1) throw DebugException('缺少行号 line（从 1 开始）');
+    final root = _savedRoot(a);
+    if (root == null) {
+      throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    }
+    final rel = BreakpointStore.relativePathOf(root, raw);
+    store.add(
+      root,
+      SavedBreakpoint(path: rel, line: line, condition: _str(a['condition'])),
+    );
+    _message = '已记住断点 ${_short(raw)}:$line，下次启动 / 接入自动生效';
+    return <String, Object?>{
+      'dir': root,
+      'saved': <Object?>[
+        for (final b in store.load(root)) debugSavedBreakpointJson(root, b),
+      ],
+    };
+  }
 
   Future<Map<String, Object?>> _addBreakpoint(Map<String, Object?> a) async {
     final raw = _str(a['path']);

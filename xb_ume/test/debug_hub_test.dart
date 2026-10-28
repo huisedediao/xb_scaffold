@@ -249,6 +249,32 @@ version: 1.0.0
       expect(item['condition'], 'i>2');
     });
 
+    test('rememberBreakpoint：没 dir 报错；有 dir 写清单且路径转相对', () async {
+      // 「一键下断点」在未连会话时只记清单，下次 start/attach 自动重下。
+      final bad = await storeHub.handle(
+        'rememberBreakpoint',
+        <String, Object?>{'path': '$root/lib/main.dart', 'line': 88},
+      );
+      expect(bad['ok'], isFalse);
+      expect('${bad['error']}', contains('项目目录'));
+      expect(storeHub.store.load(root), isEmpty);
+
+      final d = await storeHub.handle('rememberBreakpoint', <String, Object?>{
+        'dir': root,
+        'path': '$root/lib/main.dart',
+        'line': 88,
+      });
+      expect(d['ok'], isTrue);
+      final list = storeHub.store.load(root);
+      expect(list, hasLength(1));
+      expect(list.first.path, 'lib/main.dart');
+      expect(list.first.line, 88);
+      final saved = d['saved'] as List;
+      expect(saved, hasLength(1));
+      expect((saved.first as Map)['absPath'], '$root/lib/main.dart');
+      expect('${d['message']}', contains('已记住断点'));
+    });
+
     test('forgetSaved：没 dir 报可读错误，有 dir 清空并回报条数', () async {
       final bad = await storeHub.handle('forgetSaved', const <String, Object?>{});
       expect(bad['ok'], isFalse);

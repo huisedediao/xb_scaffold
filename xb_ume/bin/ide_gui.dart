@@ -12050,6 +12050,7 @@ function excCardHtml(it){
   if (it.widget) {
     h += '<div style="margin-top:4px">Widget：' + esc(it.widget);
     if (it.widgetFile) h += ' <a href="javascript:void(0)" onclick="excJump(' + it.id + ',' + (it.widgetLine || 1) + ',this)">跳转</a>';
+    if (it.widgetFile) h += ' <a href="javascript:void(0)" onclick="excQuickBp(' + it.id + ',' + (it.widgetLine || 1) + ')" title="在「调试」页下断点（已连会话立即生效，未连则记住、下次自动恢复）">断点</a>';
     h += '</div>';
   }
   if (it.stack && it.stack.length) {
@@ -12058,6 +12059,7 @@ function excCardHtml(it){
       var raw = f.raw || ((f.method || '') + ' (' + (f.uri || '') + ':' + (f.line || 0) + ')');
       h += '<div class="excframe">' + esc(raw);
       if (f.file) h += ' <a href="javascript:void(0)" onclick="excFrameJump(' + it.id + ',' + idx + ',this)">跳转</a>';
+      if (f.file) h += ' <a href="javascript:void(0)" onclick="excFrameQuickBp(' + it.id + ',' + idx + ')" title="在这一帧下断点">断点</a>';
       h += '</div>';
     });
     h += '</div>';
@@ -12161,6 +12163,80 @@ function excOpenIde(file, line, el){
     .then(function(r){ return r.json(); })
     .then(function(d){ el.textContent = d.ok ? '已打开 ✓' : '失败：' + (d.message || '未知错误'); })
     .catch(function(e){ el.textContent = '失败：' + e; });
+}
+// 「一键下断点」：异常栈帧 / 相关 Widget / 网络发起位置的源码行旁。
+// 已连同一会话 → 立刻下；未连 → 记进「已记住」清单，下次启动/接入自动生效；
+// 位置不属于当前调试会话（端口不同）→ 只把位置填到调试页，不默默下错会话。
+function excQuickBp(id, line){ // 相关 widget 的断点
+  var it = excById[id];
+  if (!it || !it.widgetFile) return;
+  dbgQuickBp(it.widgetFile, line, it.wsUri);
+}
+function excFrameQuickBp(id, idx){ // 栈帧行的断点
+  var it = excById[id];
+  var f = it && it.stack && it.stack[idx];
+  if (!f || !f.file) return;
+  dbgQuickBp(f.file, f.line, it.wsUri);
+}
+function nwInitQuickBp(id, idx){ // 网络发起位置栈帧的断点
+  var f = (nwInitFrames[id] || [])[idx];
+  if (!f || !f.file) return;
+  var u = vmFilter ? (vmUriBySource[vmFilter] || '') : '';
+  dbgQuickBp(f.file, f.line, u);
+}
+function dbgSamePort(a, b){ // 只看端口：wsUri 的 path/token 各来源不一致，比全串会误拦
+  if (!a || !b) return true;
+  var pa = /:(\d+)/.exec(a), pb = /:(\d+)/.exec(b);
+  if (!pa || !pb) return a === b;
+  return pa[1] === pb[1];
+}
+function dbgPrefillBp(file, line){ // 把位置填到调试页并切过去
+  var p = dbgEl('dbg-bp-path'), l = dbgEl('dbg-bp-line');
+  if (p) p.value = file || '';
+  if (l) l.value = line ? String(line) : '';
+  var dir = dbgEl('dbg-dir');
+  if (dir && !dir.value) {
+    // 目录空着：从候选里找文件所属的最长前缀回填，免得断点记到错项目。
+    var best = '';
+    var dl = dbgEl('dbg-dir-list');
+    if (dl) Array.prototype.forEach.call(dl.options, function(o){
+      var c = (o.value || '').replace(/[\\/]+$/, '');
+      if (c && file.indexOf(c + '/') === 0 && c.length > best.length) best = c;
+    });
+    if (best) { dir.value = best; dbgLoadSaved(); }
+  }
+  var tab = document.querySelector('[data-tab="debug"]');
+  if (tab) showTab(tab);
+}
+function dbgQuickBp(file, line, fromWs){
+  if (!file || !line) return null;
+  var name = String(file).split(/[\\/]/).pop();
+  var where = name + ':' + line;
+  if (dbgSt && dbgSt.attached) {
+    if (!dbgSamePort(fromWs, dbgSt.wsUri)) {
+      dbgPrefillBp(file, line);
+      dbgToast('该位置来自另一条调试会话：已在「调试」页填好位置，接入对应会话后再点「加断点」');
+      return null;
+    }
+    return dbgOp('addBreakpoint', {path: file, line: line}).then(function(d){
+      if (d && d.ok) { dbgLoadSaved(); dbgToast('已下断点 ' + where); }
+      return d;
+    });
+  }
+  var dir = dbgDirValue();
+  if (!dir) {
+    dbgPrefillBp(file, line);
+    dbgToast('未连接调试会话：已把位置填到「调试」页，先选项目目录再点「加断点」');
+    return null;
+  }
+  return dbgOp('rememberBreakpoint', {dir: dir, path: file, line: line}).then(function(d){
+    if (d && d.ok) {
+      dbgSavedList = d.saved || [];
+      dbgRenderSaved();
+      dbgToast('已记住断点 ' + where + '：下次启动 / 接入自动生效');
+    }
+    return d;
+  });
 }
 // -- 截图 Tab：实时截图 + 遥控（Tap/Swipe/Input）+ 录制/回放 ------------
 var shTimer = null;      // 自动刷新定时器
@@ -15130,18 +15206,21 @@ function nwDetailHtml(id, d){
     nwInitFrames[id] = fs;
     var initHtml = fs.map(function(f, idx){
       return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
-        + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+        + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '')
+        + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitQuickBp(\'' + esc(id) + '\',' + idx + ')" title="在这一帧下断点">断点</a>' : '') + '</div>';
     }).join('');
     if (fs.length > 1) {
       initHtml = fs.slice(0, 1).map(function(f, idx){
         return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
-          + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+          + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '')
+          + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitQuickBp(\'' + esc(id) + '\',' + idx + ')" title="在这一帧下断点">断点</a>' : '') + '</div>';
       }).join('')
         + '<details style="margin-top:4px"><summary class="muted">完整调用栈（' + fs.length + ' 帧）</summary>'
         + fs.slice(1).map(function(f, i){
             var idx = i + 1;
             return '<div style="font-family:monospace;font-size:12px;word-break:break-all">' + esc(f.raw || '')
-              + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '') + '</div>';
+              + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitJump(\'' + esc(id) + '\',' + idx + ',this)">跳转</a>' : '')
+              + (f.file ? ' <a href="javascript:void(0)" onclick="nwInitQuickBp(\'' + esc(id) + '\',' + idx + ')" title="在这一帧下断点">断点</a>' : '') + '</div>';
           }).join('')
         + '</details>';
     }
