@@ -84,15 +84,17 @@ String buildAiPrompt({
     ..writeln('设备：$deviceId')
     ..writeln()
     ..writeln('## 第一步：接上 app（只做一次）')
-    ..writeln('先调 xbume_sessions 看有没有现成会话：')
-    ..writeln('- 已列出这个项目的会话 → 停下来问我：复用现有会话（不能热重载），'
-        '还是重新拉起（会重启 app，手机上会顶掉 IDE 的调试会话），不要直接启动；')
+    ..writeln('先调 xbume_sessions：')
+    ..writeln('- 会话带 launcher 标记（xb_ume/GUI 拉起或认领）→ 直接用 xbume_use_session '
+        '选它，不要 app_launch 重跑；标了·可热重载的还能直接热重载/热重启；')
+    ..writeln('- 只有这个项目的会话、但没有 launcher 标记（IDE 拉起）→ 问我要不要改用 xb_ume 接管'
+        '（会重启 app，手机上会顶掉 IDE 的调试会话），不要直接启动；')
     ..writeln('- 没有可用会话 → 用 xbume_app_launch 启动，参数：')
     ..writeln(
         '{"deviceId": "$deviceId", "via": "flutter-run", "cwd": "$projectDir"}')
     ..writeln('它会由 xb_ume 启动 flutter run 并把新会话设为当前；'
-        '只有这种「自己拉起」的会话才支持后面的热重载。')
-    ..writeln('同设备同目录已有 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'
+        '返回 reused=true 表示复用了已有进程（未重装包），这是期望行为。')
+    ..writeln('同设备同目录已有 IDE 拉起的 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'
         '由我决定复用还是加 force: true。')
     ..writeln()
     ..writeln('## 第二步：按需使用工具')

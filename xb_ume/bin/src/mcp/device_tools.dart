@@ -128,7 +128,8 @@ McpTool _appLaunchTool() => McpTool(
       name: 'xbume_app_launch',
       title: '启动 app 并可选等待调试会话',
       description: 'via=flutter-run（默认）会执行 flutter run 并用解析到的 VM service '
-          '自动选为当前会话；via=adb/simctl/hdc 只启动已安装的包（需要 packageId）。',
+          '自动选为当前会话；同设备同目录已有存活会话时直接复用（不重装包）。'
+          'via=adb/simctl/hdc 只启动已安装的包（需要 packageId）。',
       group: ToolGroup.core,
       inputSchema: toolSchema(<String, Object?>{
         'deviceId': _deviceIdProp(extra: '；via=flutter-run 时可用 $_desktopDevice'),
@@ -141,7 +142,7 @@ McpTool _appLaunchTool() => McpTool(
         'waitVm': prop('boolean', '是否等待 VM service（flutter-run 默认 true）',
             defaultValue: true),
         'force': prop('boolean',
-            '同设备同目录已有 flutter run 时是否强行再起一个（会重装包并顶掉那个会话，手机上慎用）',
+            '是否强制重启：先停掉同设备同目录由本服务/GUI 拉起的会话再重新拉起（会重装包；异于复用）',
             defaultValue: false),
         'timeoutMs': prop('integer', '等待超时（毫秒）', defaultValue: 180000),
       }, <String>[
@@ -164,6 +165,7 @@ McpTool _appLaunchTool() => McpTool(
               cwd: optionalString(args, 'cwd'),
               waitVm: optionalBool(args, 'waitVm', fallback: true),
               force: optionalBool(args, 'force'),
+              owner: 'mcp',
               timeout: timeout,
             );
             String? sessionId;
@@ -171,10 +173,12 @@ McpTool _appLaunchTool() => McpTool(
               final s = ctx.sessions.addManual(r.wsUri!);
               sessionId = s.id;
             }
+            final action = r.reused ? '复用已有 flutter run' : '已启动 flutter run';
             return McpToolResult.text(
               sessionId == null
-                  ? '已启动 flutter run（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}'
-                  : '已启动并通过临时会话 $sessionId 接入（pid ${r.pid}）',
+                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}'
+                  : '$action（pid ${r.pid}）并通过临时会话 $sessionId 接入'
+                      '${r.reused ? '（未重装包）' : ''}',
               structured: <String, Object?>{
                 'ok': true,
                 'via': via,
@@ -183,6 +187,7 @@ McpTool _appLaunchTool() => McpTool(
                 'wsUri': r.wsUri,
                 'sessionId': sessionId,
                 'logPath': r.logPath,
+                'reused': r.reused,
               },
             );
           } on DeviceCommandError catch (e) {

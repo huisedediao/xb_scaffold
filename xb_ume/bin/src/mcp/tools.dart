@@ -271,7 +271,9 @@ McpTool _sessionsTool() => McpTool(
       name: 'xbume_sessions',
       title: '列出 Flutter 调试会话',
       description: '扫描本机回环地址上的 Flutter VM service（含 adb/hdc 转发来源），'
-          '返回会话 id、端口、app 名与当前选中项。任何其他工具报「未选择会话」时先调它。',
+          '返回会话 id、端口、app 名与当前选中项。带 launcher 标记的会话由 '
+          'xb_ume/GUI 拉起，可直接复用（无需 app_launch 重跑）。'
+          '任何其他工具报「未选择会话」时先调它。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'refresh':
@@ -281,9 +283,21 @@ McpTool _sessionsTool() => McpTool(
         final force = optionalBool(args, 'refresh');
         final list = await ctx.sessions.refresh(force: force);
         final cur = ctx.sessions.currentId;
-        final items = list
-            .map((s) => s.toJson(current: s.id == cur))
-            .toList(growable: false);
+        // 标注哪些会话是本服务/GUI 拉起的（可跨进程热重载），便于 AI 直接复用。
+        final managed = <int, String>{};
+        for (final h in ctx.launcher.live) {
+          final port = Uri.tryParse(h.wsUri ?? '')?.port;
+          if (port == null) continue;
+          final hot = (h.fifo != null && h.fifo!.isNotEmpty) || h.process != null;
+          managed[port] = '${h.owner}${h.adopted ? '认领' : '拉起'}'
+              '${hot ? '·可热重载' : '·只读'}';
+        }
+        final items = list.map((s) {
+          final json = s.toJson(current: s.id == cur);
+          final tag = managed[s.port];
+          if (tag != null) json['launcher'] = tag;
+          return json;
+        }).toList(growable: false);
         final sb = StringBuffer();
         if (items.isEmpty) {
           sb.write('未发现调试会话。');
@@ -295,9 +309,11 @@ McpTool _sessionsTool() => McpTool(
         } else {
           for (final s in items) {
             final app = (s['app'] ?? '').toString();
+            final tag = (s['launcher'] ?? '').toString();
             sb.write('${s['current'] == true ? '▶ ' : '  '}${s['id']}'
                 '${app.isEmpty ? '' : ' · $app'}'
-                ' · ${s['source']}${s['connected'] == true ? ' · 已连接' : ''}\n');
+                ' · ${s['source']}${s['connected'] == true ? ' · 已连接' : ''}'
+                '${tag.isEmpty ? '' : ' · $tag'}\n');
           }
         }
         return McpToolResult.text(sb.toString().trimRight(),

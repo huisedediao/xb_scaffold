@@ -49,9 +49,11 @@ void main() {
       expect(p, contains('"reload"'));
       expect(p, contains('"restart"'));
       expect(p, contains('xbume_timeline'));
-      // 拉起前先看现成会话，不直接顶掉 IDE 的调试会话。
+      // 拉起前先看现成会话：带 launcher 标记的直接复用，不重跑。
       expect(p, contains('xbume_sessions'));
-      expect(p, contains('不能热重载'));
+      expect(p, contains('launcher'));
+      expect(p, contains('xbume_use_session'));
+      expect(p, contains('reused=true'));
       expect(p, contains('force: true'));
     });
 

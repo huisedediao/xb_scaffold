@@ -16,6 +16,7 @@ import 'dart:io';
 
 import '../paths.dart';
 import 'bridge.dart';
+import 'live_store.dart';
 import 'process.dart';
 
 /// 本机已在跑的 `flutter run`（非本服务拉起），用于启动前体检。
@@ -92,6 +93,7 @@ class LaunchResult {
     this.target,
     this.wsUri,
     this.tail = '',
+    this.reused = false,
   });
 
   final int pid;
@@ -104,6 +106,9 @@ class LaunchResult {
 
   /// 失败时的日志尾部（最多 30 行）。
   final String tail;
+
+  /// true 表示命中已有存活会话，直接复用，没有重新拉起（不会重装包）。
+  final bool reused;
 }
 
 /// 正在运行的 flutter run 句柄。
@@ -114,7 +119,11 @@ class LaunchHandle {
     required this.target,
     required this.logPath,
     required this.startedAt,
-    required this.process,
+    required this.cwd,
+    this.process,
+    this.fifo,
+    this.adopted = false,
+    this.owner = 'mcp',
   });
 
   final int pid;
@@ -123,8 +132,21 @@ class LaunchHandle {
   final String logPath;
   final DateTime startedAt;
 
-  /// 自己拉起的 flutter run 进程：stdin 用于热重载（r / R），只碰自己的进程。
-  final Process process;
+  /// 启动时的工作目录（复用判定按符号链接归一后的路径比较）。
+  final String cwd;
+
+  /// 自己拉起的 flutter run 进程；认领来的进程为 null（拿不到句柄）。
+  final Process? process;
+
+  /// stdin 用的命名管道；null 表示该平台/会话不支持外部写 stdin。
+  final String? fifo;
+
+  /// true 表示从磁盘清单认领，不是本进程拉起。
+  final bool adopted;
+
+  /// 拉起方：mcp / gui。仅用于展示。
+  final String owner;
+
   String? wsUri;
 
   final StreamController<String> _lines = StreamController<String>.broadcast();
@@ -268,15 +290,18 @@ class FlutterRunLauncher {
 
   /// 启动 `flutter run -d <device>` 并等待 VM service 地址。
   ///
-  /// [cwd] 默认当前工作目录（MCP server 由使用方指定工程目录启动）。
-  /// [waitVm] 为 false 时只看进程是否起来，不等待调试端口（用于纯 UI 验证）。
-  /// [force] 为 true 时跳过「同设备同目录已有 flutter run」的体检。
+  /// 复用优先级（`force: false` 时）：
+  ///   1. 本服务 / GUI 已拉起且有 VM 地址的同设备同目录同 target 进程 → 直接复用；
+  ///   2. 正在启动中的同类进程 → 报错让调用方稍后重试（避免并发重装包）；
+  ///   3. 外部（IDE 拉起）的同设备同目录进程 → 报错，除非 `force: true`。
+  /// `force: true` 会先停掉自己拉起的同类会话，再重新拉起。
   Future<LaunchResult> launch({
     required String device,
     String? target,
     String? cwd,
     bool waitVm = true,
     bool force = false,
+    String owner = 'mcp',
     Duration timeout = const Duration(seconds: 180),
   }) async {
     final flutter = findExecutable('flutter');
@@ -288,21 +313,6 @@ class FlutterRunLauncher {
     if (!Directory(workdir).existsSync()) {
       throw DeviceCommandError('flutter-run', 'flutter run', '工作目录不存在：$workdir');
     }
-    // 体检：同设备 + 同目录已有 flutter run 时默认不重复拉起（手机上重装包
-    // 会直接顶掉那个会话，IDE 会报 Lost connection to device）。
-    if (!force) {
-      final conflict = findConflict(device: device, cwd: workdir);
-      if (conflict != null) {
-        throw DeviceCommandError(
-          'flutter-run',
-          'flutter run -d $device',
-          '设备 $device 上已有 flutter run 正在同一目录跑（pid ${conflict.pid}，目录 ${conflict.cwd}）：'
-              '继续会在手机上重装包并顶掉它（IDE 会报 Lost connection to device）。'
-              '要复用现有会话直接 xbume_sessions → xbume_use_session（该会话不支持热重载）；'
-              '确认重新拉起请传 force: true。',
-        );
-      }
-    }
     final logDir = Directory('${xbUmeHome()}/launch');
     if (!logDir.existsSync()) logDir.createSync(recursive: true);
     final stamp = DateTime.now()
@@ -310,40 +320,134 @@ class FlutterRunLauncher {
         .replaceAll(RegExp(r'[:.]'), '-')
         .substring(0, 19);
     final logPath = '${logDir.path}/$stamp-$device.log';
-    final sink = File(logPath).openWrite();
 
-    final Process proc;
+    var locked = false;
+    IOSink? sink;
+    String? fifo;
+    late final Process proc;
+    late final LaunchHandle handle;
     try {
-      proc = await Process.start(
-        flutter,
-        <String>['run', '-d', device, if (target != null && target.isNotEmpty) ...<String>['--target', target]],
-        workingDirectory: workdir,
-        // Windows 上 flutter 是 flutter.bat：CreateProcess 不能直接执行批处理，
-        // 必须走 cmd；其他平台（或原生 .exe）保持直启。
-        runInShell: needsShellOnWindows(flutter),
+      // 锁只护「判定 + 起进程」这一段：GUI 与 MCP 同时点启动时不各起一个。
+      locked = acquireLaunchLock();
+      // 先把磁盘清单里的旧进程纳入视野（自己或对方重启后仍能复用）。
+      adoptRecords();
+      final existing = _findLiveSameRun(device: device, cwd: workdir, target: target);
+      if (existing != null) {
+        if (force) {
+          // 显式重启语义：先精确停掉旧会话，再走下面的启动流程。
+          await stop(existing.pid);
+        } else if (existing.wsUri != null) {
+          return LaunchResult(
+            pid: existing.pid,
+            device: device,
+            target: target,
+            logPath: existing.logPath,
+            wsUri: existing.wsUri,
+            reused: true,
+            tail: existing.recent.length > 20
+                ? existing.recent.sublist(existing.recent.length - 20).join('\n')
+                : existing.recent.join('\n'),
+          );
+        } else {
+          throw DeviceCommandError(
+            'flutter-run',
+            'flutter run -d $device',
+            '设备 $device 上已有一条本服务拉起的 flutter run（pid ${existing.pid}，目录 ${existing.cwd}）'
+                '正在启动或等待调试端口；稍后重试，或先停止它（force 会重建）。',
+          );
+        }
+      }
+      // 体检：外部（IDE）拉起的同设备同目录会话，继续会重装包并顶掉它。
+      if (!force) {
+        final conflict = findConflict(device: device, cwd: workdir);
+        if (conflict != null) {
+          throw DeviceCommandError(
+            'flutter-run',
+            'flutter run -d $device',
+            '设备 $device 上已有 flutter run 正在同一目录跑（pid ${conflict.pid}，目录 ${conflict.cwd}）：'
+                '继续会在手机上重装包并顶掉它（IDE 会报 Lost connection to device）。'
+                '要复用现有会话直接 xbume_sessions → xbume_use_session（该会话不支持热重载）；'
+                '确认重新拉起请传 force: true。',
+          );
+        }
+      }
+
+      final runArgs = <String>[
+        'run',
+        '-d',
+        device,
+        if (target != null && target.isNotEmpty) ...<String>['--target', target],
+      ];
+      // stdin 换成命名管道：拉起方或任何后续实例都能 `printf 'r\n' > fifo`
+      // 触发热重载；exec 不换 pid，kill 依旧精确。
+      //
+      // 注意：fd3 用读写方式（3<>）只为了「持住写端」，让下面只读打开 stdin
+      // 不阻塞、也不会因外部写者退出而 EOF。不能直接把 <&3 当 stdin——
+      // Dart 的 stdin 从 O_RDWR 的 FIFO 上读不到数据（实测 r/h/q 全部无效）。
+      //
+      // 输出直接重定向到日志文件（而非管道）：拉起方退出（MCP/GUI 重启）后
+      // flutter run 仍在写日志，不会因管道读端消失而 SIGPIPE 死掉。
+      // mkfifo 不可用时（Windows）退回直启 + 管道转发。
+      final fifo0 = createLaunchFifo();
+      fifo = fifo0;
+      if (fifo0 != null) {
+        proc = await Process.start(
+          'sh',
+          <String>[
+            '-c',
+            r'fifo="$1"; log="$2"; shift 2; exec 3<>"$fifo"; exec "$@" > "$log" 2>&1 < "$fifo"',
+            'sh',
+            fifo0,
+            logPath,
+            flutter,
+            ...runArgs,
+          ],
+          workingDirectory: workdir,
+        );
+      } else {
+        sink = File(logPath).openWrite();
+        proc = await Process.start(
+          flutter,
+          runArgs,
+          workingDirectory: workdir,
+          // Windows 上 flutter 是 flutter.bat：CreateProcess 不能直接执行批处理，
+          // 必须走 cmd；其他平台（或原生 .exe）保持直启。
+          runInShell: needsShellOnWindows(flutter),
+        );
+      }
+      handle = LaunchHandle(
+        pid: proc.pid,
+        device: device,
+        target: target,
+        logPath: logPath,
+        startedAt: DateTime.now(),
+        cwd: workdir,
+        process: proc,
+        fifo: fifo,
+        owner: owner,
       );
+      _live[proc.pid] = handle;
+      _writeRecord(handle);
     } on ProcessException catch (e) {
-      await sink.close();
       throw DeviceCommandError('flutter-run', 'flutter run', e.message);
+    } catch (_) {
+      rethrow;
+    } finally {
+      if (locked) releaseLaunchLock();
     }
 
-    final handle = LaunchHandle(
-      pid: proc.pid,
-      device: device,
-      target: target,
-      logPath: logPath,
-      startedAt: DateTime.now(),
-      process: proc,
-    );
-    _live[proc.pid] = handle;
-
+    // 输出统一落到日志文件：
+    //   - FIFO 模式由 sh 直接重定向，本进程退出也不影响 flutter run；
+    //   - 没有 FIFO（Windows）时走进程管道，由 pump 转发。
     final tail = <String>[];
     final vmReady = Completer<String?>();
     final vmPattern = RegExp(r'A Dart VM Service .* is available at:\s*(http\S+)');
+    var outputStopped = false;
 
     Future<void> pump(Stream<List<int>> stream) async {
-      await for (final chunk in stream.transform(utf8.decoder).transform(const LineSplitter())) {
-        sink.writeln(chunk);
+      await for (final chunk
+          in stream.transform(utf8.decoder).transform(const LineSplitter())) {
+        sink?.writeln(chunk);
         handle.addLine(chunk);
         tail.add(chunk);
         if (tail.length > 60) tail.removeAt(0);
@@ -351,15 +455,34 @@ class FlutterRunLauncher {
           final m = vmPattern.firstMatch(chunk);
           if (m != null) {
             handle.wsUri = m.group(1)!;
+            _writeRecord(handle);
             vmReady.complete(handle.wsUri);
           }
         }
       }
     }
 
-    final outPump = pump(proc.stdout);
-    final errPump = pump(proc.stderr);
-    final exited = proc.exitCode.then((code) => code);
+    if (fifo != null) {
+      unawaited(_tailLog(
+        handle,
+        stopped: () => outputStopped,
+        vmReady: vmReady,
+        vmPattern: vmPattern,
+        tail: tail,
+      ));
+    } else {
+      unawaited(pump(proc.stdout));
+      unawaited(pump(proc.stderr));
+    }
+
+    final exited = proc.exitCode.then((code) async {
+      outputStopped = true;
+      await sink?.flush();
+      await sink?.close();
+      return code;
+    });
+    // 进程退出后清清单与 FIFO，避免下次认领到死进程。
+    unawaited(proc.exitCode.then((_) => _cleanupExited(proc.pid)));
 
     if (!waitVm) {
       // 只确认进程没有立刻退出。
@@ -368,8 +491,8 @@ class FlutterRunLauncher {
         Future<int?>.delayed(const Duration(milliseconds: 1500), () => null),
       ]);
       if (early != null) {
-        _live.remove(proc.pid);
-        await sink.close();
+        _cleanupExited(proc.pid);
+        await sink?.close();
         throw DeviceCommandError('flutter-run', 'flutter run',
             '进程启动即退出（code=$early）：${oneLine(tail.join(' '), max: 400)}');
       }
@@ -383,9 +506,6 @@ class FlutterRunLauncher {
     }
 
     final ready = await _waitVm(vmReady.future, exited, timeout);
-    unawaited(outPump);
-    unawaited(errPump);
-    await sink.flush();
     if (ready == null) {
       // 超时/早退：留进程继续跑（可能只是编译慢），把日志尾部回给调用方判断。
       throw DeviceCommandError(
@@ -403,6 +523,84 @@ class FlutterRunLauncher {
       wsUri: ready,
       tail: tail.join('\n'),
     );
+  }
+  
+  /// 把磁盘清单里仍存活的 flutter run 认领进内存（自己或其他实例拉起过）。
+  ///
+  /// 只校验「pid 存活 + 命令行仍是 flutter run」；陈旧记录直接删除。
+  List<LaunchHandle> adoptRecords() {
+    final adopted = <LaunchHandle>[];
+    for (final r in readLaunchRecords()) {
+      if (_live.containsKey(r.pid)) continue;
+      if (!recordStillValid(r)) {
+        removeLaunchRecord(r.pid);
+        removeLaunchFifo(r.fifo);
+        continue;
+      }
+      final h = LaunchHandle(
+        pid: r.pid,
+        device: r.device,
+        target: r.target,
+        logPath: r.logPath ?? '',
+        startedAt: r.startedAt,
+        cwd: r.cwd,
+        fifo: r.fifo,
+        adopted: true,
+        owner: r.owner,
+      )..wsUri = r.wsUri;
+      _live[r.pid] = h;
+      adopted.add(h);
+    }
+    return adopted;
+  }
+  
+  void _writeRecord(LaunchHandle h) {
+    writeLaunchRecord(LaunchRecord(
+      pid: h.pid,
+      device: h.device,
+      cwd: h.cwd,
+      startedAt: h.startedAt,
+      target: h.target,
+      wsUri: h.wsUri,
+      logPath: h.logPath,
+      fifo: h.fifo,
+      owner: h.owner,
+    ));
+  }
+  
+  void _cleanupExited(int pid) {
+    removeLaunchRecord(pid);
+    final h = _live.remove(pid);
+    if (h == null) return;
+    removeLaunchFifo(h.fifo);
+    h.dispose();
+  }
+  
+  /// 同设备 + 同目录 + 同 target 的本服务会话；不存在返回 null。
+  LaunchHandle? _findLiveSameRun({
+    required String device,
+    required String cwd,
+    String? target,
+  }) {
+    final normalized = resolvePathForCompare(cwd);
+    LaunchHandle? hit;
+    final dead = <int>[];
+    for (final h in _live.values) {
+      if (h.device != device) continue;
+      if (resolvePathForCompare(h.cwd) != normalized) continue;
+      if ((h.target ?? '') != (target ?? '')) continue;
+      if (!_isAlive(h.pid)) {
+        dead.add(h.pid);
+        continue;
+      }
+      hit = h;
+      break;
+    }
+    for (final pid in dead) {
+      removeLaunchRecord(pid);
+      _live.remove(pid)?.dispose();
+    }
+    return hit;
   }
 
   /// 等 VM service 地址；进程退出或超时返回 null。
@@ -433,10 +631,10 @@ class FlutterRunLauncher {
 
   /// 触发热重载（r）或热重启（R）。
   ///
-  /// 只对自己 `launch()` 拉起的进程生效：向它的 stdin 写按键，再等输出里的
-  /// 完成标记。flutter run 虽在非 TTY 下不会进 singleCharMode，但
-  /// `TerminalHandler` 仍监听 stdin（`processTerminalInput` 会 trim），所以
-  /// 管道写入可用。
+  /// 对本服务或 GUI 拉起的会话都生效：优先向 FIFO 写按键（跨进程），没有
+  /// FIFO 时退回自己进程的 stdin。flutter run 虽在非 TTY 下不会进
+  /// singleCharMode，但 `TerminalHandler` 仍监听 stdin（`processTerminalInput`
+  /// 会 trim），所以管道写入可用。
   Future<HotReloadResult> hotReload(
     int pid, {
     bool restart = false,
@@ -469,7 +667,10 @@ class FlutterRunLauncher {
       ));
     }
 
-    final sub = h.lines.listen((line) {
+    final proc = h.process;
+    var stopped = false;
+
+    void onLine(String line) {
       captured.add(line);
       if (captured.length > 60) captured.removeAt(0);
       if (successRe.hasMatch(line)) {
@@ -477,19 +678,47 @@ class FlutterRunLauncher {
       } else if (failRe.hasMatch(line)) {
         finish(false, line.trim());
       }
-    });
-    // 进程中途退出时不要干等到超时。
-    unawaited(h.process.exitCode.then((code) {
-      if (!done.isCompleted) finish(false, 'flutter run 已退出（code=$code）');
-    }));
+    }
 
-    try {
-      h.process.stdin.writeln(restart ? 'R' : 'r');
-      await h.process.stdin.flush();
-    } catch (e) {
+    if (proc != null) {
+      // 进程中途退出时不要干等到超时。
+      unawaited(proc.exitCode.then((code) {
+        if (!done.isCompleted) finish(false, 'flutter run 已退出（code=$code）');
+      }));
+    } else {
+      // 认领来的进程没有输出跟随：临时从日志末尾跟一份（只关心新行）。
+      unawaited(_tailLog(h, stopped: () => stopped, fromEnd: true));
+    }
+
+    final sub = h.lines.listen(onLine);
+
+    // 写 r / R：FIFO 优先（拉起者重启、GUI/MCP 交叉控制都能用）。
+    var wrote = false;
+    final fifo = h.fifo;
+    if (fifo != null && fifo.isNotEmpty) {
+      wrote = await writeLaunchFifo(fifo, restart ? 'R\n' : 'r\n');
+    }
+    if (!wrote && proc != null) {
+      try {
+        proc.stdin.writeln(restart ? 'R' : 'r');
+        await proc.stdin.flush();
+        wrote = true;
+      } catch (e) {
+        stopped = true;
+        await sub.cancel();
+        throw DeviceCommandError(
+            'flutter-run', 'hot reload', 'stdin 写入失败（进程可能已退出）：$e');
+      }
+    }
+    if (!wrote) {
+      stopped = true;
       await sub.cancel();
       throw DeviceCommandError(
-          'flutter-run', 'hot reload', 'stdin 写入失败（进程可能已退出）：$e');
+        'flutter-run',
+        'hot reload',
+        '无法向 pid $pid 写 stdin（该会话由上一个实例拉起且没有可用 FIFO）：'
+            'Windows 或旧版会话只能查看输出与停止；需要热重载请停止后用 app_launch 重新拉起。',
+      );
     }
 
     final result = await done.future.timeout(
@@ -505,8 +734,73 @@ class FlutterRunLauncher {
             : h.recent],
       ),
     );
+    stopped = true;
     await sub.cancel();
     return result;
+  }
+
+  /// 跟随日志文件增量：把新行送进 [LaunchHandle.lines]，并按需解析 VM 地址。
+  ///
+  /// FIFO 模式下 flutter run 的输出由 shell 直接写文件（没有管道句柄），
+  /// 本方法与 [stopped] 配合一直跟到进程退出；[fromEnd] 为 true 时从当前
+  /// 末尾开始（认领场景只看新输出）。
+  Future<void> _tailLog(
+    LaunchHandle h, {
+    required bool Function() stopped,
+    Completer<String?>? vmReady,
+    RegExp? vmPattern,
+    List<String>? tail,
+    bool fromEnd = false,
+  }) async {
+    final path = h.logPath;
+    if (path.isEmpty) return;
+    final f = File(path);
+    var offset = fromEnd ? (f.existsSync() ? f.lengthSync() : 0) : 0;
+    var pending = '';
+    final pattern = vmPattern ??
+        RegExp(r'A Dart VM Service .* is available at:\s*(http\S+)');
+    while (!stopped()) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (!f.existsSync()) continue;
+      final len = f.lengthSync();
+      if (len < offset) {
+        offset = 0; // 文件被截断 / 轮转
+        pending = '';
+      }
+      if (len == offset) continue;
+      RandomAccessFile? raf;
+      try {
+        raf = f.openSync();
+        raf.setPositionSync(offset);
+        final chunk = utf8.decode(raf.readSync(len - offset), allowMalformed: true);
+        offset = len;
+        pending += chunk;
+        final parts = pending.split('\n');
+        pending = parts.removeLast(); // 末尾可能是半行
+        for (final line in parts) {
+          h.addLine(line);
+          if (tail != null) {
+            tail.add(line);
+            if (tail.length > 60) tail.removeAt(0);
+          }
+          if (vmReady != null && !vmReady.isCompleted) {
+            final m = pattern.firstMatch(line);
+            if (m != null) {
+              h.wsUri = m.group(1)!;
+              _writeRecord(h);
+              vmReady.complete(h.wsUri);
+            }
+          }
+          if (stopped()) break;
+        }
+      } catch (_) {
+        offset = 0;
+      } finally {
+        try {
+          raf?.closeSync();
+        } catch (_) {}
+      }
+    }
   }
 
   /// 按精确 PID 结束 flutter run，并把它的子进程（被拉起的 app）一并结束。
@@ -519,7 +813,7 @@ class FlutterRunLauncher {
         : _childrenOf(pid);
     final alive = Process.killPid(pid, ProcessSignal.sigterm);
     if (!alive) {
-      _live.remove(pid)?.dispose();
+      _cleanupExited(pid);
       return StopResult(stopped: false);
     }
     for (var i = 0; i < 30; i++) {
@@ -527,7 +821,7 @@ class FlutterRunLauncher {
       if (!_isAlive(pid)) break;
     }
     if (_isAlive(pid)) Process.killPid(pid, ProcessSignal.sigkill);
-    _live.remove(pid)?.dispose();
+    _cleanupExited(pid);
     final killed = <int>[];
     for (final c in children) {
       if (c <= 1 || c == pid) continue;
@@ -583,22 +877,5 @@ class FlutterRunLauncher {
     }
   }
 
-  bool _isAlive(int pid) {
-    if (Platform.isWindows) {
-      // Windows 没有 kill -0：用 tasklist 精确查 pid。注意找不到时 tasklist
-      // 的退出码仍可能是 0（只打印「信息: 没有运行的任务…」），必须看输出里
-      // 有没有这个 pid。
-      try {
-        final r = Process.runSync(
-          'tasklist',
-          <String>['/FI', 'PID eq $pid', '/NH'],
-        );
-        return '${r.stdout}'.contains('$pid');
-      } catch (_) {
-        return false;
-      }
-    }
-    final r = Process.runSync('kill', <String>['-0', '$pid']);
-    return r.exitCode == 0;
-  }
+  bool _isAlive(int pid) => pidAlive(pid);
 }

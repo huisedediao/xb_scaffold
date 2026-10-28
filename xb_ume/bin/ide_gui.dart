@@ -31,6 +31,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'src/ai/prompt.dart';
+// 调试中枢：flutter run 拉起/复用 + VM service 断点与步进（「调试」Tab 的后端）。
+import 'src/debug/debug_hub.dart';
 // 只取常亮命令构造器：这两个文件里的 parseAdbDevices / parseHdcTargets
 // 与本文件同名的本地解析器签名不同，不能整包导入。
 import 'src/device/adb.dart' show adbKeepAwakeArgs;
@@ -432,6 +434,35 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'sessions': sessions,
         'config': readGuiIdeOrder(),
       }));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/debug/op') {
+      // 调试中枢：启动/复用 flutter run + VM 断点、栈、步进、热重载。
+      // GET 只读（status）；写操作走 POST JSON：{"op":"...", ...}。
+      final args = <String, Object?>{};
+      if (req.method == 'POST' || req.method == 'PUT') {
+        try {
+          final raw = await _readBodyText(req);
+          final parsed = raw.isEmpty ? null : jsonDecode(raw);
+          if (parsed is Map) {
+            for (final e in parsed.entries) {
+              args['${e.key}'] = e.value;
+            }
+          }
+        } catch (_) {
+          // 空体 / 非 JSON：按 status 处理（前端轮询也会用 GET）。
+        }
+      }
+      for (final e in req.uri.queryParameters.entries) {
+        args.putIfAbsent(e.key, () => e.value);
+      }
+      final op = (args['op']?.toString().trim().isNotEmpty ?? false)
+          ? args['op'].toString().trim()
+          : 'status';
+      final result = await state.debugHub.handle(op, args);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(result));
       await req.response.close();
       return;
     }
@@ -4160,6 +4191,11 @@ class GuiState {
   /// 日志环形缓冲（供 HTTP 导出接口读取）。
   List<Map<String, Object?>> get buffer => _buffer;
 
+  /// 调试中枢（flutter run + VM 断点）：首次访问「调试」Tab 时创建。
+  /// 事件与输出经 [broadcast] 推给前端，所以放在 state 里统一收尾。
+  DebugHub? _debugHub;
+  DebugHub get debugHub => _debugHub ??= DebugHub(push: broadcast);
+
   /// 异常缓冲只读视图（供 /api/exceptions）。
   List<Map<String, Object?>> get exceptions =>
       List<Map<String, Object?>>.unmodifiable(_exceptions);
@@ -4192,6 +4228,8 @@ class GuiState {
   }
 
   Future<void> dispose() async {
+    final hub = _debugHub;
+    if (hub != null) unawaited(hub.dispose());
     _pollTimer?.cancel();
     _flushTimer?.cancel();
     _tlTimer?.cancel();
