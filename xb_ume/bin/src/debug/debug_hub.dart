@@ -16,6 +16,7 @@ import 'dart:io';
 import '../device/bridge.dart' show DeviceCommandError;
 import '../device/flutter_run.dart';
 import '../device/live_store.dart' show pidAlive;
+import 'breakpoint_store.dart';
 import 'debug_client.dart';
 
 /// 推送回调（GUI 侧接 `GuiState.broadcast`）。
@@ -75,6 +76,20 @@ Map<String, Object?> debugBreakpointJson(
       'resolved': bp.resolved,
       'enabled': bp.enabled,
       if (bp.condition != null) 'condition': bp.condition,
+    };
+
+/// 断点落盘清单里的一条（`absPath` 展开成本机绝对路径，前端直接展示）。
+Map<String, Object?> debugSavedBreakpointJson(
+  String projectRoot,
+  SavedBreakpoint b,
+) =>
+    <String, Object?>{
+      'path': b.path,
+      'absPath': BreakpointStore.absolutePathOf(projectRoot, b.path),
+      'line': b.line,
+      if (b.column != null) 'column': b.column,
+      if (b.condition != null) 'condition': b.condition,
+      'enabled': b.enabled,
     };
 
 Map<String, Object?> debugVarJson(DebugVar v) => <String, Object?>{
@@ -154,11 +169,18 @@ int? _int(Object? v) {
 
 /// 一次调试会话的编排器（GUI 单实例一个）。
 class DebugHub {
-  DebugHub({required this.push, FlutterRunLauncher? launcher})
-      : launcher = launcher ?? FlutterRunLauncher();
+  DebugHub({
+    required this.push,
+    FlutterRunLauncher? launcher,
+    BreakpointStore? store,
+  })  : launcher = launcher ?? FlutterRunLauncher(),
+        store = store ?? BreakpointStore();
 
   final DebugPush push;
   final FlutterRunLauncher launcher;
+
+  /// 断点落盘：VM 会把断开客户端的断点删掉，重连后靠它恢复。
+  final BreakpointStore store;
 
   DebugClient? _client;
   StreamSubscription<DebugEvent>? _eventSub;
@@ -276,6 +298,26 @@ class DebugHub {
       case 'listBreakpoints':
         final bps = await _requireClient().listBreakpoints();
         return <String, Object?>{'count': bps.length};
+      case 'saved':
+      case 'savedBreakpoints':
+        // 已记住的断点：没连会话也能看（GUI 重启后断点表为空，但清单还在）。
+        final dir = _savedRoot(a);
+        if (dir == null) return <String, Object?>{'saved': const <Object?>[]};
+        return <String, Object?>{
+          'dir': BreakpointStore.normalizeRoot(dir),
+          'saved': <Object?>[
+            for (final b in store.load(dir))
+              debugSavedBreakpointJson(dir, b),
+          ],
+        };
+      case 'forgetSaved':
+        final root = _savedRoot(a);
+        if (root == null) {
+          throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+        }
+        final n = store.clear(root);
+        _message = n == 0 ? '没有记住的断点' : '已忘记 $n 个断点（下次连接不再自动恢复）';
+        return <String, Object?>{'cleared': n};
       case 'stack':
         final frames = await _requireClient().stack(limit: _int(a['limit']) ?? 32);
         return <String, Object?>{
@@ -314,16 +356,16 @@ class DebugHub {
         throw DebugException('会话已启动（pid ${r.pid}）但没拿到 VM service 地址，'
             '编译可能仍在进行：稍后点「接入」或重新点启动（会自动复用）。');
       }
-      await _bind(
+      final note = await _bind(
         wsUri: ws,
         pid: r.pid,
         projectRoot: cwd,
         // 自己拉起的从日志头开始（能看到编译过程）；复用只看新输出。
         followFromStart: !r.reused,
       );
-      _message = r.reused
-          ? '复用已有会话 pid ${r.pid}（未重装包）'
-          : '已启动 pid ${r.pid}（$device）';
+      _message =
+          '${r.reused ? '复用已有会话 pid ${r.pid}（未重装包）' : '已启动 pid ${r.pid}（$device）'}'
+          '${note == null ? '' : '；$note'}';
       return <String, Object?>{'pid': r.pid, 'reused': r.reused};
     } finally {
       _busy = false;
@@ -337,7 +379,7 @@ class DebugHub {
     }
     final pid = _int(a['pid']);
     _reused = true;
-    await _bind(
+    final note = await _bind(
       wsUri: raw,
       pid: pid,
       projectRoot: _str(a['projectRoot']),
@@ -348,6 +390,7 @@ class DebugHub {
     _message = h == null
         ? '已接入外部会话（只能断点/单步，热重载需从 IDE/终端操作）'
         : '已接入会话 pid ${h.pid}（${h.device}）';
+    if (note != null) _message = '$_message；$note';
     return <String, Object?>{
       'pid': h?.pid,
       'hotReloadable': h != null,
@@ -432,6 +475,20 @@ class DebugHub {
       column: _int(a['column']),
       condition: _str(a['condition']),
     );
+    // 断点落盘：VM 在客户端断开时会把它删掉，下次连同一项目靠这份清单恢复。
+    final root = _projectRoot;
+    if (root != null && bp.line != null) {
+      store.add(
+        root,
+        SavedBreakpoint(
+          path: BreakpointStore.relativePathOf(root, path),
+          line: bp.line!,
+          column: bp.column,
+          condition: bp.condition,
+          enabled: bp.enabled,
+        ),
+      );
+    }
     _message = '已加断点 ${_short(bp.scriptUri ?? path)}:${bp.line ?? line}'
         '${bp.resolved ? '' : '（待解析）'}'
         '${bp.condition == null ? '' : ' if ${bp.condition}'}';
@@ -442,7 +499,10 @@ class DebugHub {
       Map<String, Object?> a) async {
     final id = _str(a['id']);
     if (id == null) throw DebugException('缺少断点 id');
-    await _requireClient().removeBreakpoint(id);
+    final client = _requireClient();
+    final bp = _breakpointById(client, id);
+    await client.removeBreakpoint(id);
+    _syncSavedBreakpoint(client, bp);
     _message = '已删除断点 $id';
     return const <String, Object?>{};
   }
@@ -458,8 +518,32 @@ class DebugHub {
       enable = cur.isEmpty ? true : !cur.first.enabled;
     }
     await client.setBreakpointEnabled(id, enable);
+    final bp = _breakpointById(client, id)?.copyWith(enabled: enable);
+    _syncSavedBreakpoint(client, bp, enabled: enable);
     _message = '断点 $id 已${enable ? '启用' : '停用'}';
     return <String, Object?>{'enabled': enable};
+  }
+
+  DebugBreakpoint? _breakpointById(DebugClient c, String id) {
+    for (final b in c.breakpoints) {
+      if (b.id == id) return b;
+    }
+    return null;
+  }
+
+  /// 删掉（enabled 传 null）/ 启停断点时同步落盘清单；路径转成项目内相对。
+  void _syncSavedBreakpoint(DebugClient c, DebugBreakpoint? bp, {bool? enabled}) {
+    final root = _projectRoot;
+    if (root == null || bp == null || bp.line == null) return;
+    final uri = bp.scriptUri;
+    final local = uri == null ? null : c.localPathOf(uri);
+    if (local == null) return;
+    final rel = BreakpointStore.relativePathOf(root, local);
+    if (enabled == null) {
+      store.remove(root, rel, bp.line!, column: bp.column);
+    } else {
+      store.setEnabled(root, rel, bp.line!, enabled, column: bp.column);
+    }
   }
 
   // ---------------------------------------------------------------- 执行
@@ -490,7 +574,7 @@ class DebugHub {
 
   // ---------------------------------------------------------------- 内部
 
-  Future<void> _bind({
+  Future<String?> _bind({
     required String wsUri,
     int? pid,
     String? projectRoot,
@@ -513,7 +597,10 @@ class DebugHub {
     _pendingOut.clear();
     _handle = h;
     _wsUri = wsUri;
-    _projectRoot = _str(projectRoot) ?? h?.cwd ?? _projectRoot;
+    final root = _str(projectRoot) ?? h?.cwd ?? _projectRoot;
+    _projectRoot = (root == null || root.trim().isEmpty)
+        ? null
+        : BreakpointStore.normalizeRoot(root);
     _packageName = _str(packageName) ?? readPubspecName(_projectRoot ?? '');
     final client = DebugClient(
       wsUri,
@@ -529,6 +616,56 @@ class DebugHub {
       // 老版本 VM 可能不支持；断点列表随事件增量更新。
     }
     _startFollow(h?.logPath ?? '', fromStart: followFromStart);
+    // VM 在客户端断开时会把断点一起删掉：重连到同一项目就把上次的断点重下。
+    return _restoreBreakpoints();
+  }
+
+  /// 按项目根把上次的断点重下（已存在的同位置跳过）。返回给人看的摘要。
+  Future<String?> _restoreBreakpoints() async {
+    final root = _projectRoot;
+    final c = _client;
+    if (root == null || c == null) return null;
+    final saved = store.load(root);
+    if (saved.isEmpty) return null;
+    var ok = 0;
+    var failed = 0;
+    for (final s in saved) {
+      final path = breakpointPathOf(s.path,
+              projectRoot: root, packageName: _packageName) ??
+          BreakpointStore.absolutePathOf(root, s.path);
+      // 同一位置已在（IDE 也设过 / 本会话已恢复）就跳过，避免重复条目。
+      final dup = c.breakpoints.any((b) {
+        if (b.line != s.line) return false;
+        final p = b.scriptUri == null ? null : c.localPathOf(b.scriptUri!);
+        return p != null && (p == path || p.endsWith('/${s.path}'));
+      });
+      if (dup) {
+        ok++;
+        continue;
+      }
+      try {
+        final bp = await c.addBreakpoint(
+          path: path,
+          line: s.line,
+          column: s.column,
+          condition: s.condition,
+        );
+        if (!s.enabled) {
+          try {
+            await c.setBreakpointEnabled(bp.id, false);
+          } catch (_) {
+            // 停用失败不影响断点已建；状态行仍会写恢复成功。
+          }
+        }
+        ok++;
+      } catch (_) {
+        // 行号被删 / 文件改名：跳过，保留记录（切回分支常又能用）。
+        failed++;
+      }
+    }
+    if (ok == 0 && failed == 0) return null;
+    return '已恢复 $ok 个记住的断点'
+        '${failed == 0 ? '' : '（$failed 个失败，代码可能已改）'}';
   }
 
   Future<void> _detachClient() async {
@@ -553,6 +690,13 @@ class DebugHub {
           '未连接调试会话：先点「启动」，或从会话列表接入一条 VM service 地址');
     }
     return c;
+  }
+
+  /// 「已记住的断点」归属的项目根：显式 dir > 当前会话的项目根。
+  String? _savedRoot(Map<String, Object?> a) {
+    final raw = _str(a['dir']) ?? _projectRoot;
+    if (raw == null || raw.trim().isEmpty) return null;
+    return BreakpointStore.normalizeRoot(raw);
   }
 
   /// 会话对应的 flutter run pid：优先内存句柄，其次按 VM 端口反查磁盘清单。

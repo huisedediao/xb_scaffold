@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import '../bin/src/debug/breakpoint_store.dart';
 import '../bin/src/debug/debug_client.dart';
 import '../bin/src/debug/debug_hub.dart';
 import '../bin/src/device/bridge.dart';
@@ -208,6 +209,59 @@ version: 1.0.0
       final r = await hub.handle('boom', const <String, Object?>{});
       expect(r['ok'], isFalse);
       expect('${r['error']}', contains('未知操作'));
+    });
+  });
+
+  group('断点落盘（无会话）', () {
+    late Directory tmp;
+    late DebugHub storeHub;
+    late String root;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('xbd_hub_bp_');
+      root = '${tmp.path}/proj';
+      storeHub = DebugHub(
+        push: (_) {},
+        store: BreakpointStore(filePath: '${tmp.path}/bp.json'),
+      );
+    });
+
+    tearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+
+    test('saved：没给 dir 回空表，给了就列清单（含绝对路径）', () async {
+      final none = await storeHub.handle('saved', const <String, Object?>{});
+      expect(none['ok'], isTrue);
+      expect(none['saved'], isEmpty);
+
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/main.dart', line: 87, condition: 'i>2'),
+      );
+      final d = await storeHub.handle('saved', <String, Object?>{'dir': root});
+      final list = d['saved'] as List;
+      expect(list, hasLength(1));
+      final item = list.first as Map;
+      expect(item['path'], 'lib/main.dart');
+      expect(item['absPath'], '$root/lib/main.dart');
+      expect(item['line'], 87);
+      expect(item['condition'], 'i>2');
+    });
+
+    test('forgetSaved：没 dir 报可读错误，有 dir 清空并回报条数', () async {
+      final bad = await storeHub.handle('forgetSaved', const <String, Object?>{});
+      expect(bad['ok'], isFalse);
+      expect('${bad['error']}', contains('项目目录'));
+
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/main.dart', line: 87),
+      );
+      final d = await storeHub.handle('forgetSaved', <String, Object?>{'dir': root});
+      expect(d['ok'], isTrue);
+      expect(d['cleared'], 1);
+      expect(storeHub.store.load(root), isEmpty);
     });
   });
 }
