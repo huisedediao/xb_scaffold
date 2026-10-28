@@ -8,6 +8,10 @@
 // 里也不存条件，所以按 Dart-Code 的做法在客户端判定——命中后在该帧 evaluate
 // 条件表达式，结果为 false 立即自动 resume，并回一个 conditionMissed 事件。
 //
+// 日志断点（logpoint）：与条件断点同一套机制，命中后在该帧 evaluate 日志
+// 表达式，把结果拼成一行输出（logpointHit 事件）再自动 resume，不打断程序。
+// 表达式求值失败只输出原因、仍然继续——日志是观察，不该改变运行行为。
+//
 // 热重启：会换 isolate，VM 侧断点随之清空；调用方 resetIsolate() 后用
 // reapplyBreakpoints() 按本客户端登记过的清单重新下发。
 library;
@@ -58,6 +62,7 @@ class DebugBreakpoint {
     this.resolved = false,
     this.enabled = true,
     this.condition,
+    this.logMessage,
   });
 
   /// VM 断点 id（`breakpoints/3`），删除 / 启停都靠它。
@@ -75,6 +80,9 @@ class DebugBreakpoint {
   /// 客户端条件（VM 不存），null 表示无条件。
   final String? condition;
 
+  /// 客户端日志表达式（VM 不存），null 表示普通断点；非空时命中不暂停。
+  final String? logMessage;
+
   DebugBreakpoint copyWith({
     String? scriptUri,
     int? line,
@@ -82,6 +90,7 @@ class DebugBreakpoint {
     bool? resolved,
     bool? enabled,
     String? condition,
+    String? logMessage,
   }) =>
       DebugBreakpoint(
         id: id,
@@ -91,12 +100,14 @@ class DebugBreakpoint {
         resolved: resolved ?? this.resolved,
         enabled: enabled ?? this.enabled,
         condition: condition ?? this.condition,
+        logMessage: logMessage ?? this.logMessage,
       );
 
   @override
   String toString() =>
       'DebugBreakpoint($id, ${scriptUri ?? '?'}:$line, resolved: $resolved'
-      '${condition == null ? '' : ', if: $condition'})';
+      '${condition == null ? '' : ', if: $condition'}'
+      '${logMessage == null ? '' : ', log: $logMessage'})';
 }
 
 /// 栈帧里的一个变量（只取一层，够「暂停时看一眼」用）。
@@ -183,6 +194,9 @@ enum DebugEventKind {
 
   /// 本地合成：条件断点条件为 false，已自动继续。
   conditionMissed,
+
+  /// 本地合成：日志断点命中，已把求值结果写进 message 并自动继续。
+  logpointHit,
 
   /// 本地合成：连接断开。
   disconnected,
@@ -431,11 +445,14 @@ DebugEvent? parseDebugEvent(Object? raw) {
 String describeInstanceRef(Object? raw) {
   if (raw == null) return '';
   if (raw is! Map) return raw.toString();
-  if (raw['type'] == 'Error') {
+  // vm_service 14 的错误对象是 ErrorRef（type == '@Error'），老版本/包装层
+  // 可能直接给 'Error'，两种都认，否则会把 message 丢掉只剩一个 '@Error'。
+  final type = _str(raw['type']);
+  if (type == 'Error' || type == '@Error') {
     final msg = _str(raw['message']);
     if (msg != null) return msg;
   }
-  if (raw['type'] == 'Sentinel') {
+  if (type == 'Sentinel') {
     return '<${_str(raw['kind']) ?? 'sentinel'}>';
   }
   final value = raw['valueAsString'];
@@ -450,7 +467,7 @@ String describeInstanceRef(Object? raw) {
   }
   final cls = _className(_asMap(raw));
   if (cls != null) return 'Instance of $cls';
-  return _str(raw['type']) ?? '';
+  return type ?? '';
 }
 
 /// 一个 VM service Debug 客户端（单 WebSocket，事件广播）。
@@ -473,6 +490,7 @@ class DebugClient {
       StreamController<DebugEvent>.broadcast();
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, String> _conditions = <String, String>{};
+  final Map<String, String> _logMessages = <String, String>{};
   final Map<String, DebugBreakpoint> _breakpoints = <String, DebugBreakpoint>{};
   final List<_OwnedBreakpoint> _owned = <_OwnedBreakpoint>[];
 
@@ -557,6 +575,7 @@ class DebugClient {
     _pause = null;
     _breakpoints.clear();
     _conditions.clear();
+    _logMessages.clear();
   }
 
   /// 脚本 URI → 本机路径（GUI 展示用）。
@@ -591,6 +610,7 @@ class DebugClient {
     required int line,
     int? column,
     String? condition,
+    String? logMessage,
   }) async {
     if (path.trim().isEmpty) throw DebugException('断点路径为空');
     if (line < 1) throw DebugException('断点行号从 1 开始：$line');
@@ -624,7 +644,9 @@ class DebugClient {
         final bp = await _addAtUri(iso, uri, line, column);
         final cond = _blankToNull(condition);
         if (cond != null) _conditions[bp.id] = cond;
-        final merged = bp.copyWith(condition: cond);
+        final log = _blankToNull(logMessage);
+        if (log != null) _logMessages[bp.id] = log;
+        final merged = bp.copyWith(condition: cond, logMessage: log);
         _breakpoints[bp.id] = merged;
         _owned
           ..removeWhere((o) => o.id == bp.id)
@@ -634,6 +656,7 @@ class DebugClient {
             line: bp.line ?? line,
             column: bp.column ?? column,
             condition: cond,
+            logMessage: log,
           ));
         return merged;
       } catch (e) {
@@ -675,6 +698,7 @@ class DebugClient {
     });
     _breakpoints.remove(breakpointId);
     _conditions.remove(breakpointId);
+    _logMessages.remove(breakpointId);
     _owned.removeWhere((o) => o.id == breakpointId);
   }
 
@@ -687,7 +711,10 @@ class DebugClient {
     });
     final bp = parseBreakpoint(raw);
     if (bp != null) {
-      _breakpoints[bp.id] = bp.copyWith(condition: _conditions[bp.id]);
+      _breakpoints[bp.id] = bp.copyWith(
+        condition: _conditions[bp.id],
+        logMessage: _logMessages[bp.id],
+      );
     }
   }
 
@@ -720,6 +747,7 @@ class DebugClient {
     final previous = from?._items ?? List<_OwnedBreakpoint>.from(_owned);
     _breakpoints.clear();
     _conditions.clear();
+    _logMessages.clear();
     _owned.clear();
     final out = <DebugBreakpoint>[];
     for (final old in previous) {
@@ -729,6 +757,7 @@ class DebugClient {
           line: old.line,
           column: old.column,
           condition: old.condition,
+          logMessage: old.logMessage,
         ));
       } catch (_) {
         // 单个断点重下失败（行已删、文件改过）不影响其它断点。
@@ -779,7 +808,9 @@ class DebugClient {
       // 判定条件时别再被断点打断，否则会自己停在自己身上。
       'disableBreakpoints': true,
     });
-    if (raw['type'] == 'Error' || raw['type'] == 'Sentinel') {
+    if (raw['type'] == 'Error' ||
+        raw['type'] == '@Error' ||
+        raw['type'] == 'Sentinel') {
       throw DebugException(describeInstanceRef(raw));
     }
     return describeInstanceRef(raw);
@@ -906,6 +937,28 @@ class DebugClient {
             return;
           }
         }
+        // 日志断点：命中后求值打到输出区再自动继续，不停下来（求值失败
+        // 也只输原因，不把日志断点变成普通断点）。
+        final logs = <String>[];
+        for (final id in pause.breakpointIds) {
+          final l = _blankToNull(_logMessages[id]);
+          if (l != null) logs.add(l);
+        }
+        if (logs.isNotEmpty && pause.topFrame != null) {
+          final text = await _evalLogs(logs, pause);
+          try {
+            await resume();
+            _emit(DebugEvent(
+              kind: DebugEventKind.logpointHit,
+              isolateId: iso,
+              pause: pause,
+              message: text,
+            ));
+          } catch (_) {
+            _emit(ev);
+          }
+          return;
+        }
         _emit(ev);
         return;
       case DebugEventKind.resume:
@@ -919,8 +972,10 @@ class DebugClient {
       case DebugEventKind.breakpointUpdated:
         final bp = event.breakpoint;
         if (bp != null) {
-          _breakpoints[bp.id] =
-              bp.copyWith(condition: _conditions[bp.id]);
+          _breakpoints[bp.id] = bp.copyWith(
+            condition: _conditions[bp.id],
+            logMessage: _logMessages[bp.id],
+          );
         }
         _emit(event);
         return;
@@ -929,6 +984,7 @@ class DebugClient {
         if (bp != null) {
           _breakpoints.remove(bp.id);
           _conditions.remove(bp.id);
+          _logMessages.remove(bp.id);
           _owned.removeWhere((o) => o.id == bp.id);
         }
         _emit(event);
@@ -972,12 +1028,62 @@ class DebugClient {
         'disableBreakpoints': true,
       });
       final kind = _str(raw['kind']);
+      final type = _str(raw['type']);
+      // 编译 / 运行时错误（ErrorRef）不能当条件值用，带出具体原因。
+      if (type == 'Error' || type == '@Error' || type == 'Sentinel') {
+        return (true, describeInstanceRef(raw));
+      }
       if (kind == 'Bool') return (_str(raw['valueAsString']) == 'true', null);
       if (kind == 'Null') return (false, null);
       return (true, '条件不是 bool：${describeInstanceRef(raw)}');
     } catch (e) {
       return (true, '$e');
     }
+  }
+
+  /// 日志断点求值：逐条拼成「[logpoint] 文件:行  表达式 => 值」。
+  /// 单条失败只把原因写进该行，不影响其它表达式，也不影响继续运行。
+  Future<String> _evalLogs(List<String> expressions, DebugPause pause) async {
+    final frame = pause.topFrame;
+    final frameIndex = frame?.index ?? 0;
+    final loc = _logLocation(frame);
+    final lines = <String>[];
+    for (final expr in expressions) {
+      String value;
+      try {
+        value = await _evalLogExpr(frameIndex, expr);
+      } catch (e) {
+        value = '求值失败：$e';
+      }
+      lines.add('[logpoint] $loc  $expr => $value');
+    }
+    return lines.join('\n');
+  }
+
+  /// 先按表达式求值；不合法时按字符串插值再试（`i=$i` 这类裸模板）。
+  Future<String> _evalLogExpr(int frameIndex, String expr) async {
+    try {
+      return await evaluateInFrame(frameIndex, expr);
+    } catch (first) {
+      final body = expr
+          .replaceAll(r'\', r'\\')
+          .replaceAll("'", r"\'")
+          .replaceAll('\n', r'\n');
+      try {
+        return await evaluateInFrame(frameIndex, "'$body'");
+      } catch (second) {
+        throw DebugException('$second（表达式求值也失败：$first）');
+      }
+    }
+  }
+
+  String _logLocation(DebugFrame? frame) {
+    final uri = frame?.scriptUri;
+    final path = uri == null ? null : localPathOf(uri);
+    final name =
+        path == null ? (uri ?? '?') : _slash(path).split('/').last;
+    final line = frame?.line;
+    return '$name${line == null ? '' : ':$line'}';
   }
 
   void _emit(DebugEvent event) {
@@ -1012,6 +1118,7 @@ class _OwnedBreakpoint {
     required this.line,
     this.column,
     this.condition,
+    this.logMessage,
   });
 
   final String id;
@@ -1019,6 +1126,7 @@ class _OwnedBreakpoint {
   final int line;
   final int? column;
   final String? condition;
+  final String? logMessage;
 }
 
 /// 断点清单快照（不透明）：热重启前留一份，重启后用 [DebugClient.reapplyBreakpoints] 重下。

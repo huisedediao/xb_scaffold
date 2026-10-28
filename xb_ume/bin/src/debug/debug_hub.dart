@@ -76,6 +76,7 @@ Map<String, Object?> debugBreakpointJson(
       'resolved': bp.resolved,
       'enabled': bp.enabled,
       if (bp.condition != null) 'condition': bp.condition,
+      if (bp.logMessage != null) 'logMessage': bp.logMessage,
     };
 
 /// 断点落盘清单里的一条（`absPath` 展开成本机绝对路径，前端直接展示）。
@@ -89,8 +90,22 @@ Map<String, Object?> debugSavedBreakpointJson(
       'line': b.line,
       if (b.column != null) 'column': b.column,
       if (b.condition != null) 'condition': b.condition,
+      if (b.logMessage != null) 'logMessage': b.logMessage,
       'enabled': b.enabled,
     };
+
+/// 「已记住」总览的目录顺序：按路径排序，当前项目（且真有断点）排最前。
+/// 没记住任何断点的当前项目不占一个空分组。
+List<String> savedAllDirs(Iterable<String> dirs, String? current) {
+  final all = dirs.toList();
+  final out = all.toList()..sort();
+  if (current != null && all.contains(current)) {
+    out
+      ..remove(current)
+      ..insert(0, current);
+  }
+  return out;
+}
 
 Map<String, Object?> debugVarJson(DebugVar v) => <String, Object?>{
       'name': v.name,
@@ -310,6 +325,9 @@ class DebugHub {
               debugSavedBreakpointJson(dir, b),
           ],
         };
+      case 'savedAll':
+        // 所有项目记住的断点（换项目后也能看见旧项目的清单）。
+        return _savedAll();
       case 'forgetSaved':
         final root = _savedRoot(a);
         if (root == null) {
@@ -476,7 +494,12 @@ class DebugHub {
     final rel = BreakpointStore.relativePathOf(root, raw);
     store.add(
       root,
-      SavedBreakpoint(path: rel, line: line, condition: _str(a['condition'])),
+      SavedBreakpoint(
+        path: rel,
+        line: line,
+        condition: _str(a['condition']),
+        logMessage: _str(a['logMessage']),
+      ),
     );
     _message = '已记住断点 ${_short(raw)}:$line，下次启动 / 接入自动生效';
     return <String, Object?>{
@@ -502,6 +525,7 @@ class DebugHub {
       line: line,
       column: _int(a['column']),
       condition: _str(a['condition']),
+      logMessage: _str(a['logMessage']),
     );
     // 断点落盘：VM 在客户端断开时会把它删掉，下次连同一项目靠这份清单恢复。
     final root = _projectRoot;
@@ -513,13 +537,15 @@ class DebugHub {
           line: bp.line!,
           column: bp.column,
           condition: bp.condition,
+          logMessage: bp.logMessage,
           enabled: bp.enabled,
         ),
       );
     }
     _message = '已加断点 ${_short(bp.scriptUri ?? path)}:${bp.line ?? line}'
         '${bp.resolved ? '' : '（待解析）'}'
-        '${bp.condition == null ? '' : ' if ${bp.condition}'}';
+        '${bp.condition == null ? '' : ' if ${bp.condition}'}'
+        '${bp.logMessage == null ? '' : ' log ${bp.logMessage}'}';
     return <String, Object?>{'breakpoint': debugBreakpointJson(bp, localPath: path)};
   }
 
@@ -677,6 +703,7 @@ class DebugHub {
           line: s.line,
           column: s.column,
           condition: s.condition,
+          logMessage: s.logMessage,
         );
         if (!s.enabled) {
           try {
@@ -751,6 +778,27 @@ class DebugHub {
     ];
   }
 
+  /// 所有项目记住的断点（「已记住」总览）：当前项目排最前，其余按路径排序。
+  Map<String, Object?> _savedAll() {
+    final current = _projectRoot;
+    final all = store.loadAll();
+    final dirs = savedAllDirs(all.keys, current);
+    return <String, Object?>{
+      'current': current,
+      'projects': <Object?>[
+        for (final dir in dirs)
+          <String, Object?>{
+            'dir': dir,
+            'current': dir == current,
+            'items': <Object?>[
+              for (final b in all[dir] ?? const <SavedBreakpoint>[])
+                debugSavedBreakpointJson(dir, b),
+            ],
+          },
+      ],
+    };
+  }
+
   String? _toLocal(String uri) {
     final c = _client;
     if (c != null) {
@@ -773,6 +821,11 @@ class DebugHub {
     } else if (e.kind == DebugEventKind.conditionMissed) {
       // 条件不命中不算用户可见的暂停，只在输出区留一行。
       _onOutput('[debug] 条件未命中，已自动继续：${e.condition ?? ''}');
+    } else if (e.kind == DebugEventKind.logpointHit) {
+      // 日志断点也不暂停，把求值结果按行写进输出区。
+      for (final line in (e.message ?? '').split('\n')) {
+        if (line.trim().isNotEmpty) _onOutput(line);
+      }
     } else if (e.message != null) {
       _message = e.message;
     }

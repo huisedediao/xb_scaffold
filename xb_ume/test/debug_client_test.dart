@@ -312,6 +312,15 @@ void main() {
         }),
         'not a bool',
       );
+      // 真实 VM 给的是 ErrorRef（type 带 @）。
+      expect(
+        describeInstanceRef(<String, Object?>{
+          'type': '@Error',
+          'kind': 'CompileError',
+          'message': 'Expression compilation error',
+        }),
+        'Expression compilation error',
+      );
     });
 
     test('步进映射到 VM 的 Into/Over/Out', () {
@@ -398,6 +407,133 @@ void main() {
       expect(evaluate['frameIndex'], 0);
       expect(evaluate['disableBreakpoints'], isTrue);
       expect(vm.calls.any((c) => c['method'] == 'resume'), isTrue);
+      expect(events.any((e) => e.kind == DebugEventKind.pause), isFalse);
+      expect(client.paused, isFalse);
+    });
+
+    test('日志断点命中：求值输出 logpointHit 并自动 resume，不暴露暂停', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        logMessage: 'count',
+      );
+      expect(bp.logMessage, 'count');
+      expect(client.breakpoints.single.logMessage, 'count');
+      vm.onCall = (method, params) async {
+        if (method == 'evaluateInFrame') {
+          return <String, Object?>{
+            'type': '@Instance',
+            'kind': 'Int',
+            'valueAsString': '7',
+            'classRef': <String, Object?>{'name': 'int'},
+          };
+        }
+        return null;
+      };
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      addTearDown(sub.cancel);
+
+      vm.pushEvent(_pauseBreakpointEvent(line: 12, bpId: bp.id));
+      await _until(() => events.any((e) => e.kind == DebugEventKind.logpointHit));
+
+      final hit = events.lastWhere((e) => e.kind == DebugEventKind.logpointHit);
+      expect(hit.message, contains('[logpoint]'));
+      expect(hit.message, contains('main.dart:12'));
+      expect(hit.message, contains('count => 7'));
+      expect(vm.calls.any((c) => c['method'] == 'resume'), isTrue);
+      expect(events.any((e) => e.kind == DebugEventKind.pause), isFalse);
+      expect(client.paused, isFalse);
+    });
+
+    test('日志表达式写裸模板（i=\$i）：按字符串插值再试', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        logMessage: r'i=$i',
+      );
+      vm.onCall = (method, params) async {
+        if (method != 'evaluateInFrame') return null;
+        final expr = '${params['expression']}';
+        // 裸模板不是合法表达式：只有被包成字符串字面量后才能求值。
+        if (expr.startsWith("'")) {
+          return <String, Object?>{
+            'type': '@Instance',
+            'kind': 'String',
+            'valueAsString': 'i=7',
+            'classRef': <String, Object?>{'name': 'String'},
+          };
+        }
+        return <String, Object?>{'type': 'Error', 'message': 'syntax error'};
+      };
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      addTearDown(sub.cancel);
+
+      vm.pushEvent(_pauseBreakpointEvent(line: 12, bpId: bp.id));
+      await _until(() => events.any((e) => e.kind == DebugEventKind.logpointHit));
+      final hit = events.lastWhere((e) => e.kind == DebugEventKind.logpointHit);
+      expect(hit.message, contains('i=7'));
+      expect(client.paused, isFalse);
+    });
+
+    test('日志断点求值失败：输出原因并继续，不把日志断点变成普通断点', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        logMessage: 'bad ==',
+      );
+      vm.onCall = (method, params) async {
+        if (method == 'evaluateInFrame') {
+          return <String, Object?>{
+            'type': 'Error',
+            'message': 'Expression compilation error',
+          };
+        }
+        return null;
+      };
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      addTearDown(sub.cancel);
+
+      vm.pushEvent(_pauseBreakpointEvent(line: 12, bpId: bp.id));
+      await _until(() => events.any((e) => e.kind == DebugEventKind.logpointHit));
+      final hit = events.lastWhere((e) => e.kind == DebugEventKind.logpointHit);
+      expect(hit.message, contains('求值失败'));
+      expect(events.any((e) => e.kind == DebugEventKind.pause), isFalse);
+      expect(vm.calls.any((c) => c['method'] == 'resume'), isTrue);
+      expect(client.paused, isFalse);
+    });
+
+    test('条件 + 日志：条件为 false 时不打印，直接继续', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        condition: 'count > 5',
+        logMessage: 'count',
+      );
+      vm.onCall = (method, params) async {
+        if (method == 'evaluateInFrame') {
+          return <String, Object?>{
+            'type': '@Instance',
+            'kind': 'Bool',
+            'valueAsString': 'false',
+          };
+        }
+        return null;
+      };
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      addTearDown(sub.cancel);
+
+      vm.pushEvent(_pauseBreakpointEvent(line: 12, bpId: bp.id));
+      await _until(() =>
+          events.any((e) => e.kind == DebugEventKind.conditionMissed));
+      expect(events.any((e) => e.kind == DebugEventKind.logpointHit), isFalse);
       expect(events.any((e) => e.kind == DebugEventKind.pause), isFalse);
       expect(client.paused, isFalse);
     });
@@ -548,6 +684,7 @@ void main() {
         path: '/tmp/proj/lib/main.dart',
         line: 12,
         condition: 'x == 1',
+        logMessage: r'i=$i',
       );
       vm.onCall = (method, params) async {
         if (method == 'getVM') {
@@ -578,6 +715,7 @@ void main() {
       final bps = await client.reapplyBreakpoints();
       expect(bps.single.id, 'breakpoints/9');
       expect(bps.single.condition, 'x == 1');
+      expect(bps.single.logMessage, r'i=$i');
       final call = vm.calls.lastWhere(
           (c) => c['method'] == 'addBreakpointWithScriptUri');
       final params = call['params']! as Map<String, Object?>;
@@ -591,6 +729,7 @@ void main() {
         path: '/tmp/proj/lib/main.dart',
         line: 12,
         condition: 'x == 1',
+        logMessage: 'x',
       );
       expect(client.ownedBreakpointCount, 1);
       // 动手前留快照（真实流程里 launcher.hotReload 之前就取）。
@@ -642,6 +781,7 @@ void main() {
       final bps = await client.reapplyBreakpoints(from: snap);
       expect(bps.single.id, 'breakpoints/9');
       expect(bps.single.condition, 'x == 1');
+      expect(bps.single.logMessage, 'x');
       expect(client.ownedBreakpointCount, 1);
       final params = vm.calls
           .lastWhere((c) => c['method'] == 'addBreakpointWithScriptUri')['params']!

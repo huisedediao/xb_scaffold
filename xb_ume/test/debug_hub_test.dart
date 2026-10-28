@@ -70,6 +70,15 @@ version: 1.0.0
     });
   });
 
+  group('savedAllDirs', () {
+    test('当前项目有断点才置顶；没断点不占空分组', () {
+      expect(savedAllDirs(<String>['/b', '/a'], null), <String>['/a', '/b']);
+      expect(savedAllDirs(<String>['/b', '/a'], '/b'), <String>['/b', '/a']);
+      expect(savedAllDirs(<String>['/b', '/a'], '/c'), <String>['/a', '/b']);
+      expect(savedAllDirs(const <String>[], '/c'), isEmpty);
+    });
+  });
+
   group('JSON 序列化', () {
     test('断点：带条件与本机路径', () {
       final json = debugBreakpointJson(
@@ -263,16 +272,49 @@ version: 1.0.0
         'dir': root,
         'path': '$root/lib/main.dart',
         'line': 88,
+        'logMessage': r'i=$i',
       });
       expect(d['ok'], isTrue);
       final list = storeHub.store.load(root);
       expect(list, hasLength(1));
       expect(list.first.path, 'lib/main.dart');
       expect(list.first.line, 88);
+      expect(list.first.logMessage, r'i=$i');
       final saved = d['saved'] as List;
       expect(saved, hasLength(1));
       expect((saved.first as Map)['absPath'], '$root/lib/main.dart');
+      expect((saved.first as Map)['logMessage'], r'i=$i');
       expect('${d['message']}', contains('已记住断点'));
+    });
+
+    test('savedAll：列出所有项目的清单（无会话时按路径排序）', () async {
+      final other = '${tmp.path}/another';
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/main.dart', line: 10),
+      );
+      storeHub.store.add(
+        other,
+        const SavedBreakpoint(path: 'lib/a.dart', line: 20, logMessage: 'x'),
+      );
+      final d = await storeHub.handle('savedAll', const <String, Object?>{});
+      expect(d['ok'], isTrue);
+      expect(d['current'], isNull);
+      final projects = d['projects'] as List;
+      expect(projects, hasLength(2));
+      final dirs = <String>[
+        for (final p in projects) '${(p as Map)['dir']}',
+      ];
+      final sorted = <String>[
+        BreakpointStore.normalizeRoot(other),
+        BreakpointStore.normalizeRoot(root),
+      ]..sort();
+      expect(dirs, sorted);
+      final items = <Map>[
+        for (final p in projects)
+          for (final it in (p as Map)['items'] as List) it as Map,
+      ];
+      expect(items.any((it) => it['logMessage'] == 'x'), isTrue);
     });
 
     test('forgetSaved：没 dir 报可读错误，有 dir 清空并回报条数', () async {

@@ -8,7 +8,7 @@
 // 文件：$XB_UME_HOME/debug/breakpoints.json，结构：
 //   {"version": 1, "projects": {"<绝对项目根>": [
 //     {"path": "lib/main.dart", "line": 87, "column": null,
-//      "condition": null, "enabled": true}]}}
+//      "condition": null, "logMessage": null, "enabled": true}]}}
 // `path` 优先存相对项目根的路径（项目整体搬走后仍能用），项目外的文件存绝对路径。
 library;
 
@@ -24,6 +24,7 @@ class SavedBreakpoint {
     required this.line,
     this.column,
     this.condition,
+    this.logMessage,
     this.enabled = true,
   });
 
@@ -37,6 +38,9 @@ class SavedBreakpoint {
   /// 条件表达式（VM 不存，恢复时原样带回）。
   final String? condition;
 
+  /// 日志断点表达式（命中求值、输出到调试输出后自动继续；VM 不存）。
+  final String? logMessage;
+
   /// 是否启用；停用的断点恢复后立刻 setBreakpointState(false)。
   final bool enabled;
 
@@ -45,6 +49,7 @@ class SavedBreakpoint {
         'line': line,
         if (column != null) 'column': column,
         if (condition != null) 'condition': condition,
+        if (logMessage != null) 'logMessage': logMessage,
         'enabled': enabled,
       };
 
@@ -55,11 +60,13 @@ class SavedBreakpoint {
     if (path.isEmpty || line is! num || line < 1) return null;
     final column = raw['column'];
     final cond = raw['condition'];
+    final log = raw['logMessage'];
     return SavedBreakpoint(
       path: path,
       line: line.toInt(),
       column: column is num ? column.toInt() : null,
       condition: cond is String && cond.trim().isNotEmpty ? cond.trim() : null,
+      logMessage: log is String && log.trim().isNotEmpty ? log.trim() : null,
       enabled: raw['enabled'] != false,
     );
   }
@@ -69,6 +76,7 @@ class SavedBreakpoint {
         line: line,
         column: column,
         condition: condition,
+        logMessage: logMessage,
         enabled: enabled ?? this.enabled,
       );
 
@@ -80,7 +88,8 @@ class SavedBreakpoint {
 
   @override
   String toString() => 'SavedBreakpoint($path:$line${enabled ? '' : ', off'}'
-      '${condition == null ? '' : ', if $condition'})';
+      '${condition == null ? '' : ', if $condition'}'
+      '${logMessage == null ? '' : ', log $logMessage'})';
 }
 
 /// 断点清单的读写（小文件，同步 IO 够用；写盘走临时文件 + rename）。
@@ -118,6 +127,16 @@ class BreakpointStore {
     final root = normalizeRoot(projectRoot);
     final sep = root.endsWith('/') || root.endsWith(r'\') ? '' : Platform.pathSeparator;
     return File('$root$sep$path').absolute.path;
+  }
+
+  /// 读所有项目的清单（「已记住」总览用；坏文件 / 不存在都回空表）。
+  Map<String, List<SavedBreakpoint>> loadAll() {
+    final all = _readAll();
+    return <String, List<SavedBreakpoint>>{
+      for (final e in all.entries)
+        if (e.value.isNotEmpty)
+          e.key: List<SavedBreakpoint>.unmodifiable(e.value),
+    };
   }
 
   /// 读某个项目的断点（坏文件 / 不存在都回空表，不抛）。

@@ -11437,7 +11437,8 @@ const String guiHtml = r'''
         <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
           <input id="dbg-bp-path" placeholder="路径，可相对项目根：lib/main.dart" style="flex:1 1 190px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
           <input id="dbg-bp-line" placeholder="行号" style="width:70px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <input id="dbg-bp-cond" placeholder="条件（可空）" style="flex:0 1 140px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
+          <input id="dbg-bp-cond" placeholder="条件（可空）" style="flex:0 1 120px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
+          <input id="dbg-bp-log" placeholder="日志表达式（命中不暂停，如 'i=$i'）" style="flex:1 1 200px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
           <button class="primary" onclick="dbgAddBp(this)">加断点</button>
         </div>
         <div id="dbg-bps" class="dbg-list"></div>
@@ -11445,6 +11446,7 @@ const String guiHtml = r'''
           <b style="font-size:12px">已记住</b>
           <span id="dbg-saved-n" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">重连同一项目自动恢复</span>
           <button onclick="dbgLoadSaved(this)" style="flex:0 0 auto">刷新</button>
+          <button onclick="dbgShowAllSaved(this)" title="按项目根分组列出所有项目记住的断点（换项目后也能看见/清理）" style="flex:0 0 auto">全部项目</button>
           <button onclick="dbgForgetSaved(this)" title="清空该项目记住的断点，下次连接不再自动恢复（不影响当前会话里的断点）" style="flex:0 0 auto">忘记</button>
         </div>
         <div id="dbg-saved" class="dbg-list" style="max-height:150px"></div>
@@ -16797,10 +16799,13 @@ function dbgLoadOpts(){
 
 // 已记住的断点（$XB_UME_HOME/debug/breakpoints.json，按项目根）：没连会话也能看/清。
 var dbgSavedList = [];
+var dbgSavedAllMode = false;
+var dbgSavedAllProjects = [];
 
 function dbgDirValue(){ return (dbgEl('dbg-dir').value || '').trim(); }
 
 function dbgLoadSaved(){
+  dbgSavedAllMode = false;
   var dir = dbgDirValue();
   var num = dbgEl('dbg-saved-n');
   if (!dir) {
@@ -16832,9 +16837,73 @@ function dbgRenderSaved(){
       + '<span class="dot" title="已记住（点「忘记」可清空）"></span>'
       + '<span class="p" title="' + esc(b.absPath || p) + '">' + esc(name) + ':' + (b.line || 0) + '</span>'
       + (b.condition ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>' : '')
+      + (b.logMessage ? '<span class="cond" title="' + esc(b.logMessage) + '">log ' + esc(b.logMessage) + '</span>' : '')
       + (b.enabled === false ? '<span class="cond">停用</span>' : '')
       + '</div>';
   }).join('');
+}
+
+// 已记住总览：按项目根分组列出所有项目的清单（换项目后也能看见/清理）。
+function dbgShowAllSaved(btn){
+  var done = dbgBusy(btn, '读取中…');
+  return fetch('/api/debug/op?op=savedAll').then(function(r){ return r.json(); }).then(function(d){
+    done();
+    if (!d || d.ok === false) { dbgToast((d && d.error) || '读取失败'); return; }
+    dbgSavedAllMode = true;
+    dbgSavedAllProjects = (d && d.projects) || [];
+    dbgRenderSavedAll();
+  }).catch(function(e){ done(); dbgToast('请求失败：' + e); });
+}
+
+function dbgRenderSavedAll(){
+  var box = dbgEl('dbg-saved');
+  if (!box) return;
+  var projects = dbgSavedAllProjects;
+  var total = 0;
+  projects.forEach(function(p){ total += (p.items || []).length; });
+  var num = dbgEl('dbg-saved-n');
+  if (num) num.textContent = total ? '全部项目共 ' + total + ' 个（点「刷新」回到当前项目）' : '';
+  if (!total) { box.innerHTML = '<div class="muted" style="padding:6px">所有项目都还没有记住的断点</div>'; return; }
+  box.innerHTML = projects.map(function(p, pi){
+    var dir = p.dir || '';
+    var name = dir.split('/').pop() || dir;
+    var head = '<div class="row" style="gap:6px;margin-top:6px;padding:2px 4px;border-top:1px solid var(--line)">'
+      + '<b style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(dir) + '">'
+      + esc(name) + (p.current ? '（当前）' : '') + '</b>'
+      + '<span class="muted" style="font-size:12px">' + (p.items || []).length + ' 个</span>'
+      + '<span class="x" title="清空该项目的记住断点" onclick="dbgForgetDirAt(' + pi + ')">✕</span>'
+      + '</div>';
+    var items = (p.items || []).map(function(b){
+      var bp = b.path || '';
+      var bname = bp.split('/').pop();
+      return '<div class="dbg-bp' + (b.enabled === false ? ' off' : '') + '" style="padding-left:18px">'
+        + '<span class="dot" title="已记住"></span>'
+        + '<span class="p" title="' + esc(b.absPath || bp) + '">' + esc(bname) + ':' + (b.line || 0) + '</span>'
+        + (b.condition ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>' : '')
+        + (b.logMessage ? '<span class="cond" title="' + esc(b.logMessage) + '">log ' + esc(b.logMessage) + '</span>' : '')
+        + (b.enabled === false ? '<span class="cond">停用</span>' : '')
+        + '</div>';
+    }).join('');
+    return head + items;
+  }).join('');
+}
+
+function dbgForgetDirAt(i){
+  var p = dbgSavedAllProjects[i];
+  if (p && p.dir) dbgForgetDir(p.dir);
+}
+
+function dbgForgetDir(dir){
+  if (!confirm('清空「' + dir + '」记住的断点？\n下次连接不再自动恢复（不影响当前会话里已下的断点）。')) return;
+  fetch('/api/debug/op', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({op: 'forgetSaved', dir: dir})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d && d.ok === false) { dbgToast(d.error || '清理失败'); return; }
+    dbgToast('已忘记 ' + ((d && d.cleared) || 0) + ' 个断点');
+    dbgShowAllSaved();
+  }).catch(function(e){ dbgToast('请求失败：' + e); });
 }
 
 function dbgForgetSaved(btn){
@@ -16999,11 +17068,15 @@ function dbgRenderBps(){
     var cond = b.condition
       ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>'
       : '';
+    var logm = b.logMessage
+      ? '<span class="cond" title="' + esc(b.logMessage) + '">log ' + esc(b.logMessage) + '</span>'
+      : '';
     var id = String(b.id == null ? '' : b.id).replace(/[^A-Za-z0-9_.\/-]/g, '');
     return '<div class="' + cls + '">'
       + '<span class="dot" title="' + (b.resolved ? '已解析' : '待解析（文件还没加载）') + '"></span>'
       + '<span class="p" title="' + esc(p) + '">' + esc(name) + ':' + esc(b.line == null ? '?' : b.line) + '</span>'
       + cond
+      + logm
       + '<span class="x" title="' + (b.enabled === false ? '启用' : '停用') + '" onclick="dbgToggleBp(\'' + id + '\')">'
       + (b.enabled === false ? '○' : '●') + '</span>'
       + '<span class="x" title="删除" onclick="dbgDelBp(\'' + id + '\')">✕</span>'
@@ -17092,13 +17165,15 @@ function dbgAddBp(btn){
   var path = (dbgEl('dbg-bp-path').value || '').trim();
   var line = parseInt(dbgEl('dbg-bp-line').value, 10);
   var cond = (dbgEl('dbg-bp-cond').value || '').trim();
+  var logMsg = (dbgEl('dbg-bp-log').value || '').trim();
   if (!path) { dbgToast('先填源码路径（可相对项目根，如 lib/main.dart）'); return; }
   if (!line || line < 1) { dbgToast('行号从 1 开始'); return; }
   var done = dbgBusy(btn, '添加中…');
-  dbgOp('addBreakpoint', {path: path, line: line, condition: cond || null}).then(function(d){
+  dbgOp('addBreakpoint', {path: path, line: line, condition: cond || null, logMessage: logMsg || null}).then(function(d){
     done();
     if (d && d.ok) {
       dbgEl('dbg-bp-line').value = '';
+      dbgEl('dbg-bp-log').value = '';
       dbgLoadSaved();
     }
   }, done);

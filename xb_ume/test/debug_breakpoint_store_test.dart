@@ -78,6 +78,7 @@ void main() {
             path: 'lib/main.dart',
             line: 87,
             condition: 'i > 3',
+            logMessage: 'i=\$i',
             enabled: false,
           ),
         ),
@@ -88,7 +89,23 @@ void main() {
       expect(list.first.path, 'lib/main.dart');
       expect(list.first.line, 87);
       expect(list.first.condition, 'i > 3');
+      expect(list.first.logMessage, 'i=\$i');
       expect(list.first.enabled, isFalse);
+    });
+
+    test('loadAll 回所有项目清单（当前项目不在时也不丢）', () {
+      final other = '${tmp.path}/proj2';
+      store.add(root, const SavedBreakpoint(path: 'lib/main.dart', line: 10));
+      store.add(
+        other,
+        const SavedBreakpoint(path: 'lib/a.dart', line: 20, logMessage: 'x'),
+      );
+      final all = store.loadAll();
+      expect(all, hasLength(2));
+      expect(all[BreakpointStore.normalizeRoot(root)], hasLength(1));
+      expect(all[BreakpointStore.normalizeRoot(other)]!.single.logMessage, 'x');
+      store.clear(root);
+      expect(store.loadAll().keys, <String>[BreakpointStore.normalizeRoot(other)]);
     });
 
     test('同位置再 add 是覆盖，不重复', () {
@@ -164,6 +181,19 @@ void main() {
         <String, Object?>{'path': 'a.dart', 'line': 3, 'enabled': false},
       );
       expect(ok?.enabled, isFalse);
+      expect(ok?.logMessage, isNull);
+      final log = SavedBreakpoint.fromJson(<String, Object?>{
+        'path': 'a.dart',
+        'line': 3,
+        'logMessage': '  i=\$i  ',
+      });
+      expect(log?.logMessage, 'i=\$i');
+      final blank = SavedBreakpoint.fromJson(<String, Object?>{
+        'path': 'a.dart',
+        'line': 3,
+        'logMessage': '   ',
+      });
+      expect(blank?.logMessage, isNull);
     });
 
     test('列只在两边都给时才参与同位置判定', () {

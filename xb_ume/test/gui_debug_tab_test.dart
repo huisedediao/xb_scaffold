@@ -46,6 +46,20 @@ void main() {
       expect(html.contains('function dbgSamePort('), isTrue);
     });
 
+    test('断点卡片接上日志表达式与「全部项目」总览', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'id="dbg-bp-log"',
+        'logMessage',
+        'function dbgShowAllSaved(',
+        'function dbgRenderSavedAll(',
+        'savedAll',
+        'function dbgForgetDirAt(',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+    });
+
     test('接上三类 WebSocket 推送（事件/状态/输出）', () {
       const html = gui.guiHtml;
       // 少接任一条，界面就会「点得动但看不到变化」。
