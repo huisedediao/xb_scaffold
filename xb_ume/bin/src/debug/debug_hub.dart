@@ -354,6 +354,9 @@ class DebugHub {
         return <String, Object?>{'cleared': n};
       case 'rememberBreakpoint':
         return _rememberBreakpoint(a);
+      case 'forgetBreakpoint':
+        // 只删落盘清单里的一条（源码面板「再点一次取消」用；不碰当前会话）。
+        return _forgetSavedBreakpoint(a);
       case 'stack':
         final frames = await _requireClient().stack(limit: _int(a['limit']) ?? 32);
         return <String, Object?>{
@@ -524,6 +527,25 @@ class DebugHub {
         for (final b in store.load(root)) debugSavedBreakpointJson(root, b),
       ],
     };
+  }
+
+  /// 从「已记住」清单里删一条（不碰当前会话的 VM 断点）：源码面板再点一次取消它。
+  Future<Map<String, Object?>> _forgetSavedBreakpoint(
+      Map<String, Object?> a) async {
+    final raw = _str(a['path']);
+    if (raw == null) throw DebugException('缺少 path（源码文件路径）');
+    final line = _int(a['line']);
+    if (line == null || line < 1) throw DebugException('缺少行号 line（从 1 开始）');
+    final root = _savedRoot(a);
+    if (root == null) {
+      throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    }
+    final rel = BreakpointStore.relativePathOf(root, raw);
+    final hit = store.remove(root, rel, line, column: _int(a['column']));
+    _message = hit
+        ? '已取消记住 ${_short(raw)}:$line'
+        : '这条不在记住的清单里（可能已被清空）';
+    return <String, Object?>{'removed': hit};
   }
 
   Future<Map<String, Object?>> _addBreakpoint(Map<String, Object?> a) async {

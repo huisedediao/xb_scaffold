@@ -360,5 +360,38 @@ version: 1.0.0
       expect(noSession['ok'], isFalse);
       expect('${noSession['error']}', contains('未连接调试会话'));
     });
+
+    test('forgetBreakpoint：按位置只删一条（源码面板再点取消）', () async {
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/a.dart', line: 10),
+      );
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/a.dart', line: 20),
+      );
+      final noLine = await storeHub.handle(
+        'forgetBreakpoint',
+        <String, Object?>{'dir': root, 'path': '$root/lib/a.dart'},
+      );
+      expect(noLine['ok'], isFalse);
+      expect('${noLine['error']}', contains('行号'));
+
+      final noDir = await storeHub.handle(
+        'forgetBreakpoint',
+        <String, Object?>{'path': '$root/lib/a.dart', 'line': 10},
+      );
+      expect(noDir['ok'], isFalse);
+      expect('${noDir['error']}', contains('项目目录'));
+
+      final d = await storeHub.handle('forgetBreakpoint', <String, Object?>{
+        'dir': root,
+        'path': '$root/lib/a.dart',
+        'line': 10,
+      });
+      expect(d['ok'], isTrue);
+      expect(d['removed'], isTrue);
+      expect(storeHub.store.load(root).map((b) => b.line), <int>[20]);
+    });
   });
 }

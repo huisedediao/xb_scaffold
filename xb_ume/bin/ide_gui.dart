@@ -32,7 +32,10 @@ import 'dart:typed_data';
 
 import 'src/ai/prompt.dart';
 // 调试中枢：flutter run 拉起/复用 + VM service 断点与步进（「调试」Tab 的后端）。
+import 'src/debug/debug_client.dart' show DebugException;
 import 'src/debug/debug_hub.dart';
+// 「源码下断点」面板：列项目里的 .dart 并按行读源码（只读，不做语法高亮）。
+import 'src/debug/source_view.dart';
 // 只取常亮命令构造器：这两个文件里的 parseAdbDevices / parseHdcTargets
 // 与本文件同名的本地解析器签名不同，不能整包导入。
 import 'src/device/adb.dart' show adbKeepAwakeArgs;
@@ -657,6 +660,50 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.write(jsonEncode(<String, Object?>{
           'ok': false,
           'message': '$e',
+        }));
+      }
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/fs/dartfiles') {
+      // 「源码下断点」的文件候选：列项目里的 .dart（只列路径，不读内容）。
+      // 只服务调试页选文件，跳过 .dart_tool / build / 隐藏目录，上限 2000 个。
+      final root = (req.uri.queryParameters['root'] ?? '').trim();
+      req.response.headers.contentType = ContentType.json;
+      try {
+        if (root.isEmpty) throw DebugException('缺少项目根 root');
+        final files = listDartFiles(root);
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'root': Directory(root).resolveSymbolicLinksSync(),
+          'files': files,
+        }));
+      } catch (e) {
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'message': debugErrorText(e),
+        }));
+      }
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/fs/file') {
+      // 读项目内某个 .dart 的源码行：给「点行号下断点」用，只读、不搜、不监听。
+      final q = req.uri.queryParameters;
+      final root = (q['root'] ?? '').trim();
+      final rel = (q['path'] ?? '').trim();
+      req.response.headers.contentType = ContentType.json;
+      try {
+        if (root.isEmpty) throw DebugException('缺少项目根 root');
+        final view = readSourceFile(root, rel);
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          ...view.toJson(),
+        }));
+      } catch (e) {
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'message': debugErrorText(e),
         }));
       }
       await req.response.close();
@@ -11280,6 +11327,18 @@ const String guiHtml = r'''
   .dbg-bp .cond { color:#ffd479; flex:0 0 auto; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dbg-bp .x { color:#8aa0b4; cursor:pointer; padding:0 3px; flex:0 0 auto; }
   .dbg-bp .x:hover { color:var(--acc); }
+  #dbg-src-code { font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:4px 0; margin-top:6px; max-height:54vh; min-height:200px; overflow:auto; }
+  .dbg-cl { display:flex; white-space:pre; }
+  .dbg-cl .no { flex:0 0 auto; width:52px; text-align:right; padding-right:10px; color:#5b6b7c; cursor:pointer; user-select:none; }
+  .dbg-cl .no:hover { color:var(--acc); background:#161b22; }
+  .dbg-cl .tx { flex:1; min-width:0; padding-right:10px; overflow:hidden; }
+  .dbg-cl .mk { flex:0 0 auto; width:30px; color:#ff7b72; }
+  .dbg-cl.bp { background:rgba(220,60,60,.13); }
+  .dbg-cl.bp .no { color:#ff7b72; font-weight:600; }
+  .dbg-cl.saved { background:rgba(220,60,60,.06); }
+  .dbg-cl.saved .no { color:#a06060; }
+  .dbg-cl.cur { box-shadow:inset 2px 0 0 #f0b429; }
+  .dbg-cl.cur .no { color:#f0b429; }
   .dbg-fr { cursor:pointer; }
   .dbg-fr:hover { background:#161b22; }
   .dbg-fr.cur { background:#1b2532; box-shadow:inset 2px 0 0 #f0b429; }
@@ -11433,7 +11492,7 @@ const String guiHtml = r'''
     </div>
     <div class="dbg-cols">
       <div class="card">
-        <div class="row"><b>断点</b><span id="dbg-bp-n" class="muted" style="font-size:12px"></span><button onclick="dbgListBp(this)" style="margin-left:auto">刷新</button></div>
+        <div class="row"><b>断点</b><span id="dbg-bp-n" class="muted" style="font-size:12px"></span><button onclick="dbgSrcOpen()" style="margin-left:auto" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button><button onclick="dbgListBp(this)">刷新</button></div>
         <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
           <input id="dbg-bp-path" placeholder="路径，可相对项目根：lib/main.dart" style="flex:1 1 190px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
           <input id="dbg-bp-line" placeholder="行号" style="width:70px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
@@ -11462,6 +11521,18 @@ const String guiHtml = r'''
         </div>
         <div id="dbg-eval-out" class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;max-height:84px;overflow:auto"></div>
       </div>
+    </div>
+    <div class="card" id="dbg-src-card" style="display:none">
+      <div class="row" style="gap:6px;flex-wrap:wrap">
+        <b>源码</b>
+        <input id="dbg-src-file" list="dbg-src-files" placeholder="输入文件名过滤，如 error_test_page.dart（回车打开）" style="flex:1 1 260px;min-width:0;font-size:12px" onchange="dbgSrcPick()" onkeydown="if(event.key==='Enter')dbgSrcPick()">
+        <datalist id="dbg-src-files"></datalist>
+        <input id="dbg-src-cond" placeholder="条件（可空）" style="flex:0 1 130px;font-size:12px" title="填了再点行号：这一行下的是条件断点">
+        <input id="dbg-src-log" placeholder="日志表达式（可空，如 i=$i）" style="flex:0 1 180px;font-size:12px" title="填了再点行号：这一行下的是日志断点（命中不暂停）">
+        <button onclick="dbgSrcClose()" style="margin-left:auto">收起</button>
+      </div>
+      <div id="dbg-src-info" class="muted" style="font-size:12px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+      <div id="dbg-src-code"></div>
     </div>
     <div class="card">
       <div class="row"><b>运行输出</b><span id="dbg-out-n" class="muted" style="font-size:12px"></span>
@@ -16982,6 +17053,7 @@ function dbgApply(d){
       dbgFetchStack();
     }
     dbgRenderPause(d.pause);
+    dbgSrcFollowPause();
   } else {
     dbgPauseKeyShown = '';
     dbgRenderIdle();
@@ -17054,6 +17126,7 @@ function dbgRenderBar(){
 function dbgRenderBps(){
   var el = dbgEl('dbg-bps');
   if (!el) return;
+  dbgSrcMark(); // 源码面板开着时，断点增删 / 启停 / 换会话要同步行标记
   var bps = (dbgSt.breakpoints || []).slice();
   if (dbgEditBpId && !bps.some(function(b){ return b.id === dbgEditBpId; })) {
     dbgCancelBpEdit(); // 编辑中的断点被删 / 换了会话：别让「保存修改」打到不存在的 id
@@ -17229,6 +17302,279 @@ function dbgCancelBpEdit(){
 
 function dbgToggleBp(id){ dbgOp('toggleBreakpoint', {id: id}).then(dbgLoadSaved); }
 function dbgDelBp(id){ dbgOp('removeBreakpoint', {id: id}).then(dbgLoadSaved); }
+
+// ── 源码面板：点行号下断点（不用手输 文件:行）─────────────────────────────
+// 文件列表与内容都来自本机 GUI 后台（/api/fs/dartfiles、/api/fs/file），只读。
+// 点行号 = 下断点 / 再点取消：已连会话走 addBreakpoint / removeBreakpoint，
+// 没连会话走 rememberBreakpoint / forgetBreakpoint（下次启动 / 接入同一项目自动重下）。
+var dbgSrcFiles = [];   // 项目内 .dart 相对路径
+var dbgSrcRoot = '';    // 面板当前的项目根
+var dbgSrcRel = '';     // 当前文件（相对项目根）
+var dbgSrcAbs = '';     // 当前文件绝对路径（跟断点的 path 对齐）
+var dbgSrcLoaded = 0;   // 已渲染行数（标记断点时不必遍历 DOM 行）
+
+function dbgSrcNormPath(p){
+  return String(p == null ? '' : p).replace(/^file:\/\//, '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+// 绝对路径 → 项目内相对路径；前缀对不上时按后缀在候选里兑一个（防符号链接差异）。
+function dbgSrcRelOf(p){
+  var root = dbgSrcNormPath(dbgSrcRoot);
+  var abs = dbgSrcNormPath(p);
+  if (!abs) return '';
+  if (root && abs.indexOf(root + '/') === 0) return abs.substring(root.length + 1);
+  for (var i = 0; i < dbgSrcFiles.length; i++) {
+    var rel = dbgSrcFiles[i];
+    if (abs.length > rel.length && abs.slice(-(rel.length + 1)) === '/' + rel) return rel;
+  }
+  return '';
+}
+
+function dbgSrcPauseTarget(){
+  var f = (dbgSt.pause && dbgSt.pause.topFrame) || {};
+  var rel = dbgSrcRelOf(f.path || f.scriptUri || '');
+  return rel ? {rel: rel, line: f.line || 0} : null;
+}
+
+function dbgSrcOpen(){
+  var card = dbgEl('dbg-src-card');
+  if (!card) return;
+  if (card.style.display !== 'none') { dbgSrcClose(); return; }
+  // 断点下的是「当前会话」里的，所以面板优先跟会话的项目根；
+  // 没连会话才用目录框（落盘清单按它分组）。两边不一致就把目录框同步过来，
+  // 否则会拿 A 项目的源码列去给 B 项目下断点，点了没反应。
+  var dir = dbgDirValue();
+  var live = (dbgSt && dbgSt.attached && dbgSt.projectRoot) ? String(dbgSt.projectRoot) : '';
+  var root = live || dir || (dbgSt && dbgSt.projectRoot) || '';
+  if (!root) { dbgToast('先选项目目录（源码按项目根读）'); return; }
+  dbgSrcRoot = root;
+  if (live && dbgSrcNormPath(live) !== dbgSrcNormPath(dir)) {
+    var box = dbgEl('dbg-dir');
+    if (box) box.value = live;
+    dbgLoadSaved();
+    dbgToast('源码按当前调试会话打开：' + live);
+  }
+  card.style.display = '';
+  dbgSrcLoadFiles();
+}
+
+function dbgSrcClose(){
+  var card = dbgEl('dbg-src-card');
+  if (card) card.style.display = 'none';
+  dbgSrcAbs = '';
+  dbgSrcRel = '';
+  dbgSrcLoaded = 0;
+}
+
+function dbgSrcLoadFiles(){
+  var dl = dbgEl('dbg-src-files');
+  return fetch('/api/fs/dartfiles?root=' + encodeURIComponent(dbgSrcRoot))
+    .then(function(r){ return r.json(); }).then(function(d){
+      if (!d || d.ok === false) { dbgToast((d && d.message) || '列文件失败'); return; }
+      dbgSrcFiles = d.files || [];
+      if (dl) {
+        dl.innerHTML = dbgSrcFiles.map(function(p){
+          return '<option value="' + esc(p) + '"></option>';
+        }).join('');
+      }
+      var inp = dbgEl('dbg-src-file');
+      var t = dbgSrcPauseTarget();
+      if (t) { if (inp) inp.value = t.rel; return dbgSrcLoad(t.rel, t.line); }
+      var cur = inp ? dbgSrcNormPath(inp.value) : '';
+      var rel = dbgSrcFiles.indexOf(cur) >= 0 ? cur
+        : (dbgSrcFiles.indexOf('lib/main.dart') >= 0 ? 'lib/main.dart' : (dbgSrcFiles[0] || ''));
+      if (!rel) {
+        var box = dbgEl('dbg-src-code');
+        if (box) box.innerHTML = '<div class="muted" style="padding:8px">这个目录下没有 .dart 文件（先确认项目目录）</div>';
+        return;
+      }
+      if (inp) inp.value = rel;
+      return dbgSrcLoad(rel, 0);
+    }).catch(function(e){ dbgToast('请求失败：' + e); });
+}
+
+// 输入框 → 项目内相对路径：全路径、部分路径、只给文件名都认，重名时让用户从下拉选。
+function dbgSrcResolve(){
+  var inp = dbgEl('dbg-src-file');
+  var v = inp ? String(inp.value || '').trim() : '';
+  if (!v) return '';
+  var rel = dbgSrcRelOf(v) || dbgSrcNormPath(v);
+  if (dbgSrcFiles.indexOf(rel) >= 0) return rel;
+  var q = dbgSrcNormPath(rel);
+  var hits = dbgSrcFiles.filter(function(p){
+    return p === q
+      || (q.length < p.length && p.slice(-(q.length + 1)) === '/' + q)
+      || p.split('/').pop() === q;
+  });
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) {
+    var lib = hits.filter(function(p){ return p.indexOf('lib/') === 0; });
+    if (lib.length === 1) return lib[0];
+    dbgToast('匹配到 ' + hits.length + ' 个文件，请从下拉里选：' + hits.slice(0, 3).join(' 、 '));
+    return '';
+  }
+  return '';
+}
+
+function dbgSrcPick(){
+  var rel = dbgSrcResolve();
+  var inp = dbgEl('dbg-src-file');
+  if (!rel) {
+    if (inp && String(inp.value || '').trim()) dbgToast('没找到这个文件：先确认项目目录，或输入相对路径（如 lib/pages/a.dart）');
+    return;
+  }
+  if (inp) inp.value = rel;
+  dbgSrcLoad(rel, 0);
+}
+
+function dbgSrcLoad(rel, line){
+  if (!dbgSrcRoot || !rel) return;
+  var box = dbgEl('dbg-src-code');
+  if (box) box.innerHTML = '<div class="muted" style="padding:8px">读取中…</div>';
+  return fetch('/api/fs/file?root=' + encodeURIComponent(dbgSrcRoot) + '&path=' + encodeURIComponent(rel))
+    .then(function(r){ return r.json(); }).then(function(d){
+      if (!d || d.ok === false) {
+        dbgSrcAbs = ''; dbgSrcRel = ''; dbgSrcLoaded = 0;
+        if (box) box.innerHTML = '<div class="muted" style="padding:8px">' + esc((d && d.message) || '读文件失败') + '</div>';
+        return;
+      }
+      dbgSrcRel = d.rel || rel;
+      dbgSrcAbs = d.abs || '';
+      dbgSrcRender(d);
+      if (line) dbgSrcReveal(line);
+    }).catch(function(e){
+      if (box) box.innerHTML = '<div class="muted" style="padding:8px">请求失败：' + esc('' + e) + '</div>';
+    });
+}
+
+function dbgSrcRender(d){
+  var box = dbgEl('dbg-src-code');
+  if (!box) return;
+  var lines = d.lines || [];
+  dbgSrcLoaded = lines.length;
+  var html = '';
+  for (var i = 0; i < lines.length; i++) {
+    var n = i + 1;
+    html += '<div class="dbg-cl" data-line="' + n + '">'
+      + '<span class="no" title="点行号下断点 / 再点取消">' + n + '</span>'
+      + '<span class="tx">' + (lines[i] === '' ? ' ' : esc(lines[i])) + '</span>'
+      + '<span class="mk"></span></div>';
+  }
+  box.innerHTML = html || '<div class="muted" style="padding:8px">文件是空的</div>';
+  var info = dbgEl('dbg-src-info');
+  if (info) {
+    info.textContent = (d.rel || '') + ' · ' + (d.total || lines.length) + ' 行'
+      + (d.truncated ? '（只显示前 ' + lines.length + ' 行）' : '')
+      + ' · 点行号下断点 / 再点取消（顶部填了条件 / 日志就按下对应类型）';
+    info.title = d.abs || '';
+  }
+  dbgSrcMark();
+}
+
+function dbgSrcReveal(line){
+  var box = dbgEl('dbg-src-code');
+  if (!box || !line) return;
+  var row = box.querySelector('.dbg-cl[data-line="' + line + '"]');
+  if (row && row.scrollIntoView) row.scrollIntoView({block:'center'});
+}
+
+// 这一行是当前文件的断点吗（会话断点与已记住清单共用一套匹配）。
+function dbgSrcHit(b, line){
+  if (!b || b.line !== line) return false;
+  var p = dbgSrcNormPath(b.path || b.scriptUri || '');
+  if (!p) return false;
+  if (p === dbgSrcNormPath(dbgSrcAbs)) return true;
+  if (!dbgSrcRel) return false;
+  return p.length > dbgSrcRel.length && p.slice(-(dbgSrcRel.length + 1)) === '/' + dbgSrcRel;
+}
+
+function dbgSrcMark(){
+  var box = dbgEl('dbg-src-code');
+  if (!box || !dbgSrcAbs || !dbgSrcLoaded) return;
+  var live = {}, saved = {};
+  for (var n = 1; n <= dbgSrcLoaded; n++) {
+    for (var i = 0; i < (dbgSt.breakpoints || []).length; i++) {
+      if (dbgSrcHit(dbgSt.breakpoints[i], n)) { live[n] = dbgSt.breakpoints[i]; break; }
+    }
+    for (var j = 0; j < (dbgSavedList || []).length; j++) {
+      if (dbgSrcHit(dbgSavedList[j], n)) { saved[n] = dbgSavedList[j]; break; }
+    }
+  }
+  var curLine = 0;
+  if (dbgSt.paused) {
+    var f = (dbgSt.pause && dbgSt.pause.topFrame) || {};
+    var fp = dbgSrcNormPath(f.path || f.scriptUri || '');
+    var ap = dbgSrcNormPath(dbgSrcAbs);
+    if (f.line && (fp === ap || (dbgSrcRel && fp.length > dbgSrcRel.length
+        && fp.slice(-(dbgSrcRel.length + 1)) === '/' + dbgSrcRel))) curLine = f.line;
+  }
+  var rows = box.querySelectorAll('.dbg-cl');
+  for (var k = 0; k < rows.length; k++) {
+    var ln = parseInt(rows[k].getAttribute('data-line'), 10) || 0;
+    var b = live[ln];
+    rows[k].classList.toggle('bp', !!b);
+    rows[k].classList.toggle('saved', !b && !!saved[ln]);
+    rows[k].classList.toggle('cur', ln === curLine);
+    var mk = rows[k].querySelector('.mk');
+    if (mk) mk.textContent = b ? (b.enabled === false ? '○' : '●') : (saved[ln] ? '·' : '');
+  }
+}
+
+// 点行号：下 / 取消。没连会话时只动「已记住」清单。
+function dbgSrcToggle(line){
+  if (!dbgSrcAbs || !dbgSrcRel) return;
+  var hit = null;
+  (dbgSt.breakpoints || []).forEach(function(b){ if (dbgSrcHit(b, line)) hit = b; });
+  if (hit) {
+    if (!dbgSt.attached) { dbgToast('这条断点属于当前会话：先「接入」再删'); return; }
+    dbgOp('removeBreakpoint', {id: hit.id}).then(function(d){ if (d && d.ok) dbgLoadSaved(); });
+    return;
+  }
+  var saved = null;
+  (dbgSavedList || []).forEach(function(b){ if (dbgSrcHit(b, line)) saved = b; });
+  if (!dbgSt.attached) {
+    if (saved) {
+      dbgOp('forgetBreakpoint', {dir: dbgSrcRoot, path: dbgSrcAbs, line: line})
+        .then(function(d){ if (d && d.ok) dbgLoadSaved(); });
+      return;
+    }
+    var c0 = (dbgEl('dbg-src-cond').value || '').trim();
+    var l0 = (dbgEl('dbg-src-log').value || '').trim();
+    dbgOp('rememberBreakpoint', {dir: dbgSrcRoot, path: dbgSrcAbs, line: line, condition: c0 || null, logMessage: l0 || null})
+      .then(function(d){ if (d && d.ok) dbgLoadSaved(); });
+    return;
+  }
+  var cond = (dbgEl('dbg-src-cond').value || '').trim();
+  var logm = (dbgEl('dbg-src-log').value || '').trim();
+  dbgOp('addBreakpoint', {path: dbgSrcAbs, line: line, condition: cond || null, logMessage: logm || null})
+    .then(function(d){ if (d && d.ok) dbgLoadSaved(); });
+}
+
+// 暂停 / 命中断点时跟着跳到对应文件的行（IDE 的「跟随当前帧」）。
+function dbgSrcFollowPause(){
+  var card = dbgEl('dbg-src-card');
+  if (!card || card.style.display === 'none') return;
+  var t = dbgSrcPauseTarget();
+  if (!t) { dbgSrcMark(); return; }
+  if (t.rel === dbgSrcRel) { dbgSrcMark(); dbgSrcReveal(t.line); return; }
+  var inp = dbgEl('dbg-src-file');
+  if (inp) inp.value = t.rel;
+  dbgSrcLoad(t.rel, t.line);
+}
+
+(function(){
+  var box = dbgEl('dbg-src-code');
+  if (!box) return;
+  box.addEventListener('click', function(ev){
+    var el = ev.target;
+    while (el && el !== box && !(el.classList && el.classList.contains('no'))) el = el.parentElement;
+    if (!el || el === box) return;
+    var row = el.parentElement;
+    var n = row ? parseInt(row.getAttribute('data-line'), 10) : 0;
+    if (n) dbgSrcToggle(n);
+  });
+})();
+
 
 function dbgListBp(btn){
   var done = dbgBusy(btn, '刷新中…');

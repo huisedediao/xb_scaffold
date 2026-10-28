@@ -64,6 +64,30 @@ void main() {
       }
     });
 
+    test('源码面板：点行号下断点（不用手输 文件:行）', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'id="dbg-src-card"',
+        'id="dbg-src-code"',
+        'id="dbg-src-files"',
+        'function dbgSrcOpen(',
+        'function dbgSrcPick(',
+        'function dbgSrcRender(',
+        'function dbgSrcMark(',
+        'function dbgSrcToggle(',
+        'function dbgSrcFollowPause(',
+        '/api/fs/dartfiles',
+        '/api/fs/file',
+        // 没连会话时「再点取消」要能删掉落盘的那一条。
+        'forgetBreakpoint',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 断点表 / 暂停状态变化后都要重刷行内标记，否则点了没反馈。
+      expect(html.contains('dbgSrcMark();'), isTrue);
+      expect(html.contains('dbgSrcFollowPause();'), isTrue);
+    });
+
     test('接上三类 WebSocket 推送（事件/状态/输出）', () {
       const html = gui.guiHtml;
       // 少接任一条，界面就会「点得动但看不到变化」。
