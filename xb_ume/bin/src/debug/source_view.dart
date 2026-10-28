@@ -1,7 +1,8 @@
 // 调试页「源码下断点」用的只读文件视图：列项目里的 .dart、按行读源码。
 //
-// 只服务于「点行号下断点」，所以不做语法高亮、不做编辑、不监听文件变化。
-// 路径一律相对项目根，读之前解析符号链接并确认仍在项目内（防 `../` 逃逸）。
+// 只服务于「点行号下断点」与「单步跟随当前帧」，所以不做语法高亮、不做编辑、不监听文件变化。
+// 项目内路径一律相对项目根，读之前解析符号链接并确认仍在项目内（防 `../` 逃逸）；
+// 单步进入 Flutter SDK / 依赖包时走 [readSourceFileOutside] 只读展示，同样只认 .dart。
 library;
 
 import 'dart:convert';
@@ -33,6 +34,7 @@ class SourceFileView {
     required this.total,
     required this.lines,
     required this.truncated,
+    this.outside = false,
   });
 
   /// 项目根 + 相对路径拼出的绝对路径（未解析符号链接；断点路径就是这形状）。
@@ -53,12 +55,16 @@ class SourceFileView {
   /// 是否因为超过 [maxLines] 被截断。
   final bool truncated;
 
+  /// 是否在项目根之外（Flutter SDK / 依赖包）：只读跟随，不能下断点。
+  final bool outside;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'abs': abs,
         'rel': rel,
         'total': total,
         'lines': lines,
         'truncated': truncated,
+        'outside': outside,
       };
 }
 
@@ -102,6 +108,7 @@ SourceFileView readSourceFile(
   int maxLines = 4000,
   int maxLineLen = 600,
 }) {
+  if (root.trim().isEmpty) throw DebugException('缺少项目根 root');
   final base = _realDir(root);
   final clean = rel.trim().replaceAll('\\', '/');
   if (clean.isEmpty) throw DebugException('缺少源码路径（相对项目根）');
@@ -123,18 +130,7 @@ SourceFileView readSourceFile(
   if (!_inside(base, real)) {
     throw DebugException('只允许读项目目录内的文件：$rel');
   }
-  final bytes = f.readAsBytesSync();
-  var text = utf8.decode(bytes, allowMalformed: true);
-  if (text.startsWith('\uFEFF')) text = text.substring(1);
-  final all = text.split('\n');
-  // 尾随换行会多出一个空行：按内容算行数，别让「100 行文件显示 101」。
-  var total = all.length;
-  if (total > 0 && all.last.isEmpty) total -= 1;
-  final take = total > maxLines ? maxLines : total;
-  final lines = <String>[
-    for (var i = 0; i < take; i++)
-      _clip(all[i].replaceAll('\r', ''), maxLineLen),
-  ];
+  final (total, lines) = _readLines(f, maxLines: maxLines, maxLineLen: maxLineLen);
   return SourceFileView(
     abs: File(abs).absolute.path,
     path: real,
@@ -142,6 +138,62 @@ SourceFileView readSourceFile(
     total: total,
     lines: lines,
     truncated: total > maxLines,
+  );
+}
+
+/// 读项目根之外的 `.dart`（暂停帧落在 Flutter SDK / 依赖包时用）。
+///
+/// IDE 单步进入框架代码时也会把编辑器切过去并标出当前行，这里做同样的事：
+/// 只读展示、不写断点（框架源码行号随 SDK 版本变，存下来下次恢复只会失败）。
+SourceFileView readSourceFileOutside(
+  String absPath, {
+  int maxLines = 4000,
+  int maxLineLen = 600,
+}) {
+  final clean = absPath.trim().replaceAll('\\', '/');
+  if (clean.isEmpty) throw DebugException('缺少源码绝对路径');
+  if (!clean.toLowerCase().endsWith('.dart')) {
+    throw DebugException('只支持 .dart 文件：$absPath');
+  }
+  final f = File(clean).absolute;
+  if (!f.existsSync()) throw DebugException('文件不存在：$absPath');
+  String real;
+  try {
+    real = f.resolveSymbolicLinksSync();
+  } catch (_) {
+    real = f.path;
+  }
+  final (total, lines) = _readLines(f, maxLines: maxLines, maxLineLen: maxLineLen);
+  return SourceFileView(
+    abs: f.path,
+    path: real,
+    rel: '',
+    total: total,
+    lines: lines,
+    truncated: total > maxLines,
+    outside: true,
+  );
+}
+
+/// 按行读文本：去 BOM / `\r`，尾随换行不多算一行，超长行截断。
+(int, List<String>) _readLines(
+  File f, {
+  required int maxLines,
+  required int maxLineLen,
+}) {
+  var text = utf8.decode(f.readAsBytesSync(), allowMalformed: true);
+  if (text.startsWith('\uFEFF')) text = text.substring(1);
+  final all = text.split('\n');
+  // 尾随换行会多出一个空行：按内容算行数，别让「100 行文件显示 101」。
+  var total = all.length;
+  if (total > 0 && all.last.isEmpty) total -= 1;
+  final take = total > maxLines ? maxLines : total;
+  return (
+    total,
+    <String>[
+      for (var i = 0; i < take; i++)
+        _clip(all[i].replaceAll('\r', ''), maxLineLen),
+    ],
   );
 }
 

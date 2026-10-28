@@ -88,6 +88,23 @@ void main() {
       expect(html.contains('dbgSrcFollowPause();'), isTrue);
     });
 
+    test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'function dbgSrcPauseTarget(',
+        'function dbgSrcShortPath(',
+        "mode: 'pkg'",
+        "mode: 'abs'",
+        "mode === 'abs'",
+        '&abs=',
+        'dbgSrcOutside',
+        // 项目外只弹提示，不能偷偷写断点下去。
+        '不能下断点',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+    });
+
     test('接上三类 WebSocket 推送（事件/状态/输出）', () {
       const html = gui.guiHtml;
       // 少接任一条，界面就会「点得动但看不到变化」。

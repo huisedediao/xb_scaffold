@@ -740,6 +740,13 @@ class DebugHub {
     } catch (_) {
       // 老版本 VM 可能不支持；断点列表随事件增量更新。
     }
+    // 接进来的可能是「已在断点上暂停」的会话（GUI 重启 / 复用别人的调试）：
+    // VM 不会重发 Pause 事件，不同步的话界面会显示运行中、单步也用不了。
+    try {
+      await client.syncPause();
+    } catch (_) {
+      // isolate 正在启动 / 老版本 VM 没有 pauseEvent：当运行中处理。
+    }
     _startFollow(h?.logPath ?? '', fromStart: followFromStart);
     // VM 在客户端断开时会把断点一起删掉：重连到同一项目就把上次的断点重下。
     return _restoreBreakpoints();

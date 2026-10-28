@@ -2,6 +2,7 @@
 // - 只列项目里的 .dart，构建产物 / 依赖缓存 / 隐藏目录整棵跳过
 // - 按行读源码：BOM、CRLF、超长行 / 超行数截断
 // - 越界（../）、非 .dart、不存在都给可读错误
+// - 项目外（Flutter SDK / 依赖包）只读展示：标记 outside、rel 为空
 library;
 
 import 'dart:io';
@@ -90,6 +91,43 @@ void main() {
       );
       expect(
         () => readSourceFile(tmp.path, 'lib/none.dart'),
+        throwsA(predicate((e) => '$e'.contains('不存在'))),
+      );
+    });
+
+    test('根为空直接报错，不会以 cwd 为基准去读', () {
+      expect(
+        () => readSourceFile('  ', 'lib/a.dart'),
+        throwsA(predicate((e) => '$e'.contains('项目根'))),
+      );
+    });
+  });
+
+  group('readSourceFileOutside', () {
+    test('读项目外的绝对路径：outside=true、rel 为空、行内容正确', () {
+      final f = File('${tmp.path}/sdk/material/theme_data.dart')
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('class ThemeData {\n  final int x;\n}\n');
+      final v = readSourceFileOutside(f.path);
+      expect(v.outside, isTrue);
+      expect(v.rel, '');
+      expect(v.total, 3);
+      expect(v.lines.first, 'class ThemeData {');
+      expect(v.abs, endsWith('/sdk/material/theme_data.dart'));
+      expect(v.toJson()['outside'], isTrue);
+    });
+
+    test('非 .dart / 不存在 / 空路径都报可读错误', () {
+      expect(
+        () => readSourceFileOutside(''),
+        throwsA(predicate((e) => '$e'.contains('绝对路径'))),
+      );
+      expect(
+        () => readSourceFileOutside('${tmp.path}/pubspec.yaml'),
+        throwsA(predicate((e) => '$e'.contains('.dart'))),
+      );
+      expect(
+        () => readSourceFileOutside('${tmp.path}/sdk/none.dart'),
         throwsA(predicate((e) => '$e'.contains('不存在'))),
       );
     });

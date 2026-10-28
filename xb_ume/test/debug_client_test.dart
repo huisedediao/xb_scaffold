@@ -846,6 +846,84 @@ void main() {
       expect(params['isolateId'], 'isolates/2');
       expect(params['line'], 12);
     });
+
+    test('接入已在暂停中的会话时同步现场（GUI 重启 / 复用别人的调试）', () async {
+      final pauseEvent = <String, Object?>{
+        'kind': 'PauseBreakpoint',
+        'isolateId': 'isolates/1',
+        'pauseBreakpoints': <Object?>[
+          <String, Object?>{
+            'id': 'breakpoints/7',
+            'resolved': true,
+            'location': <String, Object?>{
+              'script': <String, Object?>{
+                'uri': 'package:flutter/src/material/theme_data.dart',
+              },
+              'line': 363,
+            },
+          },
+        ],
+        'topFrame': <String, Object?>{
+          'index': 0,
+          'function': <String, Object?>{'name': 'ThemeData'},
+          'location': <String, Object?>{
+            'script': <String, Object?>{
+              'uri': 'package:flutter/src/material/theme_data.dart',
+            },
+            'line': 363,
+          },
+          'vars': <Object?>[
+            <String, Object?>{
+              'name': 'x',
+              'value': <String, Object?>{'kind': 'Null'},
+            },
+          ],
+        },
+      };
+      vm.onCall = (method, params) async {
+        if (method == 'getIsolate') {
+          return <String, Object?>{
+            'type': 'Isolate',
+            'id': 'isolates/1',
+            'pauseEvent': pauseEvent,
+          };
+        }
+        return null;
+      };
+      await client.connect();
+      expect(client.paused, isFalse);
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      await client.syncPause();
+      await _until(() => events.isNotEmpty);
+      expect(client.paused, isTrue);
+      expect(client.currentPause!.line, 363);
+      expect(client.currentPause!.topFrame!.function, 'ThemeData');
+      expect(client.currentPause!.breakpointIds, <String>['breakpoints/7']);
+      final ev = events.single;
+      expect(ev.kind, DebugEventKind.pause);
+      expect(ev.pause!.scriptUri,
+          'package:flutter/src/material/theme_data.dart');
+      await sub.cancel();
+    });
+
+    test('运行中（pauseEvent 不是 Pause*）保持未暂停、不推事件', () async {
+      vm.onCall = (method, params) async => method == 'getIsolate'
+          ? <String, Object?>{
+              'type': 'Isolate',
+              'id': 'isolates/1',
+              'pauseEvent': <String, Object?>{'kind': 'Resume'},
+            }
+          : null;
+      await client.connect();
+      final events = <DebugEvent>[];
+      final sub = client.events.listen(events.add);
+      await client.syncPause();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(client.paused, isFalse);
+      expect(events, isEmpty);
+      await sub.cancel();
+    });
   });
 }
 

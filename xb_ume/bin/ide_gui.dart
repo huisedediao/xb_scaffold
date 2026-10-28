@@ -688,14 +688,28 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/fs/file') {
-      // 读项目内某个 .dart 的源码行：给「点行号下断点」用，只读、不搜、不监听。
+      // 读某个 .dart 的源码行：给「点行号下断点」与「单步跟随当前帧」用，只读、不搜、不监听。
+      // - `root` + `path`：项目内的文件（相对项目根）；
+      // - `path=package:...`：依赖包 / Flutter SDK（按项目 package_config 解析）；
+      // - `abs`：项目外的绝对路径，与上一条一样只读展示、不许下断点。
       final q = req.uri.queryParameters;
       final root = (q['root'] ?? '').trim();
       final rel = (q['path'] ?? '').trim();
+      final abs = (q['abs'] ?? '').trim();
       req.response.headers.contentType = ContentType.json;
       try {
-        if (root.isEmpty) throw DebugException('缺少项目根 root');
-        final view = readSourceFile(root, rel);
+        SourceFileView view;
+        if (abs.isNotEmpty) {
+          view = readSourceFileOutside(abs);
+        } else if (rel.startsWith('package:')) {
+          final local = resolvePackageSourcePath(rel, root);
+          if (local == null) {
+            throw DebugException('找不到依赖包源码：$rel（先在项目里跑一次 flutter pub get）');
+          }
+          view = readSourceFileOutside(local);
+        } else {
+          view = readSourceFile(root, rel);
+        }
         req.response.write(jsonEncode(<String, Object?>{
           'ok': true,
           ...view.toJson(),
@@ -10530,6 +10544,21 @@ String? _resolveLibraryFile(String uri) {
   return null;
 }
 
+/// `package:<pkg>/<p>` → 本机源码路径（Flutter SDK / 依赖包），找不到返回 null。
+/// 只给源码面板的「单步跟随当前帧」用：IDE 单步进入框架代码时也会打开源码。
+String? resolvePackageSourcePath(String uri, String projectRoot) {
+  if (!uri.startsWith('package:')) return null;
+  final rest = uri.substring('package:'.length);
+  final slash = rest.indexOf('/');
+  if (slash <= 0 || slash == rest.length - 1) return null;
+  final pkg = rest.substring(0, slash);
+  final rel = rest.substring(slash + 1);
+  final pkgRoot = _pkgRootsFor(projectRoot.trim())?[pkg];
+  if (pkgRoot == null) return null;
+  final f = File('$pkgRoot/lib/$rel');
+  return f.existsSync() ? f.path : null;
+}
+
 /// 在源文件中找类/mixin/enum 声明行（1-based）；找不到返回 1。
 int _findClassDeclLine(String path, String className) {
   try {
@@ -11337,8 +11366,8 @@ const String guiHtml = r'''
   .dbg-cl.bp .no { color:#ff7b72; font-weight:600; }
   .dbg-cl.saved { background:rgba(220,60,60,.06); }
   .dbg-cl.saved .no { color:#a06060; }
-  .dbg-cl.cur { box-shadow:inset 2px 0 0 #f0b429; }
-  .dbg-cl.cur .no { color:#f0b429; }
+  .dbg-cl.cur { background:rgba(240,180,41,.13); box-shadow:inset 3px 0 0 #f0b429; }
+  .dbg-cl.cur .no { color:#f0b429; font-weight:600; }
   .dbg-fr { cursor:pointer; }
   .dbg-fr:hover { background:#161b22; }
   .dbg-fr.cur { background:#1b2532; box-shadow:inset 2px 0 0 #f0b429; }
@@ -17312,6 +17341,8 @@ var dbgSrcRoot = '';    // 面板当前的项目根
 var dbgSrcRel = '';     // 当前文件（相对项目根）
 var dbgSrcAbs = '';     // 当前文件绝对路径（跟断点的 path 对齐）
 var dbgSrcLoaded = 0;   // 已渲染行数（标记断点时不必遍历 DOM 行）
+var dbgSrcKey = '';     // 当前文件标识：项目内相对路径 / 项目外 package: URI 或绝对路径
+var dbgSrcOutside = false; // 当前文件在项目外（Flutter SDK / 依赖包）：只读跟随，不能下断点
 
 function dbgSrcNormPath(p){
   return String(p == null ? '' : p).replace(/^file:\/\//, '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -17330,10 +17361,20 @@ function dbgSrcRelOf(p){
   return '';
 }
 
+// 暂停帧要跳到哪：项目内用相对路径，项目外用 package: URI / 绝对路径。
+// 单步进入 Flutter SDK / 依赖包时 IDE 也会把编辑器切过去，这里做同样的事。
 function dbgSrcPauseTarget(){
   var f = (dbgSt.pause && dbgSt.pause.topFrame) || {};
-  var rel = dbgSrcRelOf(f.path || f.scriptUri || '');
-  return rel ? {rel: rel, line: f.line || 0} : null;
+  var p = dbgSrcNormPath(f.path || f.scriptUri || '');
+  var line = f.line || 0;
+  if (!p) return null;
+  var rel = dbgSrcRelOf(p);
+  if (rel) return {key: rel, mode: 'rel', line: line};
+  if (/^package:/.test(p)) return {key: p, mode: 'pkg', line: line, outside: true};
+  if (/(^\/|[A-Za-z]:\/)/.test(p) && /\.dart$/i.test(p)) {
+    return {key: p, mode: 'abs', line: line, outside: true};
+  }
+  return null;
 }
 
 function dbgSrcOpen(){
@@ -17363,6 +17404,8 @@ function dbgSrcClose(){
   if (card) card.style.display = 'none';
   dbgSrcAbs = '';
   dbgSrcRel = '';
+  dbgSrcKey = '';
+  dbgSrcOutside = false;
   dbgSrcLoaded = 0;
 }
 
@@ -17379,7 +17422,7 @@ function dbgSrcLoadFiles(){
       }
       var inp = dbgEl('dbg-src-file');
       var t = dbgSrcPauseTarget();
-      if (t) { if (inp) inp.value = t.rel; return dbgSrcLoad(t.rel, t.line); }
+      if (t) { if (inp) inp.value = t.key; return dbgSrcLoad(t.key, t.line, t.mode); }
       var cur = inp ? dbgSrcNormPath(inp.value) : '';
       var rel = dbgSrcFiles.indexOf(cur) >= 0 ? cur
         : (dbgSrcFiles.indexOf('lib/main.dart') >= 0 ? 'lib/main.dart' : (dbgSrcFiles[0] || ''));
@@ -17427,24 +17470,40 @@ function dbgSrcPick(){
   dbgSrcLoad(rel, 0);
 }
 
-function dbgSrcLoad(rel, line){
-  if (!dbgSrcRoot || !rel) return;
+// mode: 'rel' 项目内相对路径 / 'pkg' package: URI / 'abs' 绝对路径
+function dbgSrcLoad(key, line, mode){
+  if (!dbgSrcRoot || !key) return;
+  mode = mode || 'rel';
   var box = dbgEl('dbg-src-code');
   if (box) box.innerHTML = '<div class="muted" style="padding:8px">读取中…</div>';
-  return fetch('/api/fs/file?root=' + encodeURIComponent(dbgSrcRoot) + '&path=' + encodeURIComponent(rel))
+  var url = '/api/fs/file?root=' + encodeURIComponent(dbgSrcRoot)
+    + (mode === 'abs' ? '&abs=' : '&path=') + encodeURIComponent(key);
+  return fetch(url)
     .then(function(r){ return r.json(); }).then(function(d){
       if (!d || d.ok === false) {
-        dbgSrcAbs = ''; dbgSrcRel = ''; dbgSrcLoaded = 0;
+        dbgSrcAbs = ''; dbgSrcRel = ''; dbgSrcKey = ''; dbgSrcOutside = false;
+        dbgSrcLoaded = 0;
         if (box) box.innerHTML = '<div class="muted" style="padding:8px">' + esc((d && d.message) || '读文件失败') + '</div>';
         return;
       }
-      dbgSrcRel = d.rel || rel;
+      dbgSrcOutside = !!d.outside;
+      dbgSrcRel = d.outside ? '' : (d.rel || key);
       dbgSrcAbs = d.abs || '';
+      dbgSrcKey = d.outside ? key : dbgSrcRel;
       dbgSrcRender(d);
       if (line) dbgSrcReveal(line);
     }).catch(function(e){
       if (box) box.innerHTML = '<div class="muted" style="padding:8px">请求失败：' + esc('' + e) + '</div>';
     });
+}
+
+// 项目外文件只留 lib/ 之后那段（Flutter SDK 的绝对路径太长）。
+function dbgSrcShortPath(p){
+  var s = dbgSrcNormPath(p);
+  var i = s.indexOf('/lib/');
+  if (i >= 0) return s.substring(i + 5);
+  var parts = s.split('/');
+  return parts.slice(-2).join('/');
 }
 
 function dbgSrcRender(d){
@@ -17463,9 +17522,13 @@ function dbgSrcRender(d){
   box.innerHTML = html || '<div class="muted" style="padding:8px">文件是空的</div>';
   var info = dbgEl('dbg-src-info');
   if (info) {
-    info.textContent = (d.rel || '') + ' · ' + (d.total || lines.length) + ' 行'
+    var name = d.outside
+      ? '项目外（Flutter SDK / 依赖包）· ' + dbgSrcShortPath(d.abs || '')
+      : (d.rel || '');
+    info.textContent = name + ' · ' + (d.total || lines.length) + ' 行'
       + (d.truncated ? '（只显示前 ' + lines.length + ' 行）' : '')
-      + ' · 点行号下断点 / 再点取消（顶部填了条件 / 日志就按下对应类型）';
+      + (d.outside ? ' · 只读跟随当前帧，不能下断点'
+                   : ' · 点行号下断点 / 再点取消（顶部填了条件 / 日志就按下对应类型）');
     info.title = d.abs || '';
   }
   dbgSrcMark();
@@ -17502,11 +17565,10 @@ function dbgSrcMark(){
   }
   var curLine = 0;
   if (dbgSt.paused) {
-    var f = (dbgSt.pause && dbgSt.pause.topFrame) || {};
-    var fp = dbgSrcNormPath(f.path || f.scriptUri || '');
-    var ap = dbgSrcNormPath(dbgSrcAbs);
-    if (f.line && (fp === ap || (dbgSrcRel && fp.length > dbgSrcRel.length
-        && fp.slice(-(dbgSrcRel.length + 1)) === '/' + dbgSrcRel))) curLine = f.line;
+    // 统一用暂停帧的「文件标识」比：项目外是 package: URI / 绝对路径，
+    // 而面板里的 dbgSrcAbs 已经被后端解析成真实路径，直接比会永远不相等。
+    var t = dbgSrcPauseTarget();
+    if (t && t.key === dbgSrcKey && t.line) curLine = t.line;
   }
   var rows = box.querySelectorAll('.dbg-cl');
   for (var k = 0; k < rows.length; k++) {
@@ -17522,7 +17584,11 @@ function dbgSrcMark(){
 
 // 点行号：下 / 取消。没连会话时只动「已记住」清单。
 function dbgSrcToggle(line){
-  if (!dbgSrcAbs || !dbgSrcRel) return;
+  if (!dbgSrcAbs) return;
+  if (!dbgSrcRel || dbgSrcOutside) {
+    dbgToast('项目外文件（Flutter SDK / 依赖包）只读跟随当前帧，不能下断点');
+    return;
+  }
   var hit = null;
   (dbgSt.breakpoints || []).forEach(function(b){ if (dbgSrcHit(b, line)) hit = b; });
   if (hit) {
@@ -17551,15 +17617,17 @@ function dbgSrcToggle(line){
 }
 
 // 暂停 / 命中断点时跟着跳到对应文件的行（IDE 的「跟随当前帧」）。
+// 步进（跳过 / 进入 / 跳出）后也会走到这里：同文件只挪黄色当前行，
+// 换文件（包括单步进入 Flutter SDK / 依赖包）就自动切过去。
 function dbgSrcFollowPause(){
   var card = dbgEl('dbg-src-card');
   if (!card || card.style.display === 'none') return;
   var t = dbgSrcPauseTarget();
   if (!t) { dbgSrcMark(); return; }
-  if (t.rel === dbgSrcRel) { dbgSrcMark(); dbgSrcReveal(t.line); return; }
+  if (t.key === dbgSrcKey) { dbgSrcMark(); dbgSrcReveal(t.line); return; }
   var inp = dbgEl('dbg-src-file');
-  if (inp) inp.value = t.rel;
-  dbgSrcLoad(t.rel, t.line);
+  if (inp) inp.value = t.key;
+  dbgSrcLoad(t.key, t.line, t.mode);
 }
 
 (function(){

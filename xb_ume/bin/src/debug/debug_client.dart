@@ -838,6 +838,30 @@ class DebugClient {
     _pause = null;
   }
 
+  /// 接入已经在暂停中的会话时同步一次暂停现场。
+  ///
+  /// VM 只在「刚暂停」那一刻推 Pause 事件：重新连到已暂停的 isolate（GUI
+  /// 重启、从会话列表接入别人正在调试的进程）收不到任何事件，状态会一直
+  /// 显示运行中，单步也就无从下手。IDE 重新 attach 时会把断点位置直接标出
+  /// 来，这里做同样的事：把 isolate 当前的 pauseEvent 当普通事件喂给同一个
+  /// 处理流程（条件 / 日志断点的自动继续也因此同样生效）。
+  Future<void> syncPause() async {
+    final iso = await isolateId();
+    final raw = await rpc('getIsolate', <String, Object?>{'isolateId': iso});
+    final ev = _asMap(raw['pauseEvent']);
+    if (ev == null || !(_str(ev['kind']) ?? '').startsWith('Pause')) {
+      _pause = null;
+      return;
+    }
+    await _handleEvent(<String, Object?>{
+      ...ev,
+      // getIsolate 里的 pauseEvent 不总带 isolate（Pause 事件本身带），
+      // 缺了就补上，免得栈帧等后续请求找不到 isolate。
+      if (!ev.containsKey('isolate'))
+        'isolate': <String, Object?>{'type': '@Isolate', 'id': iso},
+    });
+  }
+
   /// 当前调用栈（含每个栈帧的局部变量）。
   Future<List<DebugFrame>> stack({int limit = 32}) async {
     final raw = await rpc('getStack', <String, Object?>{
