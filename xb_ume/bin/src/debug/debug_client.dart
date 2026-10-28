@@ -711,8 +711,13 @@ class DebugClient {
   }
 
   /// 热重启后按本客户端登记过的清单重新下发断点。
-  Future<List<DebugBreakpoint>> reapplyBreakpoints() async {
-    final previous = List<_OwnedBreakpoint>.from(_owned);
+  ///
+  /// [from] 是重启**前**留的快照：重启会让旧 isolate 的断点全部消失，VM
+  /// 还会逐个发 BreakpointRemoved，把 [_owned] 一起清空。不带快照时只能
+  /// 用当前清单（适合非重启场景）。
+  Future<List<DebugBreakpoint>> reapplyBreakpoints(
+      {BreakpointSnapshot? from}) async {
+    final previous = from?._items ?? List<_OwnedBreakpoint>.from(_owned);
     _breakpoints.clear();
     _conditions.clear();
     _owned.clear();
@@ -731,6 +736,13 @@ class DebugClient {
     }
     return out;
   }
+
+  /// 留一份「本客户端登记过的断点」快照（热重启动手前调用）。
+  BreakpointSnapshot snapshotBreakpoints() =>
+      BreakpointSnapshot._(List<_OwnedBreakpoint>.from(_owned));
+
+  /// 本客户端登记过的断点数（诊断/测试用）。
+  int get ownedBreakpointCount => _owned.length;
 
   /// 暂停（等同于工具栏的暂停按钮）。
   Future<void> pause() async {
@@ -1007,6 +1019,13 @@ class _OwnedBreakpoint {
   final int line;
   final int? column;
   final String? condition;
+}
+
+/// 断点清单快照（不透明）：热重启前留一份，重启后用 [DebugClient.reapplyBreakpoints] 重下。
+class BreakpointSnapshot {
+  BreakpointSnapshot._(this._items);
+
+  final List<_OwnedBreakpoint> _items;
 }
 
 // ------------------------------------------------------------- 解析小工具

@@ -21,8 +21,8 @@ import 'debug_client.dart';
 /// 推送回调（GUI 侧接 `GuiState.broadcast`）。
 typedef DebugPush = void Function(Map<String, Object?> message);
 
-/// 下拉框默认值：没有选设备时用本机桌面跑起来（与 MCP 的 -d macos 一致）。
-const String kDebugDefaultDevice = 'macos';
+/// 下拉框默认值：没有选设备时用本机桌面跑起来（与 GUI 默认一致）。
+final String kDebugDefaultDevice = Platform.isWindows ? 'windows' : 'macos';
 
 /// 从 pubspec.yaml 读本包名（生成 / 反解 `package:` 脚本 URI 需要）。
 String? readPubspecName(String projectRoot) {
@@ -390,21 +390,27 @@ class DebugHub {
       throw DebugException('pid $pid 不在本工具的运行清单里，无法热重载：'
           '请回到 IDE / 终端按 r');
     }
+    // 热重启会换 isolate：VM 会为旧 isolate 的断点逐个发 BreakpointRemoved，
+    // 客户端的登记清单会被一并清空，所以动手前先留快照，重启完按它重下。
+    final snap = restart ? _client?.snapshotBreakpoints() : null;
     final r = await launcher.hotReload(pid, restart: restart);
     if (!r.ok) {
       _message = r.message;
       throw DebugException(r.message);
     }
     if (restart && _client != null) {
-      // 热重启换 isolate，VM 侧断点全清：按本地登记清单重新下发。
       _client!.resetIsolate();
       try {
-        await _client!.reapplyBreakpoints();
+        await _client!.reapplyBreakpoints(from: snap);
       } catch (_) {
         // 单个断点重下失败（行已删）不影响整体。
       }
     }
-    _message = '${restart ? '热重启' : '热重载'}完成（${r.elapsedMs}ms）：${r.message}';
+    // 热重载常直接把 UI 重建到断点上：把「已暂停」带在消息里，免得
+    // 暂停事件先到、被这句覆盖后看不出停在哪（状态行/工具条仍显示位置）。
+    final pausedNow = _client?.paused ?? false;
+    _message = '${restart ? '热重启' : '热重载'}完成（${r.elapsedMs}ms）：${r.message}'
+        '${pausedNow ? '；已暂停在断点' : ''}';
     return <String, Object?>{'elapsedMs': r.elapsedMs};
   }
 
@@ -492,7 +498,14 @@ class DebugHub {
     bool followFromStart = false,
   }) async {
     launcher.adoptRecords();
-    final h = pid == null ? null : launcher.byPid(pid);
+    var h = pid == null ? null : launcher.byPid(pid);
+    // 只给了 VM 地址（从会话列表接入）时按端口反查运行清单：认领到句柄
+    // 才能热重载，也才能跟到它那份 flutter run 日志。
+    if (h == null) {
+      final port = Uri.tryParse(wsUri)?.port ?? 0;
+      final found = port > 0 ? launcher.pidForPort(port) : null;
+      if (found != null) h = launcher.byPid(found);
+    }
     await _detachClient();
     _stopFollow();
     // 新会话从空白输出开始（上一轮日志已随 status 回给前端留档）。

@@ -36,7 +36,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | App 内 | Locator | 屏幕拾取组件：宽高、间距、组件链、源码位置、点行尾 ↗ 跳 IDE |
 | App 内 | Device | OS、屏幕尺寸、DPR、文字缩放、方向等环境信息 |
 | App 内 | Storage | 按适配器读写任意 key/value 存储（面板内只写字符串） |
-| 电脑端 | GUI 工具箱 | 14 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化等 |
+| 电脑端 | GUI 工具箱 | 15 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化/调试等 |
 | App 内 / 电脑端 | IDE 跳转 | 点源码行尾 ↗ 或 GUI 栈帧「跳转」→ 在 VS Code / Android Studio 等打开对应行列 |
 | 命令行 | `xb_ume run` | 同一份场景 JSON 在 CI 中回放并产出 HTML 报告 |
 | 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：按组件 ref 点击、读路由/网络/日志、跑场景、驱动设备 |
@@ -442,11 +442,12 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 
 **页头（全局）**：设备选择器 + VM 会话选择器。选中设备后「日志」Tab 的设备日志源随之切换；选中会话后各 VM 相关 Tab 才有数据。iOS 真机需 libimobiledevice；鸿蒙设备用 `hdc`。
 
-**Tab 一览**（当前可见 14 个；「状态」「Widget树」两个 Tab 暂时隐藏，代码保留）：
+**Tab 一览**（当前可见 15 个；「状态」「Widget树」两个 Tab 暂时隐藏，代码保留）：
 
 | Tab | 功能 | 前置 / 说明 |
 |---|---|---|
 | 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon` |
+| 调试 | 起停 `flutter run`（已有会话直接复用）；按 `文件:行` 打断点与条件断点；命中后浮动条暂停/继续/单步/热重载/热重启；调用栈、变量与求值、运行输出 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
 | 日志 | 设备日志（logcat / hilog / log stream / idevicesyslog）+ Flutter 输出（未选会话时为全部，选中后只显示该应用） | 设备工具可用；Flutter 输出需 daemon |
 | 时间轴 | 路由 / 网络 / 日志 / 异常按时间合并，可过滤、暂停、展开、跳转对应 Tab | 需选中会话 |
 | 异常 | 实时捕获框架异常与未捕获异常，栈帧可跳 IDE，Tab 角标 + 红浮层提醒 | daemon 在跑即可，覆盖全部会话（不要求选中） |

@@ -207,7 +207,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 | 工具 | 主要参数 | 返回 |
 | --- | --- | --- |
-| `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中 |
+| `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中；有 `launcher` 标记的会话由本服务或 GUI 拉起（`mcp拉起·可热重载` / `gui认领·可热重载` / `…只读`），可直接复用 |
 | `xbume_use_session` | `sessionId` | 选定后续工具默认会话，并读一次路由栈做连通性验证 |
 | `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |
 | `xbume_find_widget` | `by`(type/key/text/semantics), `value`, `exact?`, `limit?` | `ref` / 类型 / Key / 文本 / 逻辑像素 bounds / 源码位置 |
@@ -223,7 +223,7 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
-| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?`, `cwd?`, `force?` | `via=flutter-run` 顺带把新会话设为当前；**同设备同目录已有 `flutter run`（如 IDE 起的）时默认拒绝**（继续会重装包并顶掉那个会话），确认重起传 `force: true` |
+| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?`, `cwd?`, `force?` | `via=flutter-run` 顺带把新会话设为当前；**同设备 + 同目录 + 同 target 已有本服务/GUI 拉起的会话时直接复用**（回 `reused: true`，不重装包）；`force: true` = 先停掉本服务那一个再重起；外部 IDE 起的同设备同目录会话仍默认拒绝（继续会顶掉它），确认顶掉才传 `force: true` |
 | `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 向本服务拉起的 `flutter run` 写 `r`/`R`：改完代码就地热重载/热重启，返回耗时与完成行；热重启会清 isolate 缓存 |
 | `xbume_eval` | `expr`, `lib?`, `maxChars?` | **需 `--allow-eval`**：在 app 进程内求值单行表达式，返回 `值` + 库 + 类型；编译错误与运行时异常分开报 |
 
@@ -311,7 +311,7 @@ URL 片段取完整响应体）。
 
 `xbume_hot_reload`(`mode: reload`，实测空改动 ~150ms、改一个文件 ~230ms) → 改动大时用
 `mode: restart`（isolate 会换，缓存自动重建）→ `xbume_tap` / `xbume_scenario_run` 复跑。
-前提：会话由 `xbume_app_launch(via: "flutter-run")` 拉起；外部终端里的进程不归 MCP 管。
+前提：会话由 `xbume_app_launch(via: "flutter-run")` 或 GUI「调试」页拉起（落盘清单里有 FIFO），或在 GUI「调试」页「接入」认领到句柄；外部 IDE 终端里的进程不归 MCP 管，只能手动按 `r`。
 
 ---
 
@@ -453,8 +453,8 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
 | macOS 上自动化卡在导航 | app 在后台时帧会被冻结：`open -a <绝对路径>` 把它切到前台再跑。 |
-| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部终端或 IDE 的 `flutter run`；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（若同设备同目录已有进程会先报错误让你确认，见下），或手动按 `r`。 |
-| `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | IDE/终端已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。要复用就 `xbume_sessions` → `xbume_use_session`（无热重载）；确认重起传 `force: true`。 |
+| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部 IDE/终端的 `flutter run`（没有本服务的落盘清单 / FIFO）；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或手动按 `r`。 |
+| `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | 外部（IDE/终端）已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。只是要接入就 `xbume_sessions` → `xbume_use_session`（只读，无热重载），或在 GUI「调试」页「接入」；确认顶掉才传 `force: true`。 |
 | `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
 
 ---
@@ -469,17 +469,17 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
   `--tool-groups inspect` 之类只是允许但不会多出工具。
 - **性能/内存证据仍只在 GUI**：CPU、内存、帧耗时等采样没有进 MCP；
   `xbume_eval` 只能读到 `ProcessInfo` 之类的单点值，看趋势要去「性能」Tab。
-- **`xbume_hot_reload` 只作用于自己拉起的 `flutter run`**：不接管外部终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 在**同设备同目录**已有 `flutter run` 时默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
+- **`xbume_hot_reload` 只作用于本服务/GUI 拉起或认领的 `flutter run`**：不接管外部 IDE/终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 对**同设备 + 同目录 + 同 target 的本服务会话**直接复用（返回 `reused: true`，不重装包），对外部会话仍默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
 - **`assertLog` 在 CLI/MCP 下跳过**：它依赖 GUI 的日志订阅上下文（`skip`，不算失败）。
 - **mobile-mcp 的常驻进程不由我们回收**：`mobilecli-* daemon` 若被适配器拉起，
   退出后可能仍在运行；需要时手动结束。xb_ume 只负责自己拉起的 `npx` 子进程。
 - **mobile-mcp 能力是「探测到的」而非保证的**：适配器版本变化会改变可用工具集，
   以 `xbume_devices` 返回的 capabilities 为准。
 - **HTTP 传输不提供 SSE 流**：`GET /mcp` 返回 405。需要流式通知的客户端请用 stdio。
-- **Windows 上「同设备同目录防顶掉」体检不生效**：启动前扫本机 `flutter run` 依赖
+- **Windows 上「外部会话防顶掉」体检不生效**：启动前扫本机 `flutter run` 依赖
   `ps` + `lsof -d cwd`，Windows 没有这两个命令，扫描结果固定为空表，
-  `xbume_app_launch` 不会拦「已有同设备同目录的 flutter run」。要复用会话请自己先
-  `xbume_sessions` → `xbume_use_session`，否则重装包会顶掉 IDE 那个会话。
+  `xbume_app_launch` 不会拦外部（IDE）起的同设备同目录 `flutter run`。
+  但**本服务/GUI 拉起的会话不受影响**（复用判定读落盘清单 `launch/live/<pid>.json`，跨平台一致）。
 - **Windows 没有 LaunchAgent 的 KeepAlive**：`--install` 在 Windows 写 HKCU 注册表
   Run 键（登录自启），daemon 崩溃后不会被拉起；macOS 的 LaunchAgent 才会。
   Windows 的 daemon 日志在 `~/.xb_ume_ide/daemon.log`。

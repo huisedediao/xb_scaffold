@@ -403,9 +403,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         if (s is Map) {
           final uri = s['uri']?.toString();
           final app = uri == null ? null : state.appNameFor(uri);
-          if (app != null && app.isNotEmpty) {
-            return <String, Object?>{...s, 'app': app};
-          }
+          // 项目根也带上：「调试」页接入会话时要用它解析断点的相对路径。
+          final root = uri == null ? null : state.projectRootForVmUri(uri);
+          return <String, Object?>{
+            ...s,
+            if (app != null && app.isNotEmpty) 'app': app,
+            if (root != null) 'projectRoot': root,
+          };
         }
         return s;
       }).toList();
@@ -4222,6 +4226,17 @@ class GuiState {
     for (final entry in _vmSessions.entries) {
       if (entry.key.startsWith('$uri|')) {
         return entry.value.appName;
+      }
+    }
+    return null;
+  }
+
+  /// VM 地址 → 项目根（「调试」页接入外部会话时给断点相对路径用）。
+  String? projectRootForVmUri(String uri) {
+    for (final entry in _vmSessions.entries) {
+      if (entry.key.startsWith('$uri|')) {
+        final root = entry.value.projectRoot;
+        return (root == null || root.isEmpty) ? null : root;
       }
     }
     return null;
@@ -11253,6 +11268,33 @@ const String guiHtml = r'''
   .pf-memtable tr:last-child td { border-bottom:none; }
   .pf-memtable .bar { height:6px; background:#1d2735; border-radius:3px; overflow:hidden; }
   .pf-memtable .bar i { display:block; height:6px; background:var(--acc); }
+  /* 调试 Tab：左断点 / 右调用栈变量，底部运行输出；浮动工具条全局置底 */
+  .dbg-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:1000px) { .dbg-cols { grid-template-columns:1fr; } }
+  .dbg-list { max-height:260px; overflow:auto; font-size:12px; }
+  .dbg-bp, .dbg-fr, .dbg-var { display:flex; align-items:center; gap:8px; padding:4px 6px; border-bottom:1px dashed var(--line); }
+  .dbg-bp .dot { width:7px; height:7px; border-radius:50%; background:#46d68c; flex:0 0 auto; }
+  .dbg-bp.unres .dot { background:#e5484d; }
+  .dbg-bp.off .p { text-decoration:line-through; color:var(--dim); }
+  .dbg-bp .p, .dbg-fr .p, .dbg-var .p { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .dbg-bp .cond { color:#ffd479; flex:0 0 auto; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dbg-bp .x { color:#8aa0b4; cursor:pointer; padding:0 3px; flex:0 0 auto; }
+  .dbg-bp .x:hover { color:var(--acc); }
+  .dbg-fr { cursor:pointer; }
+  .dbg-fr:hover { background:#161b22; }
+  .dbg-fr.cur { background:#1b2532; box-shadow:inset 2px 0 0 #f0b429; }
+  .dbg-fr .fn { color:var(--acc); flex:0 0 auto; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dbg-var .fn { color:#ffd479; flex:0 0 auto; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #dbg-out { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; height:34vh; min-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  #dbg-bar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:96; display:none; align-items:center; flex-wrap:nowrap; gap:6px; padding:6px 8px 6px 12px; background:#0e1620; border:1px solid var(--line); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.55); }
+  #dbg-bar.on { display:flex; }
+  #dbg-bar.paused { border-color:#f0b429; }
+  #dbg-bar .why { flex:0 1 auto; color:var(--dim); font-size:12px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #dbg-bar.paused .why { color:#f0b429; }
+  #dbg-bar button { flex:0 0 auto; padding:4px 10px; font-size:12px; white-space:nowrap; }
+  #dbg-bar button:disabled { opacity:.4; cursor:not-allowed; }
+  #dbg-bar .sep { flex:0 0 auto; width:1px; height:18px; background:var(--line); }
+  #dbg-toast { position:fixed; left:50%; bottom:72px; transform:translateX(-50%); z-index:97; padding:6px 14px; border-radius:14px; background:#5c1a1a; color:#ffb4b4; border:1px solid #c0392b; font-size:12px; display:none; box-shadow:0 2px 10px rgba(0,0,0,.5); max-width:70vw; }
 </style>
 </head>
 <body>
@@ -11261,6 +11303,7 @@ const String guiHtml = r'''
   <div class="tabs">
     <div class="tab active" data-tab="daemon">守护进程</div>
     <div class="tab" data-tab="ai">AI 调试</div>
+    <div class="tab" data-tab="debug">调试</div>
     <div class="tab" data-tab="logs">日志</div>
     <div class="tab" data-tab="timeline">时间轴</div>
     <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
@@ -11352,6 +11395,70 @@ const String guiHtml = r'''
           <button class="primary" onclick="aiPickChoose()">选定此目录</button>
         </div>
       </div>
+    </div>
+  </section>
+  <section class="page" id="page-debug">
+    <div class="card">
+      <div class="row">
+        <b>调试会话</b>
+        <span id="dbg-stat" class="muted">未连接</span>
+        <span id="dbg-msg" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <button onclick="dbgStatus()">刷新</button>
+      </div>
+      <div class="row" style="margin-top:4px;gap:10px;flex-wrap:wrap">
+        <label class="chk" style="display:flex;align-items:center;flex:1 1 260px;min-width:220px" title="Flutter 项目根目录（含 pubspec.yaml），也是断点相对路径的基准">项目目录
+          <input id="dbg-dir" list="dbg-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px">
+          <datalist id="dbg-dir-list"></datalist>
+        </label>
+        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto" title="flutter run -d 哪台设备。默认 macOS 桌面；手机上的会话请用下方「接入」">设备
+          <select id="dbg-device" style="width:190px;margin-left:6px"></select>
+        </label>
+        <label class="chk" style="display:flex;align-items:center;flex:0 0 auto" title="入口文件，留空用 lib/main.dart（flutter run 默认）">入口
+          <input id="dbg-target" placeholder="lib/main.dart" style="width:150px;margin-left:6px;font-size:12px">
+        </label>
+        <button class="primary" onclick="dbgStart(this)">启动 / 复用</button>
+        <button onclick="dbgStop(this)" title="只停本工具（GUI/MCP）拉起的 flutter run，按精确 PID 停">停止</button>
+      </div>
+      <div class="row" style="margin-top:4px;gap:10px;flex-wrap:nowrap">
+        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
+          <select id="dbg-attach" style="flex:1;min-width:0;margin-left:6px"></select>
+        </label>
+        <button onclick="dbgAttach(this)">接入</button>
+        <button onclick="dbgDetach(this)" title="只断开调试连接，app 继续跑">断开</button>
+      </div>
+      <div class="muted" style="margin-top:6px;font-size:12px;line-height:1.6">
+        启动走 <code>flutter run</code>（与 AI 的 <code>xbume_app_launch</code> 同一条链路）：已在跑的会话直接<b>复用</b>，不重装包，AI 也能复用这里起的会话。
+        接入的外部会话（IDE 拉起的）可打断点/单步，热重载请回 IDE 按 <code>r</code>。断点只调 VM service，不改源码、不需编辑器。
+      </div>
+    </div>
+    <div class="dbg-cols">
+      <div class="card">
+        <div class="row"><b>断点</b><span id="dbg-bp-n" class="muted" style="font-size:12px"></span><button onclick="dbgListBp(this)" style="margin-left:auto">刷新</button></div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
+          <input id="dbg-bp-path" placeholder="路径，可相对项目根：lib/main.dart" style="flex:1 1 190px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
+          <input id="dbg-bp-line" placeholder="行号" style="width:70px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
+          <input id="dbg-bp-cond" placeholder="条件（可空）" style="flex:0 1 140px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
+          <button class="primary" onclick="dbgAddBp(this)">加断点</button>
+        </div>
+        <div id="dbg-bps" class="dbg-list"></div>
+      </div>
+      <div class="card">
+        <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto">刷新</button></div>
+        <div id="dbg-stack" class="dbg-list" style="max-height:230px"></div>
+        <div id="dbg-vars" class="dbg-list" style="max-height:200px;border-top:1px solid var(--line)"></div>
+        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
+          <input id="dbg-eval" placeholder="选中帧里求值，如 widget.runtimeType" style="flex:1;min-width:0;font-size:12px" onkeydown="if(event.key==='Enter')dbgEval()">
+          <button onclick="dbgEval()">求值</button>
+        </div>
+        <div id="dbg-eval-out" class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;max-height:84px;overflow:auto"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row"><b>运行输出</b><span id="dbg-out-n" class="muted" style="font-size:12px"></span>
+        <label class="chk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="dbg-follow" checked>自动滚到底</label>
+        <button onclick="dbgClearOut()">清屏</button>
+      </div>
+      <pre id="dbg-out"></pre>
     </div>
   </section>
   <section class="page" id="page-logs">
@@ -11738,6 +11845,22 @@ const String guiHtml = r'''
     </div>
   </section>
 </main>
+<!-- 调试浮动工具条（VSCode 风格）：连着会话就出现，暂停时高亮；跨 Tab 常驻 -->
+<div id="dbg-bar">
+  <span class="why" id="dbg-bar-why">调试中</span>
+  <button id="dbg-b-pause" onclick="dbgPause()" title="暂停（异步停在最近的 Dart 代码）">⏸ 暂停</button>
+  <button id="dbg-b-resume" onclick="dbgResume()" title="继续（F5）">▶ 继续</button>
+  <button id="dbg-b-over" onclick="dbgResume('over')" title="单步跳过（F10）：执行完当前行">↷ 跳过</button>
+  <button id="dbg-b-into" onclick="dbgResume('into')" title="单步进入（F11）：进入被调用函数">↘ 进入</button>
+  <button id="dbg-b-out" onclick="dbgResume('out')" title="单步跳出（⇧F11）：跑完当前函数">↖ 跳出</button>
+  <span class="sep"></span>
+  <button id="dbg-b-hot" onclick="dbgHot(false)" title="热重载（r）：改完代码不重启进程">⟳ 热重载</button>
+  <button id="dbg-b-restart" onclick="dbgHot(true)" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启</button>
+  <span class="sep"></span>
+  <button onclick="dbgStop()" title="停止 flutter run（只停本工具拉起的，按精确 PID）">■ 停止</button>
+  <button onclick="document.getElementById('dbg-bar').classList.remove('on')" title="收起（从调试页刷新或重新操作可再现）">✕</button>
+</div>
+<div id="dbg-toast"></div>
 <script>
 var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).content || '';
 // 同源 fetch 统一带令牌：Cookie 之外的双保险（SameSite=Strict 已挡跨站）。
@@ -11789,6 +11912,8 @@ function connect() {
     else if (msg.type === 'watchState') { inWatchApply(msg.item); }
     else if (msg.type === 'watchList') { inWatches = msg.items || []; inWatchRender(); }
     else if (msg.type === 'watchCleared') { watchEvents = []; if (tlOnTab()) tlRender(); }
+    else if (msg.type === 'debug' || msg.type === 'debugState') { dbgApply(msg.state || {}); }
+    else if (msg.type === 'debugOutput') { dbgOutAppend(msg.lines || [], msg.seq); }
   };
 }
 connect();
@@ -11802,6 +11927,7 @@ function showTab(t){
   document.getElementById('page-' + t.dataset.tab).classList.add('active');
   if (t.dataset.tab === 'daemon') { refreshDaemon(); refreshMcp(); loadIdeOrder(); }
   else if (t.dataset.tab === 'ai') aiShow();
+  else if (t.dataset.tab === 'debug') dbgShow();
   else if (t.dataset.tab === 'timeline') tlShow();
   else if (t.dataset.tab === 'sandbox') sbRefresh();
   else if (t.dataset.tab === 'db') dbRefresh();
@@ -13837,6 +13963,11 @@ function refreshDaemon(){
       el.innerHTML = '<span class="bad">未运行</span>（启动：dart run xb_ume:ide --install）';
       vm.style.display = ''; vm.textContent = 'VM 未连接'; vm.title = '守护进程未运行';
       sel.style.display = 'none';
+      var aselDown = document.getElementById('dbg-attach');
+      if (aselDown) {
+        dbgAttachList = [];
+        aselDown.innerHTML = '<option value="">守护进程未运行（只能在本页点「启动」）</option>';
+      }
     } else {
       if (lastDaemonRunning === false) clog('daemon 恢复运行');
       lastDaemonRunning = true;
@@ -13857,6 +13988,20 @@ function refreshDaemon(){
         html += '<option value="' + esc(v) + '">' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
+      // 「调试」页的接入下拉与页头同源：值用下标，接入时能一并拿到
+      // vm uri 与项目根（断点相对路径的基准）。
+      var asel = document.getElementById('dbg-attach');
+      if (asel) {
+        dbgAttachList = ss;
+        var ahtml = '<option value="">选择一条调试会话（共 ' + ss.length + ' 个）</option>';
+        ss.forEach(function(s, i){
+          ahtml += '<option value="' + i + '">'
+            + esc((s.app ? s.app + ' · ' : '') + (s.source || s.uri)) + '</option>';
+        });
+        var apv = asel.value;
+        asel.innerHTML = ahtml;
+        asel.value = apv;
+      }
       // 对比页的 A/B 会话下拉与页头同源（名称同显包名），已激活时同步刷新。
       if (typeof cmpActive === 'function' && cmpActive()) cmpFillSessions();
       // 保持用户选择：会话瞬断（休眠唤醒/热重启/ws 断链）不立即回退，
@@ -16497,6 +16642,405 @@ loadIdeOrder();
 // 默认激活的就是「守护进程」页：立即拉一次 MCP 状态。仅靠 setInterval
 // 会导致首屏最多 15 秒显示「查询中…」。
 refreshMcp();
+// ── 调试 Tab（flutter run + VM 断点）──────────────────────────────────────
+// 所有动作打 /api/debug/op，响应 = 状态快照 + 本次结果；事件与运行输出走
+// WebSocket（debug / debugState / debugOutput）。断点只调 VM service，
+// 不改源码、不需要编辑器：这里是「调试器控制面板」。
+var dbgSt = {};            // 最新状态快照（后端 status()）
+var dbgFrames = [];        // 当前调用栈（暂停后自动拉）
+var dbgFrameIdx = 0;       // 选中帧（求值用它）
+var dbgPauseKeyShown = ''; // 已拉过栈的暂停点，避免状态推送重复拉栈
+var dbgStackLoaded = false; // 当前暂停点已拉过一次栈（空栈也能说清楚）
+var dbgStacking = false;   // 拉栈进行中
+var dbgAttachList = [];    // 可接入的调试会话（/api/daemon）
+var dbgOutLines = [];      // 运行输出（前端最多留 2000 行）
+var dbgOutSeq = 0;         // 已渲染到的输出序号（旧的 status 快照不回退）
+var dbgToastTimer = null;
+
+function dbgEl(id){ return document.getElementById(id); }
+
+function dbgShow(){
+  dbgLoadOpts();
+  refreshDaemon(); // 顺手刷新「接入会话」下拉
+  dbgStatus();
+}
+
+// 项目目录候选 + 设备下拉。默认选本机桌面（macos / windows）：不自动选手机，
+// 避免在手机会话上误操作（手机上的会话请用「接入」）。
+function dbgDesktop(){
+  var ua = navigator.userAgent || '';
+  if (/Windows/i.test(ua)) return 'windows';
+  if (/Linux/i.test(ua) && !/Android/i.test(ua)) return 'linux';
+  return 'macos';
+}
+
+function dbgLoadOpts(){
+  fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
+    var dirl = dbgEl('dbg-dir-list');
+    if (dirl) {
+      dirl.innerHTML = '';
+      [d.projectDir].concat(d.sessionDirs || [], d.recentDirs || []).forEach(function(p){
+        if (!p) return;
+        var o = document.createElement('option');
+        o.value = p;
+        dirl.appendChild(o);
+      });
+    }
+    var dir = dbgEl('dbg-dir');
+    if (dir && !dir.value) {
+      dir.value = d.projectDir || (d.sessionDirs || [])[0] || (d.recentDirs || [])[0] || '';
+    }
+    var sel = dbgEl('dbg-device');
+    if (!sel) return;
+    var prev = sel.value;
+    var list = d.devices || [];
+    var html = '';
+    list.forEach(function(x){
+      html += '<option value="' + esc(x.id) + '">'
+        + esc((platformNames[x.platform] || x.platform || '') + ' · ' + (x.name || x.id)) + '</option>';
+    });
+    var desk = dbgDesktop();
+    var hasDesk = list.some(function(x){ return x.id === desk; });
+    sel.innerHTML = html || '<option value="' + desk + '">本机桌面</option>';
+    sel.value = prev;
+    if (!sel.value) sel.value = hasDesk ? desk : (list.length ? list[0].id : desk);
+  }).catch(function(){});
+}
+
+function dbgStatus(){
+  return fetch('/api/debug/op?op=status').then(function(r){ return r.json(); })
+    .then(function(d){ dbgApply(d); return d; }).catch(function(){});
+}
+
+// 发一个调试动作；失败不抛，统一 toast 提示。
+function dbgOp(op, extra){
+  var body = {op: op};
+  if (extra) for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) body[k] = extra[k];
+  return fetch('/api/debug/op', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    dbgApply(d);
+    if (d && d.ok === false && d.error) dbgToast(d.error);
+    return d;
+  }).catch(function(e){ dbgToast('请求失败：' + e); return null; });
+}
+
+function dbgBusy(btn, label){
+  if (!btn) return function(){};
+  var old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = label;
+  return function(){ btn.disabled = false; btn.textContent = old; };
+}
+
+function dbgToast(text){
+  var el = dbgEl('dbg-toast');
+  if (!el) { clog('[debug] ' + text); return; }
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(dbgToastTimer);
+  dbgToastTimer = setTimeout(function(){ el.style.display = 'none'; }, 5000);
+}
+
+// 统一渲染入口：HTTP 响应与 WS 推送都是「状态快照」，走同一套渲染。
+function dbgApply(d){
+  if (!d || typeof d !== 'object') return;
+  dbgSt = d;
+  if (d.output) dbgOutSet(d.output, d.outSeq);
+  dbgRenderHead();
+  dbgRenderBps();
+  dbgRenderBar();
+  var key = d.paused ? dbgPauseKey(d.pause) : '';
+  if (key) {
+    if (key !== dbgPauseKeyShown) {
+      dbgPauseKeyShown = key;
+      dbgStackLoaded = false;
+      dbgFrames = [];
+      dbgFrameIdx = 0;
+      var eo = dbgEl('dbg-eval-out');
+      if (eo) { eo.className = 'muted'; eo.textContent = ''; }
+      dbgFetchStack();
+    }
+    dbgRenderPause(d.pause);
+  } else {
+    dbgPauseKeyShown = '';
+    dbgRenderIdle();
+  }
+  if (d.frames) { dbgFrames = d.frames; dbgRenderStack(); }
+}
+
+function dbgPauseKey(p){
+  if (!p) return '';
+  var f = p.topFrame || {};
+  return [p.reason || '', f.path || f.scriptUri || '', f.line == null ? '' : f.line,
+    (p.breakpointIds || []).join(',')].join('|');
+}
+
+function dbgRenderHead(){
+  var s = dbgSt;
+  var el = dbgEl('dbg-stat');
+  var txt = '未连接', cls = 'muted';
+  if (s.busy) txt = '正在启动…';
+  else if (s.attached && s.paused) { txt = '已暂停'; cls = 'bad'; }
+  else if (s.attached) { txt = s.running ? '运行中（已连调试）' : '已连调试'; cls = 'ok'; }
+  else if (s.running) txt = '运行中（未连调试）';
+  var extra = [];
+  if (s.pid) extra.push('pid ' + s.pid);
+  if (s.device) extra.push(s.device);
+  if (s.reused) extra.push('复用');
+  if (s.adopted) extra.push('已认领');
+  if (s.wsUri) {
+    var m = /:(\d+)\//.exec(s.wsUri);
+    if (m) extra.push('VM 端口 ' + m[1]);
+  }
+  if (el) {
+    el.className = cls;
+    el.textContent = txt + (extra.length ? ' · ' + extra.join(' · ') : '');
+    el.title = s.wsUri || '';
+  }
+  var msg = dbgEl('dbg-msg');
+  if (msg) { msg.textContent = s.message || ''; msg.title = s.message || ''; }
+}
+
+function dbgRenderBar(){
+  var s = dbgSt, bar = dbgEl('dbg-bar');
+  if (!bar) return;
+  var on = !!(s.attached || s.running);
+  bar.classList.toggle('on', on);
+  if (!on) return;
+  bar.classList.toggle('paused', !!s.paused);
+  var why = dbgEl('dbg-bar-why');
+  var f = (s.pause && s.pause.topFrame) || {};
+  if (why) {
+    if (s.busy) why.textContent = '启动中…';
+    else if (s.paused) {
+      var fp = f.path || f.scriptUri || '';
+      var name = fp ? fp.split('/').pop() : '';
+      why.textContent = (f.function || '已暂停') + (name ? ' · ' + name + (f.line ? ':' + f.line : '') : '');
+      why.title = fp + (f.line ? ':' + f.line : '');
+    } else why.textContent = s.attached ? '运行中' : '未连调试';
+  }
+  var pauseBtn = dbgEl('dbg-b-pause');
+  if (pauseBtn) pauseBtn.disabled = !s.attached || !!s.paused || !!s.busy;
+  ['dbg-b-resume', 'dbg-b-over', 'dbg-b-into', 'dbg-b-out'].forEach(function(id){
+    var b = dbgEl(id);
+    if (b) b.disabled = !s.paused || !!s.busy;
+  });
+  var hot = dbgEl('dbg-b-hot'), rst = dbgEl('dbg-b-restart');
+  if (hot) hot.disabled = !s.pid || !!s.busy;
+  if (rst) rst.disabled = !s.pid || !!s.busy;
+}
+
+function dbgRenderBps(){
+  var el = dbgEl('dbg-bps');
+  if (!el) return;
+  var bps = (dbgSt.breakpoints || []).slice();
+  var n = dbgEl('dbg-bp-n');
+  if (n) n.textContent = bps.length ? '（' + bps.length + ' 个）' : '';
+  if (!bps.length) { el.innerHTML = '<div class="muted" style="padding:6px">还没有断点</div>'; return; }
+  bps.sort(function(a, b){
+    var pa = a.path || a.scriptUri || '', pb = b.path || b.scriptUri || '';
+    if (pa === pb) return (a.line || 0) - (b.line || 0);
+    return pa < pb ? -1 : 1;
+  });
+  el.innerHTML = bps.map(function(b){
+    var p = b.path || b.scriptUri || '?';
+    var name = p.split('/').pop();
+    var cls = 'dbg-bp' + (b.enabled === false ? ' off' : '') + (b.resolved === false ? ' unres' : '');
+    var cond = b.condition
+      ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>'
+      : '';
+    var id = String(b.id == null ? '' : b.id).replace(/[^A-Za-z0-9_.\/-]/g, '');
+    return '<div class="' + cls + '">'
+      + '<span class="dot" title="' + (b.resolved ? '已解析' : '待解析（文件还没加载）') + '"></span>'
+      + '<span class="p" title="' + esc(p) + '">' + esc(name) + ':' + esc(b.line == null ? '?' : b.line) + '</span>'
+      + cond
+      + '<span class="x" title="' + (b.enabled === false ? '启用' : '停用') + '" onclick="dbgToggleBp(\'' + id + '\')">'
+      + (b.enabled === false ? '○' : '●') + '</span>'
+      + '<span class="x" title="删除" onclick="dbgDelBp(\'' + id + '\')">✕</span>'
+      + '</div>';
+  }).join('');
+}
+
+function dbgRenderPause(p){
+  var el = dbgEl('dbg-frame');
+  if (!el) return;
+  var f = (p && p.topFrame) || {};
+  var bits = [];
+  if (p && p.reason) bits.push(p.reason);
+  if (f.function) bits.push(f.function);
+  var loc = (f.path || f.scriptUri || '') + (f.line ? ':' + f.line : '');
+  el.textContent = (bits.join(' · ') || '已暂停') + (loc ? '  ' + loc.split('/').pop() : '');
+  el.title = loc;
+}
+
+function dbgRenderIdle(){
+  var el = dbgEl('dbg-frame');
+  if (el) { el.textContent = ''; el.title = ''; }
+  dbgFrames = [];
+  dbgRenderStack();
+}
+
+function dbgRenderStack(){
+  var el = dbgEl('dbg-stack');
+  if (!el) return;
+  if (!dbgFrames.length) {
+    el.innerHTML = '<div class="muted" style="padding:6px">'
+      + (!dbgSt.paused ? '暂停后显示调用栈'
+        : (dbgStackLoaded ? '这个暂停点没有 Dart 栈帧（app 在等事件）' : '读取中…')) + '</div>';
+    dbgRenderVars();
+    return;
+  }
+  el.innerHTML = dbgFrames.map(function(f, i){
+    var p = f.path || f.scriptUri || '';
+    var name = p ? p.split('/').pop() : '';
+    var loc = name ? name + (f.line ? ':' + f.line : '') : '';
+    return '<div class="dbg-fr' + (i === dbgFrameIdx ? ' cur' : '') + '" onclick="dbgPickFrame(' + i + ')">'
+      + '<span class="fn" title="' + esc(f.function || '') + '">' + esc(f.function || '?') + '</span>'
+      + '<span class="p" title="' + esc(p) + '">' + esc(loc || '框架代码') + '</span></div>';
+  }).join('');
+  dbgRenderVars();
+}
+
+function dbgPickFrame(i){
+  dbgFrameIdx = i | 0;
+  dbgRenderStack();
+}
+
+function dbgRenderVars(){
+  var el = dbgEl('dbg-vars');
+  if (!el) return;
+  var f = dbgFrames[dbgFrameIdx];
+  var vars = (f && f.vars) || [];
+  if (!vars.length) {
+    el.innerHTML = '<div class="muted" style="padding:6px">'
+      + (!dbgSt.paused ? '暂停后显示局部变量与 this'
+        : (dbgStackLoaded ? '没有可见变量' : '读取中…')) + '</div>';
+    return;
+  }
+  el.innerHTML = vars.map(function(v){
+    return '<div class="dbg-var">'
+      + '<span class="fn" title="' + esc(v.name) + '">' + esc(v.name) + '</span>'
+      + '<span class="p" title="' + esc(v.value) + '">' + esc(v.value) + '</span>'
+      + (v.type ? '<span class="muted" style="font-size:11px">' + esc(v.type) + '</span>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function dbgFetchStack(){
+  if (dbgStacking || !dbgSt.paused) return;
+  dbgStacking = true;
+  dbgOp('stack', {limit: 32}).then(function(d){
+    dbgStacking = false;
+    dbgStackLoaded = true;
+    if (d && d.ok && d.frames) { dbgFrames = d.frames; dbgFrameIdx = 0; dbgRenderStack(); }
+    else dbgRenderStack();
+  }, function(){ dbgStacking = false; dbgStackLoaded = true; });
+}
+
+function dbgAddBp(btn){
+  if (!dbgSt.attached) { dbgToast('还没连上调试会话：先「启动」或「接入」'); return; }
+  var path = (dbgEl('dbg-bp-path').value || '').trim();
+  var line = parseInt(dbgEl('dbg-bp-line').value, 10);
+  var cond = (dbgEl('dbg-bp-cond').value || '').trim();
+  if (!path) { dbgToast('先填源码路径（可相对项目根，如 lib/main.dart）'); return; }
+  if (!line || line < 1) { dbgToast('行号从 1 开始'); return; }
+  var done = dbgBusy(btn, '添加中…');
+  dbgOp('addBreakpoint', {path: path, line: line, condition: cond || null}).then(function(d){
+    done();
+    if (d && d.ok) dbgEl('dbg-bp-line').value = '';
+  }, done);
+}
+
+function dbgToggleBp(id){ dbgOp('toggleBreakpoint', {id: id}); }
+function dbgDelBp(id){ dbgOp('removeBreakpoint', {id: id}); }
+
+function dbgListBp(btn){
+  var done = dbgBusy(btn, '刷新中…');
+  dbgOp('listBreakpoints', {}).then(done, done);
+}
+
+function dbgEval(){
+  var out = dbgEl('dbg-eval-out');
+  var expr = (dbgEl('dbg-eval').value || '').trim();
+  if (!expr) return;
+  if (!dbgSt.paused) { dbgToast('先暂停（命中断点）再求值'); return; }
+  out.className = 'muted';
+  out.textContent = '求值中…';
+  dbgOp('eval', {expression: expr, frameIndex: dbgFrameIdx}).then(function(d){
+    if (!d) return;
+    if (d.ok) {
+      out.className = '';
+      out.textContent = expr + ' = ' + d.value;
+    } else {
+      out.className = 'bad';
+      out.textContent = d.error || '求值失败';
+    }
+  });
+}
+
+function dbgStart(btn){
+  var dir = (dbgEl('dbg-dir').value || '').trim();
+  var dev = (dbgEl('dbg-device').value || '').trim() || dbgDesktop();
+  var target = (dbgEl('dbg-target').value || '').trim();
+  if (!dir) { dbgToast('先填项目目录（含 pubspec.yaml）'); return; }
+  var done = dbgBusy(btn, '启动中…');
+  var msg = dbgEl('dbg-msg');
+  if (msg) msg.textContent = '正在启动 flutter run -d ' + dev + '（首次编译较慢，输出区有进度）…';
+  dbgOp('start', {cwd: dir, device: dev, target: target || null}).then(done, done);
+}
+
+function dbgStop(btn){
+  var done = dbgBusy(btn, '停止中…');
+  dbgOp('stop', {}).then(done, done);
+}
+
+function dbgAttach(btn){
+  var sel = dbgEl('dbg-attach');
+  var i = sel ? parseInt(sel.value, 10) : NaN;
+  var s = isNaN(i) ? null : dbgAttachList[i];
+  if (!s) { dbgToast('先选一条已接入的调试会话（没有就点右上「刷新」）'); return; }
+  var done = dbgBusy(btn, '接入中…');
+  dbgOp('attach', {wsUri: s.uri, projectRoot: s.projectRoot || ''}).then(done, done);
+}
+
+function dbgDetach(btn){
+  var done = dbgBusy(btn, '断开中…');
+  dbgOp('detach', {}).then(done, done);
+}
+
+function dbgPause(){ dbgOp('pause', {}); }
+function dbgResume(step){ dbgOp('resume', step ? {step: step} : {}); }
+function dbgHot(restart){ dbgOp('hot', {restart: !!restart}); }
+
+// 输出区：status 回全量（带 outSeq），WS 增量 push；旧快照不回退。
+function dbgOutSet(lines, seq){
+  if (seq != null && seq < dbgOutSeq) return;
+  if (seq != null) dbgOutSeq = seq;
+  dbgOutLines = (lines || []).slice(-2000);
+  dbgOutRender();
+}
+
+function dbgOutAppend(lines, seq){
+  if (seq != null) dbgOutSeq = seq;
+  (lines || []).forEach(function(l){ dbgOutLines.push(l); });
+  if (dbgOutLines.length > 2000) dbgOutLines = dbgOutLines.slice(-2000);
+  dbgOutRender();
+}
+
+function dbgOutRender(){
+  var el = dbgEl('dbg-out');
+  if (!el) return;
+  el.textContent = dbgOutLines.join('\n');
+  var n = dbgEl('dbg-out-n');
+  if (n) n.textContent = dbgOutLines.length ? '（' + dbgOutLines.length + ' 行）' : '';
+  var follow = dbgEl('dbg-follow');
+  if (!follow || follow.checked) el.scrollTop = el.scrollHeight;
+}
+
+function dbgClearOut(){ dbgOutLines = []; dbgOutRender(); }
 </script>
 </body>
 </html>

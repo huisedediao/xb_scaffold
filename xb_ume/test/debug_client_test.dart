@@ -584,6 +584,71 @@ void main() {
       expect(params['isolateId'], 'isolates/2');
       expect(params['line'], 12);
     });
+
+    test('热重启期间 BreakpointRemoved 清空登记清单，靠快照仍能重下', () async {
+      await client.connect();
+      final bp = await client.addBreakpoint(
+        path: '/tmp/proj/lib/main.dart',
+        line: 12,
+        condition: 'x == 1',
+      );
+      expect(client.ownedBreakpointCount, 1);
+      // 动手前留快照（真实流程里 launcher.hotReload 之前就取）。
+      final snap = client.snapshotBreakpoints();
+
+      // 旧 isolate 退出：VM 把该断点一起发 BreakpointRemoved。
+      vm.pushEvent(<String, Object?>{
+        'kind': 'BreakpointRemoved',
+        'isolateId': 'isolates/1',
+        'breakpoint': <String, Object?>{
+          'id': bp.id,
+          'resolved': true,
+          'location': <String, Object?>{
+            'script': <String, Object?>{'uri': 'package:app/main.dart'},
+            'line': 12,
+          },
+        },
+      });
+      await _until(() => client.breakpoints.isEmpty);
+      // 事件把「本客户端登记过的清单」也清了，这正是重启后断点丢失的原因。
+      expect(client.ownedBreakpointCount, 0);
+
+      vm.onCall = (method, params) async {
+        if (method == 'getVM') {
+          return <String, Object?>{
+            'type': 'VM',
+            'isolates': <Object?>[
+              <String, Object?>{'id': 'isolates/2', 'name': 'main'},
+            ],
+          };
+        }
+        if (method == 'addBreakpointWithScriptUri') {
+          return <String, Object?>{
+            'type': 'Breakpoint',
+            'id': 'breakpoints/9',
+            'resolved': true,
+            'enabled': true,
+            'location': <String, Object?>{
+              'script': <String, Object?>{
+                'uri': (params['scriptUri'] ?? '') as String,
+              },
+              'line': params['line'],
+            },
+          };
+        }
+        return null;
+      };
+      client.resetIsolate();
+      final bps = await client.reapplyBreakpoints(from: snap);
+      expect(bps.single.id, 'breakpoints/9');
+      expect(bps.single.condition, 'x == 1');
+      expect(client.ownedBreakpointCount, 1);
+      final params = vm.calls
+          .lastWhere((c) => c['method'] == 'addBreakpointWithScriptUri')['params']!
+          as Map<String, Object?>;
+      expect(params['isolateId'], 'isolates/2');
+      expect(params['line'], 12);
+    });
   });
 }
 
