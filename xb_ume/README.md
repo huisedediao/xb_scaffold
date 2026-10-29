@@ -41,7 +41,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | 电脑端 | GUI 工具箱 | 15 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化/调试等 |
 | App 内 / 电脑端 | IDE 跳转 | 点源码行尾 ↗ 或 GUI 栈帧「跳转」→ 在 VS Code / Android Studio 等打开对应行列 |
 | 命令行 | `xb_ume run` | 同一份场景 JSON 在 CI 中回放并产出 HTML 报告 |
-| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：按组件 ref 点击、读路由/网络/日志、跑场景、驱动设备 |
+| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：断点单步、控件树、实例/性能/泄漏、共享存储/数据库/沙盒、路由/网络/时间轴、IDE 跳转与守护进程，共 53 个工具 |
 
 ## 环境与平台支持
 
@@ -616,11 +616,21 @@ dart run xb_ume:mcp --http 46140
 
 默认暴露 24 个工具（core 18 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 `flutter run` 发热重载/热重启。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
 
+另四组按需开启，`--tool-groups all` 共 53 个工具：
+
+- `debug`（6）：断点（含条件与日志断点、落盘与恢复）、暂停/继续/单步、调用栈、变量树、暂停帧求值、运行输出与源码窗口——直连 VM service，不依赖 GUI；
+- `inspect`（4）：Widget 树与点选、实例查找/字段树/改值、CPU/内存/帧快照与泄漏检测、双会话场景对比；
+- `data`（4）：shared_prefs 读写、沙盒内 SQLite 查询、沙盒文件浏览/下载/上传、表达式监听；
+- `env`（7）：IDE 跳转与顺序、守护进程/服务控制与日志、路由定位与操作、时间轴开关、网络重放/清空、异常 AI 归因、自动化场景执行；
+- `ai`（1）：自然语言目标驱动的自动操作。
+
+后四组（inspect / data / env / ai）通过本机 GUI 的 HTTP 接口执行，需要工具箱在跑；工具清单、参数、典型 prompt 与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+
 GUI「守护进程」页的「MCP 服务」卡片可直接启停：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `logs/mcp.log`），点「停止」结束；勾上「随工具箱启动」后每次打开工具箱自动拉起（默认关），勾上「允许 eval」则启动参数额外带 `--allow-eval`（改完重启服务生效）。卡片同时展示运行状态/端口/工具数，并提供「复制 MCP 配置」按当前状态生成可直接粘贴的片段（HTTP 模式自动带 token）。
 
 「AI 调试」Tab 不需要动上面任何一个开关：它按需保证服务带 `xbume_eval` 在跑（已在跑就复用，参数不一致只重启自己 pid 记录的那个），然后把指令写进剪贴板、把 `http://127.0.0.1:<gui 端口>/#ai` 作为固定深链。
 
-工具清单与参数、七个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
+工具清单与参数、九个典型 prompt、场景 DSL 全表、设备后端能力矩阵与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
 
 ## 常见问题
 

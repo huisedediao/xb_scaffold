@@ -103,10 +103,10 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 30 个工具（core 18 + diagnose 3 + run-safe 3 + act 3 + device-write 3）；
-  「AI 调试」入口另外带上 `xbume_eval`（共 31 个）：
-  装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对
-  本机任何进程都可见**，不需要时就把服务停掉。
+- 一次开全 **53 个**工具（core 19 + diagnose 3 + run-safe 3 + act 3 + device-write 3 +
+  debug 6 + inspect 4 + data 4 + env 7 + ai 1）；其中 `xbume_eval` 还要 `--allow-eval`
+  （不加是 52 个），「AI 调试」入口会自动带上：
+  装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
   stdio 拉起的进程要去客户端里关。
 - 重复点「启动」是幂等的：端口即单实例锁，不会起第二个实例；端口全占时
@@ -119,7 +119,7 @@ dart run xb_ume:mcp --http 46140
 | `--stdio` | stdio 传输（默认） |
 | `--http <port>` | Streamable HTTP，默认 46140 |
 | `--uri <port\|ws-url>` | 手工指定调试会话，跳过自动发现；可重复 |
-| `--tool-groups <list>` | `all` 或逗号分隔；目前可用的扩展组是 `act`、`device-write` |
+| `--tool-groups <list>` | `all` 或逗号分隔；可用组：`act`、`device-write`、`debug`、`inspect`、`data`、`env`、`ai`（`core` / `diagnose` / `run-safe` 默认开） |
 | `--no-tool-groups` | 只暴露 core 组 |
 | `--device-backend <list>` | `auto`（默认）/ `adb,hdc,simctl,idevice` / `mobile-mcp` |
 | `--log-file <path>` | 日志同时追加到文件（GUI 启动时为 `~/.xb_ume_ide/logs/mcp.log`） |
@@ -186,11 +186,23 @@ claude mcp add --transport http xb_ume http://127.0.0.1:46140/mcp \
 # 默认：core + diagnose + run-safe（24 个工具，全是只读或 app 内注入）
 dart run xb_ume:mcp
 
+# 断点 / 单步 / 调用栈 / 变量 / 运行输出（直连 VM，不依赖 GUI）
+dart run xb_ume:mcp --tool-groups debug
+
+# 数据面：shared_prefs / SQLite / 沙盒文件 / 表达式监听
+dart run xb_ume:mcp --tool-groups data
+
+# 观测与环境：Widget 树 / 实例 / 性能泄漏 / 路由定位 / IDE / 守护进程 / 时间轴
+dart run xb_ume:mcp --tool-groups inspect,env
+
 # 加上按键 / 原生点击
 dart run xb_ume:mcp --tool-groups act
 
 # 加上装包 / 卸包 / 停进程（高危，见「安全模型」）
 dart run xb_ume:mcp --tool-groups act,device-write
+
+# 全开（53 个，含 xbume_eval）
+dart run xb_ume:mcp --tool-groups all --allow-eval
 
 # 再加可选后端（会拉起 npx，首次需联网下载）
 dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
@@ -201,7 +213,12 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 ## 3. 工具清单
 
 工具名统一前缀 `xbume_`。默认暴露 **24 个**（core 18 + diagnose 3 + run-safe 3）；
-加 `--allow-eval` 再多个 `xbume_eval`（25 个），`--tool-groups all` 全开则是 30 / 31。
+加 `--allow-eval` 再多出 `xbume_eval`（25 个）。`--tool-groups all` 全开是 **53 个**
+（debug 6 + inspect 4 + data 4 + env 7 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 52）。
+
+debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四组通过本机 GUI 的 HTTP
+接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
+连的是「GUI 当前选中的会话」，传 `sessionId` / `uri` 可覆盖。
 
 ### core（18 个）
 
@@ -259,11 +276,60 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 | `xbume_app_uninstall` | `deviceId`, `packageId`, `confirm` | 必须显式 `confirm: true` |
 | `xbume_app_terminate` | `deviceId?`, `packageId?` 或 `pid`, `confirm` | 必须显式 `confirm: true`；支持停 `flutter run` 进程 |
 
+### debug（6 个，需 `--tool-groups debug`）
+
+直连 VM service，不经过 GUI；和 GUI 的「调试」Tab 看的是同一套 `DebugHub`。
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `xbume_debug_attach` | `sessionId?`, `projectRoot?` | 接入会话：建调试连接、认领项目根、按落盘清单恢复「已记住」的断点。后续 debug 工具复用这条连接 |
+| `xbume_debug_state` | `sessionId?`, `withOutput?`, `outputLines?` | 连接状态 / 是否暂停 / 暂停原因 / 当前帧位置 / 断点表 / 最近运行输出 |
+| `xbume_debug_breakpoints` | `action`(list/add/remove/update/toggle/toggleAll/remember/enableSaved/forget/saved/forgetSaved/savedAll), `path?`, `line?`, `column?`, `condition?`, `logMessage?`, `id?`, `enabled?`, `dir?` | 会话断点与落盘清单两套：add/remove/update/toggle 可按 `path+line`（不必先查 id）；remember/saved 跨重启保存；`logMessage` 是日志断点（不暂停） |
+| `xbume_debug_control` | `action`(pause/continue/resume/stepOver/stepInto/stepOut/detach/hot/stop) | pause 会等到真的暂停再返回；单步要求当前暂停；hot 只作用于本服务/GUI 拉起的 `flutter run`（外部 IDE 会话会明确拒绝，不会误发按键） |
+| `xbume_debug_inspect` | `action`(stack/vars/eval), `frameIndex?`, `withVars?`, `objectId?`, `keyword?`, `expression?` | 调用栈、逐层展开变量（`getObject`，配合 `objectId`）、暂停帧内求值（能读私有作用域里的局部变量） |
+| `xbume_debug_output` | `action`(tail/source/files), `lines?`, `keyword?`, `path?`, `centerLine?`, `window?`, `maxLines?`, `max?` | 运行输出尾部 / 源码窗口（相对路径按项目根解析，`centerLine` 居中）/ 项目 dart 文件列表 |
+
+### inspect（4 个，需 `--tool-groups inspect`）
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `xbume_instances` | `action`(stores/find/tree/set), `class?`, `limit?`, `id?`, `depth?`, `field?`, `value?`, `vtype?` | 实例注册表、按类查所有存活实例（VM `getInstances`）、按 `id` 展开字段树、改字段值 |
+| `xbume_widget_tree` | `action`(tree/pick), `x?`, `y?` | 整棵 Widget 树（类型 / Key / 深度 / 逻辑像素 bounds，千节点级）；pick 按屏幕坐标反查组件，等价 GUI 点选 |
+| `xbume_perf` | `action`(snapshot/leak/gc/reassemble), `windowMs?`, `classes?` | CPU / 内存 / 帧耗时快照；leak 不传 `classes` 时自动按路由栈 + 项目内 State 类普查（结果为「栈中存活 / 树上 / 堆上 / 疑似泄漏」）；gc 强制回收；reassemble 触发重建（命中断点会返回「app 可能已暂停」而不是超时） |
+| `xbume_compare` | `action`(run/status/stop), `sessionA`+`sessionB?`（或 `uriA`+`uriB`）, `name?`, `steps?` | 两个会话并行跑同一场景并逐步骤对比（同一份用例在改动前后 / 两个设备上） |
+
+### data（4 个，需 `--tool-groups data`）
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `xbume_storage` | `action`(list/read/write/reload), `file?`, `xml?`, `dirty?` | 直接读 shared_prefs XML（Android/鸿蒙）或 plist（iOS）；write 先落文件、再经 app 内 SharedPreferences 回写生效；桌面端没有 prefs 文件时给出改用沙盒/DB 的提示 |
+| `xbume_db` | `action`(open/schema/query/csv/close), `path?`, `dbId?`, `table?`, `sql?`, `force?` | app 沙盒里的 SQLite：open 拿 `dbId`、schema 省略 `table` 时列出全部表、query 默认只读（写要 `force`）、csv 导出 |
+| `xbume_sandbox` | `action`(list/read/download/downloadDir/upload/delete), `path?`, `offset?`, `max?`, `content?`, `contentBase64?`, `name?`, `saveTo?` | 浏览 / 读写 app 沙盒；`upload` 的 `path` 是目标目录 + `name` 是文件名（也可以直接传完整文件路径，工具会拆）；`downloadDir` 打成 tar |
+| `xbume_watch` | `action`(add/list/events/pause/remove/clear), `kind?`, `expr?`, `targetId?`, `lib?`, `condition?`, `id?`, `on?` | 监听**表达式 / 字段**的变化（不是文件监听），可带命中条件；事件按时间返回 |
+
+### env（7 个，需 `--tool-groups env`）
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `xbume_ide` | `action`(open/order/setOrder), `file?`, `line?`, `ideOrder?` | 按守护进程里排好的 IDE 顺序打开源码并定位到行列；也可只查 / 改这个顺序 |
+| `xbume_daemon` | `action`(status/restart/svc/svcLog/clientLog), `offset?`, `tag?`, `msg?` | 守护进程 / GUI 状态、重启、服务控制（start/stop/restart）、daemon 与前端日志 |
+| `xbume_route_locate` | `action`(locate/stack/info/op), `sessionId?`, `uri?`, `idx?`, `nav?`, `open?`, `file?`, `class?`, `op?`, `name?` | 路由栈、按路由定位到源码（`info` 支持相对路径，`locate` 的 `nav/idx` 省略时取栈顶）、GUI 侧路由操作 |
+| `xbume_timeline_control` | `action`(list/sub/off/clear), `limit?` | 时间轴订阅开关与清空（GUI 侧），配合只读的 `xbume_timeline` 使用 |
+| `xbume_network_control` | `action`(replay/clear), `id?`, `url?`, `headers?`, `body?`, `maxBody?` | 重放某条请求（可改 URL / 头 / 体）与清空记录；replay 真的会再发一次请求 |
+| `xbume_exceptions_hub` | `action`(list/clear/analyze), `id?`, `limit?` | 跨会话异常汇总；analyze 调 AI 给出根因与修复建议（需先在 GUI 配好模型） |
+| `xbume_automation` | `action`(list/get/save/delete/run/status/stop/artifact), `name?`, `steps?`, `continueOnFail?`, `file?`, `saveTo?` | 自动化场景的存取、执行、进度与产物（报告 / 截图）下载 |
+
+### ai（1 个，需 `--tool-groups ai`）
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `xbume_ai` | `action`(status/run/stop/goals/report/config), `goal?` | 自然语言目标 → AI 自动操作 app；report 取 HTML 报告，config 读写模型配置（需已在 GUI 里配好 key） |
+
 ---
 
 ## 4. 典型 prompt
 
-自然语言直接说目标即可，模型会自己串工具。以下是实测可用的七个：
+自然语言直接说目标即可，模型会自己串工具。以下是实测可用的九个：
 
 **① 看当前页面有什么**
 
@@ -312,6 +378,22 @@ URL 片段取完整响应体）。
 `xbume_hot_reload`(`mode: reload`，实测空改动 ~150ms、改一个文件 ~230ms) → 改动大时用
 `mode: restart`（isolate 会换，缓存自动重建）→ `xbume_tap` / `xbume_scenario_run` 复跑。
 前提：会话由 `xbume_app_launch(via: "flutter-run")` 或 GUI「调试」页拉起（落盘清单里有 FIFO），或在 GUI「调试」页「接入」认领到句柄；外部 IDE 终端里的进程不归 MCP 管，只能手动按 `r`。
+
+**⑧ 命中断点看现场**
+
+> 点进列表页是空的，帮我在列表的 build 里下个断点，复现后看 items 为什么是空，查完把断点删掉。
+
+`xbume_debug_attach` → `xbume_debug_breakpoints`(`action: add`, `path` + `line`，可带 `condition`)
+→ `xbume_tap` 复现 → `xbume_debug_state`（确认停在哪个文件第几行）→
+`xbume_debug_inspect`(`stack` / `vars` / `eval`，表达式能读局部变量) →
+`xbume_debug_control`(`stepOver` / `continue`) → `xbume_debug_breakpoints`(`remove`，或 `remember` 留到下次)。
+
+**⑨ 拿数据当证据**
+
+> 这个开关到底存在哪个 prefs 文件里？顺便把数据库 user 表最近 10 条和沙盒里的日志文件都贴出来。
+
+`xbume_storage`(`list` → `read`，必要时 `write` 改回) → `xbume_db`(`open` → `schema` → `query`)
+→ `xbume_sandbox`(`list` → `read`，大文件 `download` / `downloadDir` 到本机)。
 
 ---
 
@@ -456,6 +538,15 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部 IDE/终端的 `flutter run`（没有本服务的落盘清单 / FIFO）；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或手动按 `r`。 |
 | `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | 外部（IDE/终端）已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。只是要接入就 `xbume_sessions` → `xbume_use_session`（只读，无热重载），或在 GUI「调试」页「接入」；确认顶掉才传 `force: true`。 |
 | `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
+| debug 组报「连不上 VM service」 | 会话必须是 debug 模式且端口可达；release / AOT 没有 VM service，做不了断点与单步。 |
+| `xbume_debug_attach` 接上了，但 `vars` 空空 | 进程没暂停；先 `xbume_debug_control`(`pause`) 或命中一个断点，再看 `xbume_debug_state` 确认 `paused: true`。 |
+| `xbume_debug_control`(`hot`) 报「不是由本服务拉起」 | 同 `xbume_hot_reload`：外部 IDE / 终端里的 `flutter run` 不归 MCP 管，只能手动按 `r` / `R`（不会盲发到其他会话）。 |
+| data / inspect / env / ai 组报「连不上 GUI」 | 这几组走本机 GUI 的 HTTP 接口，先把工具箱打开（端口自动发现）；`403` 是令牌轮换了，重开 GUI 或重读 `~/.xb_ume_ide/gui.token`。 |
+| `xbume_perf`(`leak`) 报「自动收集为空」 | 目标页面没进过路由栈，或 State 类名不以 `State` 结尾；直接传 `classes: "XxxState,YyyState"`。 |
+| `xbume_db`(`schema`) 回来是空 | 没 `open` 或路径不对；先 `open` 拿 `dbId`，再 `schema`（省略 `table` 会列出全部表）。 |
+| `xbume_watch` 收不到事件 | 它监听的是**表达式 / 字段**（不是文件），表达式要在表达式编译环境里可求值，且值真的变过；Android/鸿蒙部分引擎没有 expression compilation，会报错。 |
+| `xbume_sandbox` 找不到文件 | 沙盒根是 app 自己的容器目录（macOS 在 `~/Library/Containers/<id>/Data`），不能用 `/tmp` 或宿主机路径；先 `list` 看真实目录。 |
+| `xbume_storage` 桌面端没数据 | macOS / Windows 桌面 app 没有 shared_prefs 文件（不是 Android 的 XML）；改用 `xbume_sandbox` 或 `xbume_db`。 |
 
 ---
 
@@ -465,11 +556,14 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 
 - **`record` 场景步骤未实现**：录屏涉及设备端进程生命周期，未实测前不提供假实现；
   请用系统录屏。GUI 与 CLI 都会明确报「尚未实现」。
-- **`inspect` / `ai` / `ide` 三个工具组为预留**：目前没有对应工具，
-  `--tool-groups inspect` 之类只是允许但不会多出工具。
-- **性能/内存证据仍只在 GUI**：CPU、内存、帧耗时等采样没有进 MCP；
-  `xbume_eval` 只能读到 `ProcessInfo` 之类的单点值，看趋势要去「性能」Tab。
-- **`xbume_hot_reload` 只作用于本服务/GUI 拉起或认领的 `flutter run`**：不接管外部 IDE/终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 对**同设备 + 同目录 + 同 target 的本服务会话**直接复用（返回 `reused: true`，不重装包），对外部会话仍默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
+- **桥接类工具依赖本机 GUI 在跑**：data / inspect / env / ai 四组走 GUI 的 HTTP 接口
+  （不直连 VM），GUI 关着就只能用 core / debug；debug 组不受影响。
+- **`xbume_instances` 只认已加载的类**：底层是 VM `getInstances`，JIT 懒加载导致
+  没进过内存的类查不到；`xbume_perf`(`leak`) 的自动普查同理，只覆盖已加载的 State。
+- **`xbume_hot_reload` / `xbume_debug_control`(`hot`) 只作用于本服务/GUI 拉起或认领的 `flutter run`**：不接管外部 IDE/终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 对**同设备 + 同目录 + 同 target 的本服务会话**直接复用（返回 `reused: true`，不重装包），对外部会话仍默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
+- **有副作用的桥接动作要显式调用**：`xbume_automation`(`run` / `stop`)、
+  `xbume_network_control`(`replay`)、`xbume_compare`(`run`)、`xbume_ai`(`run`) 会真的操作 app / 发请求；
+  只读排查不要顺手带上。
 - **`assertLog` 在 CLI/MCP 下跳过**：它依赖 GUI 的日志订阅上下文（`skip`，不算失败）。
 - **mobile-mcp 的常驻进程不由我们回收**：`mobilecli-* daemon` 若被适配器拉起，
   退出后可能仍在运行；需要时手动结束。xb_ume 只负责自己拉起的 `npx` 子进程。
