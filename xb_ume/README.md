@@ -17,6 +17,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 - [App 内模块详解](#app-内模块详解)
 - [配置项](#配置项)
 - [电脑端 GUI 工具箱](#电脑端-gui-工具箱)
+- [服务控制（一键重启 / 停止 / 开启）](#服务控制一键重启--停止--开启)
 - [项目运行配置（启动前准备）](#项目运行配置启动前准备)
 - [IDE 跳转](#ide-跳转)
 - [命令行执行场景（CLI / CI）](#命令行执行场景cli--ci)
@@ -441,13 +442,13 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 
 **安装与启动**：见 [安装 3](#3-电脑端守护与-gui每台电脑一次)；详细说明（启动方式、令牌、每个 Tab 的操作步骤、常见问题）见 [GUI_GUIDE.md](GUI_GUIDE.md)。
 
-**页头（全局）**：设备选择器 + VM 会话选择器。选中设备后「日志」Tab 的设备日志源随之切换；选中会话后各 VM 相关 Tab 才有数据。iOS 真机需 libimobiledevice；鸿蒙设备用 `hdc`。
+**页头（全局）**：设备选择器 + VM 会话选择器 + 「服务」菜单（GUI 与守护进程的一键重启 / 停止 / 开启、重新部署，见 [服务控制](#服务控制一键重启--停止--开启)）。选中设备后「日志」Tab 的设备日志源随之切换；选中会话后各 VM 相关 Tab 才有数据。iOS 真机需 libimobiledevice；鸿蒙设备用 `hdc`。
 
 **Tab 一览**（当前可见 15 个；「状态」「Widget树」两个 Tab 暂时隐藏，代码保留）：
 
 | Tab | 功能 | 前置 / 说明 |
 |---|---|---|
-| 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon` |
+| 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon`；页头「服务」菜单是同一套实现 |
 | 调试 | 起停 `flutter run`（已有会话直接复用），可选的「项目运行配置」在启动前 做准备、停止后清理；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
 | 日志 | 设备日志（logcat / hilog / log stream / idevicesyslog）+ Flutter 输出（未选会话时为全部，选中后只显示该应用） | 设备工具可用；Flutter 输出需 daemon |
 | 时间轴 | 路由 / 网络 / 日志 / 异常按时间合并，可过滤、暂停、展开、跳转对应 Tab | 需选中会话 |
@@ -469,6 +470,36 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 - 内存：Android/鸿蒙取 PSS（Android 按 `dumpsys meminfo` 分类，鸿蒙按 DevEco 内存类型），iOS/macOS 取 `phys_footprint`；
 - 依赖 app 内 `XBUmeBinding.ensureInitialized` 注册的 `ext.xbume.processStats`（xb_ume ≥ 0.3.0）；未注册时回退为 Dart 主 isolate CPU + VM 进程内存分桶；
 - GPU memtrack 显存在 app 内不可读，Android 的 Graphics、鸿蒙的 GL/Graph 可能略低于官方工具。
+
+## 服务控制（一键重启 / 停止 / 开启）
+
+GUI 的守护进程与页面本体都不用再回到终端：页头右侧「服务 ▾」把常用动作收在一处，左边两个徽标是实时状态（绿=在跑：GUI 显示端口、daemon 显示已接入会话数；红 `○`=已停，5 秒轮询）。
+
+| 动作 | 作用 | 用时 |
+|---|---|---|
+| 重启 GUI | 起一个新实例接班 → 旧实例优雅退出（关掉所有 VM 会话再退，不会让正在调试的 app 卡死）→ 新实例抢回原端口 | 3~5s，页面自动重连 |
+| 重启守护进程 | macOS 走 `launchctl kickstart -k` 原地重启（不产生双实例空窗）；其他平台按精确 PID 结束后重新拉起 | 2~6s |
+| 重启全部 | 先守护进程、后 GUI（顺序固定：GUI 起来后能立刻看到 daemon 状态） | 5~10s |
+| 停止 GUI | 优雅退出，页面回到「服务已停止」遮罩；**双击「xb_ume 工具箱」即可再开**（启动器会顺手 `--ensure-daemon`，守护进程不在了也一并拉起） | 即时 |
+| 停止守护进程 | macOS 用 `launchctl bootout` 卸下 LaunchAgent（否则 `KeepAlive` 会立刻把它拉回来）；其他平台按精确 PID 结束 | 1~3s |
+| 重新部署并重启 | 从**源码目录**重跑 `--install`（`--install` 时记在 `config.json` 的 `sourceRoot`）→ 等旧 GUI 退出 → 新副本启动。改了 `bin/` 下的脚本想立刻生效用它，等价于「回终端跑一遍 install」 | 10~60s，进度见「查看部署日志」 |
+
+说明：
+
+- 停止 GUI 只停页面，守护进程照常收集会话；「停止 GUI」后页面不会自己回来（服务真的退了），双击工具箱或 `dart run xb_ume:ide --gui` 再开；
+- 动作串行执行，同一时刻只跑一个（按钮会显示 `执行中…`），避免「重启」和「停止」互相踩；
+- 页面外兜底（不打开浏览器也能用）：
+
+```bash
+dart run xb_ume:ide --svc status              # GUI / 守护进程 / 源码目录三行摘要
+dart run xb_ume:ide --svc restart daemon      # gui / daemon / all 三选一，默认 all
+dart run xb_ume:ide --svc stop gui
+dart run xb_ume:ide --svc start all
+dart run xb_ume:ide --svc redeploy            # 需 GUI 在跑（由它等自己退出后重装）
+dart run xb_ume:ide --ensure-daemon           # 幂等：没跑就拉起，跑着就什么都不做
+```
+
+- GUI 在跑时 `--svc` 会把请求转给页面进程（`POST /api/svc/<stop|restart|redeploy>?target=`，带 `X-XBUME-Token`），这样「重启 GUI」也能走优雅退出；GUI 没在跑时直接控制守护进程。
 
 ## 项目运行配置（启动前准备）
 
