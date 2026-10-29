@@ -18395,6 +18395,7 @@ function dbgEval(){
   if (!dbgSt.paused) { dbgToast('先暂停（命中断点）再求值'); return; }
   out.className = 'muted';
   out.textContent = '求值中…';
+  out.title = '';
   dbgOp('eval', {expression: expr, frameIndex: dbgFrameIdx}).then(function(d){
     if (!d) return;
     if (d.ok) {
@@ -18402,9 +18403,74 @@ function dbgEval(){
       out.textContent = expr + ' = ' + d.value;
     } else {
       out.className = 'bad';
-      out.textContent = d.error || '求值失败';
+      // VM 的编译错误很长（synthetic_debug_expression + 来源包 + 标准建议），
+      // 压成一句「类 X 没有成员 Y」，原文收进悬停。
+      var h = dbgEvalErrHint(d);
+      out.textContent = h.text;
+      out.title = h.raw;
     }
   });
+}
+
+// 求值失败 → 一行可读的原因 + 最可能的正确写法。
+// 两种错误很常见，各给一份提示：
+//   ① 拼写错（runTimeType）—— 后端按本机源码算的 suggest；
+//   ② 写错对象（controller.controlFinishLoad，而它在 refreshController 上）
+//      —— 在已展开的变量树里找同名字段，直接给完整表达式。
+function dbgEvalErrHint(d){
+  var raw = String((d && d.error) || '求值失败');
+  var m = /'([A-Za-z_$][\w$]*)' isn't defined for the class '([A-Za-z_$][\w$]*)'/.exec(raw);
+  if (!m) return { text: raw, raw: raw };
+  var member = m[1], cls = m[2];
+  var tips = [];
+  var alt = dbgVarFindMember(member);
+  if (alt) tips.push(alt);
+  var sug = (d && d.suggest) || [];
+  for (var i = 0; i < sug.length && i < 2; i++) {
+    if (sug[i] && tips.indexOf(sug[i]) < 0) tips.push(sug[i]);
+  }
+  return {
+    text: cls + ' 没有成员 ' + member + (tips.length ? '；试试 ' + tips.join(' / ') : ''),
+    raw: raw,
+  };
+}
+
+// 在「已展开」的变量树里找谁的字段叫这个名字，返回可复制进输入框的表达式。
+// 只看已加载过的层：没展开的要再打一次 getObject，求值报错时不该再发请求。
+function dbgVarFindMember(member){
+  var f = dbgFrames[dbgFrameIdx];
+  var roots = (f && f.vars) || [];
+  for (var i = 0; i < roots.length; i++){
+    if (roots[i] && roots[i].name === member) return member;
+  }
+  var paths = Object.keys(dbgVarKids);
+  for (var k = 0; k < paths.length; k++){
+    var r = dbgVarKids[paths[k]];
+    if (!r || !r.vars) continue;
+    for (var j = 0; j < r.vars.length; j++){
+      if (!r.vars[j] || r.vars[j].name !== member) continue;
+      var base = dbgVarPathExpr(paths[k]);
+      if (base) return base + '.' + member;
+    }
+  }
+  return '';
+}
+
+// 变量树 path（"2" / "2-1"）→ 可求值的表达式（refreshController.controlFinishLoad）。
+function dbgVarPathExpr(path){
+  var segs = String(path).split('-');
+  var f = dbgFrames[dbgFrameIdx];
+  var out = [];
+  for (var i = 0; i < segs.length; i++){
+    var r = i === 0
+      ? { vars: (f && f.vars) || [] }
+      : dbgVarKids[segs.slice(0, i).join('-')];
+    if (!r || !r.vars) return '';
+    var v = r.vars[parseInt(segs[i], 10)];
+    if (!v) return '';
+    out.push(v.name);
+  }
+  return out.join('.');
 }
 
 function dbgStart(btn){

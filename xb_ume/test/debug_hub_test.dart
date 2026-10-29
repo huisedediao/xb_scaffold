@@ -185,6 +185,91 @@ version: 1.0.0
     });
   });
 
+  // 求值写错（拼错成员 / 选错对象）时 VM 只回一大段编译错误；GUI 压成一句话并给
+  // 「是不是 xxx？」候选——候选来自本机源码里该类的成员名 + 继承来的常用成员。
+  group('求值报错建议（evalMemberSuggestions）', () {
+    late Directory dir;
+
+    String err(String member, String cls) => "Error: The getter '$member' "
+        "isn't defined for the class '$cls'. - '$cls' is from "
+        "'package:app/controllers.dart' ('lib/controllers.dart'). "
+        "Try correcting the name to the name of an existing getter, or "
+        "defining a getter or field named '$member'.";
+
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('xb_suggest_');
+      Directory('${dir.path}/lib').createSync(recursive: true);
+      File('${dir.path}/lib/controllers.dart').writeAsStringSync('''
+import 'package:flutter/material.dart';
+
+class DoorLockHomeController {
+  final EasyRefreshController refreshController = EasyRefreshController();
+  int counter = 0;
+
+  bool get controlFinishLoad => refreshController.controlFinishLoad;
+
+  void refresh() {}
+}
+
+class DoorLockHomePage extends StatefulWidget {
+  State<DoorLockHomePage> createState() => _DoorLockHomePageState();
+}
+''');
+    });
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    test('拼错成员：给最近的成员（不分大小写）', () {
+      expect(
+        evalMemberSuggestions(
+            err('controlFinshLoad', 'DoorLockHomeController'), dir.path),
+        contains('controlFinishLoad'),
+      );
+      expect(
+        evalMemberSuggestions(
+            err('refresController', 'DoorLockHomeController'), dir.path),
+        contains('refreshController'),
+      );
+      // 大小写差异不该被算成两处错。
+      expect(
+        evalMemberSuggestions(err('Counter', 'DoorLockHomeController'), dir.path),
+        contains('counter'),
+      );
+    });
+
+    test('继承来的成员（runtimeType）也能提示', () {
+      // 它不写在类体里，光扫源码永远没有候选。
+      expect(
+        evalMemberSuggestions(err('runTimeType', 'DoorLockHomePage'), dir.path),
+        contains('runtimeType'),
+      );
+    });
+
+    test('选错对象：本类里没有相近成员就不硬凑（走变量树反查）', () {
+      // controlFinishLoad 在 DoorLockHomeController 上，拿 HomePage 求值不该有候选。
+      expect(
+        evalMemberSuggestions(
+            err('controlFinishLoad', 'DoorLockHomePage'), dir.path),
+        isEmpty,
+      );
+    });
+
+    test('认不出 / 读不到源码时返回空列表（调用方展示原文）', () {
+      expect(evalMemberSuggestions('SocketException: boom', dir.path), isEmpty);
+      expect(evalMemberSuggestions(err('x', 'DoorLockHomeController'), null),
+          isEmpty);
+      expect(
+        evalMemberSuggestions(
+            err('x', 'DoorLockHomeController'), '/tmp/xb-missing-root-xyz'),
+        isEmpty,
+      );
+      // 来源文件读得到，但里面没有这个类。
+      expect(
+        evalMemberSuggestions(err('x', 'NoSuchClass'), dir.path),
+        isEmpty,
+      );
+    });
+  });
+
   group('DebugHub（无会话）', () {
     late List<Map<String, Object?>> pushed;
     late DebugHub hub;

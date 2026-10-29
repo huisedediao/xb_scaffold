@@ -185,6 +185,39 @@ void main() {
       expect(hub.contains("case 'getObject':"), isTrue);
     });
 
+    test('求值报错压成一句话，并给拼写 / 对象候选', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'function dbgEvalErrHint(',
+        'function dbgVarFindMember(',
+        'function dbgVarPathExpr(',
+        'var h = dbgEvalErrHint(d);',
+        // 原文不丢：压成一句后仍能悬停看完整错误。
+        'out.title = h.raw;',
+        // 两种提示：变量树里反查到的完整表达式 / 后端算的拼写候选。
+        'dbgVarFindMember(member)',
+        // 提示里的「；试试 …」用全角分号（源码就是这么写的）。
+        "'；试试 '",
+        "' 没有成员 '",
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 不再把 VM 那一大段原文直接铺在红字里。
+      expect(html.contains('out.textContent = d.error'), isFalse);
+
+      final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
+      for (final fn in <String>[
+        'List<String> evalMemberSuggestions(String error, String? projectRoot)',
+        'evalMemberSuggestions(debugErrorText(e), _projectRoot)',
+        // 只给 eval：其余 op 的失败不需要拼写候选。
+        "final suggest = op == 'eval'",
+        "if (suggest.isNotEmpty) 'suggest': suggest,",
+        'const _commonMembers = <String>[',
+      ]) {
+        expect(hub.contains(fn), isTrue, reason: fn);
+      }
+    });
+
     test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[

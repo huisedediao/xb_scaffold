@@ -186,6 +186,150 @@ String debugErrorText(Object e) {
   return '$e';
 }
 
+/// 求值失败时的「是不是写错了」建议（IDE 式的 did you mean）。
+///
+/// VM 编译表达式的错误长这样（一大段）：
+///   Error: The getter 'runTimeType' isn't defined for the class 'HomePage'. -
+///   'HomePage' is from 'package:app/x.dart' ('lib/x.dart').
+/// 从里面认出错写的成员名 + 类名 + 来源文件，到本机源码里扫该类的成员，
+/// 按编辑距离取最近的 1~2 个（`runTimeType` → `runtimeType`）。
+/// 认不出 / 读不到源码时返回空列表，调用方原样展示错误。
+List<String> evalMemberSuggestions(String error, String? projectRoot) {
+  final m = RegExp(
+          r"'([A-Za-z_$][\w$]*)' isn't defined for the class '([A-Za-z_$][\w$]*)'")
+      .firstMatch(error);
+  if (m == null) return const <String>[];
+  final member = m.group(1)!;
+  final cls = m.group(2)!;
+  if (projectRoot == null || projectRoot.isEmpty) return const <String>[];
+
+  // 来源文件在错误末尾：('lib/pages/…/x.dart')，是相对项目根的路径。
+  final files = RegExp(r"\('([^']+\.dart)'\)").allMatches(error).toList();
+  if (files.isEmpty) return const <String>[];
+  final rel = files.last.group(1)!;
+  final path = rel.startsWith('/') ? rel : '$projectRoot/$rel';
+  String src;
+  try {
+    src = File(path).readAsStringSync();
+  } catch (_) {
+    return const <String>[];
+  }
+
+  final body = _dartClassBodyOf(src, cls);
+  if (body == null) return const <String>[];
+  // 类体里声明的成员 + 继承来的常用成员（runtimeType 之类不会出现在类体里，
+  // 光扫源码的话 `runTimeType` 永远没有候选）。
+  final names = <String>{..._dartMemberNamesOf(body), ..._commonMembers};
+
+  // 阈值随名字长度放宽：短名字 1，长名字最多 3——太宽会变成噪音。
+  // 比较用小写，避免大小写差异（runTimeType / runtimeType）被算成两处错。
+  final limit = member.length <= 4 ? 1 : (member.length <= 10 ? 2 : 3);
+  final low = member.toLowerCase();
+  final scored = <(int, String)>[];
+  for (final n in names) {
+    if (n == member) continue;
+    final d = _editDistance(low, n.toLowerCase());
+    if (d <= limit) scored.add((d, n));
+  }
+  scored.sort((a, b) {
+    final c = a.$1.compareTo(b.$1);
+    return c != 0 ? c : a.$2.compareTo(b.$2);
+  });
+  return <String>[for (final s in scored.take(2)) s.$2];
+}
+
+/// 源码中类 <clsName> 的类体（大括号配平截取，不含外层花括号）；找不到返回 null。
+/// 匹配口径与 GUI 路由栈那套静态解析一致（允许 abstract/base/final/sealed 前缀）。
+String? _dartClassBodyOf(String src, String clsName) {
+  final m = RegExp(
+          '(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+          '${RegExp.escape(clsName)}[\\s<]')
+      .firstMatch(src);
+  if (m == null) return null;
+  final open = src.indexOf('{', m.end);
+  if (open < 0) return null;
+  var depth = 0;
+  for (var i = open; i < src.length; i++) {
+    if (src[i] == '{') depth++;
+    if (src[i] == '}') {
+      depth--;
+      if (depth == 0) return src.substring(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/// 不写在类体里、但 Object / Widget / State 都有的成员。
+/// 用户把 `runtimeType` 写成 `runTimeType` 时，扫源码扫不到它，只能靠这份兜底。
+const _commonMembers = <String>[
+  'runtimeType',
+  'toString',
+  'hashCode',
+  'noSuchMethod',
+  'mounted',
+  'context',
+  'widget',
+  'setState',
+  'build',
+  'dispose',
+  'initState',
+];
+
+/// 类体里的成员名（字段 / getter / setter / 方法），给拼写建议用。
+Set<String> _dartMemberNamesOf(String body) {
+  final out = <String>{};
+  for (final m
+      in RegExp(r'\b(?:get|set)\s+([A-Za-z_$][\w$]*)').allMatches(body)) {
+    out.add(m.group(1)!);
+  }
+  for (final m in RegExp(
+          r'\b(?:final|late|const|var|static)\s+[^;=(){}]*?\b([A-Za-z_$][\w$]*)\s*(?:=|;)')
+      .allMatches(body)) {
+    out.add(m.group(1)!);
+  }
+  // 不带修饰符的字段：`int page = 0;` / `EasyRefreshController c;`。
+  // 只认行首（缩进后）的「类型 名字 =/;」，避免把方法体里的表达式也算成成员。
+  for (final m in RegExp(
+          r'^\s*[A-Za-z_$][\w$<>?,\[\] ]*\s+([A-Za-z_$][\w$]*)\s*(?:=|;)',
+          multiLine: true)
+      .allMatches(body)) {
+    out.add(m.group(1)!);
+  }
+  for (final m in RegExp(
+          r'\b[A-Za-z_$][\w$<>?,\[\] ]*\s+([A-Za-z_$][\w$]*)\s*\(')
+      .allMatches(body)) {
+    out.add(m.group(1)!);
+  }
+  out.removeAll(const <String>{
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'else', 'new', 'assert',
+    'await', 'super', 'this', 'is', 'as', 'in', 'throw', 'try', 'do', 'when',
+  });
+  return out;
+}
+
+/// 两个标识符的编辑距离（Levenshtein，滚动两行，短串够用）。
+int _editDistance(String a, String b) {
+  final m = a.length, n = b.length;
+  if (m == 0) return n;
+  if (n == 0) return m;
+  var prev = List<int>.generate(n + 1, (i) => i);
+  var cur = List<int>.filled(n + 1, 0);
+  for (var i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (var j = 1; j <= n; j++) {
+      final cost = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
+      var v = prev[j - 1] + cost;
+      if (prev[j] + 1 < v) v = prev[j] + 1;
+      if (cur[j - 1] + 1 < v) v = cur[j - 1] + 1;
+      cur[j] = v;
+    }
+    final t = prev;
+    prev = cur;
+    cur = t;
+  }
+  return prev[n];
+}
+
 String? _str(Object? v) {
   if (v == null) return null;
   final s = v.toString().trim();
@@ -281,10 +425,15 @@ class DebugHub {
       extra = await _dispatch(op, args);
       return <String, Object?>{'ok': true, 'op': op, ...status(), ...extra};
     } catch (e) {
+      // 求值写错成员名很常见，顺手给一份拼写候选（其余 op 不带）。
+      final suggest = op == 'eval'
+          ? evalMemberSuggestions(debugErrorText(e), _projectRoot)
+          : const <String>[];
       return <String, Object?>{
         'ok': false,
         'op': op,
         'error': debugErrorText(e),
+        if (suggest.isNotEmpty) 'suggest': suggest,
         ...status(),
       };
     } finally {
