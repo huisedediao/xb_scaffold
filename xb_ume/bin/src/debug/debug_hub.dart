@@ -128,6 +128,10 @@ Map<String, Object?> debugVarJson(DebugVar v) => <String, Object?>{
       if (v.type != null) 'type': v.type,
       if (v.kind != null) 'kind': v.kind,
       if (v.objectId != null) 'objectId': v.objectId,
+      // 框架 / 依赖库里声明的字段：界面默认藏起来（`ChangeNotifier._count` 之类）。
+      if (!v.own) 'own': false,
+      // 值类型是框架 / 依赖对象：筛选扫描不往里钻。
+      if (v.fw) 'fw': true,
     };
 
 Map<String, Object?> debugFrameJson(

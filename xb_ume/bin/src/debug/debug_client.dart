@@ -118,6 +118,9 @@ class DebugVar {
     this.type,
     this.kind,
     this.objectId,
+    this.lib,
+    this.own = true,
+    this.fw = false,
   });
 
   final String name;
@@ -133,6 +136,19 @@ class DebugVar {
 
   /// 对象 id；后续要展开一层时用。
   final String? objectId;
+
+  /// 字段声明所在的库 URI（`package:flutter/...` / `package:<本包>/...`）。
+  final String? lib;
+
+  /// 这个字段是不是声明在**我自己的项目**里。
+  ///
+  /// 光看名字分不出噪音：`ChangeNotifier._count` 是监听器个数，和业务字段
+  /// 同形，界面上默认把它藏起来靠的就是这个标记。拿不到库信息时为 true。
+  final bool own;
+
+  /// 值的类型是不是框架 / 依赖库的对象（List / Map / Set 不算）。
+  /// 扫描筛选时遇到它不往下钻：Element / RenderObject 子树能大到没边。
+  final bool fw;
 }
 
 /// 一个栈帧；index 可直接用于 evaluateInFrame（0 = 栈顶）。
@@ -341,8 +357,60 @@ DebugBreakpoint? parseBreakpoint(Object? raw, {String? condition}) {
   );
 }
 
+/// 一个库 URI 是否属于「我自己项目的代码」。
+///
+/// 用途两处：① 字段声明在谁的库（框架 / 依赖库的字段默认藏起来，否则
+/// `ChangeNotifier._count` 这类同名噪音会淹没业务字段）；② 值类型在谁的库
+/// （框架对象子树不往下扫）。拿不到 URI 时返回 true：宁可多显示，也不要把
+/// 判断不出的字段藏掉。
+bool ownLibrary(String? uri, {String? packageName, String? projectRoot}) {
+  final u = uri?.trim() ?? '';
+  if (u.isEmpty) return true;
+  if (u.startsWith('dart:')) return false;
+  if (u.startsWith('package:flutter') || u.startsWith('package:sky_engine')) {
+    return false;
+  }
+  if (u.startsWith('package:')) {
+    final pkg = packageName?.trim() ?? '';
+    if (pkg.isEmpty) return true; // 不知道本包名时不乱藏
+    return u.startsWith('package:$pkg/');
+  }
+  if (u.startsWith('file:') || u.startsWith('/')) {
+    final root = projectRoot?.trim() ?? '';
+    if (root.isEmpty) return true;
+    var path = u;
+    if (!path.startsWith('/')) {
+      try {
+        path = Uri.parse(path).toFilePath();
+      } catch (_) {
+        return true;
+      }
+    }
+    final dir = root.endsWith('/') ? root : '$root/';
+    return path.startsWith(dir);
+  }
+  return true;
+}
+
+/// 这个对象要不要继续往下读（筛选扫描的剪枝依据）。
+/// 框架 / 依赖库的对象不读——除非它是集合，List / Map / Set 里往往装着自己的对象。
+bool scanIntoValue(
+  String? valueLib, {
+  String? kind,
+  String? packageName,
+  String? projectRoot,
+}) {
+  if (kind == 'List' || kind == 'Map' || kind == 'Set') return true;
+  return ownLibrary(valueLib,
+      packageName: packageName, projectRoot: projectRoot);
+}
+
 /// 解析 VM 的 Frame（含 vars）。
-DebugFrame? parseFrame(Object? raw) {
+DebugFrame? parseFrame(
+  Object? raw, {
+  String? packageName,
+  String? projectRoot,
+}) {
   final m = _asMap(raw);
   if (m == null) return null;
   final loc = _asMap(m['location']);
@@ -359,6 +427,7 @@ DebugFrame? parseFrame(Object? raw) {
       final varName = _str(bv?['name']);
       if (bv == null || varName == null) continue;
       final value = _asMap(bv['value']);
+      final valLib = _valueLibraryUri(value);
       vars.add(DebugVar(
         name: varName,
         value: describeInstanceRef(bv['value']),
@@ -366,6 +435,11 @@ DebugFrame? parseFrame(Object? raw) {
         type: _className(value),
         kind: _str(value?['kind']),
         objectId: _str(value?['id']),
+        // 局部变量没有声明类（自己写的），只判值要不要往下扫。
+        fw: !scanIntoValue(valLib,
+            kind: _str(value?['kind']),
+            packageName: packageName,
+            projectRoot: projectRoot),
       ));
     }
   }
@@ -380,12 +454,19 @@ DebugFrame? parseFrame(Object? raw) {
 }
 
 /// 解析 getStack 的结果（只取同步栈 frames）。
-List<DebugFrame> parseStack(Object? raw) {
+List<DebugFrame> parseStack(
+  Object? raw, {
+  String? packageName,
+  String? projectRoot,
+}) {
   final list = _asMap(raw)?['frames'];
   if (list is! List) return const <DebugFrame>[];
   return <DebugFrame>[
     for (final item in list)
-      if (parseFrame(item) case final f?) f,
+      if (parseFrame(item,
+              packageName: packageName, projectRoot: projectRoot)
+          case final f?)
+        f,
   ];
 }
 
@@ -410,7 +491,11 @@ class ObjectFields {
 /// Map 取 `associations`，统一成「名字 → 值」的列表。
 ///
 /// 名字取法：实例用字段名，List 用 `[下标]`，Map 用键的可读值。
-ObjectFields parseObjectFields(Object? raw) {
+ObjectFields parseObjectFields(
+  Object? raw, {
+  String? packageName,
+  String? projectRoot,
+}) {
   final m = _asMap(raw);
   if (m == null) return const ObjectFields(vars: <DebugVar>[]);
   // 对象已被 GC / 不可用：VM 返回 Sentinel，不是错误，只是没东西可列。
@@ -419,15 +504,21 @@ ObjectFields parseObjectFields(Object? raw) {
   }
   final vars = <DebugVar>[];
 
-  void add(String name, Object? ref) {
+  void add(String name, Object? ref, {String? declLib}) {
     final v = _asMap(ref);
     if (v == null) return;
+    final kind = _str(v['kind']);
     vars.add(DebugVar(
       name: name,
       value: describeInstanceRef(ref),
       type: _className(v),
-      kind: _str(v['kind']),
+      kind: kind,
       objectId: _str(v['id']),
+      lib: declLib,
+      own: ownLibrary(declLib,
+          packageName: packageName, projectRoot: projectRoot),
+      fw: !scanIntoValue(_valueLibraryUri(v),
+          kind: kind, packageName: packageName, projectRoot: projectRoot),
     ));
   }
 
@@ -439,7 +530,8 @@ ObjectFields parseObjectFields(Object? raw) {
       final decl = _asMap(f['decl']);
       final name = _str(decl?['name']) ?? _str(f['name']);
       if (name == null) continue;
-      add(name, f['value']);
+      // 声明类的库：`ChangeNotifier._count` → package:flutter/...
+      add(name, f['value'], declLib: _declLibraryUri(decl));
     }
   }
   final elements = m['elements'];
@@ -944,7 +1036,8 @@ class DebugClient {
       'isolateId': await isolateId(),
       'limit': limit,
     });
-    return parseStack(raw);
+    return parseStack(raw,
+        packageName: packageName, projectRoot: projectRoot);
   }
 
   /// 展开一层对象实例：按 [objectId]（DebugVar.objectId）读字段 / 元素。
@@ -962,7 +1055,8 @@ class DebugClient {
       'offset': offset,
       'count': count,
     });
-    return parseObjectFields(raw);
+    return parseObjectFields(raw,
+        packageName: packageName, projectRoot: projectRoot);
   }
 
   /// 在当前调用栈的第 [frameIndex] 帧求值（0 = 栈顶）。
@@ -1311,6 +1405,16 @@ class BreakpointSnapshot {
 String? _className(Map<String, Object?>? instanceRef) =>
     _str(_asMap(instanceRef?['classRef'])?['name']) ??
     _str(_asMap(instanceRef?['class'])?['name']);
+
+/// 值自身的类型声明在哪个库（InstanceRef.classRef.library.uri）。
+String? _valueLibraryUri(Map<String, Object?>? instanceRef) {
+  final cls = _asMap(instanceRef?['classRef']) ?? _asMap(instanceRef?['class']);
+  return _str(_asMap(cls?['library'])?['uri']);
+}
+
+/// 字段的声明类在哪个库（FieldRef.decl.owner.library.uri）。
+String? _declLibraryUri(Map<String, Object?>? decl) =>
+    _str(_asMap(_asMap(decl?['owner'])?['library'])?['uri']);
 
 Map<String, Object?>? _asMap(Object? raw) {
   if (raw is Map<String, Object?>) return raw;

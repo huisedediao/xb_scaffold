@@ -283,6 +283,129 @@ void main() {
     });
   });
 
+  group('字段归属（own / fw：把框架噪音和业务字段分开）', () {
+    test('ownLibrary：dart:* / package:flutter* / 外部包不算我的，本包 / 项目内文件算', () {
+      const pkg = 'xb_ume_example';
+      const root = '/tmp/proj';
+      bool own(String? u) =>
+          ownLibrary(u, packageName: pkg, projectRoot: root);
+
+      expect(own('dart:core'), isFalse);
+      expect(own('package:flutter/src/foundation/change_notifier.dart'),
+          isFalse);
+      expect(own('package:$pkg/lib/src/page.dart'), isTrue);
+      // 第三方依赖：按「只留自己项目」的口径也算不是我的
+      expect(own('package:dio/src/dio.dart'), isFalse);
+      expect(own('file:///tmp/proj/lib/a.dart'), isTrue);
+      expect(own('file:///tmp/other/lib/a.dart'), isFalse);
+      // 判断不出的一律当自己的：宁可多显示，不藏掉业务字段
+      expect(own(null), isTrue);
+      expect(own(''), isTrue);
+      expect(ownLibrary('package:whatever/x.dart'), isTrue);
+    });
+
+    test('scanIntoValue：集合照常下钻，框架 / 依赖对象不下钻', () {
+      const pkg = 'xb_ume_example';
+      bool scan(String? lib, [String? kind]) =>
+          scanIntoValue(lib, kind: kind, packageName: pkg);
+
+      expect(scan('dart:core', 'List'), isTrue);
+      expect(scan('dart:core', 'Map'), isTrue);
+      expect(scan('dart:core', 'Set'), isTrue);
+      // 框架对象（Element / RenderObject 子树）不下钻
+      expect(scan('package:flutter/src/widgets/framework.dart', 'PlainInstance'),
+          isFalse);
+      expect(scan('package:$pkg/lib/model.dart', 'PlainInstance'), isTrue);
+      expect(scan(null), isTrue);
+    });
+
+    test('parseObjectFields：带声明类库 → 框架字段标 own=false，框架对象标 fw=true', () {
+      const flutterLib =
+          'package:flutter/src/foundation/change_notifier.dart';
+      const appLib = 'package:xb_ume_example/src/door_lock_controller.dart';
+      Object? field(String name, String declLib, Map<String, Object?> value) =>
+          <String, Object?>{
+            'decl': <String, Object?>{
+              'name': name,
+              'owner': <String, Object?>{
+                'name': 'ChangeNotifier',
+                'library': <String, Object?>{'uri': declLib},
+              },
+            },
+            'value': value,
+          };
+
+      final r = parseObjectFields(
+        <String, Object?>{
+          'type': '@Instance',
+          'kind': 'PlainInstance',
+          'fields': <Object?>[
+            // ChangeNotifier 的监听器计数：和业务字段同名，但不该露出
+            field('_count', flutterLib,
+                <String, Object?>{'kind': 'Int', 'valueAsString': '1'}),
+            field(
+                '_listeners',
+                flutterLib,
+                <String, Object?>{
+                  'kind': 'List',
+                  'class': <String, Object?>{
+                    'name': '_GrowableList',
+                    'library': <String, Object?>{'uri': 'dart:core'},
+                  },
+                  'id': 'objects/3',
+                }),
+            field(
+                'count',
+                appLib,
+                <String, Object?>{'kind': 'Int', 'valueAsString': '7'}),
+            field(
+                '_element',
+                appLib,
+                <String, Object?>{
+                  'kind': 'PlainInstance',
+                  'class': <String, Object?>{
+                    'name': 'StatefulElement',
+                    'library': <String, Object?>{
+                      'uri': 'package:flutter/src/widgets/framework.dart',
+                    },
+                  },
+                  'id': 'objects/9',
+                }),
+          ],
+        },
+        packageName: 'xb_ume_example',
+      );
+      final byName = <String, DebugVar>{
+        for (final v in r.vars) v.name: v,
+      };
+      // 框架库里声明的：默认收起
+      expect(byName['_count']!.own, isFalse);
+      expect(byName['_listeners']!.own, isFalse);
+      // 自己类里声明的：即使值是框架对象也保留，但扫描不往里钻
+      expect(byName['count']!.own, isTrue);
+      expect(byName['count']!.fw, isFalse);
+      expect(byName['_element']!.own, isTrue);
+      expect(byName['_element']!.fw, isTrue);
+      // List 值不剪枝（里面往往装着自己的对象）
+      expect(byName['_listeners']!.fw, isFalse);
+    });
+
+    test('parseObjectFields：拿不到库信息时 own=true、fw=false（不误藏）', () {
+      final r = parseObjectFields(<String, Object?>{
+        'type': '@Instance',
+        'kind': 'PlainInstance',
+        'fields': <Object?>[
+          <String, Object?>{
+            'decl': <String, Object?>{'name': 'page'},
+            'value': <String, Object?>{'kind': 'Int', 'valueAsString': '1'},
+          },
+        ],
+      });
+      expect(r.vars.single.own, isTrue);
+      expect(r.vars.single.fw, isFalse);
+    });
+  });
+
   group('parseDebugEvent', () {
     test('PauseBreakpoint：带栈顶帧与命中断点', () {
       final e = parseDebugEvent(<String, Object?>{

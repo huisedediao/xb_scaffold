@@ -260,6 +260,15 @@ void main() {
         "筛选中… 已查 '",
         '达到扫描上限',
         '}, 300);',
+        // 只留自己项目里声明的字段：框架 / 依赖库的字段收起计数
+        // （`ChangeNotifier._count` 和业务字段同名，不藏就是一片噪音）。
+        'id="dbg-var-mine"',
+        'function dbgVarMineToggle(',
+        'dbgVarMine && v.own === false',
+        "' · 隐藏 ' + cnt.hid",
+        // 扫描不往框架对象（Element / RenderObject 子树）里钻。
+        'dbgVarMine && c.fw',
+        'dbgVarMine && v.fw',
         // 命中片段高亮。
         '#dbg-vars mark {',
       ]) {
@@ -285,6 +294,10 @@ void main() {
       final renderFrom = html.indexOf('function dbgRenderVars(');
       final render = html.substring(renderFrom, html.indexOf('function dbgVarPaint(', renderFrom));
       expect(render.contains('dbgVarScanAbort()'), isTrue);
+      // 后端得把「字段声明在谁的库」「值是不是框架对象」传上来，否则前端分不清噪音。
+      final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
+      expect(hub.contains("if (!v.own) 'own': false,"), isTrue);
+      expect(hub.contains("if (v.fw) 'fw': true,"), isTrue);
     });
 
     test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {

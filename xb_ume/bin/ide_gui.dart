@@ -11776,7 +11776,8 @@ const String guiHtml = r'''
         <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto">刷新</button></div>
         <div id="dbg-stack" class="dbg-list" style="max-height:230px"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
-          <input id="dbg-var-filter" placeholder="筛选变量：名字包含即可（忽略大小写），如 count" style="flex:1;min-width:0;font-size:12px" title="模糊匹配变量名；命中项与通往它的祖先保留，其余隐藏。只筛已展开的层，Esc 清空" oninput="dbgVarFilterOnInput()" onkeydown="if(event.key==='Escape')dbgVarFilterClear()">
+          <input id="dbg-var-filter" placeholder="筛选变量：名字包含即可（忽略大小写），如 count" style="flex:1;min-width:0;font-size:12px" title="模糊匹配变量名；命中项与通往它的祖先保留，其余隐藏。输入停下后会自动把整棵树拉下来补扫，Esc 清空" oninput="dbgVarFilterOnInput()" onkeydown="if(event.key==='Escape')dbgVarFilterClear()">
+          <label class="muted" style="font-size:11px;flex:0 0 auto;display:flex;align-items:center;gap:3px;cursor:pointer;white-space:nowrap" title="只显示声明在你项目包里的字段；框架 / 依赖库里的字段收起来只计数（如 ChangeNotifier 的 _count）。取消勾选看全部，扫描也不再跳过框架对象"><input id="dbg-var-mine" type="checkbox" checked style="margin:0" onchange="dbgVarMineToggle()">我的</label>
           <span id="dbg-var-fstat" class="muted" style="font-size:11px;flex:0 0 auto"></span>
         </div>
         <div id="dbg-vars" class="dbg-list" style="max-height:200px;border-top:1px solid var(--line)"></div>
@@ -17744,6 +17745,7 @@ var dbgVarKids = {};   // path → {vars,total,truncated}：已拉过的子项�
 var dbgVarOpen = {};   // path → true：展开态
 var dbgVarObj = {};    // path → objectId：展开时要用的对象 id
 var dbgVarFilter = ''; // 筛选关键字（已转小写，空 = 不筛）
+var dbgVarMine = true; // 只看自己项目里声明的字段（框架 / 依赖字段收起计数）
 var dbgVarGen = 0;     // 变量区生成号：换帧 / 刷栈 +1，异步回来发现变了就丢弃
 // 全量筛选：输入停下 300ms 后按 BFS 把整棵树拉下来（getObject），边拉边重画。
 // seq 一变（改词 / 清空 / 换帧）在跑的扫描就自行退出；对象数与深度都有上限。
@@ -17852,7 +17854,7 @@ function dbgVarPaint(){
     el.innerHTML = vars.map(function(v, i){ return dbgVarHtml(v, String(i), 0); }).join('');
     return;
   }
-  var cnt = {n: 0};
+  var cnt = {n: 0, hid: 0};
   var html = vars.map(function(v, i){
     return dbgVarMatchHtml(v, String(i), 0, q, cnt);
   }).join('');
@@ -17860,20 +17862,26 @@ function dbgVarPaint(){
   if (stat) {
     stat.textContent = sc.run
       ? '筛选中… 已查 ' + sc.objs + ' 个对象'
-      : (cnt.n + ' 条' + (sc.capped ? '（已查 ' + sc.objs + ' 个对象，达到扫描上限）' : ''));
+      : (cnt.n + ' 条'
+        + (cnt.hid ? ' · 隐藏 ' + cnt.hid + ' 个框架字段' : '')
+        + (sc.capped ? '（已查 ' + sc.objs + ' 个对象，达到扫描上限）' : ''));
     stat.title = sc.run
       ? '正在把变量树整个拉下来按名字匹配，结果会边拉边补'
-      : (sc.capped
-        ? '最多扫 ' + dbgVarScanObjCap + ' 个对象 / ' + dbgVarScanDepCap + ' 层，超出部分可能有遗漏'
-        : '');
+      : (cnt.hid ? '框架 / 依赖库里声明的字段被收起了，取消勾选「我的」可看'
+        : (sc.capped
+          ? '最多扫 ' + dbgVarScanObjCap + ' 个对象 / ' + dbgVarScanDepCap + ' 层，超出部分可能有遗漏'
+          : ''));
   }
   if (html) { el.innerHTML = html; return; }
-  var why = sc.run
-    ? '正在把变量树拉下来…（已查 ' + sc.objs + ' 个对象）'
-    : '没有名字含「' + esc(q) + '」的变量'
-      + (sc.capped
-        ? '（已查 ' + sc.objs + ' 个对象，达到扫描上限；更深的层没扫到）'
-        : (sc.objs ? '（已扫 ' + sc.objs + ' 个对象）' : ''));
+  var why;
+  if (sc.run) {
+    why = '正在把变量树拉下来…（已查 ' + sc.objs + ' 个对象）';
+  } else {
+    why = '没有名字含「' + esc(q) + '」的变量';
+    if (cnt.hid) why += '（已隐藏 ' + cnt.hid + ' 个框架字段，取消勾选「我的」可看）';
+    else if (sc.capped) why += '（已查 ' + sc.objs + ' 个对象，达到扫描上限；更深的层没扫到）';
+    else if (sc.objs) why += '（已扫 ' + sc.objs + ' 个对象）';
+  }
   el.innerHTML = '<div class="muted" style="padding:6px">' + why + '</div>';
 }
 
@@ -17896,6 +17904,15 @@ function dbgVarFilterClear(){
   dbgVarFilter = '';
   dbgVarScanAbort();
   dbgVarPaint();
+}
+
+// 「我的」：只显示声明在自己项目里的字段；扫描也不往框架对象里钻。
+function dbgVarMineToggle(){
+  var el = dbgEl('dbg-var-mine');
+  dbgVarMine = !el || el.checked;
+  dbgVarPaint();
+  // 从「只看我的」切到「全部」：之前被剪掉的框架层要补扫一轮（缓存里有的直接重用）。
+  if (dbgVarFilter && !dbgVarScanSt.run) dbgVarScanStart();
 }
 
 // 作废正在跑的扫描：改筛选词、清空、换帧 / 刷栈都走这里。
@@ -17921,6 +17938,9 @@ function dbgVarMatchHtml(v, path, depth, q, cnt){
   }
   var self = String(v.name || '').toLowerCase().indexOf(q) >= 0;
   if (!self && !kids) return '';
+  // 框架 / 依赖库里声明的字段：默认收起来只计数。
+  // `ChangeNotifier._count`（监听器个数）这类和业务字段同名，不藏就是一片噪音。
+  if (dbgVarMine && v.own === false) { cnt.hid++; return ''; }
   if (self) cnt.n++;
   if (kid) dbgVarObj[path] = v.objectId;
   var canLoad = kid && !loaded;
@@ -17980,11 +18000,17 @@ function dbgVarScanStart(){
       return;
     }
     (r.vars || []).forEach(function(c, i){
-      if (c && c.objectId) queue.push({path: path + '-' + i, depth: depth + 1, objectId: c.objectId});
+      if (!c || !c.objectId) return;
+      // 框架 / 依赖对象（Element / RenderObject / Widget 子树）不扫：
+      // 它能把 300 个对象的预算全烧光，还把一堆框架字段带进结果。
+      if (dbgVarMine && c.fw) return;
+      queue.push({path: path + '-' + i, depth: depth + 1, objectId: c.objectId});
     });
   }
   vars.forEach(function(v, i){
-    if (v && v.objectId) queue.push({path: String(i), depth: 0, objectId: v.objectId});
+    if (v && v.objectId && !(dbgVarMine && v.fw)) {
+      queue.push({path: String(i), depth: 0, objectId: v.objectId});
+    }
   });
   dbgVarPaint();
 
