@@ -31,6 +31,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'src/session/discovery.dart';
+// 服务控制：GUI / daemon 的启停、重启与重新部署；与 bin/ide_gui.dart 共用
+// 同一份实现（macOS 走 launchd，其他平台按命令行精确匹配进程）。
+import 'src/control/svc_control.dart';
 
 /// App 端 XBUmeIdeJump.eventId，双端约定一致。
 const String kEventKind = 'xb_ume:openSource';
@@ -88,7 +91,12 @@ void _printUsage() {
   dart run xb_ume:ide --configure [--ide-order "..."] [--show]                   查看/修改 IDE 优先级
   dart run xb_ume:ide --uninstall                                卸载
   dart run xb_ume:ide --daemon [--ide ...]                       前台运行守护进程
-  dart run xb_ume:ide --uri <ws-url> [--ide ...]                 手动监听单个 VM service''');
+  dart run xb_ume:ide --uri <ws-url> [--ide ...]                 手动监听单个 VM service
+  dart run xb_ume:ide --gui                                      启动 GUI（先确保守护进程在跑）
+  dart run xb_ume:ide --ensure-daemon                            确保守护进程在跑（已在则跳过）
+  dart run xb_ume:ide --svc status                               查看 GUI / 守护进程状态
+  dart run xb_ume:ide --svc start|stop|restart [gui|daemon|all]  启停 / 重启（GUI 需在运行才能优雅停止）
+  dart run xb_ume:ide --svc redeploy                             从源码重新部署并重启（需 GUI 在跑）''');
 }
 
 String? _argValue(List<String> args, String name) {
@@ -130,6 +138,16 @@ Future<void> _mainImpl(List<String> args) async {
     );
     return;
   }
+  if (args.contains('--ensure-daemon')) {
+    final r = await startDaemon();
+    print('[xbume-ide] ${r['message'] ?? r}');
+    if (r['ok'] != true) exitCode = 1;
+    return;
+  }
+  if (args.contains('--svc')) {
+    await svcCommand(args);
+    return;
+  }
   final ide = _argValue(args, '--ide') ?? 'auto';
   final uri = _argValue(args, '--uri');
   if (uri != null) {
@@ -143,6 +161,9 @@ Future<void> _mainImpl(List<String> args) async {
       exitCode = 1;
       return;
     }
+    // 工具箱入口是「一键开启」：先把守护进程确保起来（失败不拦 GUI）。
+    final d = await startDaemon();
+    if (d['ok'] != true) print('[xbume-ide] ${d['message']}');
     await Process.start(
       Platform.resolvedExecutable,
       <String>[guiScript.path],
@@ -187,6 +208,8 @@ Future<void> install(List<String> args) async {
 
   // 部署 GUI 工具箱（bin/ide_gui.dart 与本文件同目录）。
   await _deployGui(scriptPath, installDir.path, dartBin);
+  // 记录源码目录：GUI「重新部署并重启」要靠它跑源码里的 --install。
+  await _writeSourceRoot(scriptPath, installDir.path);
 
   final bool ok;
   final String detailPath;
@@ -229,6 +252,139 @@ Future<void> install(List<String> args) async {
   print('  日志 : $logPath');
   print('  GUI  : ${installDir.path}${Platform.pathSeparator}ide_gui.dart（启动器见同目录，或 dart run xb_ume:ide --gui）');
   print('卸载: dart run xb_ume:ide --uninstall');
+}
+
+/// 把源码目录写进 config.json（读-改-写，保留 ideOrder 等其他键）。
+///
+/// 部署副本（~/.xb_ume_ide/ide.dart）运行时不带 package 依赖，无法自己
+/// 定位仓库；GUI 的「重新部署并重启」需要这个路径去 detach 源码的
+/// `bin/ide.dart --install`。
+Future<void> _writeSourceRoot(String ideScriptPath, String installDir) async {
+  final file = File('$installDir${Platform.pathSeparator}$kConfigName');
+  Map<String, Object?> data = <String, Object?>{};
+  try {
+    if (file.existsSync()) {
+      final decoded = jsonDecode(file.readAsStringSync());
+      if (decoded is Map) {
+        data = <String, Object?>{
+          for (final e in decoded.entries) e.key.toString(): e.value,
+        };
+      }
+    }
+  } catch (_) {
+    // 旧配置坏了就直接重写，不阻塞安装。
+  }
+  data['sourceRoot'] = Directory(File(ideScriptPath).parent.path).parent.path;
+  data['deployedAt'] = DateTime.now().toIso8601String();
+  await file.parent.create(recursive: true);
+  await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+}
+
+// ---------------------------------------------------------------------------
+// 服务控制（命令行入口）
+// ---------------------------------------------------------------------------
+
+/// `--svc status|start|stop|restart|redeploy [gui|daemon|all]`。
+///
+/// GUI 的停止 / 重启必须由 GUI 进程自己收尾（先关 VM 会话再 exit，否则
+/// DDS 死锁），所以 GUI 在跑时一律经本地令牌调它的 `/api/svc/*`；GUI 不在
+/// 时才直接操作 daemon。
+Future<void> svcCommand(List<String> args) async {
+  final i = args.indexOf('--svc');
+  final action = (i >= 0 && i + 1 < args.length) ? args[i + 1] : 'status';
+  final positional = <String>[];
+  for (var j = 0; j < args.length; j++) {
+    if (j == i || j == i + 1) continue;
+    if (args[j].startsWith('--')) continue;
+    positional.add(args[j]);
+  }
+  if (positional.isNotEmpty && normalizeSvcTarget(positional.first) == null) {
+    print('[xbume-svc] 目标只能是 gui / daemon / all');
+    exitCode = 1;
+    return;
+  }
+  final target = normalizeSvcTarget(positional.isEmpty ? null : positional.first) ??
+      'all';
+  final guiPort = await discoverGuiPort();
+  switch (action) {
+    case 'status':
+      await _printSvcStatus(guiPort);
+      return;
+    case 'start':
+      if (target == 'daemon' || target == 'all') {
+        final r = await startDaemon();
+        print('[xbume-svc] ${r['message'] ?? r}');
+        if (r['ok'] != true) exitCode = 1;
+      }
+      if (target == 'gui' || target == 'all') {
+        final r = await spawnGuiDetached();
+        print('[xbume-svc] ${r['message'] ?? r}');
+        if (r['ok'] != true) exitCode = 1;
+      }
+      return;
+    case 'stop':
+      if (guiPort != null && (target == 'gui' || target == 'all')) {
+        // target=all 时 GUI 会先把 daemon 停掉再退出，不用分两次调。
+        final r = await callGuiSvc('stop', target: target);
+        print('[xbume-svc] ${r['message'] ?? r}');
+        if (r['ok'] != true) exitCode = 1;
+        return;
+      }
+      final r = await stopDaemon();
+      print('[xbume-svc] ${r['message'] ?? r}');
+      if (r['ok'] != true) exitCode = 1;
+      return;
+    case 'restart':
+      if (guiPort != null) {
+        final r = await callGuiSvc('restart', target: target);
+        print('[xbume-svc] ${r['message'] ?? r}');
+        if (r['ok'] != true) exitCode = 1;
+        return;
+      }
+      if (target != 'gui') {
+        final d = await restartDaemon();
+        print('[xbume-svc] ${d['message'] ?? d}');
+        if (d['ok'] != true) exitCode = 1;
+      }
+      if (target == 'gui' || target == 'all') {
+        final g = await spawnGuiDetached();
+        print('[xbume-svc] ${g['message'] ?? g}');
+        if (g['ok'] != true) exitCode = 1;
+      }
+      return;
+    case 'redeploy':
+      if (guiPort == null) {
+        print('[xbume-svc] 重新部署需要 GUI 在跑（由它先优雅退出再执行 --install）；'
+            '也可直接运行 dart run xb_ume:ide --install');
+        exitCode = 1;
+        return;
+      }
+      final r = await callGuiSvc('redeploy', target: 'all');
+      print('[xbume-svc] ${r['message'] ?? r}');
+      if (r['ok'] != true) exitCode = 1;
+      return;
+    default:
+      print('[xbume-svc] 未知动作: $action'
+          '（可用 status / start / stop / restart / redeploy）');
+      exitCode = 1;
+  }
+}
+
+Future<void> _printSvcStatus(int? guiPort) async {
+  final daemon = await queryDaemonStatus();
+  if (guiPort != null) {
+    print('[xbume-svc] GUI    : 运行中 http://127.0.0.1:$guiPort');
+  } else {
+    print('[xbume-svc] GUI    : 未运行');
+  }
+  if (daemon != null) {
+    final sessions = (daemon['sessions'] as List?)?.length ?? 0;
+    print('[xbume-svc] daemon : 运行中 pid=${daemon['pid']} 会话=$sessions '
+        '运行时长=${daemon['uptimeSec'] ?? '?'}s');
+  } else {
+    print('[xbume-svc] daemon : 未运行');
+  }
+  print('[xbume-svc] 源码   : ${readSourceRoot() ?? '未记录（重新部署不可用）'}');
 }
 
 /// GUI 桌面入口名称（macOS 应用包 / Windows 桌面快捷方式）。
@@ -301,12 +457,20 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
     await File('$installDir${sep}ide_gui.dart')
         .writeAsString(guiSource.readAsStringSync());
     if (Platform.isWindows) {
+      // 一键开启：先确保守护进程（--ensure-daemon 幂等），再起 GUI。
       await File('$installDir${sep}XBumeGui.bat').writeAsString(
-        '@echo off\r\nstart "xbume-gui" /min "$dartBin" "$installDir${sep}ide_gui.dart"\r\n',
+        '@echo off\r\n'
+        'start "xbume-daemon" /min "$dartBin" "$installDir${sep}ide.dart" --ensure-daemon\r\n'
+        'start "xbume-gui" /min "$dartBin" "$installDir${sep}ide_gui.dart"\r\n',
       );
     } else {
       final launcher = File('$installDir${sep}xb_ume_gui.command');
-      await launcher.writeAsString('#!/bin/bash\n"$dartBin" "$installDir/ide_gui.dart"\n');
+      await launcher.writeAsString(
+        '#!/bin/bash\n'
+        // 双击启动 = 一键开启：守护进程不在就拉起来（幂等，失败不拦 GUI）。
+        '"$dartBin" "$installDir/ide.dart" --ensure-daemon >/dev/null 2>&1\n'
+        'exec "$dartBin" "$installDir/ide_gui.dart"\n',
+      );
       try {
         await Process.run('chmod', <String>['+x', launcher.path]);
       } catch (_) {
@@ -337,7 +501,13 @@ Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
       await Directory('$contents/Resources').create(recursive: true);
       await File('$contents/Info.plist').writeAsString(_guiAppPlist);
       final exec = File('$contents/MacOS/xbumegui');
-      await exec.writeAsString('#!/bin/bash\nexec "$dartBin" "$guiScript"\n');
+      await exec.writeAsString(
+        '#!/bin/bash\n'
+        // 双击工具箱 = 一键开启：先把守护进程确保起来（KeepAlive 的 plist
+        // 可能被「停止守护进程」bootout 过），再启动 GUI。
+        '"$dartBin" "$installDir/ide.dart" --ensure-daemon >/dev/null 2>&1\n'
+        'exec "$dartBin" "$guiScript"\n',
+      );
       try {
         await Process.run('chmod', <String>['+x', exec.path]);
       } catch (_) {
@@ -359,12 +529,11 @@ Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
     }
     print('[xbume-ide] GUI 应用安装失败（应用程序文件夹无写权限），仍可用启动器 .command 或 --gui 启动。');
   } else if (Platform.isWindows) {
-    final winScript = '$installDir\\ide_gui.dart';
+    // 快捷方式指向 .bat：它内部先 --ensure-daemon 再起 GUI（一键开启）。
     final ps = '\$ws = New-Object -ComObject WScript.Shell; '
         "\$desktop = [Environment]::GetFolderPath('Desktop'); "
         '\$s = \$ws.CreateShortcut("\$desktop\\$kGuiAppName.lnk"); '
-        "\$s.TargetPath = '$dartBin'; "
-        "\$s.Arguments = '$winScript'; "
+        "\$s.TargetPath = '$installDir\\XBumeGui.bat'; "
         "\$s.WorkingDirectory = '$installDir'; "
         "\$s.IconLocation = '$dartBin,0'; "
         '\$s.WindowStyle = 7; '
@@ -453,6 +622,16 @@ Future<void> _restartGui(String installDir, String dartBin) async {
   if (!File(script).existsSync()) {
     print('[xbume-ide] 未找到 $script，跳过 GUI 重启。');
     return;
+  }
+  // 先请正在跑的 GUI 自己退出：它会先关掉全部 VM 会话再 exit，直接
+  // kill -9 会让 DDS 永久死锁（该调试会话此后对所有客户端无响应）。
+  // GUI 不在 / 没有令牌 / 卡死无响应时才退回下面的精确 kill。
+  final graceful = await callGuiSvc('stop', target: 'gui');
+  if (graceful['ok'] == true) {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      if (!await _anyGuiAlive()) break;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
   }
   await _killGuiProcesses();
   // 必须确认旧实例真的不响应了再拉起：否则新进程探测到旧实例后
@@ -744,12 +923,24 @@ List<String>? loadIdeOrder() {
 Future<void> saveIdeOrder(List<String> order) async {
   final file = _configFile();
   await file.parent.create(recursive: true);
-  await file.writeAsString(
-    const JsonEncoder.withIndent('  ').convert(<String, Object?>{
-      'ideOrder': order,
-      'updatedAt': DateTime.now().toIso8601String(),
-    }),
-  );
+  // 读-改-写：config.json 里还存着 sourceRoot / MCP 自启等键，整体覆盖
+  // 会把 GUI「重新部署」依赖的源码目录抹掉。
+  Map<String, Object?> data = <String, Object?>{};
+  try {
+    if (file.existsSync()) {
+      final decoded = jsonDecode(file.readAsStringSync());
+      if (decoded is Map) {
+        data = <String, Object?>{
+          for (final e in decoded.entries) e.key.toString(): e.value,
+        };
+      }
+    }
+  } catch (_) {
+    // 旧配置坏了就重写。
+  }
+  data['ideOrder'] = order;
+  data['updatedAt'] = DateTime.now().toIso8601String();
+  await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
 }
 
 /// 安装时确定 IDE 顺序：--ide-order > 交互选择 > 不写配置（保持默认）。

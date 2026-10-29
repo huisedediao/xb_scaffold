@@ -41,14 +41,9 @@ import 'src/debug/source_view.dart';
 import 'src/device/adb.dart' show adbKeepAwakeArgs;
 import 'src/device/hdc.dart' show hdcKeepAwakeArgs;
 import 'src/device/run_profile.dart' show runProfileFilePath;
-
-/// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
-const int kDaemonLockPort = 46128;
-const String kDaemonStatusToken = 'xbume-ide-status';
-
-/// 与 daemon（bin/ide.dart）约定的安装目录与配置文件名。
-const String kInstallDirName = '.xb_ume_ide';
-const String kConfigName = 'config.json';
+// 服务控制：GUI / daemon 的启停、重启与重新部署（与 bin/ide.dart 共用同一
+// 份实现，避免两边各写一套进程管理、再次和 LaunchAgent 的 KeepAlive 抢实例）。
+import 'src/control/svc_control.dart';
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
@@ -57,6 +52,13 @@ const int kGuiPortBase = 46129;
 /// Cookie 名按端口区分（浏览器 Cookie 不区分端口，多实例会互相覆盖）。
 String _guiToken = '';
 int _guiPort = 0;
+
+/// 服务控制串行化：避免连点产生多个接班人 / 并发重启 daemon。
+bool _svcBusy = false;
+String _svcBusyAction = '';
+
+/// GUI 启动时间（/api/svc/status 展示运行时长）。
+DateTime _guiStartedAt = DateTime.now();
 
 /// 容错 UTF-8 解码：logcat 输出、外部 HTTP 响应可能含非法字节序列，
 /// 默认 utf8.decoder 遇到会抛 FormatException——且流回调里的异常
@@ -230,19 +232,91 @@ Future<void> main(List<String> args) async {
   });
 }
 
-Future<void> _mainImpl(List<String> args) async {
-  HttpServer? server;
-  var port = kGuiPortBase;
-  for (; port < kGuiPortBase + 10; port++) {
+/// 取命令行参数值（`--name value`）；缺失返回 null。
+String? _cliValue(List<String> args, String name) {
+  final i = args.indexOf(name);
+  if (i >= 0 && i + 1 < args.length) return args[i + 1];
+  return null;
+}
+
+/// 进程是否还活着（kill -0 / tasklist，不发信号）。
+bool _pidAlive(int p) {
+  if (p <= 0) return false;
+  try {
+    final r = Process.runSync('kill', <String>['-0', '$p']);
+    if (r.exitCode == 0) return true;
+    // kill 不存在（Windows）时落到 tasklist。
+    if (r.exitCode != 0 && !Platform.isWindows) return false;
+  } catch (_) {}
+  try {
+    final r = Process.runSync('tasklist', <String>['/FI', 'PID eq $p', '/NH']);
+    return r.stdout.toString().contains('$p');
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 等旧 GUI 退出（接班人模式）；超时返回 false 但仍继续尝试 bind。
+Future<bool> _waitOwnerExit(int ownerPid, Duration limit) async {
+  final deadline = DateTime.now().add(limit);
+  while (DateTime.now().isBefore(deadline)) {
+    if (!_pidAlive(ownerPid)) return true;
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  return false;
+}
+
+/// 固定端口接管：旧实例刚退出时端口可能短暂占用，重试 10s。
+///
+/// 固定端口的目的是让页面地址不变（浏览器不用换 URL）；拿不到就放弃，
+/// 宁可让用户双击工具箱，也不要顺延到 46130 后页面还指着 46129。
+Future<HttpServer?> _bindFixedPort(int port) async {
+  for (var i = 0; i < 40; i++) {
     try {
-      server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
-      break;
+      return await HttpServer.bind(InternetAddress.loopbackIPv4, port);
     } on SocketException {
-      // 端口被占用：若是已有 GUI 实例，打开浏览器后退出（单实例语义）。
-      if (await pingGui(port)) {
-        print('[xbume-gui] 已有实例运行于端口 $port，打开页面后退出。');
-        await openBrowser(port);
-        return;
+      if (i == 0 && await pingGui(port)) {
+        print('[xbume-gui] 端口 $port 仍被旧实例占用，放弃接班。');
+        return null;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+  }
+  return null;
+}
+
+Future<void> _mainImpl(List<String> args) async {
+  // 接班人模式（由 /api/svc/restart 拉起）：等旧实例退出后按固定端口接管。
+  // 旧实例要先关掉全部 VM 会话再 exit（防 DDS 死锁），最长 2s；这里绝不
+  // 抢在它前面 bind，否则「已有实例」分支会开个浏览器就退出。
+  final restartOwner =
+      int.tryParse(_cliValue(args, '--restart-owner') ?? '') ?? 0;
+  final fixedPort = int.tryParse(_cliValue(args, '--port') ?? '') ?? 0;
+  HttpServer? server;
+  var port = fixedPort > 0 ? fixedPort : kGuiPortBase;
+  if (restartOwner > 0) {
+    final gone = await _waitOwnerExit(restartOwner, const Duration(seconds: 15));
+    print('[xbume-gui] 接管旧实例（pid=$restartOwner，已退出=$gone）端口 $port');
+  }
+  if (fixedPort > 0) {
+    server = await _bindFixedPort(fixedPort);
+    if (server == null) {
+      print('[xbume-gui] 端口 $fixedPort 未释放，放弃这次重启；请双击工具箱手动打开。');
+      exitCode = 1;
+      return;
+    }
+  } else {
+    for (; port < kGuiPortBase + 10; port++) {
+      try {
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+        break;
+      } on SocketException {
+        // 端口被占用：若是已有 GUI 实例，打开浏览器后退出（单实例语义）。
+        if (await pingGui(port)) {
+          print('[xbume-gui] 已有实例运行于端口 $port，打开页面后退出。');
+          await openBrowser(port);
+          return;
+        }
       }
     }
   }
@@ -253,6 +327,7 @@ Future<void> _mainImpl(List<String> args) async {
   }
   print('[xbume-gui] GUI 服务已启动: http://127.0.0.1:$port （Ctrl-C 退出）');
   _guiPort = port;
+  _guiStartedAt = DateTime.now();
   _guiToken = generateGuiToken();
   _writeGuiTokenFile();
   print('[xbume-gui] 本地脚本访问令牌: $_home/.xb_ume_ide/gui.token');
@@ -270,10 +345,7 @@ Future<void> _mainImpl(List<String> args) async {
   // 卡死退出。Windows 无法捕获控制台关闭事件，只能尽量在启动器侧先发
   // 终止信号；不支持的信号 watch() 会抛 SignalException，这里统一吞掉。
   Future<void> shutdown() async {
-    try {
-      await state.dispose().timeout(const Duration(seconds: 2));
-    } catch (_) {}
-    exit(0);
+    await gracefulShutdown(state);
   }
 
   for (final signal in <ProcessSignal>[
@@ -790,6 +862,20 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(result));
       await req.response.close();
+      return;
+    }
+    // 服务控制（顶栏「服务」菜单）：GUI / daemon 的启停与重启。
+    // 变更类操作走 POST；status / log 只读，用 GET 不会误触发副作用。
+    if (path == '/api/svc/status') {
+      await _writeJson(req, await svcStatusSnapshot());
+      return;
+    }
+    if (path == '/api/svc/log') {
+      await _writeJson(req, readInstallLog(req.uri.queryParameters['offset']));
+      return;
+    }
+    if (path.startsWith('/api/svc/') && req.method == 'POST') {
+      await handleSvcAction(state, req, path.substring('/api/svc/'.length));
       return;
     }
     if (path == '/api/openconfig' && req.method == 'POST') {
@@ -4138,20 +4224,23 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
   }
 }
 
-/// GUI 访问令牌校验：Cookie（页面自动携带）/ X-XBUME-Token（fetch 包装器）
-/// / query token（WS 与命令行脚本）三选一。
+/// GUI 访问令牌校验：X-XBUME-Token（fetch 包装器）> Cookie（页面自动携带）
+/// > query token（WS 与命令行脚本），三选一，先命中先算。
 bool _isGuiAuthorized(HttpRequest req) {
   if (_guiToken.isEmpty) return false;
-  String? supplied;
-  try {
-    for (final c in req.cookies) {
-      if (c.name == 'xbume_gui_$_guiPort') {
-        supplied = c.value;
-        break;
+  // 先看显式 header：页面重启后浏览器可能还带着上一份 Cookie（名字只含端口，
+  // 新实例同名但值已变），不能让陈旧的 Cookie 压过请求里带的新令牌。
+  String? supplied = req.headers.value('x-xbume-token');
+  if (supplied == null || supplied.isEmpty) {
+    try {
+      for (final c in req.cookies) {
+        if (c.name == 'xbume_gui_$_guiPort') {
+          supplied = c.value;
+          break;
+        }
       }
-    }
-  } catch (_) {}
-  supplied ??= req.headers.value('x-xbume-token');
+    } catch (_) {}
+  }
   supplied ??= req.uri.queryParameters['token'];
   if (supplied == null || supplied.isEmpty) return false;
   return constantTimeEquals(supplied, _guiToken);
@@ -9876,160 +9965,165 @@ Future<List<int>> _mcpStdioPids() async {
   }
 }
 
-/// 查询 daemon 状态（经互斥端口 status 协议）。未运行返回 null。
-Future<Map<String, Object?>?> queryDaemonStatus() async {
-  Socket? socket;
+/// 与 daemon（bin/ide.dart）约定的安装目录与配置文件名。
+const String kInstallDirName = '.xb_ume_ide';
+const String kConfigName = 'config.json';
+
+/// 重启 / 停止 / 启动守护进程、GUI 接班人、重新部署均在
+/// src/control/svc_control.dart 里实现（GUI 与 bin/ide.dart 共用）。
+
+/// 优雅退出：先关掉全部 VM 会话再 exit。
+///
+/// 实测：持有流订阅（Stdout/Extension）的 VM service 连接被硬切断后，
+/// DDS 会永久死锁（该会话此后对所有客户端无响应）；重启 / 停止 GUI 都
+/// 必须走这里，不能直接 kill -9。
+Future<void> gracefulShutdown(GuiState state) async {
   try {
-    socket = await Socket.connect(
-      InternetAddress.loopbackIPv4,
-      kDaemonLockPort,
-      timeout: const Duration(milliseconds: 800),
-    );
-    final completer = Completer<Map<String, Object?>?>();
-    late StreamSubscription<List<int>> sub;
-    sub = socket.listen((data) {
-      if (!completer.isCompleted) {
-        try {
-          final decoded = jsonDecode(utf8.decode(data));
-          completer.complete(decoded is Map
-              ? <String, Object?>{
-                  for (final entry in decoded.entries)
-                    entry.key.toString(): entry.value,
-                }
-              : null);
-        } catch (_) {
-          completer.complete(null);
-        }
-      }
-      unawaited(sub.cancel());
-    }, onDone: () {
-      if (!completer.isCompleted) {
-        completer.complete(null);
-      }
-    }, onError: (dynamic _) {
-      if (!completer.isCompleted) {
-        completer.complete(null);
-      }
-    });
-    socket.write(kDaemonStatusToken);
-    await socket.flush();
-    final result = await completer.future.timeout(
-      const Duration(seconds: 2),
-      onTimeout: () => null,
-    );
-    return result;
-  } catch (_) {
-    return null;
-  } finally {
-    socket?.destroy();
-  }
+    await state.dispose().timeout(const Duration(seconds: 2));
+  } catch (_) {}
+  exit(0);
 }
 
-/// 重启守护进程：杀掉所有实例 → detached 启动部署副本 → 等待就绪。
-/// 依赖 ide.dart 单实例接管锁：新实例自动成为唯一实例。
-Future<Map<String, Object?>> restartDaemon() async {
-  final script = File('$_home/.xb_ume_ide/ide.dart');
-  if (!script.existsSync()) {
-    return <String, Object?>{
-      'ok': false,
-      'message': '未找到守护脚本，请先执行 dart run xb_ume:ide --install',
-    };
-  }
-  // 部署副本的相对 import 没跟随复制时（升级后常见），dart 会直接编译失败、
-  // 进程秒退，只看到「未检测到 daemon」无从下手；这里先把缺的文件点出来。
-  final missing = _missingDaemonDeps(script);
-  if (missing.isNotEmpty) {
-    return <String, Object?>{
-      'ok': false,
-      'message': '守护脚本缺少依赖 ${missing.join('、')}（部署不完整）：'
-          '请重新执行 dart run xb_ume:ide --install',
-    };
-  }
-  await killOtherDaemons();
-  try {
-    await Process.start(
-      Platform.resolvedExecutable,
-      <String>[script.path, '--daemon'],
-      mode: ProcessStartMode.detached,
-    );
-  } catch (e) {
-    return <String, Object?>{'ok': false, 'message': '启动失败: $e'};
-  }
-  for (var i = 0; i < 10; i++) {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (await queryDaemonStatus() != null) {
-      return <String, Object?>{'ok': true, 'message': '守护进程已重启'};
-    }
-  }
+/// 服务状态快照（/api/svc/status）。
+Future<Map<String, Object?>> svcStatusSnapshot() async {
+  final daemon = await queryDaemonStatus();
   return <String, Object?>{
-    'ok': false,
-    'message': '重启后未检测到 daemon（可查看 ~/.xb_ume_ide/daemon.log）',
+    'ok': true,
+    'gui': <String, Object?>{
+      'pid': pid,
+      'port': _guiPort,
+      'uptimeSec': DateTime.now().difference(_guiStartedAt).inSeconds,
+      'script': Platform.script.toFilePath(),
+    },
+    'daemon': daemon,
+    'sourceRoot': readSourceRoot(),
+    'busy': _svcBusy ? _svcBusyAction : null,
+    'platform': Platform.operatingSystem,
   };
 }
 
-/// 检查部署脚本里的 `import 'src/...'` 相对依赖是否都在安装目录内。
-List<String> _missingDaemonDeps(File script) {
-  final missing = <String>[];
-  try {
-    final re = RegExp(r'''^import\s+'(src/[^']+)';''', multiLine: true);
-    for (final m in re.allMatches(script.readAsStringSync())) {
-      final rel = m.group(1)!;
-      final f = File('$_home/.xb_ume_ide${Platform.pathSeparator}'
-          '${rel.replaceAll('/', Platform.pathSeparator)}');
-      if (!f.existsSync()) missing.add(rel);
-    }
-  } catch (_) {
-    // 读不了就不拦：让启动流程自己暴露真实错误。
+/// 部署日志增量（/api/svc/log?offset=N）：offset 为已读字节数。
+Map<String, Object?> readInstallLog(String? offsetRaw) {
+  final f = File(installLogPath());
+  if (!f.existsSync()) {
+    return <String, Object?>{
+      'ok': true,
+      'offset': 0,
+      'text': '',
+      'running': false,
+    };
   }
-  return missing;
+  try {
+    final bytes = f.readAsBytesSync();
+    final size = bytes.length;
+    final since = int.tryParse(offsetRaw ?? '') ?? -1;
+    // offset 非法（页面重开 / 日志被截断）时退回最后 4KB，别把整段历史发过去。
+    final from = since >= 0 && since <= size
+        ? since
+        : (size > 4096 ? size - 4096 : 0);
+    return <String, Object?>{
+      'ok': true,
+      'offset': size,
+      'text': utf8.decode(bytes.sublist(from), allowMalformed: true),
+      'running': _svcBusy && _svcBusyAction == 'redeploy',
+    };
+  } catch (e) {
+    return <String, Object?>{'ok': false, 'message': '读取日志失败: $e'};
+  }
 }
 
-/// 停止本机上其他 `ide.dart --daemon` 进程（排除自身）。
-/// 复制自 bin/ide.dart 的 _killOtherDaemons（单文件部署无法共享代码）。
-Future<void> killOtherDaemons() async {
+String _svcTargetLabel(String t) =>
+    t == 'gui' ? 'GUI' : (t == 'daemon' ? '守护进程' : t);
+
+String _svcSummary(String verb, Map<String, Object?> out) {
+  final parts = <String>[];
+  out.forEach((k, v) {
+    final ok = v is Map && v['ok'] == true;
+    parts.add('${_svcTargetLabel(k)}${ok ? '✓' : '✗'}');
+  });
+  return '$verb结果：${parts.join('，')}';
+}
+
+Future<void> _writeJson(HttpRequest req, Map<String, Object?> body) async {
+  req.response.headers.contentType = ContentType.json;
+  req.response.write(jsonEncode(body));
+  await req.response.close();
+}
+
+/// /api/svc/<action>：start / stop / restart / redeploy。
+///
+/// GUI 自身的重启 / 停止不能在此直接 exit：先把响应写完，再交给
+/// gracefulShutdown（关 VM 会话），否则前端拿到的是连接被重置。
+Future<void> handleSvcAction(
+  GuiState state,
+  HttpRequest req,
+  String action,
+) async {
+  if (_svcBusy) {
+    await _writeJson(req, <String, Object?>{
+      'ok': false,
+      'message': '正在执行 $_svcBusyAction，请稍候',
+    });
+    return;
+  }
+  final target = normalizeSvcTarget(req.uri.queryParameters['target']) ??
+      (action == 'start' ? 'daemon' : 'all');
+  _svcBusy = true;
+  _svcBusyAction = action;
+  var exitAfter = false;
+  Map<String, Object?> result;
   try {
-    if (Platform.isWindows) {
-      final ps = "Get-CimInstance Win32_Process | Where-Object { "
-          "\$_.CommandLine -match 'ide\\.dart' -and "
-          "\$_.CommandLine -match '--daemon' -and \$_.ProcessId -ne $pid } | "
-          "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
-      await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
+    if (action == 'start') {
+      result = target == 'gui'
+          ? <String, Object?>{
+              'ok': true,
+              'message': 'GUI 已在运行（pid=$pid）；启动 GUI 请双击工具箱或运行 --svc start gui',
+            }
+          : await startDaemon();
+    } else if (action == 'stop' || action == 'restart') {
+      final out = <String, Object?>{};
+      for (final t in svcActionOrder(target)) {
+        if (t == 'daemon') {
+          out['daemon'] =
+              action == 'stop' ? await stopDaemon() : await restartDaemon();
+        } else if (t == 'gui') {
+          if (action == 'stop') {
+            out['gui'] = <String, Object?>{
+              'ok': true,
+              'message': 'GUI 正在停止（页面会失去连接）',
+            };
+            exitAfter = true;
+          } else {
+            final r = await spawnGuiSuccessor(ownerPid: pid, port: _guiPort);
+            out['gui'] = r;
+            exitAfter = r['ok'] == true;
+          }
+        }
+      }
+      final ok = out.values.every((v) => v is Map && v['ok'] == true);
+      result = <String, Object?>{
+        'ok': ok,
+        'message': _svcSummary(action == 'stop' ? '停止' : '重启', out),
+        'results': out,
+      };
+    } else if (action == 'redeploy') {
+      final r = await redeployAndRestart(waitPid: pid);
+      exitAfter = r['ok'] == true;
+      result = r;
     } else {
-      // 优先用 daemon 状态里的 pid 精确停止；无状态时再扫进程命令行兜底。
-      final status = await queryDaemonStatus();
-      final statusPid = int.tryParse('${status?['pid'] ?? ''}');
-      final targets = <int>{};
-      if (statusPid != null && statusPid > 0 && statusPid != pid) {
-        targets.add(statusPid);
-      }
-      final pgrep = await Process.run(
-        'pgrep',
-        <String>['-f', r'ide\.dart.*--daemon'],
-      );
-      for (final line in pgrep.stdout.toString().split('\n')) {
-        final other = int.tryParse(line.trim());
-        if (other == null || other == pid || targets.contains(other)) {
-          continue;
-        }
-        // 严格校验命令行：只杀部署目录下的 ide.dart --daemon，避免误伤
-        // 本机其他含 ide.dart 字样的调试进程（用户机器上常同时开着多个）。
-        final ps = await Process.run(
-          'ps',
-          <String>['-p', '$other', '-o', 'command='],
-        );
-        final cmdline = ps.stdout.toString().trim();
-        if (!cmdline.contains('$_home/.xb_ume_ide/ide.dart') ||
-            !cmdline.contains('--daemon')) {
-          continue;
-        }
-        targets.add(other);
-      }
-      for (final target in targets) {
-        await Process.run('kill', <String>['-9', '$target']);
-      }
+      result = <String, Object?>{'ok': false, 'message': '未知动作: $action'};
     }
-  } catch (_) {
-    // 清理失败不阻塞。
+  } catch (e) {
+    result = <String, Object?>{'ok': false, 'message': '执行失败: $e'};
+  } finally {
+    _svcBusy = false;
+    _svcBusyAction = '';
+  }
+  await _writeJson(req, result);
+  if (exitAfter) {
+    // 响应已 flush：留 400ms 让浏览器收到结果，再优雅退出。
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 400))
+        .then((_) => gracefulShutdown(state)));
   }
 }
 
@@ -11133,24 +11227,6 @@ void trimLogBuffer(
 // 系统辅助
 // ---------------------------------------------------------------------------
 
-Future<bool> pingGui(int port) async {
-  HttpClient? client;
-  try {
-    client = HttpClient()
-      ..connectionTimeout = const Duration(milliseconds: 500);
-    final request = await client
-        .getUrl(Uri.parse('http://127.0.0.1:$port/ping'))
-        .timeout(const Duration(seconds: 1));
-    final response = await request.close().timeout(const Duration(seconds: 1));
-    final body = await response.transform(_lenientUtf8.decoder).join();
-    return body.trim() == 'xbume-gui';
-  } catch (_) {
-    return false;
-  } finally {
-    client?.close();
-  }
-}
-
 Future<void> openBrowser(int port) async {
   final url = 'http://127.0.0.1:$port';
   try {
@@ -11209,7 +11285,29 @@ const String guiHtml = r'''
   .ide-list li.dragging { opacity:.45; }
   .ide-list li.dragover { border-color:var(--acc); }
   .ide-list li .notinstalled { color:var(--dim); font-size:12px; margin-left:auto; }
-  #hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+  #hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; position:relative; }
+  /* 服务控制（顶栏）：GUI / daemon 状态徽标 + 下拉菜单 */
+  .svc-badge { font-size:11px; padding:2px 8px; border-radius:10px; border:1px solid var(--line); color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .svc-badge.on { color:#7ee787; border-color:#2f6b3c; background:#12251a; }
+  .svc-badge.off { color:#ff9b9b; border-color:#5c2e2e; background:#241416; }
+  .svc { position:relative; }
+  .svc > button { padding:5px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--dim); cursor:pointer; }
+  .svc > button:hover { color:var(--fg); border-color:var(--acc); }
+  .svc-menu { position:absolute; right:0; top:calc(100% + 6px); min-width:200px; background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 28px rgba(0,0,0,.55); padding:4px; display:none; z-index:80; }
+  .svc-menu.open { display:block; }
+  .svc-menu > div { padding:7px 10px; border-radius:6px; cursor:pointer; font-size:12.5px; color:var(--fg); white-space:nowrap; }
+  .svc-menu > div:hover { background:#1b2634; }
+  .svc-menu > div.danger { color:#ff9b9b; }
+  .svc-menu > div.disabled { opacity:.45; cursor:default; }
+  .svc-menu > div.disabled:hover { background:none; }
+  .svc-menu .sep { height:1px; background:var(--line); margin:4px 6px; padding:0; cursor:default; }
+  #svc-toast { position:fixed; right:16px; bottom:16px; z-index:98; padding:8px 14px; border-radius:8px; background:#132132; border:1px solid var(--line); color:var(--fg); font-size:12.5px; max-width:420px; display:none; box-shadow:0 4px 18px rgba(0,0,0,.5); white-space:pre-wrap; }
+  #svc-toast.err { background:#2a1518; border-color:#5c2e2e; color:#ffb4b4; }
+  #svc-overlay { position:fixed; inset:0; z-index:999; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; background:rgba(6,10,14,.82); color:var(--fg); }
+  #svc-overlay .t { font-size:16px; font-weight:600; }
+  #svc-overlay .s { font-size:12.5px; color:var(--dim); max-width:520px; text-align:center; line-height:1.7; }
+  #svc-logbox { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:min(760px,86vw); max-height:70vh; z-index:99; background:#0d141c; border:1px solid var(--line); border-radius:10px; padding:12px 14px; display:none; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+  #svc-logbox pre { margin:8px 0 0; max-height:52vh; overflow:auto; font-size:12px; line-height:1.5; color:#c6d4e2; white-space:pre-wrap; }
   #wsdot { width:8px; height:8px; border-radius:50%; background:#e5484d; }
   #wsdot.on { background:#46d68c; }
   main { flex:1; overflow:auto; padding:0 16px 16px; }
@@ -11424,6 +11522,23 @@ const String guiHtml = r'''
     <div class="tab" data-tab="compare">对比</div>
   </div>
   <div id="hdr-right">
+    <span id="svc-badge-gui" class="svc-badge" title="GUI 进程">GUI ○</span>
+    <span id="svc-badge-daemon" class="svc-badge" title="守护进程">daemon ○</span>
+    <div class="svc">
+      <button id="svc-btn" onclick="svcToggle(event)" title="服务控制：重启 / 停止 GUI 与守护进程、重新部署">服务 ▾</button>
+      <div class="svc-menu" id="svc-menu">
+        <div onclick="svcAct('restart','gui')">重启 GUI</div>
+        <div onclick="svcAct('restart','daemon')">重启守护进程</div>
+        <div onclick="svcAct('restart','all')">重启全部</div>
+        <div class="sep"></div>
+        <div class="danger" onclick="svcAct('stop','gui')">停止 GUI</div>
+        <div class="danger" onclick="svcAct('stop','daemon')">停止守护进程</div>
+        <div class="sep"></div>
+        <div id="svc-redeploy">重新部署并重启</div>
+        <div id="svc-redeploy-hint" class="disabled" style="display:none">（需先用 --install 记录源码目录）</div>
+        <div onclick="svcShowLog()">查看部署日志</div>
+      </div>
+    </div>
     <span id="vmstat" class="bad" style="display:none"></span>
     <select id="vmsel" style="display:none" onchange="setVmFilter(this.value)" title="选择要查看哪个调试会话（Flutter 输出来源），IDE 跳转不受影响"></select>
     <select id="hdrdev" onchange="selectDevice(this.value)"></select>
@@ -11432,6 +11547,9 @@ const String guiHtml = r'''
     <div id="wsdot" title="页面连接状态"></div>
   </div>
 </header>
+<div id="svc-overlay"><div class="t"></div><div class="s"></div></div>
+<div id="svc-toast"></div>
+<div id="svc-logbox"><b style="font-size:13px">部署日志</b><span class="muted" style="font-size:11px;margin-left:8px">~/.xb_ume_ide/install.log</span><div style="float:right"><button onclick="document.getElementById('svc-logbox').style.display='none'">关闭</button></div><pre id="svc-log-pre"></pre></div>
 <div id="exc-overlay" onclick="excGoTab()"></div>
 <main>
   <section class="page active" id="page-daemon">
@@ -11993,6 +12111,9 @@ const String guiHtml = r'''
 <script>
 var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).content || '';
 // 同源 fetch 统一带令牌：Cookie 之外的双保险（SameSite=Strict 已挡跨站）。
+// 令牌随进程启动重新生成，重启后旧标签页里的令牌（meta + Cookie）全部失效；
+// 这里遇到 403 自动重载一次，重载会拿到新页面与新 Cookie（限频防循环）。
+var authReloaded = false;
 (function(){
   if (!window.fetch) return;
   var nativeFetch = window.fetch.bind(window);
@@ -12003,7 +12124,18 @@ var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).con
       if (XBUME_TOKEN) h.set('X-XBUME-Token', XBUME_TOKEN);
       init.headers = h;
     } catch (e) {}
-    return nativeFetch(input, init);
+    return nativeFetch(input, init).then(function(r){
+      if (r.status !== 403 || authReloaded) return r;
+      authReloaded = true;
+      try {
+        var last = +(sessionStorage.getItem('xbume_auth_reload') || 0);
+        // 刚重载过还是 403：说明不是令牌过期，停下（避免死循环刷新）。
+        if (Date.now() - last < 15000) return r;
+        sessionStorage.setItem('xbume_auth_reload', String(Date.now()));
+      } catch (e) { return r; }
+      setTimeout(function(){ location.reload(); }, 80);
+      return r;
+    });
   };
 })();
 var ws = null, devices = [], selected = null, logs = [], paused = false, vmFilter = '';
@@ -16197,9 +16329,122 @@ function syncGroup(){
   g.querySelectorAll('input').forEach(function(c){ c.disabled = !on; });
 }
 syncGroup();
+// ── 服务控制（顶栏）：GUI / 守护进程的启停与重启、重新部署 ──
+var svcInfo = null, svcToastTimer = null;
+function svcEl(id){ return document.getElementById(id); }
+function svcToggle(e){
+  if (e) e.stopPropagation();
+  svcEl('svc-menu').classList.toggle('open');
+  svcPoll();
+}
+// 点空白处收起下拉（按钮自身已 stopPropagation，菜单内部点击不关）。
+document.addEventListener('click', function(e){
+  var m = svcEl('svc-menu');
+  if (m && !m.contains(e.target) && e.target.id !== 'svc-btn') m.classList.remove('open');
+});
+function svcToast(msg, isErr){
+  var t = svcEl('svc-toast');
+  t.textContent = msg;
+  t.className = isErr ? 'err' : '';
+  t.style.display = 'block';
+  if (svcToastTimer) clearTimeout(svcToastTimer);
+  svcToastTimer = setTimeout(function(){ t.style.display = 'none'; }, 6000);
+}
+function svcPoll(){
+  fetch('/api/svc/status').then(function(r){ return r.json(); }).then(function(d){
+    svcInfo = d; svcRender();
+  }).catch(function(){}).finally(function(){ setTimeout(svcPoll, 5000); });
+}
+function svcRender(){
+  var g = svcEl('svc-badge-gui'), dm = svcEl('svc-badge-daemon');
+  var gi = svcInfo && svcInfo.gui;
+  g.textContent = gi ? ('GUI ' + gi.port) : 'GUI ○';
+  g.className = 'svc-badge ' + (gi ? 'on' : 'off');
+  if (gi) {
+    var m = Math.floor((gi.uptimeSec || 0) / 60);
+    g.title = 'GUI 进程 pid=' + gi.pid + '，已运行 ' + (m >= 60 ? Math.floor(m / 60) + ' 小时 ' : '') + (m % 60) + ' 分钟\n脚本：' + (gi.script || '');
+  }
+  var d = svcInfo && svcInfo.daemon;
+  if (d) {
+    dm.textContent = 'daemon ' + ((d.sessions || []).length) + ' 会话';
+    dm.className = 'svc-badge on';
+    dm.title = '守护进程 pid=' + d.pid + '，已运行 ' + Math.round((d.uptimeSec || 0) / 60) + ' 分钟';
+  } else {
+    dm.textContent = 'daemon ○';
+    dm.className = 'svc-badge off';
+    dm.title = '守护进程未运行（IDE 双击跳转会失效）';
+  }
+  var rd = svcEl('svc-redeploy'), hint = svcEl('svc-redeploy-hint');
+  var hasSrc = !!(svcInfo && svcInfo.sourceRoot);
+  rd.classList.toggle('disabled', !hasSrc);
+  rd.onclick = hasSrc ? function(){ svcAct('redeploy'); } : null;
+  hint.style.display = hasSrc ? 'none' : 'block';
+  rd.title = hasSrc ? ('从源码重新部署到 ' + svcInfo.sourceRoot + ' 并重启') : '';
+}
+// 遮罩 + 自动重连：重启 / 重新部署后轮询 /ping，恢复后 reload。
+function svcOverlay(title, sub, waitMs){
+  var o = svcEl('svc-overlay');
+  o.querySelector('.t').textContent = title;
+  o.querySelector('.s').textContent = sub;
+  o.style.display = 'flex';
+  if (!waitMs) return;
+  var t0 = Date.now();
+  (function tick(){
+    if (Date.now() - t0 > waitMs) {
+      o.querySelector('.t').textContent = '服务没有按时恢复';
+      o.querySelector('.s').textContent = '请双击「xb_ume 工具箱」重新打开；部署问题看 ~/.xb_ume_ide/install.log';
+      return;
+    }
+    fetch('/ping', {cache: 'no-store'}).then(function(r){ return r.text(); }).then(function(t){
+      if (t.trim() === 'xbume-gui') { location.reload(); return; }
+      setTimeout(tick, 600);
+    }).catch(function(){ setTimeout(tick, 600); });
+  })();
+}
+function svcAct(action, target){
+  var key = action + '-' + (target || 'all');
+  var tips = {
+    'restart-gui': '重启 GUI：页面会断开约 3~5 秒后自动恢复，确定？',
+    'restart-daemon': '重启守护进程？正在进行的调试会话会自动重连。',
+    'restart-all': '重启守护进程与 GUI：页面会断开约 5 秒后自动恢复，确定？',
+    'stop-gui': '停止 GUI 后本页面会失去连接，需要双击「xb_ume 工具箱」才能重新打开。确定？',
+    'stop-daemon': '停止守护进程后，IDE 双击跳转会失效，直到重新开启。确定？',
+    'redeploy-all': '从源码重新部署并重启：页面会断开 10~60 秒；若一直没恢复，请双击工具箱或查看部署日志。确定？'
+  };
+  if (!confirm(tips[key] || (action === 'redeploy' ? tips['redeploy-all'] : ('确定执行 ' + action + '？')))) return;
+  svcEl('svc-menu').classList.remove('open');
+  var url = '/api/svc/' + action + (target ? '?target=' + target : '');
+  fetch(url, {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    svcToast(d.message || (d.ok ? '已执行' : '失败'), !d.ok);
+    if (!d.ok) { svcPoll(); return; }
+    var target2 = target || 'all';
+    if (action === 'redeploy') {
+      svcOverlay('正在重新部署并重启…', '从源码部署到 ~/.xb_ume_ide 后再启动；通常 10~60 秒。若超过 2 分钟没恢复，请双击「xb_ume 工具箱」或查看部署日志。', 120000);
+    } else if (action === 'restart' && (target2 === 'gui' || target2 === 'all')) {
+      svcOverlay('GUI 正在重启…', '页面会自动恢复；若 30 秒内没反应，请双击「xb_ume 工具箱」。', 30000);
+    } else if (action === 'stop' && (target2 === 'gui' || target2 === 'all')) {
+      svcOverlay('GUI 服务已停止', '双击「xb_ume 工具箱」可重新开启。', 0);
+    } else if (action === 'stop') {
+      if (typeof refreshDaemon === 'function') refreshDaemon();
+      svcPoll();
+    } else {
+      if (typeof refreshDaemon === 'function') refreshDaemon();
+      svcPoll();
+    }
+  }).catch(function(e){ svcToast('请求失败: ' + e, true); svcPoll(); });
+}
+function svcShowLog(){
+  svcEl('svc-menu').classList.remove('open');
+  svcEl('svc-logbox').style.display = 'block';
+  svcEl('svc-log-pre').textContent = '读取中…';
+  fetch('/api/svc/log').then(function(r){ return r.json(); }).then(function(d){
+    svcEl('svc-log-pre').textContent = (d && d.text) ? d.text : '（还没有部署日志；点「重新部署并重启」后生成）';
+  }).catch(function(e){ svcEl('svc-log-pre').textContent = '读取失败: ' + e; });
+}
+svcPoll();
+
 function restartDaemon(){
-  if (!confirm('重启守护进程？正在进行的调试会话会自动重连。')) return;
-  fetch('/api/daemon/restart', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){ alert(d.message); refreshDaemon(); });
+  svcAct('restart', 'daemon');
 }
 // ── P9 Widget 树浏览 + 截图高亮 ──
 var wtNodes = [], wtDpr = 1, wtPhysW = 0, wtPhysH = 0, wtSel = -1, wtExpand = {}, wtFilter = '', wtParents = [];
