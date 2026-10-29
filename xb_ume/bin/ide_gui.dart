@@ -11669,6 +11669,12 @@ const String guiHtml = r'''
         </div>
         <div id="dbg-bps" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;gap:6px">
+          <b style="font-size:12px">路由栈</b>
+          <span id="dbg-rt-n" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">刷新后列出当前会话的路由与文件：点文件在下方源码面板打开，点「断点」直接下</span>
+          <button onclick="dbgRtLoad(this)" style="flex:0 0 auto" title="读取当前调试会话的 Navigator 路由栈，并列出每条路由对应的源码文件">刷新</button>
+        </div>
+        <div id="dbg-routes" class="dbg-list" style="max-height:150px"></div>
+        <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;gap:6px">
           <b style="font-size:12px">已记住</b>
           <span id="dbg-saved-n" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">重连同一项目自动恢复</span>
           <button onclick="dbgLoadSaved(this)" style="flex:0 0 auto">刷新</button>
@@ -17669,6 +17675,99 @@ function dbgSrcNormPath(p){
   return String(p == null ? '' : p).replace(/^file:\/\//, '').replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
+// -- 路由栈（断点卡片内）：复用 /api/routestack + /api/routelocate ---------
+// 目的：在断点区就能看到「当前调试会话」的路由与对应文件，点文件直接进源码
+// 面板点行号，或直接点「断点」。只认 dbgSt.wsUri（不跟页头 VM 下拉），避免拿
+// 到别的会话 / 旧端口的路由。
+function dbgProjRoot(){
+  var live = (dbgSt && dbgSt.attached && dbgSt.projectRoot) ? String(dbgSt.projectRoot) : '';
+  return live || dbgDirValue() || (dbgSt && dbgSt.projectRoot) || '';
+}
+function dbgRtShort(file){
+  var root = dbgSrcNormPath(dbgProjRoot());
+  var abs = dbgSrcNormPath(file);
+  if (root && abs.indexOf(root + '/') === 0) return abs.substring(root.length + 1);
+  var parts = abs.split('/');
+  return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : abs;
+}
+function dbgRtLoad(btn){
+  var box = dbgEl('dbg-routes');
+  if (!box) return;
+  var n = dbgEl('dbg-rt-n');
+  var uri = (dbgSt && dbgSt.wsUri) ? String(dbgSt.wsUri) : '';
+  if (!uri) {
+    box.innerHTML = '<span class="muted">先连上调试会话（启动 / 接入），再点刷新</span>';
+    if (n) n.textContent = '';
+    return;
+  }
+  var done = dbgBusy(btn, '读取中…');
+  box.innerHTML = '<span class="muted">读取路由栈…</span>';
+  fetch('/api/routestack?uri=' + encodeURIComponent(uri))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      done();
+      if (!d || d.error) {
+        box.innerHTML = '<span class="bad">读取失败：' + esc((d && d.error) || '未知错误') + '</span>';
+        return;
+      }
+      var flat = [];
+      (d.navigators || []).forEach(function(nav){
+        var rs = nav.routes || [];
+        rs.forEach(function(r, i){ flat.push({nav: nav.index, idx: i, r: r}); });
+      });
+      if (!flat.length) {
+        box.innerHTML = '<span class="muted">路由栈为空（app 可能还没建出首帧，或该会话不是 debug 模式）</span>';
+        if (n) n.textContent = '';
+        return;
+      }
+      if (n) n.textContent = flat.length + ' 条 · 来自当前调试会话';
+      box.innerHTML = flat.map(function(it, k){
+        var name = it.r.name ? esc(it.r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
+        var cur = it.r.current ? ' <span style="color:var(--acc);font-weight:600">● 当前</span>' : '';
+        var type = it.r.type ? ' <span class="muted">' + esc(it.r.type) + '</span>' : '';
+        return '<div style="display:flex;gap:6px;align-items:center;padding:2px 0">'
+          + '<span class="muted" style="flex:0 0 auto">N' + (it.nav + 1) + '#' + (it.idx + 1) + '</span>'
+          + '<span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + cur + type + '</span>'
+          + '<a href="javascript:void(0)" id="dbg-rtf-' + k + '" class="muted" style="flex:0 0 auto">定位中…</a>'
+          + '<span id="dbg-rtb-' + k + '" style="flex:0 0 auto"></span>'
+          + '</div>';
+      }).join('');
+      flat.forEach(function(it, k){ dbgRtLocate(uri, it, k); });
+    })
+    .catch(function(e){
+      done();
+      box.innerHTML = '<span class="bad">读取失败：' + esc(String(e)) + '</span>';
+    });
+}
+function dbgRtLocate(uri, it, k){
+  fetch('/api/routelocate?uri=' + encodeURIComponent(uri) + '&nav=' + it.nav + '&idx=' + it.idx + '&open=0')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var a = dbgEl('dbg-rtf-' + k);
+      var b = dbgEl('dbg-rtb-' + k);
+      if (!a) return;
+      if (!d || d.error || !d.file) {
+        a.className = 'muted';
+        a.textContent = '未定位到文件';
+        a.title = rtLocErr((d && d.error) || '');
+        return;
+      }
+      var file = String(d.file), line = d.line || 0;
+      a.className = '';
+      a.textContent = dbgRtShort(file) + (line ? ':' + line : '');
+      a.title = file + (line ? ':' + line : '') + '（点击在下方源码面板打开，点行号即下断点）';
+      a.onclick = function(){ dbgSrcOpenAt(file, line); };
+      if (b) {
+        b.innerHTML = '<a href="javascript:void(0)" title="直接在这一行下断点">断点</a>';
+        if (b.firstChild) b.firstChild.onclick = function(){ dbgQuickBp(file, line, dbgSt.wsUri); };
+      }
+    })
+    .catch(function(e){
+      var a = dbgEl('dbg-rtf-' + k);
+      if (a) { a.className = 'muted'; a.textContent = '定位失败'; a.title = String(e); }
+    });
+}
+
 // 绝对路径 → 项目内相对路径；前缀对不上时按后缀在候选里兑一个（防符号链接差异）。
 function dbgSrcRelOf(p){
   var root = dbgSrcNormPath(dbgSrcRoot);
@@ -17718,6 +17817,32 @@ function dbgSrcOpen(){
   }
   card.style.display = '';
   dbgSrcLoadFiles();
+}
+
+// 从外部（如断点卡片的「路由栈」）给的「文件:行」直接打开源码面板并定位：
+// 先按当前会话的项目根归一，再等文件列表到位（dbgSrcLoadFiles 会先渲染暂停
+// 目标 / 默认文件），最后读目标文件——保证屏上留的是点的那一个。
+function dbgSrcOpenAt(file, line){
+  var card = dbgEl('dbg-src-card');
+  if (!card) return;
+  var root = dbgProjRoot();
+  if (!root) { dbgToast('先选项目目录（源码按项目根读）'); return; }
+  var changed = dbgSrcNormPath(dbgSrcRoot) !== dbgSrcNormPath(root);
+  dbgSrcRoot = root;
+  if (card.style.display === 'none') { card.style.display = ''; changed = true; }
+  var rel = dbgSrcRelOf(file);
+  var inp = dbgEl('dbg-src-file');
+  if (inp) inp.value = rel || file;
+  var load = function(){
+    if (rel) dbgSrcLoad(rel, line || 0, 'rel');
+    else dbgSrcLoad(file, line || 0, 'abs');
+  };
+  if (changed || !dbgSrcFiles.length) {
+    var p = dbgSrcLoadFiles();
+    if (p && p.then) p.then(load, load); else load();
+  } else {
+    load();
+  }
 }
 
 function dbgSrcClose(){

@@ -64,6 +64,24 @@ void main() {
       }
     });
 
+    test('断点卡片接上当前会话的路由栈（文件 → 源码面板 / 一键断点）', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'id="dbg-routes"',
+        'id="dbg-rt-n"',
+        'function dbgRtLoad(',
+        'function dbgRtLocate(',
+        '/api/routestack?uri=',
+        '/api/routelocate?uri=',
+        'function dbgSrcOpenAt(',
+        'dbgQuickBp(file, line, dbgSt.wsUri)',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 只认当前调试会话：没连会话时不能去拿页头 VM 下拉的 uri。
+      expect(html.contains('先连上调试会话（启动 / 接入），再点刷新'), isTrue);
+    });
+
     test('源码面板：点行号下断点（不用手输 文件:行）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[
