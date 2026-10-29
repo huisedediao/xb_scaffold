@@ -229,7 +229,7 @@ void main() {
       }
     });
 
-    test('变量可以按名字筛选（模糊匹配、忽略大小写，不发请求）', () {
+    test('变量可以按名字筛选（模糊匹配、忽略大小写，未展开的层自动补扫）', () {
       const html = gui.guiHtml;
       for (final s in <String>[
         'id="dbg-var-filter"',
@@ -249,8 +249,17 @@ void main() {
         'dbgVarGen++;',
         // 拉过但没有命中项时要说清楚。
         '下面没有名字含',
-        // 空态要说清楚为什么筛不到（只筛已展开的层）。
-        '只筛已展开的层',
+        // 没展开过的层也要能筛到：输入停下后按 BFS 把整棵树拉下来补扫，
+        // 对象数与深度都有上限，到顶要说清楚（否则「0 条」会被当成真没有）。
+        'function dbgVarScanStart(',
+        'dbgVarScanObjCap',
+        'dbgVarScanDepCap',
+        'function dbgVarScanAbort(',
+        'dbgVarScanSeq++',
+        '正在把变量树拉下来',
+        "筛选中… 已查 '",
+        '达到扫描上限',
+        '}, 300);',
         // 命中片段高亮。
         '#dbg-vars mark {',
       ]) {
@@ -263,14 +272,19 @@ void main() {
       expect(stackAt, greaterThan(0));
       expect(filterAt, greaterThan(stackAt));
       expect(varsAt, greaterThan(filterAt));
-      // 输入筛选词只是重画：一个请求都不发（否则每敲一个字就 getObject 一整棵树）；
-      // 拉子层只走用户点 ▶ 的 dbgVarFilterLoad。
+      // 输入筛选词只是重画：防抖窗口里一个请求都不发（否则每敲一个字就
+      // getObject 一整棵树）；拉子层只走用户点 ▶ 的 dbgVarFilterLoad，
+      // 批量补扫只走防抖后调用的 dbgVarScanStart。
       final paintFrom = html.indexOf('function dbgVarPaint(');
       final paintTo = html.indexOf('function dbgVarFilterLoad(', paintFrom);
       expect(paintFrom, greaterThan(0));
       expect(paintTo, greaterThan(paintFrom));
       final paint = html.substring(paintFrom, paintTo);
       expect(paint.contains('dbgOp('), isFalse);
+      // 换帧 / 刷栈要作废在跑的扫描（objectId 属于上一次暂停）。
+      final renderFrom = html.indexOf('function dbgRenderVars(');
+      final render = html.substring(renderFrom, html.indexOf('function dbgVarPaint(', renderFrom));
+      expect(render.contains('dbgVarScanAbort()'), isTrue);
     });
 
     test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {

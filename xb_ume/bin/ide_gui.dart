@@ -17745,6 +17745,13 @@ var dbgVarOpen = {};   // path → true：展开态
 var dbgVarObj = {};    // path → objectId：展开时要用的对象 id
 var dbgVarFilter = ''; // 筛选关键字（已转小写，空 = 不筛）
 var dbgVarGen = 0;     // 变量区生成号：换帧 / 刷栈 +1，异步回来发现变了就丢弃
+// 全量筛选：输入停下 300ms 后按 BFS 把整棵树拉下来（getObject），边拉边重画。
+// seq 一变（改词 / 清空 / 换帧）在跑的扫描就自行退出；对象数与深度都有上限。
+var dbgVarScanSeq = 0;
+var dbgVarScanTimer = 0;
+var dbgVarScanSt = {run: false, objs: 0, done: false, capped: false};
+var dbgVarScanObjCap = 300;
+var dbgVarScanDepCap = 8;
 
 // 变量行：有 objectId 的能点开看字段 / 元素（懒加载，点一次读一层）。
 // path 是层级路径（"0" / "0-3" / "0-3-1"），只含数字和连字符，可直接进 id。
@@ -17820,6 +17827,7 @@ function dbgRenderVars(){
   // 换帧 / 刷新调用栈就重置展开态：objectId 属于上一次暂停，不能复用。
   dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {};
   dbgVarGen++;
+  dbgVarScanAbort();
   dbgVarPaint();
 }
 
@@ -17848,30 +17856,59 @@ function dbgVarPaint(){
   var html = vars.map(function(v, i){
     return dbgVarMatchHtml(v, String(i), 0, q, cnt);
   }).join('');
-  if (stat) stat.textContent = cnt.n + ' 条';
-  el.innerHTML = html || '<div class="muted" style="padding:6px">没有名字含「'
-    + esc(q) + '」的变量（只筛已展开的层，展开父节点后再试）</div>';
+  var sc = dbgVarScanSt;
+  if (stat) {
+    stat.textContent = sc.run
+      ? '筛选中… 已查 ' + sc.objs + ' 个对象'
+      : (cnt.n + ' 条' + (sc.capped ? '（已查 ' + sc.objs + ' 个对象，达到扫描上限）' : ''));
+    stat.title = sc.run
+      ? '正在把变量树整个拉下来按名字匹配，结果会边拉边补'
+      : (sc.capped
+        ? '最多扫 ' + dbgVarScanObjCap + ' 个对象 / ' + dbgVarScanDepCap + ' 层，超出部分可能有遗漏'
+        : '');
+  }
+  if (html) { el.innerHTML = html; return; }
+  var why = sc.run
+    ? '正在把变量树拉下来…（已查 ' + sc.objs + ' 个对象）'
+    : '没有名字含「' + esc(q) + '」的变量'
+      + (sc.capped
+        ? '（已查 ' + sc.objs + ' 个对象，达到扫描上限；更深的层没扫到）'
+        : (sc.objs ? '（已扫 ' + sc.objs + ' 个对象）' : ''));
+  el.innerHTML = '<div class="muted" style="padding:6px">' + why + '</div>';
 }
 
-// 筛选输入：立刻重画，不发任何 getObject（只筛已展开的层）。
+// 筛选输入：先拿已有缓存重画，再把整棵树拉下来补齐（防抖 300ms，输入过程中不发请求）。
 function dbgVarFilterOnInput(){
   var el = dbgEl('dbg-var-filter');
   dbgVarFilter = ((el && el.value) || '').trim().toLowerCase();
+  dbgVarScanAbort();
   dbgVarPaint();
+  if (!dbgVarFilter) return;
+  dbgVarScanTimer = setTimeout(function(){
+    dbgVarScanTimer = 0;
+    dbgVarScanStart();
+  }, 300);
 }
 
 function dbgVarFilterClear(){
   var el = dbgEl('dbg-var-filter');
   if (el) el.value = '';
   dbgVarFilter = '';
+  dbgVarScanAbort();
   dbgVarPaint();
 }
 
+// 作废正在跑的扫描：改筛选词、清空、换帧 / 刷栈都走这里。
+function dbgVarScanAbort(){
+  dbgVarScanSeq++;
+  if (dbgVarScanTimer) { clearTimeout(dbgVarScanTimer); dbgVarScanTimer = 0; }
+  dbgVarScanSt = {run: false, objs: 0, done: false, capped: false};
+}
+
 // 筛选模式：只留名字命中的节点，以及通往命中节点的祖先（祖先不计数，
-// 箭头给 ▼ 表示下面是命中路径）。搜索范围是 `dbgVarKids` 里**拉过的所有层**，
-// 跟当前是否收起无关（收起不丢缓存）——所以深层字段只要展开过一次就能筛到。
-// 命中节点如果子层还没拉过，给 ▶：点一下只拉这一层（用户点才发请求），
-// 拉完就地重画，命中项就补出来了——边筛边往下钻，不用先清掉筛选。
+// 箭头给 ▼ 表示下面是命中路径）。搜索范围是 `dbgVarKids` 缓存——
+// 手动展开过的层 + dbgVarScanStart 自动拉下来的层（收起不丢缓存）。
+// 命中的节点若子层还没拉过，给 ▶ 可手动补（扫描到它时也会自己拉）。
 function dbgVarMatchHtml(v, path, depth, q, cnt){
   var r = dbgVarKids[path];
   var loaded = !!r;
@@ -17890,8 +17927,9 @@ function dbgVarMatchHtml(v, path, depth, q, cnt){
   var attr = canLoad
     ? ' onclick="dbgVarFilterLoad(\'' + path + '\')" title="点一下拉这一层，命中字段会补出来"'
     : ' title="筛选结果：清空筛选后可点开 / 收起字段"';
-  // 拉过但下面一条都不命中：说清楚，不然会以为筛选坏了。
-  var note = (self && loaded && !kids)
+  // 拉过但下面一条都不命中：说清楚，不然会以为筛选坏了。扫描中先不说，
+  // 因为它自己马上会把子层拉下来。
+  var note = (self && loaded && !kids && !dbgVarScanSt.run)
     ? '<div class="muted" style="padding:1px 6px 1px ' + (20 + depth * 14)
       + 'px;font-size:11px">下面没有名字含「' + esc(q) + '」的字段</div>'
     : '';
@@ -17920,6 +17958,62 @@ function dbgVarFilterLoad(path){
     dbgVarOpen[path] = true;
     dbgVarPaint();
   });
+}
+
+// 按当前筛选词把整棵变量树拉下来：BFS + 每批 4 个 getObject，边拉边重画。
+// 不拉的话「没展开过的层」永远搜不到；但整个 Element 树能大到没边，所以有上限
+// （对象数 dbgVarScanObjCap / 深度 dbgVarScanDepCap），到顶就停并在状态栏说明。
+// 同一个对象被多处引用时按 objectId 只拉一次，子项直接复用。
+function dbgVarScanStart(){
+  var f = dbgFrames[dbgFrameIdx];
+  var vars = (f && f.vars) || [];
+  if (!dbgVarFilter || !vars.length) return;
+  var seq = ++dbgVarScanSeq;
+  var st = dbgVarScanSt = {run: true, objs: 0, done: false, capped: false};
+  var byObj = {};     // objectId → 已拉到的子项（同一对象多处引用只拉一次）
+  var queue = [];
+  function pushKids(path, depth, r){
+    // 子项在 depth+1 层；再深就不会拉了，没必要塞进队列把队列撑大。
+    // 但真有展开不下的子项时要记一笔，否则「0 条」会让人以为真没有。
+    if (depth + 1 >= dbgVarScanDepCap) {
+      (r.vars || []).forEach(function(c){ if (c && c.objectId) st.capped = true; });
+      return;
+    }
+    (r.vars || []).forEach(function(c, i){
+      if (c && c.objectId) queue.push({path: path + '-' + i, depth: depth + 1, objectId: c.objectId});
+    });
+  }
+  vars.forEach(function(v, i){
+    if (v && v.objectId) queue.push({path: String(i), depth: 0, objectId: v.objectId});
+  });
+  dbgVarPaint();
+
+  function step(){
+    if (seq !== dbgVarScanSeq) return;    // 改词 / 清空 / 换帧：这轮作废
+    if (!queue.length) { st.run = false; st.done = true; dbgVarPaint(); return; }
+    if (st.objs >= dbgVarScanObjCap) { st.run = false; st.capped = true; dbgVarPaint(); return; }
+    var batch = queue.splice(0, 4);
+    var pending = batch.length;
+    batch.forEach(function(it){
+      function ok(){ if (--pending === 0) { if (seq !== dbgVarScanSeq) return; dbgVarPaint(); step(); } }
+      var cached = dbgVarKids[it.path];
+      if (cached) { pushKids(it.path, it.depth, cached); return ok(); }
+      var same = byObj[it.objectId];
+      if (same) { dbgVarKids[it.path] = same; pushKids(it.path, it.depth, same); return ok(); }
+      // 深度到顶（理论上 pushKids 已经拦住了，这里再兜一层）
+      if (it.depth >= dbgVarScanDepCap) { st.capped = true; return ok(); }
+      st.objs++;
+      dbgOp('getObject', {objectId: it.objectId}).then(function(d){
+        if (seq !== dbgVarScanSeq) return;
+        if (!d || !d.ok) return;
+        var r = {vars: d.vars || [], total: d.total || 0, truncated: !!d.truncated};
+        byObj[it.objectId] = r;
+        dbgVarKids[it.path] = r;
+        pushKids(it.path, it.depth, r);
+      }).then(ok, ok);
+    });
+  }
+  step();
 }
 
 // 名字里命中的那段包 <mark>（q 已经是小写）。
