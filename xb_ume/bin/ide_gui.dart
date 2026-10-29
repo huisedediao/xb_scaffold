@@ -11586,6 +11586,12 @@ const String guiHtml = r'''
   .dbg-outgrip { position:absolute; left:0; right:0; top:-5px; height:13px; cursor:row-resize; touch-action:none; z-index:2; }
   .dbg-outgrip::after { content:''; position:absolute; left:14px; right:14px; top:5px; height:3px; border-radius:2px; background:var(--line); }
   .dbg-outgrip:hover::after, .dbg-outgrip.on::after { background:var(--acc); }
+  /* 运行输出查找 / 筛选：查找只高亮（黄）、筛选只留匹配行（绿）、同时命中橙，
+     配色与交互对齐「文件查看」页；两个输入框宽度可收缩，窄窗口下不会把标题挤掉。 */
+  .dbg-outq { flex:0 1 190px; min-width:104px; font-size:12px; padding:3px 8px; }
+  #dbg-out mark { background:#e3b341; color:#0b0f14; border-radius:2px; }
+  #dbg-out mark.mf { background:#46d68c; color:#07110b; }
+  #dbg-out mark.mb { background:#f0883e; color:#241a0b; }
   .dbg-list { max-height:260px; overflow:auto; font-size:12px; }
   /* 小屏 / 窄窗口：退回上下堆叠，整页开始滚（保证不会把面板压成一条缝） */
   @media (max-width:1180px) {
@@ -11900,6 +11906,8 @@ const String guiHtml = r'''
     <div class="card dbg-outcard">
       <div class="dbg-outgrip" id="dbg-outgrip" title="拖动调整运行输出高度，双击复位" onpointerdown="dbgOutHDrag(event)" ondblclick="dbgOutHReset()"></div>
       <div class="row"><b>运行输出</b><span id="dbg-out-n" class="muted" style="font-size:12px"></span>
+        <input id="dbg-out-search" class="dbg-outq" placeholder="查找（高亮）" title="在运行输出里查找，命中片段高亮成黄色、行不过滤；Esc 清空" oninput="dbgOutQuery('s', this.value)" onkeydown="if(event.key==='Escape'){this.value='';dbgOutQuery('s','');}">
+        <input id="dbg-out-filter" class="dbg-outq" placeholder="筛选（只留匹配行）" title="只保留包含关键字的行，命中片段高亮成绿色；两个框都填时同时命中显示橙色；Esc 清空" oninput="dbgOutQuery('f', this.value)" onkeydown="if(event.key==='Escape'){this.value='';dbgOutQuery('f','');}">
         <label class="chk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="dbg-follow" checked>自动滚到底</label>
         <button onclick="dbgClearOut()">清屏</button>
       </div>
@@ -18899,14 +18907,76 @@ function dbgOutAppend(lines, seq){
   dbgOutRender();
 }
 
+// 运行输出查找 / 筛选（同「文件查看」页）：查找只高亮不过滤，筛选只留匹配行，
+// 两个都填时同时命中的片段显示橙色。关键词变了 120ms 防抖再重绘，不逐字扫 2000 行。
+var dbgOutQ = { s: '', f: '' }, dbgOutQTimer = null;
+function dbgOutQuery(kind, val){
+  if (kind === 'f') dbgOutQ.f = val || ''; else dbgOutQ.s = val || '';
+  if (dbgOutQTimer) clearTimeout(dbgOutQTimer);
+  dbgOutQTimer = setTimeout(function(){ dbgOutQTimer = null; dbgOutRender(); }, 120);
+}
+// 输出区专用转义（正则版）：DOM 版 esc 每行都 createElement，两千行重绘太贵。
+function dbgOutEsc(s){
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// 一行的高亮片段：查找（1）=黄、筛选（2）=绿、同时命中（3）=橙；交叉区间先合并再着色。
+function dbgOutHlLine(line, s, f){
+  var l = line.toLowerCase(), marks = [];
+  function collect(kw, tag){
+    if (!kw) return;
+    var j = 0;
+    while (true) { var k = l.indexOf(kw, j); if (k < 0) break; marks.push([k, k + kw.length, tag]); j = k + kw.length; }
+  }
+  collect(s, 1); collect(f, 2);
+  if (!marks.length) return dbgOutEsc(line);
+  marks.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
+  var merged = [];
+  for (var i = 0; i < marks.length; i++) {
+    var m = merged[merged.length - 1];
+    if (m && marks[i][0] < m[1]) { if (marks[i][1] > m[1]) m[1] = marks[i][1]; m[2] |= marks[i][2]; }
+    else merged.push([marks[i][0], marks[i][1], marks[i][2]]);
+  }
+  var out = '', at = 0;
+  for (var j = 0; j < merged.length; j++) {
+    var cls = merged[j][2] === 2 ? ' class="mf"' : (merged[j][2] === 3 ? ' class="mb"' : '');
+    out += dbgOutEsc(line.substring(at, merged[j][0])) + '<mark' + cls + '>' + dbgOutEsc(line.substring(merged[j][0], merged[j][1])) + '</mark>';
+    at = merged[j][1];
+  }
+  return out + dbgOutEsc(line.substring(at));
+}
+
 function dbgOutRender(){
   var el = dbgEl('dbg-out');
   if (!el) return;
-  el.textContent = dbgOutLines.join('\n');
-  var n = dbgEl('dbg-out-n');
-  if (n) n.textContent = dbgOutLines.length ? '（' + dbgOutLines.length + ' 行）' : '';
+  var s = dbgOutQ.s.toLowerCase(), f = dbgOutQ.f.toLowerCase();
+  // 粘底（同「文件查看」）：本来就在底部才跟到新行，手动翻上去看历史时不被新行拽回去。
   var follow = dbgEl('dbg-follow');
-  if (!follow || follow.checked) el.scrollTop = el.scrollHeight;
+  var stick = (!follow || follow.checked) && (el.scrollTop + el.clientHeight >= el.scrollHeight - 24);
+  var n = dbgEl('dbg-out-n');
+  if (!s && !f) {
+    // 没查找 / 筛选：走原来的纯文本路径（两千行也不必逐行转义）
+    el.textContent = dbgOutLines.join('\n');
+    if (stick) el.scrollTop = el.scrollHeight;
+    if (n) n.textContent = dbgOutLines.length ? '（' + dbgOutLines.length + ' 行）' : '';
+    return;
+  }
+  var shown = 0, hits = 0, parts = [];
+  for (var i = 0; i < dbgOutLines.length; i++) {
+    var line = dbgOutLines[i];
+    if (f && line.toLowerCase().indexOf(f) < 0) continue;
+    shown++;
+    if (s) {
+      var l = line.toLowerCase(), j = 0;
+      while (true) { var k = l.indexOf(s, j); if (k < 0) break; hits++; j = k + s.length; }
+    }
+    parts.push(dbgOutHlLine(line, s, f));
+  }
+  el.innerHTML = parts.length ? parts.join('\n') : '<span class="muted">（' + (dbgOutLines.length ? '无匹配行' : '暂无内容') + '）</span>';
+  if (stick) el.scrollTop = el.scrollHeight;
+  if (n) {
+    if (!dbgOutLines.length) n.textContent = '';
+    else n.textContent = '（' + (f ? shown + ' / ' + dbgOutLines.length + ' 行' : dbgOutLines.length + ' 行') + (s ? ' · 命中 ' + hits + ' 处' : '') + '）';
+  }
 }
 
 function dbgClearOut(){ dbgOutLines = []; dbgOutRender(); }

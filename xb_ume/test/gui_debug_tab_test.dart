@@ -53,6 +53,23 @@ void main() {
       ]) {
         expect(html.contains(fn), isTrue, reason: fn);
       }
+      // 运行输出的查找 / 筛选（对齐「文件查看」页：查找高亮不过滤、筛选只留匹配行）
+      expect(html.contains('id="dbg-out-search"'), isTrue);
+      expect(html.contains('id="dbg-out-filter"'), isTrue);
+      expect(html.contains('.dbg-outq {'), isTrue);
+      for (final fn in <String>[
+        'function dbgOutQuery(',
+        'function dbgOutHlLine(',
+        'function dbgOutEsc(',
+        "var dbgOutQ = { s: '', f: '' }",
+        '#dbg-out mark.mf {',
+        '#dbg-out mark.mb {',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 没关键词走 textContent 快速路径，有关键词才 innerHTML 高亮
+      expect(html.contains('if (!s && !f) {'), isTrue);
+      expect(html.contains('el.innerHTML = parts.length ?'), isTrue);
       // 旧的上下双列容器已经不用了，再回来就会变成「一屏看不到变量 / 输出」
       expect(html.contains('dbg-cols'), isFalse);
       // 源码面板是三栏里的右栏：默认隐藏，关掉时中栏自动变宽
