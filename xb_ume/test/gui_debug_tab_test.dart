@@ -229,6 +229,50 @@ void main() {
       }
     });
 
+    test('变量可以按名字筛选（模糊匹配、忽略大小写，不发请求）', () {
+      const html = gui.guiHtml;
+      for (final s in <String>[
+        'id="dbg-var-filter"',
+        'id="dbg-var-fstat"',
+        'function dbgVarPaint(',
+        'function dbgVarFilterOnInput(',
+        'function dbgVarFilterClear(',
+        // 筛选模式自己的渲染：只留命中项 + 通往它的祖先。
+        'function dbgVarMatchHtml(',
+        'function dbgVarMark(',
+        'dbgVarFilterOnInput()',
+        // 筛选态下点 ▶ 才拉一层（用户点才发请求），拉完就地重画。
+        'function dbgVarFilterLoad(',
+        "onclick=\"dbgVarFilterLoad(\\'",
+        'gen !== dbgVarGen',
+        'var dbgVarGen = 0;',
+        'dbgVarGen++;',
+        // 拉过但没有命中项时要说清楚。
+        '下面没有名字含',
+        // 空态要说清楚为什么筛不到（只筛已展开的层）。
+        '只筛已展开的层',
+        // 命中片段高亮。
+        '#dbg-vars mark {',
+      ]) {
+        expect(html.contains(s), isTrue, reason: s);
+      }
+      // 顺序：调用栈 → 筛选框 → 变量区。
+      final stackAt = html.indexOf('id="dbg-stack"');
+      final filterAt = html.indexOf('id="dbg-var-filter"');
+      final varsAt = html.indexOf('id="dbg-vars"');
+      expect(stackAt, greaterThan(0));
+      expect(filterAt, greaterThan(stackAt));
+      expect(varsAt, greaterThan(filterAt));
+      // 输入筛选词只是重画：一个请求都不发（否则每敲一个字就 getObject 一整棵树）；
+      // 拉子层只走用户点 ▶ 的 dbgVarFilterLoad。
+      final paintFrom = html.indexOf('function dbgVarPaint(');
+      final paintTo = html.indexOf('function dbgVarFilterLoad(', paintFrom);
+      expect(paintFrom, greaterThan(0));
+      expect(paintTo, greaterThan(paintFrom));
+      final paint = html.substring(paintFrom, paintTo);
+      expect(paint.contains('dbgOp('), isFalse);
+    });
+
     test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[

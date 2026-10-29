@@ -11567,6 +11567,8 @@ const String guiHtml = r'''
   .dbg-fr.cur { background:#1b2532; box-shadow:inset 2px 0 0 #f0b429; }
   .dbg-fr .fn { color:var(--acc); flex:0 0 auto; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dbg-var .fn { color:#ffd479; flex:0 0 auto; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* 变量筛选：命中的那段名字高亮（深色底 + 亮字，跟 .fn 的黄字拉开层次） */
+  #dbg-vars mark { background:#4a3a00; color:#ffe9a8; padding:0 1px; border-radius:2px; font-weight:600; }
   /* 可展开的变量（对象 / List / Map）：箭头占位固定宽度，整行可点。 */
   .dbg-var.kid { cursor:pointer; }
   .dbg-var.kid:hover { background:#161b22; }
@@ -11773,6 +11775,10 @@ const String guiHtml = r'''
       <div class="card">
         <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto">刷新</button></div>
         <div id="dbg-stack" class="dbg-list" style="max-height:230px"></div>
+        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
+          <input id="dbg-var-filter" placeholder="筛选变量：名字包含即可（忽略大小写），如 count" style="flex:1;min-width:0;font-size:12px" title="模糊匹配变量名；命中项与通往它的祖先保留，其余隐藏。只筛已展开的层，Esc 清空" oninput="dbgVarFilterOnInput()" onkeydown="if(event.key==='Escape')dbgVarFilterClear()">
+          <span id="dbg-var-fstat" class="muted" style="font-size:11px;flex:0 0 auto"></span>
+        </div>
         <div id="dbg-vars" class="dbg-list" style="max-height:200px;border-top:1px solid var(--line)"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
           <input id="dbg-eval" placeholder="选中帧里求值，如 widget.runtimeType" style="flex:1;min-width:0;font-size:12px" onkeydown="if(event.key==='Enter')dbgEval()">
@@ -17737,6 +17743,8 @@ function dbgPickFrame(i){
 var dbgVarKids = {};   // path → {vars,total,truncated}：已拉过的子项（换帧即清）
 var dbgVarOpen = {};   // path → true：展开态
 var dbgVarObj = {};    // path → objectId：展开时要用的对象 id
+var dbgVarFilter = ''; // 筛选关键字（已转小写，空 = 不筛）
+var dbgVarGen = 0;     // 变量区生成号：换帧 / 刷栈 +1，异步回来发现变了就丢弃
 
 // 变量行：有 objectId 的能点开看字段 / 元素（懒加载，点一次读一层）。
 // path 是层级路径（"0" / "0-3" / "0-3-1"），只含数字和连字符，可直接进 id。
@@ -17809,19 +17817,118 @@ function dbgVarToggle(path){
 }
 
 function dbgRenderVars(){
-  var el = dbgEl('dbg-vars');
-  if (!el) return;
   // 换帧 / 刷新调用栈就重置展开态：objectId 属于上一次暂停，不能复用。
   dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {};
+  dbgVarGen++;
+  dbgVarPaint();
+}
+
+// 按当前状态重画变量区。筛选输入只是重画（不重置缓存），否则每敲一个字
+// 展开的层就会没。
+function dbgVarPaint(){
+  var el = dbgEl('dbg-vars');
+  if (!el) return;
+  var stat = dbgEl('dbg-var-fstat');
   var f = dbgFrames[dbgFrameIdx];
   var vars = (f && f.vars) || [];
   if (!vars.length) {
+    if (stat) stat.textContent = '';
     el.innerHTML = '<div class="muted" style="padding:6px">'
       + (!dbgSt.paused ? '暂停后显示局部变量与 this'
         : (dbgStackLoaded ? '没有可见变量' : '读取中…')) + '</div>';
     return;
   }
-  el.innerHTML = vars.map(function(v, i){ return dbgVarHtml(v, String(i), 0); }).join('');
+  var q = dbgVarFilter;
+  if (!q) {
+    if (stat) stat.textContent = '';
+    el.innerHTML = vars.map(function(v, i){ return dbgVarHtml(v, String(i), 0); }).join('');
+    return;
+  }
+  var cnt = {n: 0};
+  var html = vars.map(function(v, i){
+    return dbgVarMatchHtml(v, String(i), 0, q, cnt);
+  }).join('');
+  if (stat) stat.textContent = cnt.n + ' 条';
+  el.innerHTML = html || '<div class="muted" style="padding:6px">没有名字含「'
+    + esc(q) + '」的变量（只筛已展开的层，展开父节点后再试）</div>';
+}
+
+// 筛选输入：立刻重画，不发任何 getObject（只筛已展开的层）。
+function dbgVarFilterOnInput(){
+  var el = dbgEl('dbg-var-filter');
+  dbgVarFilter = ((el && el.value) || '').trim().toLowerCase();
+  dbgVarPaint();
+}
+
+function dbgVarFilterClear(){
+  var el = dbgEl('dbg-var-filter');
+  if (el) el.value = '';
+  dbgVarFilter = '';
+  dbgVarPaint();
+}
+
+// 筛选模式：只留名字命中的节点，以及通往命中节点的祖先（祖先不计数，
+// 箭头给 ▼ 表示下面是命中路径）。搜索范围是 `dbgVarKids` 里**拉过的所有层**，
+// 跟当前是否收起无关（收起不丢缓存）——所以深层字段只要展开过一次就能筛到。
+// 命中节点如果子层还没拉过，给 ▶：点一下只拉这一层（用户点才发请求），
+// 拉完就地重画，命中项就补出来了——边筛边往下钻，不用先清掉筛选。
+function dbgVarMatchHtml(v, path, depth, q, cnt){
+  var r = dbgVarKids[path];
+  var loaded = !!r;
+  var kid = !!v.objectId;
+  var kids = '';
+  if (r && r.vars && r.vars.length) {
+    kids = r.vars.map(function(c, i){
+      return dbgVarMatchHtml(c, path + '-' + i, depth + 1, q, cnt);
+    }).join('');
+  }
+  var self = String(v.name || '').toLowerCase().indexOf(q) >= 0;
+  if (!self && !kids) return '';
+  if (self) cnt.n++;
+  if (kid) dbgVarObj[path] = v.objectId;
+  var canLoad = kid && !loaded;
+  var attr = canLoad
+    ? ' onclick="dbgVarFilterLoad(\'' + path + '\')" title="点一下拉这一层，命中字段会补出来"'
+    : ' title="筛选结果：清空筛选后可点开 / 收起字段"';
+  // 拉过但下面一条都不命中：说清楚，不然会以为筛选坏了。
+  var note = (self && loaded && !kids)
+    ? '<div class="muted" style="padding:1px 6px 1px ' + (20 + depth * 14)
+      + 'px;font-size:11px">下面没有名字含「' + esc(q) + '」的字段</div>'
+    : '';
+  return '<div class="dbg-var' + (canLoad ? ' kid' : '') + '" id="dbg-v-' + path + '"'
+    + ' style="padding-left:' + (6 + depth * 14) + 'px"' + attr + '>'
+    + '<span class="arw">' + (kids ? '▼' : (canLoad ? '▶' : '')) + '</span>'
+    + '<span class="fn" title="' + esc(v.name) + '">' + dbgVarMark(v.name, q) + '</span>'
+    + '<span class="p" title="' + esc(v.value) + '">' + esc(v.value) + '</span>'
+    + (v.type ? '<span class="muted" style="font-size:11px">' + esc(v.type) + '</span>' : '')
+    + '</div>'
+    + (kids ? '<div id="dbg-kids-' + path + '">' + kids + '</div>' : '')
+    + note;
+}
+
+// 筛选态下点开一个还没拉过的命中节点：拉一层 → 记成展开 → 就地重画。
+// 只有用户点才会走到这里，输入筛选词时一个请求都不发。
+function dbgVarFilterLoad(path){
+  var objectId = dbgVarObj[path] || '';
+  if (!objectId || dbgVarKids[path]) return;
+  var gen = dbgVarGen;
+  dbgOp('getObject', {objectId: objectId}).then(function(d){
+    // 等待期间可能换了帧 / 刷新了调用栈：缓存已重置，别把上一帧的对象塞进来。
+    if (gen !== dbgVarGen) return;
+    if (!d || !d.ok) return;
+    dbgVarKids[path] = {vars: d.vars || [], total: d.total || 0, truncated: !!d.truncated};
+    dbgVarOpen[path] = true;
+    dbgVarPaint();
+  });
+}
+
+// 名字里命中的那段包 <mark>（q 已经是小写）。
+function dbgVarMark(name, q){
+  var s = String(name || '');
+  var i = q ? s.toLowerCase().indexOf(q) : -1;
+  if (i < 0) return esc(s);
+  return esc(s.slice(0, i)) + '<mark>' + esc(s.slice(i, i + q.length)) + '</mark>'
+    + esc(s.slice(i + q.length));
 }
 
 function dbgFetchStack(){
