@@ -139,11 +139,16 @@ class DeviceUnsupported implements Exception {
 
 /// 命令执行失败（有 stderr / 退出码）。
 class DeviceCommandError implements Exception {
-  DeviceCommandError(this.backend, this.command, this.message);
+  DeviceCommandError(this.backend, this.command, this.message,
+      {this.logPath});
 
   final String backend;
   final String command;
   final String message;
+
+  /// 失败现场已落盘的日志路径（启动类命令才有）：调用方据此把完整输出
+  /// 接到界面上，而不是只看到一条摘要。
+  final String? logPath;
 
   @override
   String toString() => '$backend 命令失败（$command）：$message';

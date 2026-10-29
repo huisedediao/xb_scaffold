@@ -13,6 +13,27 @@ import '../bin/src/debug/breakpoint_store.dart';
 import '../bin/src/debug/debug_client.dart';
 import '../bin/src/debug/debug_hub.dart';
 import '../bin/src/device/bridge.dart';
+import '../bin/src/device/flutter_run.dart';
+
+/// 启动直接失败的 launcher：不碰真实设备，只验证失败分支的界面反馈。
+class _ThrowingLauncher extends FlutterRunLauncher {
+  _ThrowingLauncher(this.error);
+
+  final DeviceCommandError error;
+
+  @override
+  Future<LaunchResult> launch({
+    required String device,
+    String? target,
+    String? cwd,
+    String? platform,
+    bool waitVm = true,
+    bool force = false,
+    String owner = 'mcp',
+    Duration timeout = const Duration(seconds: 180),
+  }) async =>
+      throw error;
+}
 
 void main() {
   group('readPubspecName', () {
@@ -392,6 +413,45 @@ version: 1.0.0
       expect(d['ok'], isTrue);
       expect(d['removed'], isTrue);
       expect(storeHub.store.load(root).map((b) => b.line), <int>[20]);
+    });
+  });
+
+  // 启动失败时日志已落盘，界面必须能看到（只弹一条 5 秒提示≈“什么都没打印”）。
+  group('DebugHub（启动失败）', () {
+    test('把已落盘的启动日志接到运行输出', () async {
+      final dir = Directory.systemTemp.createTempSync('xbd_hub_fail_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final log = File('${dir.path}/run.log')
+        ..writeAsStringSync('✓ Built entry-default-signed.hap\n'
+            'Connect server failed\n'
+            'Error launching application on 2LQ0224125000898.\n');
+
+      final pushed = <Map<String, Object?>>[];
+      final hub = DebugHub(
+        push: pushed.add,
+        launcher: _ThrowingLauncher(DeviceCommandError(
+          'flutter-run',
+          'flutter run',
+          '等待 VM service 超时（240s）或进程退出\n完整日志：${log.path}',
+          logPath: log.path,
+        )),
+      );
+      addTearDown(hub.dispose);
+
+      final r = await hub.handle(
+          'start', <String, Object?>{'cwd': dir.path, 'device': 'macos'});
+      expect(r['ok'], isFalse);
+      expect('${r['error']}', contains('完整日志'));
+      // 输出按 120ms 批量推：等它落到 debugOutput。
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      final lines = <String>[];
+      for (final m in pushed) {
+        if (m['type'] != 'debugOutput') continue;
+        lines.addAll((m['lines'] as List).cast<String>());
+      }
+      expect(lines.join('\n'), contains('Connect server failed'));
+      expect(lines.join('\n'), contains('Error launching application'));
+      expect(hub.status()['message'], contains('启动失败'));
     });
   });
 }

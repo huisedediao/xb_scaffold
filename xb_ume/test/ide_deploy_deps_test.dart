@@ -43,4 +43,19 @@ void main() {
     expect(Directory('bin/src').existsSync(), isTrue);
     expect(File('bin/mcp.dart').existsSync(), isTrue);
   });
+
+  test('收旧 GUI 先 SIGTERM 再 SIGKILL（不把设备日志流留成孤儿）', () {
+    // SIGKILL 不会触发 GUI 的优雅退出：它拉起的 hdc hilog / adb logcat /
+    // simctl log stream 会一直在后台，攒几天占满 hdc 连接，flutter run 的
+    // fport 就会报 Connect server failed（实发问题）。
+    final start = source.indexOf('Future<void> _killGuiProcesses()');
+    expect(start, greaterThanOrEqualTo(0), reason: '未找到 _killGuiProcesses');
+    final end = source.indexOf('\n}\n', start);
+    final body = source.substring(start, end);
+    final term = body.indexOf("'-TERM'");
+    final hard = body.indexOf("'-9'");
+    expect(term, greaterThanOrEqualTo(0), reason: '先发 SIGTERM 走优雅退出');
+    expect(hard, greaterThan(term), reason: 'SIGKILL 只能做超时兑底');
+    expect(body, contains('_anyPidAlive'), reason: '要等旧进程真的退完');
+  });
 }

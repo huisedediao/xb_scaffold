@@ -77,4 +77,41 @@ void main() {
       expect(parseDescendantPids('garbage\n\n', 10), isEmpty);
     });
   });
+
+  // 启动失败时 GUI 只拿到这一条摘要（详见输出面板）：必须取日志末尾，
+  // 开头是预启动与编译进度，真正的原因（装包 / 端口转发）总在最后。
+  group('launchFailureSummary', () {
+    test('超长输出保留末尾，丢掉开头的进度噪声', () {
+      final tail = <String>[
+        '[pre-run] \$ bash scripts/dev_run.sh --prepare --mode debug',
+        ...List<String>.filled(30, '正在编译（Hvigor assembleHap）…'),
+        'Connect server failed',
+        'Command: hdc -t 2LQ0224125000898 fport tcp:56181 tcp:41035',
+      ];
+      final s = launchFailureSummary(tail, max: 120);
+      expect(s, startsWith('…'));
+      expect(s, contains('fport tcp:56181'));
+      expect(s, isNot(contains('pre-run')));
+    });
+
+    test('hdc 端口转发失败附可执行建议', () {
+      final s = launchFailureSummary(const <String>[
+        'Error waiting for a debug connection: ProcessException: hdc returned error:',
+        'Connect server failed',
+        '  Command: .../hdc -t X fport tcp:56181 tcp:41035',
+      ]);
+      expect(s, contains('Connect server failed'));
+      expect(s, contains('hdc kill -r'));
+    });
+
+    test('其它失败不硬塞建议', () {
+      const line = 'Gradle task assembleDebug failed';
+      expect(launchFailureSummary(const <String>[line]), line);
+      expect(launchFailureAdvice(line), isNull);
+    });
+
+    test('空输出不抛异常', () {
+      expect(launchFailureSummary(const <String>[]), '');
+    });
+  });
 }

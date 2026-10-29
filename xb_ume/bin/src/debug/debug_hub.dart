@@ -452,9 +452,23 @@ class DebugHub {
         'platform': platform,
         'preRun': r.preRunCommands,
       };
+    } on DeviceCommandError catch (e) {
+      // 启动失败（编译 / 装包 / 端口转发）时输出已落在日志文件里：接到
+      // 「运行输出」，否则页面上只剩几秒的提示，真正的原因（在日志末尾）
+      // 看不到，看起来就像“什么都没打印”。
+      _followFailureLog(e.logPath);
+      _message = '启动失败：${e.message.split('\n').first}';
+      rethrow;
     } finally {
       _busy = false;
     }
+  }
+
+  /// 启动失败后把已落盘的日志接到输出面板（文件不在就算了）。
+  void _followFailureLog(String? path) {
+    if (path == null || path.isEmpty) return;
+    if (!File(path).existsSync()) return;
+    _startFollow(path, fromStart: true);
   }
 
   Future<Map<String, Object?>> _attach(Map<String, Object?> a) async {

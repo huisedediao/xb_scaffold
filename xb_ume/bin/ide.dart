@@ -565,6 +565,10 @@ bool isGuiProcessCommandLine(String cmdline) =>
     _dartExecutablePattern.hasMatch(cmdline);
 
 /// 结束本机正在运行的 GUI（按命令行精确匹配，不碰 daemon 与其他 dart 进程）。
+/// 先 SIGTERM：GUI 收到后走优雅退出，顺手收掉自己拉起的设备日志流（hdc
+/// hilog / adb logcat / simctl log stream）——这些子进程不随父进程退出，
+/// 硬杀会一直留在后台，攒几天把 hdc 的连接占满，表现为 flutter run 在
+/// fport 阶段报 `Connect server failed`。等不到退出再 SIGKILL 兜底。
 Future<void> _killGuiProcesses() async {
   try {
     if (Platform.isWindows) {
@@ -573,23 +577,54 @@ Future<void> _killGuiProcesses() async {
           "Where-Object { \$_.CommandLine -like '*ide_gui.dart*' } | "
           "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
       await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
-    } else {
-      final pgrep = await Process.run('pgrep', <String>['-f', r'ide_gui\.dart']);
-      for (final line in pgrep.stdout.toString().split('\n')) {
-        final other = int.tryParse(line.trim());
-        if (other == null || other == pid) continue;
-        // 严格复核命令行，避免误伤编辑器、grep 等同样带脚本名的进程。
-        final ps = await Process.run(
-          'ps',
-          <String>['-p', '$other', '-o', 'command='],
-        );
-        if (!isGuiProcessCommandLine(ps.stdout.toString())) continue;
+      return;
+    }
+    final targets = <int>[];
+    final pgrep = await Process.run('pgrep', <String>['-f', r'ide_gui\.dart']);
+    for (final line in pgrep.stdout.toString().split('\n')) {
+      final other = int.tryParse(line.trim());
+      if (other == null || other == pid) continue;
+      // 严格复核命令行，避免误伤编辑器、grep 等同样带脚本名的进程。
+      final ps = await Process.run(
+        'ps',
+        <String>['-p', '$other', '-o', 'command='],
+      );
+      if (!isGuiProcessCommandLine(ps.stdout.toString())) continue;
+      targets.add(other);
+    }
+    if (targets.isEmpty) return;
+    for (final other in targets) {
+      await Process.run('kill', <String>['-TERM', '$other']);
+    }
+    for (var attempt = 0; attempt < 12; attempt++) {
+      if (!await _anyPidAlive(targets)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    for (final other in targets) {
+      if (await _pidRunning(other)) {
         await Process.run('kill', <String>['-9', '$other']);
       }
     }
   } catch (_) {
     // 结束旧 GUI 失败不阻塞安装；新进程启动时会走单实例语义。
   }
+}
+
+/// 进程是否还活着（kill -0 不发信号，只探测）。
+Future<bool> _pidRunning(int target) async {
+  try {
+    final r = await Process.run('kill', <String>['-0', '$target']);
+    return r.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _anyPidAlive(List<int> targets) async {
+  for (final p in targets) {
+    if (await _pidRunning(p)) return true;
+  }
+  return false;
 }
 
 /// 探测某端口是否已有 GUI 在应答（/ping 返回 xbume-gui 指纹）。

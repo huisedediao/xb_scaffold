@@ -118,6 +118,36 @@ List<int> parseDescendantPids(String csv, int root) {
   return out;
 }
 
+/// 启动失败时给人看的摘要：取输出**末尾**。
+///
+/// 真正的原因（装包失败 / 端口转发失败 / 编译报错）几乎总在最后，而日志
+/// 开头是预启动命令与编译进度；按开头截断只剩“正在编译”，正是最没用的一段。
+String launchFailureSummary(List<String> tail, {int max = 400}) {
+  final text = tail
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .join(' ');
+  final body =
+      text.length <= max ? text : '…${text.substring(text.length - max)}';
+  final advice = launchFailureAdvice(text);
+  if (advice == null) return body;
+  return body.isEmpty ? advice : '$body\n$advice';
+}
+
+/// 常见启动失败的可执行建议（没命中返回 null）。
+String? launchFailureAdvice(String output) {
+  final t = output.toLowerCase();
+  // hdc 的连接被后台堆积的 hilog 客户端占满时，fport 会报此错：装包其实
+  // 已经成功，只是拿不到 VM service。重启 hdc server 是最快的恢复手段
+  // （会断开其它正在跑的 hdc 会话，所以只提示、不代劳）。
+  if (t.contains('connect server failed') && t.contains('fport')) {
+    return 'hdc 端口转发失败（装包通常已成功，只是拿不到 VM service）：先清掉'
+        '多余的 hdc 客户端，或执行 `hdc kill -r` 重启 hdc server（会断开其它'
+        '正在跑的 hdc 会话），再重新点启动。';
+  }
+  return null;
+}
+
 /// 一次 flutter run 的结果。
 class LaunchResult {
   LaunchResult({
@@ -615,11 +645,14 @@ class FlutterRunLauncher {
     final ready = await _waitVm(vmReady.future, exited, timeout);
     if (ready == null) {
       // 超时/早退：留进程继续跑（可能只是编译慢），把日志尾部回给调用方判断。
+      // 带上 logPath：GUI 据此把完整日志接到「运行输出」，不只给一条摘要。
       throw DeviceCommandError(
         'flutter-run',
         'flutter run',
-        '等待 VM service 超时（${timeout.inSeconds}s）或进程退出，日志：$logPath\n'
-            '${oneLine(tail.join(' '), max: 400)}',
+        '等待 VM service 超时（${timeout.inSeconds}s）或进程退出\n'
+            '${launchFailureSummary(tail)}\n'
+            '完整日志：$logPath',
+        logPath: logPath,
       );
     }
     return LaunchResult(
