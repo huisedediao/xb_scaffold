@@ -64,7 +64,7 @@ void main() {
       }
     });
 
-    test('断点卡片接上当前会话的路由栈（文件 → 源码面板 / 一键断点）', () {
+    test('断点卡片接上当前会话的路由栈（文件 → 源码面板 / IDE 跳转）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[
         'id="dbg-routes"',
@@ -74,10 +74,16 @@ void main() {
         '/api/routestack?uri=',
         '/api/routelocate?uri=',
         'function dbgSrcOpenAt(',
-        'dbgQuickBp(file, line, dbgSt.wsUri)',
+        'dbgIdeJump(j, file, line)',
       ]) {
         expect(html.contains(fn), isTrue, reason: fn);
       }
+      // 行尾只留「跳转」：原先那个「断点」按钮已去掉（用户要求），
+      // 要下断点就点文件名开下方源码面板再点行号。
+      expect(html.contains('id="dbg-rtb-'), isFalse);
+      expect(html.contains('dbgQuickBp(file, line, dbgSt.wsUri)'), isFalse);
+      // 函数本身还要留着：异常 / 网络 Tab 的「一键下断点」在用。
+      expect(html.contains('function dbgQuickBp('), isTrue);
       // 只认当前调试会话：没连会话时不能去拿页头 VM 下拉的 uri。
       expect(html.contains('先连上调试会话（启动 / 接入），再点刷新'), isTrue);
       // dbgSt.wsUri 是 flutter run 输出的 http 形态，直连 VM 的接口入口必须归一，
@@ -219,6 +225,59 @@ void main() {
         expect(html.contains(s), isTrue, reason: s);
       }
     });
+
+    test('路由栈小节显示 Widget / State / VM / Notifier，点名字开源码面板', () {
+      const html = gui.guiHtml;
+      for (final s in <String>[
+        // 第二行的容器（单独一行，第一行的 文件:行 / 跳转 不动）。
+        "+ '<div id=\"dbg-rtc-' + k + '\"",
+        'function dbgRtInfo(',
+        'function dbgSrcOpenAtEl(',
+        '/api/routeinfo?class=',
+        'if (d.className) dbgRtInfo(',
+        // 名字可点：data-* 带位置，点了就开下面源码面板（与 dbgIdeJumpEl 同一套）。
+        'onclick="dbgSrcOpenAtEl(this)"',
+        // 名字后的小 ◎ 跳实例 Tab 查对象（复用路由栈 Tab 的入口）。
+        // 源码里是拼接出来的 onclick="rtToInstances(\'…\')"，故带反斜杠。
+        "onclick=\"rtToInstances(\\'",
+        // 找不到源码的降级为灰字，不误报可点。
+        '本机项目里没找到',
+      ]) {
+        expect(html.contains(s), isTrue, reason: s);
+      }
+      // 位置由 /api/routeinfo 的 loc 提供（只有名字没法开文件）。
+      final src = File('bin/ide_gui.dart').readAsStringSync();
+      expect(src.contains("'loc': loc,"), isTrue);
+      expect(src.contains('Map<String, Map<String, Object?>> _classLocations('),
+          isTrue);
+      expect(src.contains('int? _classLineOf('), isTrue);
+    });
+
+    test('实例 Tab 上部操作区固定在顶部（不随字段树滚动）', () {
+      const html = gui.guiHtml;
+      for (final s in <String>[
+        'id="in-sticky"',
+        // main 才是滚动容器，所以用 sticky 而非 fixed；背景要遮住下面的内容。
+        '#in-sticky { position:sticky; top:0; z-index:6; background:var(--bg)',
+        // 16px 留白从 .page 挪到 sticky 自己身上：否则滚动头 16px 它会先往上挪一下。
+        '#page-instances { padding-top:0; }',
+        'padding:16px 0 2px;',
+        // 两个列表各自限高内滚，多命中 / 多条监听时不会把固定区撑满屏幕。
+        '#in-sticky #in-list { max-height:24vh; overflow:auto; }',
+        '#in-sticky .inwatch-list { max-height:18vh; overflow:auto; }',
+      ]) {
+        expect(html.contains(s), isTrue, reason: s);
+      }
+      // 查找区 / Watch / 实例列表在 sticky 块里，字段树必须在块外（要跟着滚）。
+      final stickyAt = html.indexOf('id="in-sticky"');
+      final watchAt = html.indexOf('id="in-watch-list"');
+      final listAt = html.indexOf('id="in-list"');
+      final treeAt = html.indexOf('id="in-tree"');
+      expect(stickyAt, greaterThan(0));
+      expect(watchAt, greaterThan(stickyAt));
+      expect(listAt, greaterThan(watchAt));
+      expect(treeAt, greaterThan(listAt));
+    });
   });
 
   group('调试后端接口', () {
@@ -311,6 +370,69 @@ void main() {
       expect('${d['path']}'.endsWith('/debug/run_profiles.json'), isTrue);
       // 没配这个项目：不带 profile 字段（前端显示「未配置」）。
       expect(d.containsKey('profile'), isFalse);
+    });
+
+    test('/api/routeinfo 带 loc：类名 → 文件:行（点名字才开得了文件）', () async {
+      final dir = Directory.systemTemp.createTempSync('xbume_rtinfo_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      File('${dir.path}/pubspec.yaml').writeAsStringSync('name: demo\n');
+      Directory('${dir.path}/lib').createSync();
+      final home = '${dir.path}/lib/home_page.dart';
+      final ctrls = '${dir.path}/lib/controllers.dart';
+      // 可断行的源：HomePage 在 1 行，_HomePageState 在 6 行；
+      // Controller 故意放另一个文件（第 3 行），验证会走项目类索引。
+      File(home).writeAsStringSync(
+        'class HomePage extends XBPage<HomeController> {\n'
+        '  @override\n'
+        '  State<HomePage> createState() => _HomePageState();\n'
+        '}\n'
+        '\n'
+        'class _HomePageState extends State<HomePage> {\n'
+        '  @override\n'
+        '  Widget build(BuildContext context) => const SizedBox();\n'
+        '}\n',
+      );
+      File(ctrls).writeAsStringSync(
+        '// controllers\n'
+        '\n'
+        'class HomeController extends ChangeNotifier {}\n',
+      );
+
+      final client = HttpClient();
+      final Map<String, Object?> d;
+      try {
+        final req = await client.getUrl(Uri.parse(
+          'http://127.0.0.1:$port/api/routeinfo'
+          '?class=HomePage&file=${Uri.encodeQueryComponent(home)}',
+        ));
+        req.headers.set('x-xbume-token', token);
+        final resp = await req.close();
+        final text = await utf8.decoder.bind(resp).join();
+        expect(resp.statusCode, 200, reason: text);
+        d = jsonDecode(text) as Map<String, Object?>;
+      } finally {
+        client.close(force: true);
+      }
+
+      expect(d['ok'], isTrue);
+      expect(d['state'], '_HomePageState');
+      expect(d['cn'], contains('HomeController'));
+      // 既有字段一个不少（路由栈 Tab 还在用）。
+      expect(d['widget'], 'HomePage');
+      expect(d['vm'], isA<List<Object?>>());
+
+      final loc = (d['loc'] as Map).cast<String, Object?>();
+      expect(loc.keys,
+          containsAll(<String>['HomePage', '_HomePageState', 'HomeController']));
+      final w = (loc['HomePage'] as Map).cast<String, Object?>();
+      expect(w['file'], home);
+      expect(w['line'], 1);
+      final st = (loc['_HomePageState'] as Map).cast<String, Object?>();
+      expect(st['file'], home);
+      expect(st['line'], 6);
+      final cn = (loc['HomeController'] as Map).cast<String, Object?>();
+      expect(cn['file'], ctrls);
+      expect(cn['line'], 3);
     });
   });
 }

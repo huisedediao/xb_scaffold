@@ -1508,6 +1508,12 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       try {
         (state, vmList, cnList) = _routeStateAndNotifier(file, cls);
       } catch (_) {}
+      // 每个类的声明位置：断点卡片的路由栈小节要“点名字就在下方源码面板
+      // 打开并定位”（点行号即下断点）。只有名字没法开文件，所以一并给出。
+      var loc = const <String, Map<String, Object?>>{};
+      try {
+        loc = _classLocations(file, cls, state, vmList, cnList);
+      } catch (_) {}
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'ok': true,
@@ -1515,6 +1521,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'state': state,
         'vm': vmList,
         'cn': cnList,
+        'loc': loc,
       }));
       await req.response.close();
       return;
@@ -10772,6 +10779,67 @@ String? _superClassOf(String src, String clsName) {
   return RegExp(r'\bextends\s+([A-Za-z_$][\w$]*)').firstMatch(decl)?.group(1);
 }
 
+/// 源码中类 <clsName> 的声明行号（1 起）；找不到返回 null。
+///
+/// 匹配规则与 [_classBodyOf] 一致（允许 abstract/base/final/sealed 前缀）。
+int? _classLineOf(String src, String clsName) {
+  final m = RegExp(
+          '(?:^|\\s)(?:abstract\\s+|base\\s+|final\\s+|sealed\\s+|mixin\\s+)*class\\s+'
+          '${RegExp.escape(clsName)}[\\s<]')
+      .firstMatch(src);
+  if (m == null) return null;
+  // 匹配可以空白开头，行号按 class 关键字本身算。
+  final at = src.indexOf('class', m.start);
+  if (at < 0) return null;
+  var line = 1;
+  for (var i = 0; i < at; i++) {
+    if (src.codeUnitAt(i) == 0x0A) line++;
+  }
+  return line;
+}
+
+/// 类名 → 本机源码位置（`file` + `line`），供断点卡片的路由栈小节
+/// “点名字就在下方源码面板打开”用。
+///
+/// State 多与 widget 同文件，所以先试 widgetFile；VM / ChangeNotifier 常
+/// 在单独文件，统一走 [_clsFileIndexFor] 的项目类索引（按项目根缓存）。
+/// 找不到源码的类（在依赖包 / SDK 里）不进结果，前端据此降级为灰字。
+Map<String, Map<String, Object?>> _classLocations(
+    String widgetFile, String widgetCls, String stateName,
+    List<String> vmList, List<String> cnList) {
+  final out = <String, Map<String, Object?>>{};
+  final root = _pubspecRootFor(widgetFile);
+  final idx = root == null ? const <String, String>{} : _clsFileIndexFor(root);
+
+  void put(String cls, List<String?> prefers) {
+    if (cls.isEmpty || out.containsKey(cls)) return;
+    final seen = <String>{};
+    for (final f in <String?>[...prefers, idx[cls]]) {
+      if (f == null || !seen.add(f)) continue;
+      String src;
+      try {
+        src = File(f).readAsStringSync();
+      } catch (_) {
+        continue;
+      }
+      final line = _classLineOf(src, cls);
+      if (line == null) continue;
+      out[cls] = <String, Object?>{'file': f, 'line': line};
+      return;
+    }
+  }
+
+  put(widgetCls, <String?>[widgetFile]);
+  if (stateName.isNotEmpty) put(stateName, <String?>[widgetFile]);
+  for (final v in vmList) {
+    put(v, const <String?>[]);
+  }
+  for (final c in cnList) {
+    put(c, const <String?>[]);
+  }
+  return out;
+}
+
 /// 从 widget / State 源码收集 XBVM 与 ChangeNotifier 类名（去重保序）。
 ///
 /// 依次探测：声明处泛型实参、generateVM 返回类型与构造调用、字段类型、
@@ -11355,6 +11423,15 @@ const String guiHtml = r'''
   .inwatch input, .inwatch select { font-size:12px; }
   .inwatch-list { margin-top:6px; }
   .inwatch-list .wrow { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; padding:3px 0; border-top:1px dashed var(--line); }
+  /* 实例 Tab：上部操作区贴顶（main 才是滚动容器），字段树滚动时不跟着滚走。
+     背景色必须不透明，否则下面内容会透出来；两个列表限高内滚，避免多命中 /
+     多条监听时固定区把屏幕占满。
+     padding-top 从 .page 挪到 sticky 自己身上：sticky 元素的原始 y 必须是 0，
+     否则滚动头 16px 它会先跟着内容往上挪一下再粘住。 */
+  #page-instances { padding-top:0; }
+  #in-sticky { position:sticky; top:0; z-index:6; background:var(--bg); padding:16px 0 2px; }
+  #in-sticky #in-list { max-height:24vh; overflow:auto; }
+  #in-sticky .inwatch-list { max-height:18vh; overflow:auto; }
   .tl-detail { padding:6px 12px 10px 22px; background:#161b22; border-left:3px solid var(--line); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   .tl-detail a { color:#58a6ff; text-decoration:none; }
   .tl-detail a:hover { text-decoration:underline; }
@@ -11884,6 +11961,10 @@ const String guiHtml = r'''
     <div class="muted" style="margin-top:6px">候选类 = Element 树上挂着的 ChangeNotifier（State 本身是 CN 的，如框架控制器）+ 手动输入；实例数 = GC 后堆扫描（getClassList + getInstances totalCount）；监听者数读 _listeners 的非 Null 槽（老版 SDK 读 _count 字段），读不到显示 ?；字段摘要取第一个实例。同类的多个实例状态可能不同，展开全量与实时查看点类名跳「实例」Tab。</div>
   </section>
   <section class="page" id="page-instances">
+    <!-- 上部操作区 sticky（main 是滚动容器）：字段树很长时查找 / Watch / 实例
+         列表始终可见，不用滚回顶部。两个列表各自限高内滚，避免多命中时
+         把屏幕占满（见 #in-sticky 的 CSS）。 -->
+    <div id="in-sticky">
     <div style="display:flex;align-items:center;gap:10px">
       <button onclick="inLoadStores()" title="列出 app 端 XBUme.registerStore 注册的实例">注册表 Store</button>
       <input id="in-cls" placeholder="类名（如 CounterState / UserNotifier）" style="width:260px" onkeydown="if(event.key==='Enter')inFind()">
@@ -11911,6 +11992,7 @@ const String guiHtml = r'''
       <div id="in-watch-list" class="inwatch-list"></div>
     </div>
     <div id="in-list" style="margin-top:8px"></div>
+    </div>
     <div id="in-tree" style="margin-top:8px"></div>
     <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。「Watch 监听」按间隔轮询字段/表达式，值变化写入时间轴；条件表达式成立时自动截图（落盘 scenarios/artifacts）。</div>
   </section>
@@ -17888,8 +17970,8 @@ function dbgRtLoad(btn){
           + '<span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + cur + type + '</span>'
           + '<a href="javascript:void(0)" id="dbg-rtf-' + k + '" class="muted" style="flex:0 0 auto">定位中…</a>'
           + '<a href="javascript:void(0)" id="dbg-rtj-' + k + '" class="muted" style="flex:0 0 auto;display:none">跳转</a>'
-          + '<span id="dbg-rtb-' + k + '" style="flex:0 0 auto"></span>'
-          + '</div>';
+          + '</div>'
+          + '<div id="dbg-rtc-' + k + '" style="display:none;font-size:12px;padding:0 0 2px 34px"></div>';
       }).join('');
       flat.forEach(function(it, k){ dbgRtLocate(uri, it, k); });
     })
@@ -17903,7 +17985,6 @@ function dbgRtLocate(uri, it, k){
     .then(function(r){ return r.json(); })
     .then(function(d){
       var a = dbgEl('dbg-rtf-' + k);
-      var b = dbgEl('dbg-rtb-' + k);
       if (!a) return;
       if (!d || d.error || !d.file) {
         a.className = 'muted';
@@ -17926,15 +18007,51 @@ function dbgRtLocate(uri, it, k){
         j.title = '用配置的 IDE 打开 ' + file + (line ? ':' + line : '');
         j.onclick = function(){ dbgIdeJump(j, file, line); };
       }
-      if (b) {
-        b.innerHTML = '<a href="javascript:void(0)" title="直接在这一行下断点">断点</a>';
-        if (b.firstChild) b.firstChild.onclick = function(){ dbgQuickBp(file, line, dbgSt.wsUri); };
-      }
+      // Widget / State / VM / Notifier：单独一行，点名字在下方源码面板打开。
+      if (d.className) dbgRtInfo(k, String(d.className), file);
     })
     .catch(function(e){
       var a = dbgEl('dbg-rtf-' + k);
       if (a) { a.className = 'muted'; a.textContent = '定位失败'; a.title = String(e); }
     });
+}
+
+// Widget / State / VM / Notifier（与路由栈 Tab 同一套 /api/routeinfo 静态解析）。
+// 每个类名点了就在下方源码面板打开并定到声明行（点行号即下断点）；名字后的
+// 小 ◎ 跳「实例」Tab 查对象。位置来自 loc，找不到源码的降级为灰字不可点。
+function dbgRtInfo(k, cls, file){
+  fetch('/api/routeinfo?class=' + encodeURIComponent(cls) + '&file=' + encodeURIComponent(file))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var box = dbgEl('dbg-rtc-' + k);
+      if (!box || !d || !d.ok) return;
+      var loc = d.loc || {};
+      var names = [];
+      if (d.widget) names.push(d.widget);
+      if (d.state) names.push(d.state);
+      (d.vm || []).forEach(function(n){ if (n) names.push(n); });
+      (d.cn || []).forEach(function(n){ if (n) names.push(n); });
+      var parts = names.map(function(nm){
+        var safe = escAttr(nm);
+        var inst = '<a href="javascript:void(0)" class="muted" style="font-size:11px;text-decoration:none"'
+          + ' title="在「实例」Tab 查找 ' + safe + ' 的对象"'
+          + ' onclick="rtToInstances(\'' + safe + '\')">◎</a>';
+        var at = loc[nm];
+        if (at && at.file) {
+          var pos = at.file + (at.line ? ':' + at.line : '');
+          return '<a href="javascript:void(0)" style="font-family:monospace"'
+            + ' title="' + escAttr(pos + '（点开下方源码面板，点行号即下断点）') + '"'
+            + ' data-file="' + escAttr(at.file) + '" data-line="' + (at.line || 0) + '"'
+            + ' onclick="dbgSrcOpenAtEl(this)">' + esc(nm) + '</a>' + inst;
+        }
+        return '<span class="muted" title="本机项目里没找到 ' + safe + ' 的源码（可能在依赖包 / SDK）">'
+          + esc(nm) + '</span>' + inst;
+      });
+      if (!parts.length) return;
+      box.style.display = '';
+      box.innerHTML = parts.join(' <span class="muted">/</span> ');
+    })
+    .catch(function(){});
 }
 
 // 绝对路径 → 项目内相对路径；前缀对不上时按后缀在候选里兑一个（防符号链接差异）。
@@ -18012,6 +18129,13 @@ function dbgSrcOpenAt(file, line){
   } else {
     load();
   }
+}
+
+// 行内链接统一入口：参数走 data-file / data-line（与 dbgIdeJumpEl 同一套）。
+function dbgSrcOpenAtEl(el){
+  if (!el) return;
+  dbgSrcOpenAt(el.getAttribute('data-file') || '',
+    parseInt(el.getAttribute('data-line'), 10) || 0);
 }
 
 function dbgSrcClose(){
