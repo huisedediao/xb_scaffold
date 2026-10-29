@@ -17746,6 +17746,7 @@ var dbgVarOpen = {};   // path → true：展开态
 var dbgVarObj = {};    // path → objectId：展开时要用的对象 id
 var dbgVarFilter = ''; // 筛选关键字（已转小写，空 = 不筛）
 var dbgVarMine = true; // 只看自己项目里声明的字段（框架 / 依赖字段收起计数）
+var dbgVarFold = {};   // path → false：筛选结果里这一段收起了（默认展开）
 var dbgVarGen = 0;     // 变量区生成号：换帧 / 刷栈 +1，异步回来发现变了就丢弃
 // 全量筛选：输入停下 300ms 后按 BFS 把整棵树拉下来（getObject），边拉边重画。
 // seq 一变（改词 / 清空 / 换帧）在跑的扫描就自行退出；对象数与深度都有上限。
@@ -17827,7 +17828,7 @@ function dbgVarToggle(path){
 
 function dbgRenderVars(){
   // 换帧 / 刷新调用栈就重置展开态：objectId 属于上一次暂停，不能复用。
-  dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {};
+  dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {}; dbgVarFold = {};
   dbgVarGen++;
   dbgVarScanAbort();
   dbgVarPaint();
@@ -17902,6 +17903,7 @@ function dbgVarFilterClear(){
   var el = dbgEl('dbg-var-filter');
   if (el) el.value = '';
   dbgVarFilter = '';
+  dbgVarFold = {};
   dbgVarScanAbort();
   dbgVarPaint();
 }
@@ -17944,24 +17946,40 @@ function dbgVarMatchHtml(v, path, depth, q, cnt){
   if (self) cnt.n++;
   if (kid) dbgVarObj[path] = v.objectId;
   var canLoad = kid && !loaded;
-  var attr = canLoad
-    ? ' onclick="dbgVarFilterLoad(\'' + path + '\')" title="点一下拉这一层，命中字段会补出来"'
-    : ' title="筛选结果：清空筛选后可点开 / 收起字段"';
+  var folded = dbgVarFold[path] === false;
+  // 收起只是不渲染；cnt 上面已经递归算完，不然一条条收起会看到「3 条」变「1 条」。
+  var shown = folded ? '' : kids;
+  var attr;
+  if (canLoad) {
+    attr = ' onclick="dbgVarFilterLoad(\'' + path + '\')" title="点一下拉这一层，命中字段会补出来"';
+  } else if (kids) {
+    attr = ' onclick="dbgVarFoldToggle(\'' + path + '\')" title="'
+      + (folded ? '点一下展开命中项' : '点一下收起这一段') + '"';
+  } else {
+    attr = ' title="筛选结果：清空筛选后可点开 / 收起字段"';
+  }
   // 拉过但下面一条都不命中：说清楚，不然会以为筛选坏了。扫描中先不说，
   // 因为它自己马上会把子层拉下来。
   var note = (self && loaded && !kids && !dbgVarScanSt.run)
     ? '<div class="muted" style="padding:1px 6px 1px ' + (20 + depth * 14)
       + 'px;font-size:11px">下面没有名字含「' + esc(q) + '」的字段</div>'
     : '';
-  return '<div class="dbg-var' + (canLoad ? ' kid' : '') + '" id="dbg-v-' + path + '"'
+  var arrow = kids ? (folded ? '▶' : '▼') : (canLoad ? '▶' : '');
+  return '<div class="dbg-var' + (canLoad || kids ? ' kid' : '') + '" id="dbg-v-' + path + '"'
     + ' style="padding-left:' + (6 + depth * 14) + 'px"' + attr + '>'
-    + '<span class="arw">' + (kids ? '▼' : (canLoad ? '▶' : '')) + '</span>'
+    + '<span class="arw">' + arrow + '</span>'
     + '<span class="fn" title="' + esc(v.name) + '">' + dbgVarMark(v.name, q) + '</span>'
     + '<span class="p" title="' + esc(v.value) + '">' + esc(v.value) + '</span>'
     + (v.type ? '<span class="muted" style="font-size:11px">' + esc(v.type) + '</span>' : '')
     + '</div>'
-    + (kids ? '<div id="dbg-kids-' + path + '">' + kids + '</div>' : '')
+    + (shown ? '<div id="dbg-kids-' + path + '">' + shown + '</div>' : '')
     + note;
+}
+
+// 筛选结果里收起 / 展开一段：只改这份折叠表，不碰普通树的展开态。
+function dbgVarFoldToggle(path){
+  dbgVarFold[path] = dbgVarFold[path] === false;
+  dbgVarPaint();
 }
 
 // 筛选态下点开一个还没拉过的命中节点：拉一层 → 记成展开 → 就地重画。

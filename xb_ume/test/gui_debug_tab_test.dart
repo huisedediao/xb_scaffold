@@ -269,6 +269,13 @@ void main() {
         // 扫描不往框架对象（Element / RenderObject 子树）里钻。
         'dbgVarMine && c.fw',
         'dbgVarMine && v.fw',
+        // 筛选结果也要能收起：一份独立的折叠表，不碰普通树的展开态；
+        // 收起只影响渲染，命中数仍按整棵算（否则会看到「3 条」变「1 条」）。
+        'var dbgVarFold = {};',
+        'function dbgVarFoldToggle(',
+        'dbgVarFold[path] = dbgVarFold[path] === false;',
+        'var folded = dbgVarFold[path] === false;',
+        "var shown = folded ? '' : kids;",
         // 命中片段高亮。
         '#dbg-vars mark {',
       ]) {
@@ -290,10 +297,11 @@ void main() {
       expect(paintTo, greaterThan(paintFrom));
       final paint = html.substring(paintFrom, paintTo);
       expect(paint.contains('dbgOp('), isFalse);
-      // 换帧 / 刷栈要作废在跑的扫描（objectId 属于上一次暂停）。
+      // 换帧 / 刷栈要作废在跑的扫描（objectId 属于上一次暂停），顺手清折叠表。
       final renderFrom = html.indexOf('function dbgRenderVars(');
       final render = html.substring(renderFrom, html.indexOf('function dbgVarPaint(', renderFrom));
       expect(render.contains('dbgVarScanAbort()'), isTrue);
+      expect(render.contains('dbgVarFold = {};'), isTrue);
       // 后端得把「字段声明在谁的库」「值是不是框架对象」传上来，否则前端分不清噪音。
       final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
       expect(hub.contains("if (!v.own) 'own': false,"), isTrue);
