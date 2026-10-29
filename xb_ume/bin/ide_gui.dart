@@ -11538,10 +11538,74 @@ const String guiHtml = r'''
   .pf-memtable tr:last-child td { border-bottom:none; }
   .pf-memtable .bar { height:6px; background:#1d2735; border-radius:3px; overflow:hidden; }
   .pf-memtable .bar i { display:block; height:6px; background:var(--acc); }
-  /* 调试 Tab：左断点 / 右调用栈变量，底部运行输出；浮动工具条全局置底 */
-  .dbg-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  @media (max-width:1000px) { .dbg-cols { grid-template-columns:1fr; } }
+  /* 调试 Tab：VS Code 式一屏布局——左栏断点 / 路由栈 / 已记住（左侧栏），
+     中栏调用栈 + 变量 + 求值（主区），右栏源码（编辑器），底部运行输出（调试控制台）。
+     整页不滚，每个面板只在自己框里滚，不再用固定 max-height 一路堆卡片。 */
+  #page-debug.active { display:flex; flex-direction:column; gap:10px; height:100%; min-height:0; overflow:hidden; }
+  #page-debug .card { margin-bottom:0; padding:8px 12px; }
+  #page-debug .row { margin-bottom:6px; gap:8px; }
+  #page-debug button { padding:4px 9px; font-size:12px; }
+  .dbg-tools { flex:0 0 auto; }
+  .dbg-main { flex:1 1 auto; display:flex; gap:10px; min-height:0; }
+  /* 三栏共用：内部滚动，绝不把自己撑得比父级高 */
+  .dbg-col { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  /* 左栏整体可滚：窗口不够高时侧栏自己滚，绝不把断点输入区 / 列表压没 */
+  .dbg-side { flex:0 0 300px; gap:10px; overflow:auto; }
+  .dbg-side > .card { display:flex; flex-direction:column; min-height:0; }
+  .dbg-side > .dbg-bpcard { flex:1 1 auto; min-height:190px; }
+  .dbg-side > .dbg-sec { flex:0 0 auto; }
+  /* 窄栏里的行一律允许换行，按钮不把状态文字挤成一条缝 */
+  .dbg-side .row { flex-wrap:wrap; }
+  .dbg-varcol { flex:1 1 420px; }
+  #dbg-src-card { flex:1.05 1 460px; min-width:340px; }
+  /* 断点输入：窄栏里两列排（路径 + 行号 / 条件 + 日志），否则五个控件各占一行把列表挤没 */
+  .dbg-bpadd { display:flex; flex-direction:column; gap:6px; margin-bottom:6px; }
+  .dbg-bprow { display:flex; gap:6px; min-width:0; }
+  .dbg-bprow #dbg-bp-line { flex:0 0 72px; }
+  .dbg-bpadd input, .dbg-bpadd button { width:auto; min-width:0; margin:0; font-size:12px; padding:4px 8px; }
+  .dbg-bpadd input { flex:1 1 0; }
+  .dbg-bpadd button { flex:1 1 0; }
+  /* 源码面板的文件 / 条件 / 日志：右栏窄，同样两列排（文件名整行） */
+  .dbg-srcadd { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:6px; margin-bottom:6px; }
+  .dbg-srcadd #dbg-src-file { grid-column:1 / -1; }
+  .dbg-srcadd input { width:auto; min-width:0; margin:0; font-size:12px; padding:4px 8px; }
+  /* 工具条：运行配置 / 接入会话并成一行（宽屏） */
+  .dbg-tools2 { display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; }
+  #page-debug .dbg-tools2 > .row { flex:1 1 400px; margin-bottom:0; }
+  #dbg-bps { flex:1 1 auto; max-height:none; min-height:52px; }
+  #dbg-routes { max-height:16vh; min-height:40px; }
+  #dbg-saved { max-height:13vh; min-height:34px; }
+  #dbg-stack { flex:0 0 auto; max-height:min(24vh,200px); min-height:56px; }
+  #dbg-vars { flex:1 1 auto; max-height:none; min-height:60px; margin-top:6px; padding-top:4px; border-top:1px solid var(--line); }
+  #dbg-eval-out { flex:0 0 auto; max-height:76px; }
+  #dbg-src-code { flex:1 1 auto; max-height:none; min-height:0; }
+  .dbg-outcard { flex:0 0 auto; height:clamp(140px,22vh,220px); display:flex; flex-direction:column; }
+  .dbg-outcard > #dbg-out { flex:1 1 auto; height:auto; min-height:0; }
   .dbg-list { max-height:260px; overflow:auto; font-size:12px; }
+  /* 小屏 / 窄窗口：退回上下堆叠，整页开始滚（保证不会把面板压成一条缝） */
+  @media (max-width:1180px) {
+    #page-debug.active { height:auto; overflow:visible; }
+    .dbg-main { flex-wrap:wrap; }
+    .dbg-side { flex:1 1 100%; flex-direction:row; }
+    .dbg-side > .card { flex:1 1 260px; }
+    .dbg-varcol { flex:1 1 100%; }
+    #dbg-src-card { flex:1 1 100%; }
+    #dbg-stack { max-height:34vh; }
+    #dbg-vars { max-height:40vh; }
+    #dbg-bps { max-height:40vh; }
+    #dbg-src-code { max-height:60vh; }
+    .dbg-outcard { height:auto; }
+    .dbg-outcard > #dbg-out { height:30vh; }
+  }
+  /* 窗口矮（笔记本电脑分屏）：一屏装不下就退回整页滚，保证断点区不被压成一条 */
+  @media (max-height:840px) and (min-width:1181px) {
+    #page-debug.active { height:auto; overflow:visible; }
+    .dbg-main { min-height:520px; }
+    #dbg-vars { max-height:40vh; }
+    #dbg-src-code { max-height:60vh; }
+    .dbg-outcard { height:auto; }
+    .dbg-outcard > #dbg-out { height:22vh; }
+  }
   .dbg-bp, .dbg-fr, .dbg-var { display:flex; align-items:center; gap:8px; padding:4px 6px; border-bottom:1px dashed var(--line); }
   .dbg-bp .dot { width:7px; height:7px; border-radius:50%; background:#46d68c; flex:0 0 auto; }
   .dbg-bp.unres .dot { background:#e5484d; }
@@ -11550,7 +11614,7 @@ const String guiHtml = r'''
   .dbg-bp .cond { color:#ffd479; flex:0 0 auto; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dbg-bp .x { color:#8aa0b4; cursor:pointer; padding:0 3px; flex:0 0 auto; }
   .dbg-bp .x:hover { color:var(--acc); }
-  #dbg-src-code { font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:4px 0; margin-top:6px; max-height:54vh; min-height:200px; overflow:auto; }
+  #dbg-src-code { font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:4px 0; margin-top:6px; overflow:auto; }
   .dbg-cl { display:flex; white-space:pre; }
   .dbg-cl .no { flex:0 0 auto; width:52px; text-align:right; padding-right:10px; color:#5b6b7c; cursor:pointer; user-select:none; }
   .dbg-cl .no:hover { color:var(--acc); background:#161b22; }
@@ -11573,7 +11637,7 @@ const String guiHtml = r'''
   .dbg-var.kid { cursor:pointer; }
   .dbg-var.kid:hover { background:#161b22; }
   .dbg-var .arw { flex:0 0 auto; width:11px; text-align:center; color:var(--dim); font-size:9px; }
-  #dbg-out { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; height:34vh; min-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+  #dbg-out { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
   #dbg-bar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:96; display:none; align-items:center; flex-wrap:nowrap; gap:6px; padding:6px 8px 6px 12px; background:#0e1620; border:1px solid var(--line); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.55); }
   #dbg-bar.on { display:flex; }
   #dbg-bar.paused { border-color:#f0b429; }
@@ -11707,7 +11771,8 @@ const String guiHtml = r'''
     </div>
   </section>
   <section class="page" id="page-debug">
-    <div class="card">
+    <!-- 顶部工具条：会话 / 目录 / 设备 / 运行配置 / 接入（对应 VS Code 调试视图顶部） -->
+    <div class="card dbg-tools">
       <div class="row">
         <b>调试会话</b>
         <span id="dbg-stat" class="muted">未连接</span>
@@ -11728,80 +11793,106 @@ const String guiHtml = r'''
         <button class="primary" onclick="dbgStart(this)">启动 / 复用</button>
         <button onclick="dbgStop(this)" title="只停本工具（GUI/MCP）拉起的 flutter run，按精确 PID 停">停止</button>
       </div>
-      <div class="row" style="margin-top:4px;gap:8px;flex-wrap:wrap">
-        <b style="font-size:12px" title="项目级运行配置：启动前要跑的准备命令、按平台追加给 flutter run 的参数、停止后的清理（run_profiles.json，按项目根生效）">运行配置</b>
-        <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
-        <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
-        <button onclick="dbgProfileOpen()" style="flex:0 0 auto" title="打开 run_profiles.json（只读摘要来自它：预启动命令 / 额外参数 / 停止清理）">打开配置</button>
-      </div>
-      <div class="row" style="margin-top:4px;gap:10px;flex-wrap:nowrap">
-        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
-          <select id="dbg-attach" style="flex:1;min-width:0;margin-left:6px"></select>
-        </label>
-        <button onclick="dbgAttach(this)">接入</button>
-        <button onclick="dbgDetach(this)" title="只断开调试连接，app 继续跑">断开</button>
+      <!-- 运行配置与接入会话：宽屏并排一行，窄屏自动折行 -->
+      <div class="dbg-tools2" style="margin-top:4px">
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <b style="font-size:12px" title="项目级运行配置：启动前要跑的准备命令、按平台追加给 flutter run 的参数、停止后的清理（run_profiles.json，按项目根生效）">运行配置</b>
+          <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
+          <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
+          <button onclick="dbgProfileOpen()" style="flex:0 0 auto" title="打开 run_profiles.json（只读摘要来自它：预启动命令 / 额外参数 / 停止清理）">打开配置</button>
+        </div>
+        <div class="row" style="gap:10px;flex-wrap:nowrap">
+          <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
+            <select id="dbg-attach" style="flex:1;min-width:0;margin-left:6px"></select>
+          </label>
+          <button onclick="dbgAttach(this)">接入</button>
+          <button onclick="dbgDetach(this)" title="只断开调试连接，app 继续跑">断开</button>
+        </div>
       </div>
       <div class="muted" style="margin-top:6px;font-size:12px;line-height:1.6">
         启动走 <code>flutter run</code>（与 AI 的 <code>xbume_app_launch</code> 同一条链路）：已在跑的会话直接<b>复用</b>，不重装包，AI 也能复用这里起的会话。
         接入的外部会话（IDE 拉起的）可打断点/单步，热重载请回 IDE 按 <code>r</code>。断点只调 VM service，不改源码、不需编辑器。
       </div>
     </div>
-    <div class="dbg-cols">
-      <div class="card">
-        <div class="row"><b>断点</b><span id="dbg-bp-n" class="muted" style="font-size:12px"></span><button onclick="dbgSrcOpen()" style="margin-left:auto" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button><button onclick="dbgListBp(this)">刷新</button></div>
-        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px">
-          <input id="dbg-bp-path" placeholder="路径，可相对项目根：lib/main.dart" style="flex:1 1 190px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <input id="dbg-bp-line" placeholder="行号" style="width:70px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <input id="dbg-bp-cond" placeholder="条件（可空）" style="flex:0 1 120px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <input id="dbg-bp-log" placeholder="日志表达式（命中不暂停，如 'i=$i'）" style="flex:1 1 200px;font-size:12px" onkeydown="if(event.key==='Enter')dbgAddBp()">
-          <button class="primary" id="dbg-bp-add" onclick="dbgAddBp(this)">加断点</button>
-          <button id="dbg-bp-cancel" onclick="dbgCancelBpEdit()" style="display:none" title="放弃修改，回到新加断点">取消</button>
+    <div class="dbg-main">
+      <!-- 左栏：断点 / 路由栈 / 已记住（VS Code 左侧栏） -->
+      <div class="dbg-side dbg-col">
+        <div class="card dbg-bpcard">
+          <div class="row">
+            <b>断点</b>
+            <span id="dbg-bp-n" class="muted" style="font-size:12px"></span>
+            <button onclick="dbgSrcOpen()" style="margin-left:auto" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button>
+            <button onclick="dbgListBp(this)">刷新</button>
+          </div>
+          <div class="dbg-bpadd">
+            <div class="dbg-bprow">
+              <input id="dbg-bp-path" placeholder="路径，可相对项目根：lib/main.dart" onkeydown="if(event.key==='Enter')dbgAddBp()">
+              <input id="dbg-bp-line" placeholder="行号" onkeydown="if(event.key==='Enter')dbgAddBp()">
+            </div>
+            <div class="dbg-bprow">
+              <input id="dbg-bp-cond" placeholder="条件（可空）" onkeydown="if(event.key==='Enter')dbgAddBp()">
+              <input id="dbg-bp-log" placeholder="日志表达式（命中不暂停，如 'i=$i'）" onkeydown="if(event.key==='Enter')dbgAddBp()">
+            </div>
+            <div class="dbg-bprow">
+              <button class="primary" id="dbg-bp-add" onclick="dbgAddBp(this)">加断点</button>
+              <button id="dbg-bp-cancel" onclick="dbgCancelBpEdit()" style="display:none" title="放弃修改，回到新加断点">取消</button>
+            </div>
+          </div>
+          <div id="dbg-bps" class="dbg-list"></div>
         </div>
-        <div id="dbg-bps" class="dbg-list"></div>
-        <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;gap:6px">
-          <b style="font-size:12px">路由栈</b>
-          <span id="dbg-rt-n" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">刷新后列出当前会话的路由与文件：点文件在下方源码面板打开，点「断点」直接下</span>
-          <button onclick="dbgRtLoad(this)" style="flex:0 0 auto" title="读取当前调试会话的 Navigator 路由栈，并列出每条路由对应的源码文件">刷新</button>
+        <div class="card dbg-sec">
+          <div class="row" style="gap:6px">
+            <b style="font-size:12px">路由栈</b>
+            <button onclick="dbgRtLoad(this)" style="margin-left:auto;flex:0 0 auto" title="读取当前调试会话的 Navigator 路由栈，并列出每条路由对应的源码文件">刷新</button>
+          </div>
+          <div id="dbg-rt-n" class="muted" style="font-size:11px;line-height:1.4;margin-bottom:4px">刷新后列出当前会话的路由与文件：点文件在下方源码面板打开，点「断点」直接下</div>
+          <div id="dbg-routes" class="dbg-list"></div>
         </div>
-        <div id="dbg-routes" class="dbg-list" style="max-height:150px"></div>
-        <div class="row" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px;gap:6px">
-          <b style="font-size:12px">已记住</b>
-          <span id="dbg-saved-n" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">重连同一项目自动恢复</span>
-          <button onclick="dbgLoadSaved(this)" style="flex:0 0 auto">刷新</button>
-          <button onclick="dbgShowAllSaved(this)" title="按项目根分组列出所有项目记住的断点（换项目后也能看见/清理）" style="flex:0 0 auto">全部项目</button>
-          <button onclick="dbgForgetSaved(this)" title="清空该项目记住的断点，下次连接不再自动恢复（不影响当前会话里的断点）" style="flex:0 0 auto">忘记</button>
+        <div class="card dbg-sec">
+          <div class="row" style="gap:6px">
+            <b style="font-size:12px">已记住</b>
+            <button onclick="dbgLoadSaved(this)" style="margin-left:auto;flex:0 0 auto">刷新</button>
+            <button onclick="dbgShowAllSaved(this)" title="按项目根分组列出所有项目记住的断点（换项目后也能看见/清理）" style="flex:0 0 auto">全部项目</button>
+            <button onclick="dbgForgetSaved(this)" title="清空该项目记住的断点，下次连接不再自动恢复（不影响当前会话里的断点）" style="flex:0 0 auto">忘记</button>
+          </div>
+          <div id="dbg-saved-n" class="muted" style="font-size:11px;line-height:1.4;margin-bottom:4px">重连同一项目自动恢复</div>
+          <div id="dbg-saved" class="dbg-list"></div>
         </div>
-        <div id="dbg-saved" class="dbg-list" style="max-height:150px"></div>
       </div>
-      <div class="card">
+      <!-- 中栏：调用栈 / 变量 / 求值（主区，变量树吃掉剩余高度） -->
+      <div class="card dbg-varcol dbg-col">
         <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto">刷新</button></div>
-        <div id="dbg-stack" class="dbg-list" style="max-height:230px"></div>
+        <div id="dbg-stack" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
           <input id="dbg-var-filter" placeholder="筛选变量：名字包含即可（忽略大小写），如 count" style="flex:1;min-width:0;font-size:12px" title="模糊匹配变量名；命中项与通往它的祖先保留，其余隐藏。输入停下后会自动把整棵树拉下来补扫，Esc 清空" oninput="dbgVarFilterOnInput()" onkeydown="if(event.key==='Escape')dbgVarFilterClear()">
           <label class="muted" style="font-size:11px;flex:0 0 auto;display:flex;align-items:center;gap:3px;cursor:pointer;white-space:nowrap" title="只显示声明在你项目包里的字段；框架 / 依赖库里的字段收起来只计数（如 ChangeNotifier 的 _count）。取消勾选看全部，扫描也不再跳过框架对象"><input id="dbg-var-mine" type="checkbox" checked style="margin:0" onchange="dbgVarMineToggle()">我的</label>
           <span id="dbg-var-fstat" class="muted" style="font-size:11px;flex:0 0 auto"></span>
         </div>
-        <div id="dbg-vars" class="dbg-list" style="max-height:200px;border-top:1px solid var(--line)"></div>
+        <div id="dbg-vars" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
           <input id="dbg-eval" placeholder="选中帧里求值，如 widget.runtimeType" style="flex:1;min-width:0;font-size:12px" onkeydown="if(event.key==='Enter')dbgEval()">
           <button onclick="dbgEval()">求值</button>
         </div>
-        <div id="dbg-eval-out" class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;max-height:84px;overflow:auto"></div>
+        <div id="dbg-eval-out" class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;overflow:auto"></div>
+      </div>
+      <!-- 右栏：源码（点「源码下断点」才出现，关掉时中栏自动变宽） -->
+      <div class="card dbg-col" id="dbg-src-card" style="display:none">
+        <div class="row" style="gap:6px">
+          <b>源码</b>
+          <button onclick="dbgSrcClose()" style="margin-left:auto">收起</button>
+        </div>
+        <div class="dbg-srcadd">
+          <input id="dbg-src-file" list="dbg-src-files" placeholder="输入文件名过滤，如 error_test_page.dart（回车打开）" onchange="dbgSrcPick()" onkeydown="if(event.key==='Enter')dbgSrcPick()">
+          <datalist id="dbg-src-files"></datalist>
+          <input id="dbg-src-cond" placeholder="条件（可空）" title="填了再点行号：这一行下的是条件断点">
+          <input id="dbg-src-log" placeholder="日志表达式（可空，如 i=$i）" title="填了再点行号：这一行下的是日志断点（命中不暂停）">
+        </div>
+        <div id="dbg-src-info" class="muted" style="font-size:12px;margin-top:2px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+        <div id="dbg-src-code"></div>
       </div>
     </div>
-    <div class="card" id="dbg-src-card" style="display:none">
-      <div class="row" style="gap:6px;flex-wrap:wrap">
-        <b>源码</b>
-        <input id="dbg-src-file" list="dbg-src-files" placeholder="输入文件名过滤，如 error_test_page.dart（回车打开）" style="flex:1 1 260px;min-width:0;font-size:12px" onchange="dbgSrcPick()" onkeydown="if(event.key==='Enter')dbgSrcPick()">
-        <datalist id="dbg-src-files"></datalist>
-        <input id="dbg-src-cond" placeholder="条件（可空）" style="flex:0 1 130px;font-size:12px" title="填了再点行号：这一行下的是条件断点">
-        <input id="dbg-src-log" placeholder="日志表达式（可空，如 i=$i）" style="flex:0 1 180px;font-size:12px" title="填了再点行号：这一行下的是日志断点（命中不暂停）">
-        <button onclick="dbgSrcClose()" style="margin-left:auto">收起</button>
-      </div>
-      <div id="dbg-src-info" class="muted" style="font-size:12px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
-      <div id="dbg-src-code"></div>
-    </div>
-    <div class="card">
+    <!-- 底部：运行输出（VS Code 调试控制台的位置，固定高、自己滚） -->
+    <div class="card dbg-outcard">
       <div class="row"><b>运行输出</b><span id="dbg-out-n" class="muted" style="font-size:12px"></span>
         <label class="chk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="dbg-follow" checked>自动滚到底</label>
         <button onclick="dbgClearOut()">清屏</button>

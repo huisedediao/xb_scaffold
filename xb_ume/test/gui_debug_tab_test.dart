@@ -29,6 +29,40 @@ void main() {
       }
     });
 
+    test('调试页是 VS Code 式一屏三栏 + 底部输出（不再上下堆卡片）', () {
+      const html = gui.guiHtml;
+      // 一屏 flex 布局：工具条 + 三栏 + 底部面板，整页不滚
+      expect(html.contains('#page-debug.active { display:flex; flex-direction:column;'), isTrue);
+      expect(html.contains('.dbg-main { flex:1 1 auto; display:flex;'), isTrue);
+      expect(html.contains('.dbg-side {'), isTrue);
+      // 窗口不够高时左栏自己滚（否则断点输入区被压没、列表看不见）
+      expect(html.contains('.dbg-side { flex:0 0 300px; gap:10px; overflow:auto; }'), isTrue);
+      expect(html.contains('.dbg-side > .dbg-bpcard { flex:1 1 auto; min-height:190px; }'), isTrue);
+      expect(html.contains('.dbg-varcol {'), isTrue);
+      expect(html.contains('class="card dbg-outcard"'), isTrue);
+      // 旧的上下双列容器已经不用了，再回来就会变成「一屏看不到变量 / 输出」
+      expect(html.contains('dbg-cols'), isFalse);
+      // 源码面板是三栏里的右栏：默认隐藏，关掉时中栏自动变宽
+      expect(html.contains('<div class="card dbg-col" id="dbg-src-card" style="display:none">'), isTrue);
+      // 换了外层容器，面板 id 一个不能少（JS 全靠它们）
+      for (final id in <String>[
+        'dbg-bps',
+        'dbg-routes',
+        'dbg-saved',
+        'dbg-stack',
+        'dbg-vars',
+        'dbg-eval-out',
+        'dbg-src-code',
+        'dbg-out',
+      ]) {
+        expect(html.contains('id="$id"'), isTrue, reason: id);
+      }
+      // 固定 max-height 改由 flex 分配（面板自己滚），矮窗口另有回退
+      expect(html.contains('id="dbg-vars" class="dbg-list" style="max-height'), isFalse);
+      expect(html.contains('id="dbg-stack" class="dbg-list" style="max-height'), isFalse);
+      expect(html.contains('@media (max-height:840px)'), isTrue);
+    });
+
     test('异常 / 网络定位行接上「一键下断点」', () {
       // 异常栈帧 / 相关 Widget / 网络发起位置的「断点」链接。
       const html = gui.guiHtml;
