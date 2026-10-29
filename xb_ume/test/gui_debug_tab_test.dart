@@ -214,6 +214,32 @@ void main() {
       expect(hub.contains('store.setEnabled(root, rel, line, want'), isTrue);
     });
 
+    test('断点区能一键停用 / 启用全部断点', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'id="dbg-bp-all"',
+        'onclick="dbgToggleAllBps(this)"',
+        'function dbgSyncBpAllBtn(',
+        'function dbgToggleAllBps(',
+        "dbgOp('toggleAllBreakpoints'",
+        // 还有启用的就整批停用，全停了才切到整批启用。
+        "el.textContent = allOff ? '启用全部' : '停用全部';",
+        'dbgBpAllBusy',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 断点列表每次重渲染都要跟着刷按钮，否则连上会话 / 增删断点后文案是旧的。
+      expect(html.contains('dbgSyncBpAllBtn(bps);'), isTrue);
+      // 只切启停、不删断点：批量也走 setBreakpointState 那条路，落盘清单同步。
+      final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
+      expect(hub.contains("case 'toggleAllBreakpoints':"), isTrue);
+      expect(hub.contains('await client.setBreakpointEnabled(bp.id, enable);'),
+          isTrue);
+      expect(hub.contains("'changed': changed"), isTrue);
+      // 失败的 op 只有 error、没有状态快照：不能拿它覆盖当前状态（否则断点列表清空）。
+      expect(html.contains('if (d.ok === false && !d.breakpoints) return;'), isTrue);
+    });
+
     test('源码面板：点行号下断点（不用手输 文件:行）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[

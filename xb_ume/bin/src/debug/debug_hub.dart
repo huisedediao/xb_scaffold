@@ -480,6 +480,9 @@ class DebugHub {
         return _updateBreakpoint(a);
       case 'toggleBreakpoint':
         return _toggleBreakpoint(a);
+      case 'toggleAllBreakpoints':
+        // 一键启停（IDE 的「停用所有断点」）：断点不删，只切 VM 的 enable。
+        return _toggleAllBreakpoints(a);
       case 'listBreakpoints':
         final bps = await _requireClient().listBreakpoints();
         return <String, Object?>{'count': bps.length};
@@ -953,6 +956,36 @@ class DebugHub {
     _syncSavedBreakpoint(client, bp, enabled: enable);
     _message = '断点 $id 已${enable ? '启用' : '停用'}';
     return <String, Object?>{'enabled': enable};
+  }
+
+  /// 一键启停当前会话的全部断点：断点都留着，只切 VM 的 enable。
+  ///
+  /// VM 没有批量 RPC，逐条 `setBreakpointState`；已经处于目标状态的跳过，
+  /// 免得一次点击变成一串无意义的往返。落盘清单同步成新状态（下次接入
+  /// 恢复的就是「全部停用」）。
+  Future<Map<String, Object?>> _toggleAllBreakpoints(
+      Map<String, Object?> a) async {
+    final enable = a['enabled'];
+    if (enable is! bool) throw DebugException('缺少 enabled（true / false）');
+    final client = _requireClient();
+    final all = client.breakpoints;
+    var changed = 0;
+    for (final bp in all) {
+      if (bp.enabled == enable) continue;
+      await client.setBreakpointEnabled(bp.id, enable);
+      _syncSavedBreakpoint(client, _breakpointById(client, bp.id),
+          enabled: enable);
+      changed++;
+    }
+    final action = enable ? '启用' : '停用';
+    _message = all.isEmpty
+        ? '当前会话还没有断点'
+        : '已$action $changed 个断点（共 ${all.length} 个）';
+    return <String, Object?>{
+      'enabled': enable,
+      'changed': changed,
+      'count': all.length,
+    };
   }
 
   DebugBreakpoint? _breakpointById(DebugClient c, String id) {

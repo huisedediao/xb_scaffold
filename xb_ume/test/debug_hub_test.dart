@@ -557,6 +557,28 @@ class DoorLockHomePage extends StatefulWidget {
       expect(miss['ok'], isTrue);
       expect(miss['hit'], isFalse);
     });
+
+    test('toggleAllBreakpoints：先校验 enabled，没连会话时报可读错误', () async {
+      // 一键启停要逐条 setBreakpointState，没会话时只能拒绝；但参数错误要比
+      // 「未连接」更早报出来，否则前端传空了也看不出原因。
+      final noFlag = await storeHub.handle(
+        'toggleAllBreakpoints',
+        <String, Object?>{
+          'dir': root,
+          'path': '$root/lib/a.dart',
+          'line': 10,
+        },
+      );
+      expect(noFlag['ok'], isFalse);
+      expect('${noFlag['error']}', contains('enabled'));
+
+      final off = await storeHub.handle(
+        'toggleAllBreakpoints',
+        <String, Object?>{'enabled': false},
+      );
+      expect(off['ok'], isFalse);
+      expect('${off['error']}', contains('未连接调试会话'));
+    });
   });
 
   // 启动失败时日志已落盘，界面必须能看到（只弹一条 5 秒提示≈“什么都没打印”）。

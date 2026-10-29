@@ -11832,6 +11832,7 @@ const String guiHtml = r'''
           <div class="row">
             <b>断点</b>
             <span id="dbg-bp-n" class="muted" style="font-size:12px"></span>
+            <button id="dbg-bp-all" onclick="dbgToggleAllBps(this)" title="当前会话还没有断点">停用全部</button>
             <button onclick="dbgSrcOpen()" style="margin-left:auto" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button>
             <button onclick="dbgListBp(this)">刷新</button>
           </div>
@@ -17674,6 +17675,9 @@ function dbgToast(text){
 // 统一渲染入口：HTTP 响应与 WS 推送都是「状态快照」，走同一套渲染。
 function dbgApply(d){
   if (!d || typeof d !== 'object') return;
+  // 失败的 op 只带 error、没有状态快照：直接覆盖会把断点列表 / 暂停现场清空，
+  // 看着像「断点全没了」。错误提示由 dbgOp 弹，这里保留上一份状态。
+  if (d.ok === false && !d.breakpoints) return;
   dbgSt = d;
   if (d.output) dbgOutSet(d.output, d.outSeq);
   dbgRenderHead();
@@ -17771,6 +17775,7 @@ function dbgRenderBps(){
   }
   var n = dbgEl('dbg-bp-n');
   if (n) n.textContent = bps.length ? '（' + bps.length + ' 个）' : '';
+  dbgSyncBpAllBtn(bps);
   if (!bps.length) { el.innerHTML = '<div class="muted" style="padding:6px">还没有断点</div>'; return; }
   bps.sort(function(a, b){
     var pa = a.path || a.scriptUri || '', pb = b.path || b.scriptUri || '';
@@ -18250,6 +18255,48 @@ function dbgCancelBpEdit(){
 
 function dbgToggleBp(id){ dbgOp('toggleBreakpoint', {id: id}).then(dbgLoadSaved); }
 function dbgDelBp(id){ dbgOp('removeBreakpoint', {id: id}).then(dbgLoadSaved); }
+
+var dbgBpAllBusy = false; // 「停用 / 启用全部」请求在途：别让连点发两次
+
+// 断点区「停用全部 / 启用全部」的文案：还有启用的就显示「停用全部」，
+// 全停了（或还没断点）才切到「启用全部」。
+function dbgSyncBpAllBtn(bps){
+  var el = dbgEl('dbg-bp-all');
+  if (!el) return;
+  bps = bps || dbgSt.breakpoints || [];
+  var off = 0;
+  for (var i = 0; i < bps.length; i++) if (bps[i].enabled === false) off++;
+  var allOff = bps.length > 0 && off === bps.length;
+  el.disabled = !bps.length || dbgBpAllBusy;
+  el.textContent = allOff ? '启用全部' : '停用全部';
+  el.title = !bps.length
+    ? '当前会话还没有断点'
+    : (allOff
+      ? '一键启用当前会话的全部 ' + bps.length + ' 个断点'
+      : '一键停用当前会话的全部断点（停用后仍保留，随时可以再启用）');
+}
+
+// 一键停用 / 启用全部断点（同 IDE 的「停用所有断点」）：断点不删，只切启停。
+// 有停用中的就整批启用，否则整批停用（按钮文案由 dbgSyncBpAllBtn 按状态给）。
+function dbgToggleAllBps(btn){
+  if (dbgBpAllBusy) return;
+  var bps = dbgSt.breakpoints || [];
+  if (!bps.length) { dbgToast('当前会话还没有断点'); return; }
+  var enable = true;
+  for (var i = 0; i < bps.length; i++) {
+    if (bps[i].enabled !== false) { enable = false; break; } // 还有启用的 → 全停用
+  }
+  dbgBpAllBusy = true;
+  var done = dbgBusy(btn, enable ? '启用中…' : '停用中…');
+  dbgOp('toggleAllBreakpoints', {enabled: enable}).then(function(d){
+    dbgBpAllBusy = false;
+    done();
+    dbgSyncBpAllBtn();
+    if (!d || d.ok === false) return; // 错误已由 dbgOp 提示
+    if (d.message) dbgToast(d.message);
+    dbgLoadSaved();
+  });
+}
 
 // ── 源码面板：点行号下断点（不用手输 文件:行）─────────────────────────────
 // 文件列表与内容都来自本机 GUI 后台（/api/fs/dartfiles、/api/fs/file），只读。
