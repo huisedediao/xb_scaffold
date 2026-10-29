@@ -1,5 +1,7 @@
 ## 0.4.0
 
+- hdc 启动前体检与自愈（修「同一台机器上反复点启动都失败：界面有日志、会话却连不上」）：`hdc -t <id> fport` 报 `Connect server failed` 时装包其实已成功，只是拿不到 VM service；根因是 GUI「日志」对每台设备常驻一个 `hdc -t <id> hilog` 客户端，旧版重新部署 `kill -9` 让它变孤儿（PPID=1）并一直占着 hdc server 连接，攒够了就拒连。现在 `flutter run` 起进程前（OHOS）先体检：① 回收 PPID=1 的 `hdc -t … hilog` 孤儿（精确 PID + SIGTERM，不碰 DevEco 的 `shell hilog` 形态）；② 探 `hdc list targets`，回收后仍不通才自动 `hdc kill -r` 重启 server；③ 做过的处置写进状态行 / MCP 工具输出。另外 hdc 拒连导致的启动失败会自动重试一次（第二次是增量构建，不用用户再点）。新增 10 项测试。
+
 - 启动失败也能看到日志（修「点了启动、app 都跑到手机上了，页面上什么都没打印」）：`flutter run` 在装包 / 端口转发阶段失败时，页面原先只弹一条 5 秒提示，日志躺在 `~/.xb_ume_ide/launch/*.log` 里没人看，「运行输出」全空。现在：① `DeviceCommandError` 加 `logPath`（`flutter run` 等 VM service 超时 / 早退时带上）；② 失败摘要改取输出**末尾** 400 字（原来取开头，正好把 `Connect server failed` 这类真正原因截掉），命中 `Connect server failed` + `fport` 时附处置建议（清掉多余的 hdc 客户端，或 `hdc kill -r` 重启 hdc server）；③ `DebugHub._start` 失败后把已落盘日志从文件头接到「运行输出」，状态行改「启动失败：…」（不再停在「正在执行预启动命令…」）。`--install` 收旧 GUI 由 `kill -9` 改为先 SIGTERM 等它优雅退出再 SIGKILL：SIGKILL 让 GUI 来不及收自己拉起的 `hdc hilog` 子进程，攒几天把 hdc 连接占满，正是 `fport` 报 `Connect server failed` 的直接原因（实测清掉 12 个孤儿后 `hdc list targets` 秒回）。新增 6 项测试。
 
 - 修复 GUI 重启后旧标签页一律「未授权：请从 GUI 页面访问」：令牌随进程启动重新生成，旧页面的 Cookie（名字只含端口，重启后同名不同值）与页面内嵌令牌都过期了，而鉴权原来先看 Cookie、陈旧值会压过请求里带的新令牌。现在 `_isGuiAuthorized` 改为 `X-XBUME-Token` header > Cookie > query token；前端 `fetch` 包装器遇 403 自动重载一次（`sessionStorage` 记时间戳，15 秒内不重复，避免死循环刷新）。重启 / 重新部署走页面菜单时仍由 `/ping` 轮询 + reload 自动恢复。新增 2 项测试（旧 Cookie 不压过正确 header、403 自愈脚本存在）。
