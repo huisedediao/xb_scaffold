@@ -80,6 +80,11 @@ void main() {
       }
       // 只认当前调试会话：没连会话时不能去拿页头 VM 下拉的 uri。
       expect(html.contains('先连上调试会话（启动 / 接入），再点刷新'), isTrue);
+      // dbgSt.wsUri 是 flutter run 输出的 http 形态，直连 VM 的接口入口必须归一，
+      // 否则点刷新会报 WebSocketException: Unsupported URL scheme 'http'。
+      // 归一在后端 _SandboxRpc（不在 guiHtml 里），所以读源码断言。
+      final src = File('bin/ide_gui.dart').readAsStringSync();
+      expect(src.contains('uri = normalizeVmUri(uri)'), isTrue);
     });
 
     test('源码面板：点行号下断点（不用手输 文件:行）', () {
@@ -104,6 +109,26 @@ void main() {
       // 断点表 / 暂停状态变化后都要重刷行内标记，否则点了没反馈。
       expect(html.contains('dbgSrcMark();'), isTrue);
       expect(html.contains('dbgSrcFollowPause();'), isTrue);
+    });
+
+    test('变量行能展开看实例字段（懒加载 getObject）', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'function dbgVarHtml(',
+        'function dbgVarRowsHtml(',
+        'function dbgVarToggle(',
+        "dbgOp('getObject'",
+        'id="dbg-kids-',
+        '没有可见字段（对象可能已被回收，或只有 getter）',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 换帧 / 刷新调用栈必须重置展开态：objectId 属于上一次暂停。
+      expect(html.contains('dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {};'),
+          isTrue);
+      // 后端得真的支持这个 op，否则点箭头只会报「未知操作」。
+      final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
+      expect(hub.contains("case 'getObject':"), isTrue);
     });
 
     test('单步跟随时项目外文件也能跟（只读，不许下断点）', () {

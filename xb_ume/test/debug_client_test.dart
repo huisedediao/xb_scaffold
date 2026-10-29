@@ -212,6 +212,77 @@ void main() {
     });
   });
 
+  group('parseObjectFields（展开变量里的实例）', () {
+    test('普通实例取 fields，名字取 decl.name', () {
+      final r = parseObjectFields(<String, Object?>{
+        'type': '@Instance',
+        'kind': 'PlainInstance',
+        'class': <String, Object?>{'name': '_DoorLockHomePageState'},
+        'length': 2,
+        'fields': <Object?>[
+          <String, Object?>{
+            'decl': <String, Object?>{'name': '_loading'},
+            'value': <String, Object?>
+                {'kind': 'Bool', 'valueAsString': 'true', 'id': 'objects/7'},
+          },
+          <String, Object?>{
+            'decl': <String, Object?>{'name': '_lock'},
+            'value': <String, Object?>{
+              'kind': 'PlainInstance',
+              'class': <String, Object?>{'name': 'DoorLock'},
+              'id': 'objects/9',
+            },
+          },
+        ],
+      });
+      expect(r.vars.map((v) => v.name), <String>['_loading', '_lock']);
+      expect(r.vars.first.value, 'true');
+      expect(r.vars.last.value, 'Instance of DoorLock');
+      expect(r.vars.last.objectId, 'objects/9');
+      expect(r.total, 2);
+      expect(r.truncated, isFalse);
+    });
+
+    test('List 取 elements，名字是 [下标]，超出 length 标 truncated', () {
+      final r = parseObjectFields(<String, Object?>{
+        'type': '@Instance',
+        'kind': 'List',
+        'length': 5,
+        'elements': <Object?>[
+          <String, Object?>{'kind': 'Int', 'valueAsString': '1'},
+          <String, Object?>{'kind': 'Int', 'valueAsString': '2'},
+        ],
+      });
+      expect(r.vars.map((v) => v.name), <String>['[0]', '[1]']);
+      expect(r.vars.map((v) => v.value), <String>['1', '2']);
+      expect(r.total, 5);
+      expect(r.truncated, isTrue);
+    });
+
+    test('Map 取 associations，名字是键的可读值', () {
+      final r = parseObjectFields(<String, Object?>{
+        'type': '@Instance',
+        'kind': 'Map',
+        'length': 1,
+        'associations': <Object?>[
+          <String, Object?>{
+            'key': <String, Object?>{'kind': 'String', 'valueAsString': 'name'},
+            'value': <String, Object?>{'kind': 'String', 'valueAsString': 'xb'},
+          },
+        ],
+      });
+      expect(r.vars, hasLength(1));
+      expect(r.vars.single.name, 'name');
+      expect(r.vars.single.value, 'xb');
+    });
+
+    test('Sentinel / 空响应不抛异常，返回空表', () {
+      expect(
+          parseObjectFields(<String, Object?>{'type': 'Sentinel'}).vars, isEmpty);
+      expect(parseObjectFields(null).vars, isEmpty);
+    });
+  });
+
   group('parseDebugEvent', () {
     test('PauseBreakpoint：带栈顶帧与命中断点', () {
       final e = parseDebugEvent(<String, Object?>{

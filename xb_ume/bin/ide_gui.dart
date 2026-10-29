@@ -44,6 +44,9 @@ import 'src/device/run_profile.dart' show runProfileFilePath;
 // 服务控制：GUI / daemon 的启停、重启与重新部署（与 bin/ide.dart 共用同一
 // 份实现，避免两边各写一套进程管理、再次和 LaunchAgent 的 KeepAlive 抢实例）。
 import 'src/control/svc_control.dart';
+// 只取 VM service 地址归一：前端各处的 uri 来源不一（flutter run 输出是
+// http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
+import 'src/scenario/vm_client.dart' show normalizeVmUri;
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
@@ -8959,7 +8962,10 @@ Future<Map<String, Object?>> dbTableInfo(String dbPath, String table) async {
 /// 零 app 端改动（debug 模式即可，release 无 VM service）。
 /// 每次请求新建临时连接，用完即断。
 class _SandboxRpc {
-  _SandboxRpc(this.uri);
+  // uri 在入口就归一：/api/routestack、/api/routelocate 等由前端直接透传的
+  // 地址可能是 http://（flutter run 输出、dbgSt.wsUri 都是这个形态），
+  // 而 WebSocket.connect 只认 ws(s)://，不归一就会报 Unsupported URL scheme。
+  _SandboxRpc(String uri) : uri = normalizeVmUri(uri);
 
   final String uri;
   int _seq = 0;
@@ -11484,6 +11490,10 @@ const String guiHtml = r'''
   .dbg-fr.cur { background:#1b2532; box-shadow:inset 2px 0 0 #f0b429; }
   .dbg-fr .fn { color:var(--acc); flex:0 0 auto; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dbg-var .fn { color:#ffd479; flex:0 0 auto; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* 可展开的变量（对象 / List / Map）：箭头占位固定宽度，整行可点。 */
+  .dbg-var.kid { cursor:pointer; }
+  .dbg-var.kid:hover { background:#161b22; }
+  .dbg-var .arw { flex:0 0 auto; width:11px; text-align:center; color:var(--dim); font-size:9px; }
   #dbg-out { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; height:34vh; min-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
   #dbg-bar { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:96; display:none; align-items:center; flex-wrap:nowrap; gap:6px; padding:6px 8px 6px 12px; background:#0e1620; border:1px solid var(--line); border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.55); }
   #dbg-bar.on { display:flex; }
@@ -17564,9 +17574,85 @@ function dbgPickFrame(i){
   dbgRenderStack();
 }
 
+var dbgVarKids = {};   // path → {vars,total,truncated}：已拉过的子项（换帧即清）
+var dbgVarOpen = {};   // path → true：展开态
+var dbgVarObj = {};    // path → objectId：展开时要用的对象 id
+
+// 变量行：有 objectId 的能点开看字段 / 元素（懒加载，点一次读一层）。
+// path 是层级路径（"0" / "0-3" / "0-3-1"），只含数字和连字符，可直接进 id。
+function dbgVarHtml(v, path, depth){
+  var kid = !!v.objectId;
+  if (kid) dbgVarObj[path] = v.objectId;
+  var open = !!dbgVarOpen[path];
+  return '<div class="dbg-var' + (kid ? ' kid' : '') + '" id="dbg-v-' + path + '"'
+    + ' style="padding-left:' + (6 + depth * 14) + 'px"'
+    + (kid ? ' onclick="dbgVarToggle(\'' + path + '\')" title="展开 / 收起字段、元素"' : '')
+    + '>'
+    + '<span class="arw">' + (kid ? (open ? '▼' : '▶') : '') + '</span>'
+    + '<span class="fn" title="' + esc(v.name) + '">' + esc(v.name) + '</span>'
+    + '<span class="p" title="' + esc(v.value) + '">' + esc(v.value) + '</span>'
+    + (v.type ? '<span class="muted" style="font-size:11px">' + esc(v.type) + '</span>' : '')
+    + '</div>'
+    + '<div id="dbg-kids-' + path + '"></div>';
+}
+
+function dbgVarRowsHtml(r, parentPath, depth){
+  if (!r.vars.length) {
+    return '<div class="muted" style="padding:2px 6px 2px ' + (6 + depth * 14) + 'px;font-size:11px">'
+      + '没有可见字段（对象可能已被回收，或只有 getter）</div>';
+  }
+  var html = r.vars.map(function(v, i){
+    return dbgVarHtml(v, parentPath + '-' + i, depth);
+  }).join('');
+  if (r.truncated) {
+    html += '<div class="muted" style="padding:2px 6px 2px ' + (6 + depth * 14) + 'px;font-size:11px">'
+      + '只显示前 ' + r.vars.length + ' / ' + r.total + ' 条</div>';
+  }
+  return html;
+}
+
+function dbgVarToggle(path){
+  var box = dbgEl('dbg-kids-' + path);
+  if (!box) return;
+  var open = !dbgVarOpen[path];
+  dbgVarOpen[path] = open;
+  var row = dbgEl('dbg-v-' + path);
+  var arw = row ? row.querySelector('.arw') : null;
+  if (arw) arw.textContent = open ? '▼' : '▶';
+  if (!open) {
+    box.innerHTML = '';
+    // 收起时把子孙的展开态一起清掉，否则再展开时箭头是 ▼ 但内容空。
+    Object.keys(dbgVarOpen).forEach(function(k){
+      if (k.indexOf(path + '-') === 0) delete dbgVarOpen[k];
+    });
+    return;
+  }
+  var depth = path.split('-').length;
+  var cached = dbgVarKids[path];
+  if (cached) { box.innerHTML = dbgVarRowsHtml(cached, path, depth); return; }
+  var objectId = dbgVarObj[path];
+  if (!objectId) return;
+  box.innerHTML = '<div class="muted" style="padding:2px 6px;font-size:11px">展开中…</div>';
+  dbgOp('getObject', {objectId: objectId}).then(function(d){
+    // 等待期间可能已收起 / 换帧重渲染：两个 id 都还在才落盘。
+    var same = dbgEl('dbg-kids-' + path);
+    if (!same || !dbgVarOpen[path]) return;
+    if (!d || !d.ok) {
+      same.innerHTML = '<div class="bad" style="padding:2px 6px;font-size:11px">展开失败：'
+        + esc((d && d.error) || '请求失败') + '</div>';
+      return;
+    }
+    var r = {vars: d.vars || [], total: d.total || 0, truncated: !!d.truncated};
+    dbgVarKids[path] = r;
+    same.innerHTML = dbgVarRowsHtml(r, path, depth);
+  });
+}
+
 function dbgRenderVars(){
   var el = dbgEl('dbg-vars');
   if (!el) return;
+  // 换帧 / 刷新调用栈就重置展开态：objectId 属于上一次暂停，不能复用。
+  dbgVarKids = {}; dbgVarOpen = {}; dbgVarObj = {};
   var f = dbgFrames[dbgFrameIdx];
   var vars = (f && f.vars) || [];
   if (!vars.length) {
@@ -17575,13 +17661,7 @@ function dbgRenderVars(){
         : (dbgStackLoaded ? '没有可见变量' : '读取中…')) + '</div>';
     return;
   }
-  el.innerHTML = vars.map(function(v){
-    return '<div class="dbg-var">'
-      + '<span class="fn" title="' + esc(v.name) + '">' + esc(v.name) + '</span>'
-      + '<span class="p" title="' + esc(v.value) + '">' + esc(v.value) + '</span>'
-      + (v.type ? '<span class="muted" style="font-size:11px">' + esc(v.type) + '</span>' : '')
-      + '</div>';
-  }).join('');
+  el.innerHTML = vars.map(function(v, i){ return dbgVarHtml(v, String(i), 0); }).join('');
 }
 
 function dbgFetchStack(){

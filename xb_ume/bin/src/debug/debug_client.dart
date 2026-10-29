@@ -389,6 +389,82 @@ List<DebugFrame> parseStack(Object? raw) {
   ];
 }
 
+/// 展开一层对象得到的条目（字段 / 元素 / 键值对，统一成 DebugVar）。
+class ObjectFields {
+  const ObjectFields({
+    required this.vars,
+    this.total = 0,
+    this.truncated = false,
+  });
+
+  final List<DebugVar> vars;
+
+  /// 对象的完整条目数（List 的 length / Map 的键值对数 / 实例的字段数）。
+  final int total;
+
+  /// 是否因为 count 上限被截断（前端提示「只显示前 N 条」）。
+  final bool truncated;
+}
+
+/// 解析 getObject 的结果：普通实例取 `fields`，List 取 `elements`，
+/// Map 取 `associations`，统一成「名字 → 值」的列表。
+///
+/// 名字取法：实例用字段名，List 用 `[下标]`，Map 用键的可读值。
+ObjectFields parseObjectFields(Object? raw) {
+  final m = _asMap(raw);
+  if (m == null) return const ObjectFields(vars: <DebugVar>[]);
+  // 对象已被 GC / 不可用：VM 返回 Sentinel，不是错误，只是没东西可列。
+  if (_str(m['type']) == 'Sentinel') {
+    return const ObjectFields(vars: <DebugVar>[]);
+  }
+  final vars = <DebugVar>[];
+
+  void add(String name, Object? ref) {
+    final v = _asMap(ref);
+    if (v == null) return;
+    vars.add(DebugVar(
+      name: name,
+      value: describeInstanceRef(ref),
+      type: _className(v),
+      kind: _str(v['kind']),
+      objectId: _str(v['id']),
+    ));
+  }
+
+  final fields = m['fields'];
+  if (fields is List) {
+    for (final item in fields) {
+      final f = _asMap(item);
+      if (f == null) continue;
+      final decl = _asMap(f['decl']);
+      final name = _str(decl?['name']) ?? _str(f['name']);
+      if (name == null) continue;
+      add(name, f['value']);
+    }
+  }
+  final elements = m['elements'];
+  if (elements is List) {
+    for (var i = 0; i < elements.length; i++) {
+      add('[$i]', elements[i]);
+    }
+  }
+  final associations = m['associations'];
+  if (associations is List) {
+    for (final item in associations) {
+      final a = _asMap(item);
+      if (a == null) continue;
+      add(describeInstanceRef(a['key']), a['value']);
+    }
+  }
+
+  final total = _int(m['length']) ?? vars.length;
+  return ObjectFields(
+    vars: vars,
+    total: total,
+    truncated: vars.length < total,
+  );
+}
+
 /// 解析 Debug 流事件（传入 streamNotify.params.event）。
 DebugEvent? parseDebugEvent(Object? raw) {
   final m = _asMap(raw);
@@ -869,6 +945,24 @@ class DebugClient {
       'limit': limit,
     });
     return parseStack(raw);
+  }
+
+  /// 展开一层对象实例：按 [objectId]（DebugVar.objectId）读字段 / 元素。
+  ///
+  /// 只读一层且限 [count] 条：展开是懒加载的，子项再点再读，避免一次把
+  /// 大 List / 深层对象拉爆。
+  Future<ObjectFields> objectFields(
+    String objectId, {
+    int offset = 0,
+    int count = 50,
+  }) async {
+    final raw = await rpc('getObject', <String, Object?>{
+      'isolateId': await isolateId(),
+      'objectId': objectId,
+      'offset': offset,
+      'count': count,
+    });
+    return parseObjectFields(raw);
   }
 
   /// 在当前调用栈的第 [frameIndex] 帧求值（0 = 栈顶）。

@@ -41,6 +41,15 @@ void main() {
       expect(normalizeVmUri('https://example.com'), 'wss://example.com/ws');
     });
 
+    test('带 token 的 http 地址只换 scheme，保留原路径', () {
+      // flutter run 打印的就是这个形态（DebugHub 的 wsUri 也存它），
+      // /api/routestack 等直连 VM 的接口必须能吃下这一种。
+      expect(normalizeVmUri('http://127.0.0.1:55333/nIpL2-QthcI=/'),
+          'ws://127.0.0.1:55333/nIpL2-QthcI=/');
+      expect(normalizeVmUri('https://127.0.0.1:55333/nIpL2-QthcI=/'),
+          'wss://127.0.0.1:55333/nIpL2-QthcI=/');
+    });
+
     test('带 token 路径的 ws 地址原样保留', () {
       const u = 'ws://127.0.0.1:54579/nIpL2-QthcI=/ws';
       expect(normalizeVmUri(u), u);

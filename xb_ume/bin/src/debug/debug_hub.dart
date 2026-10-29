@@ -365,6 +365,22 @@ class DebugHub {
             for (final f in frames) debugFrameJson(f, toLocal: _toLocal),
           ],
         };
+      case 'getObject':
+        // 展开变量里的对象实例（DebugVar.objectId）：只读一层，子项再点再读。
+        final objectId = _str(a['objectId']);
+        if (objectId == null || objectId.isEmpty) {
+          throw DebugException('缺少 objectId：刷新调用栈后重点变量行左侧箭头');
+        }
+        final fields = await _requireClient().objectFields(
+          objectId,
+          offset: _int(a['offset']) ?? 0,
+          count: _int(a['count']) ?? 50,
+        );
+        return <String, Object?>{
+          'vars': <Object?>[for (final v in fields.vars) debugVarJson(v)],
+          'total': fields.total,
+          'truncated': fields.truncated,
+        };
       case 'runProfile':
         return _runProfile(a);
       case 'eval':
