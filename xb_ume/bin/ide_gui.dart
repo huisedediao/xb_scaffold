@@ -12508,6 +12508,41 @@ function dbgQuickBp(file, line, fromWs){
     return d;
   });
 }
+
+// 属性值转义：esc 只转 &<>，写进 data-file 还得挡引号。
+function escAttr(s){ return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// 用「守护进程 Tab 里排好的 IDE 顺序」打开 文件:行。
+// 与路由栈 Tab 的「跳转」同一条通道：/api/openide → _guiLaunchIde →
+// _guiIdeOrder（读 config.json 的 ideOrder）。找不到可用 IDE 时后端已把
+// path:line 复制到剪贴板，把它的原因原样报出来。
+function dbgIdeJump(anchor, file, line){
+  if (!anchor) return;
+  if (!file) { dbgToast('这个位置还没解析到文件，稍后再试'); return; }
+  var old = anchor.getAttribute('data-label') || anchor.textContent || '跳转';
+  anchor.setAttribute('data-label', old);
+  anchor.textContent = '打开中…';
+  fetch('/api/openide?file=' + encodeURIComponent(file) + '&line=' + (line || 1))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var ok = !!(d && d.ok);
+      anchor.textContent = ok ? '已打开 ✓' : '失败';
+      anchor.title = (d && d.message) ? String(d.message) : (file + (line ? ':' + line : ''));
+      if (!ok) dbgToast('打开失败：' + ((d && d.message) || '未知错误'));
+      setTimeout(function(){ anchor.textContent = old; }, 2500);
+    })
+    .catch(function(e){
+      anchor.textContent = old;
+      dbgToast('请求失败：' + e);
+    });
+}
+
+// 行内链接统一入口：参数走 data-file / data-line，不把路径拼进内联 onclick。
+function dbgIdeJumpEl(el){
+  if (!el) return;
+  dbgIdeJump(el, el.getAttribute('data-file') || '',
+    parseInt(el.getAttribute('data-line'), 10) || 0);
+}
 // -- 截图 Tab：实时截图 + 遥控（Tap/Swipe/Input）+ 录制/回放 ------------
 var shTimer = null;      // 自动刷新定时器
 var shCopyTimer = null;  // 复制结果提示的还原定时器
@@ -17260,6 +17295,40 @@ function dbgLoadSaved(){
     }).catch(function(){});
 }
 
+// 「已记住」行的启停按钮：停用态显示「启用」，反之显示「停用」。
+function dbgSavedBpToggleHtml(dir, abs, b){
+  var off = b.enabled === false;
+  return '<span class="x" title="' + (off
+      ? '恢复命中（当前会话有同位置断点也一起启用）'
+      : '先别命中（下次接入按这个状态恢复）') + '"'
+    + ' data-dir="' + escAttr(dir) + '" data-file="' + escAttr(abs) + '"'
+    + ' data-line="' + (b.line || 0) + '" data-enable="' + (off ? '1' : '0') + '"'
+    + ' onclick="dbgSavedBpToggle(this)">' + (off ? '启用' : '停用') + '</span>';
+}
+
+// 点一下切一下：没连会话也能改（下次接入按新状态恢复）；
+// 当前会话有同位置的断点时后端会一并切 VM 的启停，不然会觉得「点了没用」。
+function dbgSavedBpToggle(el){
+  var file = el.getAttribute('data-file') || '';
+  var line = parseInt(el.getAttribute('data-line'), 10) || 0;
+  var enabled = el.getAttribute('data-enable') === '1';
+  if (!file || !line) return;
+  var old = el.textContent;
+  el.textContent = enabled ? '启用中…' : '停用中…';
+  dbgOp('enableSavedBreakpoint', {
+    dir: el.getAttribute('data-dir') || '',
+    path: file,
+    line: line,
+    enabled: enabled,
+  }).then(function(d){
+    if (!d || d.ok === false) { el.textContent = old; return; } // 错误已由 dbgOp 提示
+    // 后端会报「已停用 …（当前会话已同步）」，把是否动了 VM 一并告诉用户。
+    if (d.message) dbgToast(d.message);
+    // 清单整份重拉：当前项目 / 「全部项目」两种视图各拉各的。
+    if (dbgSavedAllMode) dbgShowAllSaved(null); else dbgLoadSaved();
+  });
+}
+
 function dbgRenderSaved(){
   var box = dbgEl('dbg-saved');
   if (!box) return;
@@ -17269,15 +17338,19 @@ function dbgRenderSaved(){
       ? '共 ' + dbgSavedList.length + ' 个（重连同一项目自动恢复）'
       : '还没有记住的断点（加断点后自动记住）';
   }
+  var dir = dbgDirValue(); // 启停按钮要带上项目根（没连会话时也能改）
   box.innerHTML = dbgSavedList.map(function(b){
     var p = b.path || '';
     var name = p.split('/').pop();
+    var abs = b.absPath || p; // 落盘清单存的是相对项目根的 path，IDE 要绝对路径
     return '<div class="dbg-bp' + (b.enabled === false ? ' off' : '') + '">'
       + '<span class="dot" title="已记住（点「忘记」可清空）"></span>'
-      + '<span class="p" title="' + esc(b.absPath || p) + '">' + esc(name) + ':' + (b.line || 0) + '</span>'
+      + '<span class="p" title="' + esc(abs) + '">' + esc(name) + ':' + (b.line || 0) + '</span>'
       + (b.condition ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>' : '')
       + (b.logMessage ? '<span class="cond" title="' + esc(b.logMessage) + '">log ' + esc(b.logMessage) + '</span>' : '')
-      + (b.enabled === false ? '<span class="cond">停用</span>' : '')
+      + dbgSavedBpToggleHtml(dir, abs, b)
+      + '<span class="x" title="用配置的 IDE 打开 ' + escAttr(abs) + ':' + (b.line || 0) + '"'
+      + ' data-file="' + escAttr(abs) + '" data-line="' + (b.line || 0) + '" onclick="dbgIdeJumpEl(this)">跳转</span>'
       + '</div>';
   }).join('');
 }
@@ -17315,12 +17388,15 @@ function dbgRenderSavedAll(){
     var items = (p.items || []).map(function(b){
       var bp = b.path || '';
       var bname = bp.split('/').pop();
+      var babs = b.absPath || bp; // 总览也是同一份落盘清单，同样补绝对路径
       return '<div class="dbg-bp' + (b.enabled === false ? ' off' : '') + '" style="padding-left:18px">'
         + '<span class="dot" title="已记住"></span>'
-        + '<span class="p" title="' + esc(b.absPath || bp) + '">' + esc(bname) + ':' + (b.line || 0) + '</span>'
+        + '<span class="p" title="' + esc(babs) + '">' + esc(bname) + ':' + (b.line || 0) + '</span>'
         + (b.condition ? '<span class="cond" title="' + esc(b.condition) + '">if ' + esc(b.condition) + '</span>' : '')
         + (b.logMessage ? '<span class="cond" title="' + esc(b.logMessage) + '">log ' + esc(b.logMessage) + '</span>' : '')
-        + (b.enabled === false ? '<span class="cond">停用</span>' : '')
+        + dbgSavedBpToggleHtml(dir, babs, b)
+        + '<span class="x" title="用配置的 IDE 打开 ' + escAttr(babs) + ':' + (b.line || 0) + '"'
+        + ' data-file="' + escAttr(babs) + '" data-line="' + (b.line || 0) + '" onclick="dbgIdeJumpEl(this)">跳转</span>'
         + '</div>';
     }).join('');
     return head + items;
@@ -17521,6 +17597,8 @@ function dbgRenderBps(){
       + '<span class="p" title="' + esc(p) + '">' + esc(name) + ':' + esc(b.line == null ? '?' : b.line) + '</span>'
       + cond
       + logm
+      + '<span class="x" title="用配置的 IDE 打开 ' + escAttr(p) + ':' + (b.line == null ? '?' : b.line) + '"'
+      + ' data-file="' + escAttr(p) + '" data-line="' + (b.line || 0) + '" onclick="dbgIdeJumpEl(this)">跳转</span>'
       + '<span class="x" title="改条件 / 日志表达式（位置不变）" onclick="dbgEditBp(\'' + id + '\')">✎</span>'
       + '<span class="x" title="' + (b.enabled === false ? '启用' : '停用') + '" onclick="dbgToggleBp(\'' + id + '\')">'
       + (b.enabled === false ? '○' : '●') + '</span>'
@@ -17809,6 +17887,7 @@ function dbgRtLoad(btn){
           + '<span class="muted" style="flex:0 0 auto">N' + (it.nav + 1) + '#' + (it.idx + 1) + '</span>'
           + '<span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + cur + type + '</span>'
           + '<a href="javascript:void(0)" id="dbg-rtf-' + k + '" class="muted" style="flex:0 0 auto">定位中…</a>'
+          + '<a href="javascript:void(0)" id="dbg-rtj-' + k + '" class="muted" style="flex:0 0 auto;display:none">跳转</a>'
           + '<span id="dbg-rtb-' + k + '" style="flex:0 0 auto"></span>'
           + '</div>';
       }).join('');
@@ -17837,6 +17916,16 @@ function dbgRtLocate(uri, it, k){
       a.textContent = dbgRtShort(file) + (line ? ':' + line : '');
       a.title = file + (line ? ':' + line : '') + '（点击在下方源码面板打开，点行号即下断点）';
       a.onclick = function(){ dbgSrcOpenAt(file, line); };
+      // 文件名仍开下方源码面板，「跳转」才是唤起 IDE（与路由栈 Tab 的「跳转」同一通道）。
+      // 定位成功才知道路径，所以链接先占位隐藏，这里再填 data-file。
+      var j = dbgEl('dbg-rtj-' + k);
+      if (j) {
+        j.style.display = '';
+        j.setAttribute('data-file', file);
+        j.setAttribute('data-line', String(line));
+        j.title = '用配置的 IDE 打开 ' + file + (line ? ':' + line : '');
+        j.onclick = function(){ dbgIdeJump(j, file, line); };
+      }
       if (b) {
         b.innerHTML = '<a href="javascript:void(0)" title="直接在这一行下断点">断点</a>';
         if (b.firstChild) b.firstChild.onclick = function(){ dbgQuickBp(file, line, dbgSt.wsUri); };

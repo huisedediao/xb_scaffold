@@ -358,6 +358,10 @@ class DebugHub {
       case 'forgetBreakpoint':
         // 只删落盘清单里的一条（源码面板「再点一次取消」用；不碰当前会话）。
         return _forgetSavedBreakpoint(a);
+      case 'enableSavedBreakpoint':
+        // 启停「已记住」里的一条：没连会话也能改，下次接入按新状态恢复；
+        // 当前会话有同位置断点时一并切 VM 的启停。
+        return _enableSavedBreakpoint(a);
       case 'stack':
         final frames = await _requireClient().stack(limit: _int(a['limit']) ?? 32);
         return <String, Object?>{
@@ -633,6 +637,65 @@ class DebugHub {
         ? '已取消记住 ${_short(raw)}:$line'
         : '这条不在记住的清单里（可能已被清空）';
     return <String, Object?>{'removed': hit};
+  }
+
+  /// 启停「已记住」清单里的一条（没有 VM 断点 id 也能用）。
+  ///
+  /// 会话断点与落盘清单是两套状态：只改清单的话，当前会话里那条断点依旧
+  /// 命中，用户会觉得「点了停用却没用」。所以同位置的会话断点也一并切；
+  /// 对不上（换了项目 / 断点还没下发）就只改清单，下次接入按新状态恢复。
+  Future<Map<String, Object?>> _enableSavedBreakpoint(
+      Map<String, Object?> a) async {
+    final raw = _str(a['path']);
+    if (raw == null) throw DebugException('缺少 path（源码文件路径）');
+    final line = _int(a['line']);
+    if (line == null || line < 1) throw DebugException('缺少行号 line（从 1 开始）');
+    final root = _savedRoot(a);
+    if (root == null) {
+      throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    }
+    final rel = BreakpointStore.relativePathOf(root, raw);
+    final column = _int(a['column']);
+
+    // 不传 enabled 就按清单现值取反（前端点一下就是切一下）。
+    final bool want;
+    final rawEnabled = a['enabled'];
+    if (rawEnabled is bool) {
+      want = rawEnabled;
+    } else {
+      final cur =
+          store.load(root).where((b) => b.path == rel && b.line == line);
+      want = cur.isEmpty ? true : !cur.first.enabled;
+    }
+    final hit = store.setEnabled(root, rel, line, want, column: column);
+
+    var applied = 0;
+    final client = _client;
+    if (client != null) {
+      for (final bp in client.breakpoints) {
+        if (bp.line != line) continue;
+        final uri = bp.scriptUri;
+        final local = uri == null ? null : client.localPathOf(uri);
+        if (local == null) continue;
+        if (BreakpointStore.relativePathOf(root, local) != rel) continue;
+        try {
+          await client.setBreakpointEnabled(bp.id, want);
+          applied++;
+        } catch (_) {
+          // 会话正在断 / 该断点已失效：清单已改，这里不阻断。
+        }
+      }
+    }
+
+    _message = hit
+        ? '已${want ? '启用' : '停用'}记住的断点 ${_short(raw)}:$line'
+            '${applied > 0 ? '（当前会话已同步）' : ''}'
+        : '这条不在记住的清单里（可能已被清空）';
+    return <String, Object?>{
+      'enabled': want,
+      'applied': applied,
+      'hit': hit,
+    };
   }
 
   Future<Map<String, Object?>> _addBreakpoint(Map<String, Object?> a) async {

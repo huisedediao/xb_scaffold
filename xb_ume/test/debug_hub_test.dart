@@ -414,6 +414,64 @@ version: 1.0.0
       expect(d['removed'], isTrue);
       expect(storeHub.store.load(root).map((b) => b.line), <int>[20]);
     });
+
+    test('enableSavedBreakpoint：按位置启停清单（不传 enabled 就取反）', () async {
+      // 已记住的条目没有 VM 断点 id，只能按「项目根 + 相对路径 + 行号」定位。
+      storeHub.store.add(
+        root,
+        const SavedBreakpoint(path: 'lib/a.dart', line: 10),
+      );
+      final noLine = await storeHub.handle(
+        'enableSavedBreakpoint',
+        <String, Object?>{'dir': root, 'path': '$root/lib/a.dart'},
+      );
+      expect(noLine['ok'], isFalse);
+      expect('${noLine['error']}', contains('行号'));
+
+      final noDir = await storeHub.handle(
+        'enableSavedBreakpoint',
+        <String, Object?>{'path': '$root/lib/a.dart', 'line': 10},
+      );
+      expect(noDir['ok'], isFalse);
+      expect('${noDir['error']}', contains('项目目录'));
+
+      // 显式停用：没连会话时只改清单（applied 0），下次接入按这个状态恢复。
+      final off = await storeHub.handle(
+        'enableSavedBreakpoint',
+        <String, Object?>{
+          'dir': root,
+          'path': '$root/lib/a.dart',
+          'line': 10,
+          'enabled': false,
+        },
+      );
+      expect(off['ok'], isTrue);
+      expect(off['hit'], isTrue);
+      expect(off['enabled'], isFalse);
+      expect(off['applied'], 0);
+      expect(storeHub.store.load(root).single.enabled, isFalse);
+      expect('${off['message']}', contains('停用'));
+
+      // 不传 enabled 就是切一下：又回到启用。
+      final on = await storeHub.handle(
+        'enableSavedBreakpoint',
+        <String, Object?>{'dir': root, 'path': '$root/lib/a.dart', 'line': 10},
+      );
+      expect(on['enabled'], isTrue);
+      expect(storeHub.store.load(root).single.enabled, isTrue);
+
+      // 不在清单里的位置：回报未命中，不抛异常。
+      final miss = await storeHub.handle(
+        'enableSavedBreakpoint',
+        <String, Object?>{
+          'dir': root,
+          'path': '$root/lib/a.dart',
+          'line': 999,
+        },
+      );
+      expect(miss['ok'], isTrue);
+      expect(miss['hit'], isFalse);
+    });
   });
 
   // 启动失败时日志已落盘，界面必须能看到（只弹一条 5 秒提示≈“什么都没打印”）。

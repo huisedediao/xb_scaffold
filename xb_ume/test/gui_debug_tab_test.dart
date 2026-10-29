@@ -87,6 +87,54 @@ void main() {
       expect(src.contains('uri = normalizeVmUri(uri)'), isTrue);
     });
 
+    test('断点 / 路由栈 / 已记住三处文件后面接上 IDE 跳转', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'function dbgIdeJump(',
+        'function dbgIdeJumpEl(',
+        'function escAttr(',
+        '/api/openide?file=',
+        // 定位成功才知道路径，占位链接先隐藏。
+        "id=\"dbg-rtj-' + k + '\"",
+        'dbgIdeJump(j, file, line)',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 断点列表 / 已记住 / 全部项目三处走同一个行内入口。
+      expect('dbgIdeJumpEl(this)'.allMatches(html).length, greaterThanOrEqualTo(3));
+      // 落盘清单存的是相对项目根的 path，IDE 要绝对路径。
+      expect(html.contains('b.absPath || p'), isTrue);
+      expect(html.contains('b.absPath || bp'), isTrue);
+      // 打开通道复用既有后端（按 ideOrder 走），所以读源码确认。
+      final src = File('bin/ide_gui.dart').readAsStringSync();
+      expect(src.contains("path == '/api/openide'"), isTrue);
+      expect(src.contains('for (final ide in _guiIdeOrder())'), isTrue);
+    });
+
+    test('已记住的断点能启用 / 停用（不是只标一个「停用」）', () {
+      const html = gui.guiHtml;
+      for (final fn in <String>[
+        'function dbgSavedBpToggleHtml(',
+        'function dbgSavedBpToggle(',
+        "dbgOp('enableSavedBreakpoint'",
+        'onclick="dbgSavedBpToggle(this)"',
+        // 停用态给的是「启用」；启用态给的是「停用」。
+        "(off ? '启用' : '停用')",
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
+      // 当前项目清单与「全部项目」总览各要带自己的项目根（没连会话也能改）。
+      expect(html.contains('dbgSavedBpToggleHtml(dir, abs, b)'), isTrue);
+      expect(html.contains('dbgSavedBpToggleHtml(dir, babs, b)'), isTrue);
+      // 两种视图改完各重拉各的。
+      expect(html.contains('if (dbgSavedAllMode) dbgShowAllSaved(null); else dbgLoadSaved();'),
+          isTrue);
+      // 后端得真的支持这个 op，否则点了只会报「未知操作」。
+      final hub = File('bin/src/debug/debug_hub.dart').readAsStringSync();
+      expect(hub.contains("case 'enableSavedBreakpoint':"), isTrue);
+      expect(hub.contains('store.setEnabled(root, rel, line, want'), isTrue);
+    });
+
     test('源码面板：点行号下断点（不用手输 文件:行）', () {
       const html = gui.guiHtml;
       for (final fn in <String>[
