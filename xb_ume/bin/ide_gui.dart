@@ -11677,13 +11677,14 @@ const String guiHtml = r'''
       </div>
       <div class="muted" style="margin-top:8px;line-height:1.6">
         点「一键开启」会：启动带 <code>xbume_eval</code> 的 MCP（已在跑就复用，参数不一致只重启自己记录的那个）
-        → 生成一段指令并自动复制。把指令粘给 AI，它会自己 <code>xbume_app_launch</code> 拉起 app、
-        复现现场、定位到源码行、改代码、热重载、复跑验证。
+        → 生成一段指令并自动复制。把指令粘给 AI，它会先看有没有可复用的会话（没有就自己
+        <code>flutter run</code> 拉起 app）、复现现场、定位到源码行、改代码、热重载、复跑验证。
       </div>
       <div class="muted" style="margin-top:6px;line-height:1.6;font-size:12px">
         「项目目录」候选项来自：当前已连接的调试会话（按 app 库路径反推项目根）+ 最近用过的目录，也可直接粘路径；
-        「设备」默认跟随右上角设备选择器。注意右上角的 <b>VM 会话</b>是<b>已经在跑</b>的调试会话（日志/时间轴用），
-        AI 调试不复用它——它要自己 <code>flutter run</code> 拉起 app，才有热重载所需的 stdin 句柄。
+        「设备」默认跟随右上角设备选择器。右上角的 <b>VM 会话</b>是已经在跑的调试会话（日志 / 时间轴用）；
+        由本工具拉起的（调试 Tab「启动 / 复用」或 AI 自己）AI 调试会直接<b>复用</b>、也能热重载；
+        IDE 拉起的只能只读接入（能看能下断点，热重载回 IDE 按 <code>r</code>）。
       </div>
       <pre id="ai-prompt" style="white-space:pre-wrap;max-height:calc(100vh - 400px);min-height:180px;overflow:auto;font-size:12px;line-height:1.55;margin:10px 0 0">点「一键开启」后，这里会出现可直接粘给 AI 的指令</pre>
     </div>

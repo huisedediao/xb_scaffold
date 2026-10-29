@@ -78,24 +78,30 @@ String buildAiPrompt({
   required bool hasEval,
 }) {
   final sb = StringBuffer()
-    ..writeln('用 xb_ume 自己调试这个 Flutter 项目，不要让我手动启动 app。')
+    ..writeln('用 xb_ume 自己调试这个 Flutter 项目：能复用就复用，需要启动时自己启动，'
+        '不要让我手动跑 app。')
     ..writeln()
     ..writeln('项目：$projectDir')
     ..writeln('设备：$deviceId')
     ..writeln()
-    ..writeln('## 第一步：接上 app（只做一次）')
-    ..writeln('先调 xbume_sessions：')
-    ..writeln('- 会话带 launcher 标记（xb_ume/GUI 拉起或认领）→ 直接用 xbume_use_session '
-        '选它，不要 app_launch 重跑；标了·可热重载的还能直接热重载/热重启；')
-    ..writeln('- 只有这个项目的会话、但没有 launcher 标记（IDE 拉起）→ 问我要不要改用 xb_ume 接管'
-        '（会重启 app，手机上会顶掉 IDE 的调试会话），不要直接启动；')
+    ..writeln('## 第一步：接上 app（复用优先，只做一次）')
+    ..writeln('先调 xbume_sessions，按每个会话的 launcher 标记分流：')
+    ..writeln('- 带 launcher 标记且标了·可热重载（本工具 / GUI 拉起或认领；我可能已经在「调试」Tab '
+        '点过「启动 / 复用」）→ 直接 xbume_use_session 选它，不要 app_launch 重跑；')
+    ..writeln('- 带 launcher 标记但标了·只读（认领到的进程拿不到输入句柄）→ 看现场、下断点都能用，'
+        '热重载按第三步的回落处理；')
+    ..writeln('- 只有这个项目的会话、但没有 launcher 标记（IDE 拉起）→ 先问我要哪种，不要自己选：')
+    ..writeln('  (a) 只读接入：xbume_use_session 选它，界面 / 断点 / eval / 时间轴都能用，'
+        '改完回 IDE 按 r；')
+    ..writeln('  (b) 由 xb_ume 接管：app_launch 加 force: true，会重装包并重启 app，'
+        '手机上会顶掉 IDE 的调试会话；')
     ..writeln('- 没有可用会话 → 用 xbume_app_launch 启动，参数：')
     ..writeln(
         '{"deviceId": "$deviceId", "via": "flutter-run", "cwd": "$projectDir"}')
     ..writeln('它会由 xb_ume 启动 flutter run 并把新会话设为当前；'
-        '返回 reused=true 表示复用了已有进程（未重装包），这是期望行为。')
+        '返回 reused=true 表示复用了已有进程（未重装包），这是期望行为，不要因为它再 force 一次。')
     ..writeln('同设备同目录已有 IDE 拉起的 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'
-        '由我决定复用还是加 force: true。')
+        '由我选 (a) 还是 (b)。')
     ..writeln()
     ..writeln('## 第二步：按需使用工具')
     ..writeln('- xbume_screenshot / xbume_find_widget / xbume_tap / xbume_input：'
@@ -114,6 +120,8 @@ String buildAiPrompt({
     ..writeln('xbume_hot_reload {"mode": "reload"} —— 改了 widget/文案/局部逻辑用它；')
     ..writeln('xbume_hot_reload {"mode": "restart"} —— 改了初始化逻辑、全局状态、'
         'main() 用它（isolate 会重建，之前的缓存自动清掉）。')
+    ..writeln('只对带·可热重载标记的会话有效；·只读 会话会直接报错，不要反复重试，'
+        '改让那个会话的主人自己重跑（IDE 里按 r），或先问我要不要 force 重启。')
     ..writeln('热重载失败时把编译错误原样读出来再改，不要凭猜测绕过。')
     ..writeln()
     ..writeln('## 规则')

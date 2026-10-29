@@ -55,6 +55,16 @@ void main() {
       expect(p, contains('xbume_use_session'));
       expect(p, contains('reused=true'));
       expect(p, contains('force: true'));
+      // 复用优先，且区分「·可热重载」与「·只读」：只读会话也能接（看现场 /
+      // 下断点），不要为了看数据就把 IDE 拉起的会话重启掉。
+      expect(p, contains('复用优先'));
+      expect(p, contains('·可热重载'));
+      expect(p, contains('·只读'));
+      expect(p, contains('(a) 只读接入'));
+      expect(p, contains('(b) 由 xb_ume 接管'));
+      // 热重载的回落：只读会话会报错，别反复重试。
+      expect(p, contains('只对带·可热重载标记的会话有效'));
+      expect(p, contains('不要反复重试'));
     });
 
     test('eval 未开启时不出现 xbume_eval', () {
@@ -107,6 +117,11 @@ void main() {
       expect(src, contains('function aiPickDir()'));
       expect(src, contains('function aiPickChoose()'));
       expect(src, contains("aiPickLoad(this.dataset.path)"));
+      // 页面说明不能再说「AI 调试不复用 VM 会话」：本工具拉起的会话可以复用
+      // 也能热重载，只有 IDE 拉起的才是只读。
+      expect(src, isNot(contains('AI 调试不复用它')));
+      expect(src, contains('AI 调试会直接<b>复用</b>'));
+      expect(src, contains('IDE 拉起的只能只读接入'));
     });
   });
 }
