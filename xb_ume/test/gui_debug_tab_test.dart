@@ -191,7 +191,7 @@ void main() {
         'function dbgEvalErrHint(',
         'function dbgVarFindMember(',
         'function dbgVarPathExpr(',
-        'var h = dbgEvalErrHint(d);',
+        'var h = dbgEvalErrHint(d, expr);',
         // 原文不丢：压成一句后仍能悬停看完整错误。
         'out.title = h.raw;',
         // 两种提示：变量树里反查到的完整表达式 / 后端算的拼写候选。
@@ -199,6 +199,17 @@ void main() {
         // 提示里的「；试试 …」用全角分号（源码就是这么写的）。
         "'；试试 '",
         "' 没有成员 '",
+        // 私有成员（`_count`）不是写错，是表达式读不到；反查出的同名路径正是刚输的。
+        "member.charAt(0) === '_'",
+        "' 的私有成员 '",
+        "sug[i].charAt(0) === '_'",
+        // 等于用户输入的建议要丢掉，否则提示自指（「试试 this.controller._count」）。
+        'function dbgNormExpr(',
+        'dbgNormExpr(alt) !== typed',
+        // 后端给的是成员名，要拼回用户那一行才能直接粘（controller.x → controller.y）。
+        'function dbgFixTail(',
+        'dbgFixTail(expr, member, sug[i])',
+        'dbgNormExpr(fixed) === typed',
       ]) {
         expect(html.contains(fn), isTrue, reason: fn);
       }

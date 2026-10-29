@@ -18405,7 +18405,7 @@ function dbgEval(){
       out.className = 'bad';
       // VM 的编译错误很长（synthetic_debug_expression + 来源包 + 标准建议），
       // 压成一句「类 X 没有成员 Y」，原文收进悬停。
-      var h = dbgEvalErrHint(d);
+      var h = dbgEvalErrHint(d, expr);
       out.textContent = h.text;
       out.title = h.raw;
     }
@@ -18413,26 +18413,60 @@ function dbgEval(){
 }
 
 // 求值失败 → 一行可读的原因 + 最可能的正确写法。
-// 两种错误很常见，各给一份提示：
+// 三种错误很常见，各给一份提示：
 //   ① 拼写错（runTimeType）—— 后端按本机源码算的 suggest；
 //   ② 写错对象（controller.controlFinishLoad，而它在 refreshController 上）
-//      —— 在已展开的变量树里找同名字段，直接给完整表达式。
-function dbgEvalErrHint(d){
+//      —— 在已展开的变量树里找同名字段，直接给完整表达式；
+//   ③ 私有成员（this.controller._count）—— 不是写错，是读不到：Dart 的私有名
+//      按库区分，求值表达式编译在合成库里，别的库的 `_x` 根本解析不到。
+function dbgEvalErrHint(d, expr){
   var raw = String((d && d.error) || '求值失败');
   var m = /'([A-Za-z_$][\w$]*)' isn't defined for the class '([A-Za-z_$][\w$]*)'/.exec(raw);
   if (!m) return { text: raw, raw: raw };
   var member = m[1], cls = m[2];
+  if (member.charAt(0) === '_') {
+    // 反查出来的同名路径正是用户刚试过的写法，「试试 xxx」只会自指。
+    return {
+      text: cls + ' 的私有成员 ' + member + ' 在表达式里读不到（Dart 私有名按库区分）；'
+        + '它的值在变量树 / 「实例」Tab 里能直接看',
+      raw: raw,
+    };
+  }
+  var typed = dbgNormExpr(expr);
   var tips = [];
   var alt = dbgVarFindMember(member);
-  if (alt) tips.push(alt);
+  if (alt && dbgNormExpr(alt) !== typed) tips.push(alt);
   var sug = (d && d.suggest) || [];
   for (var i = 0; i < sug.length && i < 2; i++) {
-    if (sug[i] && tips.indexOf(sug[i]) < 0) tips.push(sug[i]);
+    if (!sug[i] || sug[i].charAt(0) === '_') continue;
+    // 后端给的是成员名（runtimeType），要拼回用户那一行才是能直接粘的表达式
+    // （controller.runTimeType → controller.runtimeType）。
+    var fixed = dbgFixTail(expr, member, sug[i]);
+    // 等于用户输入的也别给（同一个表达式再试一次还是同样报错）。
+    if (dbgNormExpr(fixed) === typed || tips.indexOf(fixed) >= 0) continue;
+    tips.push(fixed);
   }
   return {
     text: cls + ' 没有成员 ' + member + (tips.length ? '；试试 ' + tips.join(' / ') : ''),
     raw: raw,
   };
+}
+
+// 把表达式最后一段（= 报错的成员名）换成建议的成员名：
+// controller.runTimeType → controller.runtimeType；对不上就只返回名字。
+function dbgFixTail(expr, member, sug){
+  var e = String(expr || '').trim();
+  if (e.length > member.length && e.slice(e.length - member.length) === member) {
+    var head = e.slice(0, e.length - member.length);
+    if (/[.\w$]\s*$/.test(head)) return head + sug;
+  }
+  return sug;
+}
+
+// 比「建议」与「用户输入」是否同一个表达式：忽略空白与 this. 前缀
+// （this.controller._count ≡ controller._count）。
+function dbgNormExpr(s){
+  return String(s || '').replace(/\s+/g, '').replace(/^this\./, '');
 }
 
 // 在「已展开」的变量树里找谁的字段叫这个名字，返回可复制进输入框的表达式。
