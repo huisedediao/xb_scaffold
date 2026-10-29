@@ -112,6 +112,22 @@ void main() {
       expect(html.contains("msg.type === 'debugState'"), isTrue);
       expect(html.contains("msg.type === 'debugOutput'"), isTrue);
     });
+
+    test('运行配置：只读摘要 + 打开配置文件 + 启动带平台', () {
+      const html = gui.guiHtml;
+      for (final s in <String>[
+        'id="dbg-profile"',
+        'function dbgProfileRefresh(',
+        'function dbgProfileText(',
+        'function dbgProfileOpen(',
+        '/api/openconfig?file=run',
+        'dbgPlatformOf(',
+        // 启动时把设备平台一并交给后端，配置才能按平台选参数。
+        "platform: dbgPlatformOf(dev) || null",
+      ]) {
+        expect(html.contains(s), isTrue, reason: s);
+      }
+    });
   });
 
   group('调试后端接口', () {
@@ -189,6 +205,21 @@ void main() {
       final d = await op(jsonEncode(<String, Object?>{'op': 'no-such-op'}));
       expect(d['ok'], isFalse);
       expect('${d['error']}'.contains('未知操作'), isTrue);
+    });
+
+    test('runProfile 只读接口：项目没配置也算正常返回', () async {
+      final dir = Directory.systemTemp.createTempSync('xbume_gui_profile_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final d = await op(
+        null,
+        method: 'GET',
+        query: '?op=runProfile&dir=${Uri.encodeQueryComponent(dir.path)}',
+      );
+      expect(d['ok'], isTrue);
+      expect(d['op'], 'runProfile');
+      expect('${d['path']}'.endsWith('/debug/run_profiles.json'), isTrue);
+      // 没配这个项目：不带 profile 字段（前端显示「未配置」）。
+      expect(d.containsKey('profile'), isFalse);
     });
   });
 }

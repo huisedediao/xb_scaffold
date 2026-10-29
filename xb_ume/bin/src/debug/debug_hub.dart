@@ -16,6 +16,7 @@ import 'dart:io';
 import '../device/bridge.dart' show DeviceCommandError;
 import '../device/flutter_run.dart';
 import '../device/live_store.dart' show pidAlive;
+import '../device/run_profile.dart';
 import 'breakpoint_store.dart';
 import 'debug_client.dart';
 
@@ -364,6 +365,8 @@ class DebugHub {
             for (final f in frames) debugFrameJson(f, toLocal: _toLocal),
           ],
         };
+      case 'runProfile':
+        return _runProfile(a);
       case 'eval':
         return _eval(a);
       default:
@@ -373,19 +376,51 @@ class DebugHub {
 
   // ---------------------------------------------------------------- 运行
 
+  /// 当前项目的运行配置（GUI 只读展示 + 「打开配置」用）。
+  ///
+  /// 没有目录 / 没配置都正常返回（`profile` 缺席），前端据此显示「未配置」。
+  Map<String, Object?> _runProfile(Map<String, Object?> a) {
+    final dir = _str(a['dir']) ?? _projectRoot;
+    final path = runProfileFilePath();
+    if (dir == null) {
+      return <String, Object?>{
+        'dir': null,
+        'path': path,
+        'exists': File(path).existsSync(),
+      };
+    }
+    final p = loadRunProfile(dir);
+    return <String, Object?>{
+      'dir': normalizeProjectRoot(dir),
+      'path': path,
+      'exists': File(path).existsSync(),
+      if (p != null) 'profile': p.toJson(),
+    };
+  }
+
   Future<Map<String, Object?>> _start(Map<String, Object?> a) async {
     if (_busy) throw DebugException('正在启动中，请稍候再点');
     final device = _str(a['device']) ?? kDebugDefaultDevice;
     final target = _str(a['target']);
+    final platform = _str(a['platform']);
     final cwd = _str(a['cwd']) ?? _handle?.cwd ?? _projectRoot;
     _busy = true;
-    _message = '正在启动 flutter run -d $device …';
+    final profile = cwd == null ? null : loadRunProfile(cwd);
+    // 只在「配置对当前平台生效」时才提示预启动；平台未知时按后端识别的结果算，
+    // 这里不抢话术（宁可说“启动中”）。
+    final willPreRun = profile != null &&
+        profile.preRun.isNotEmpty &&
+        profile.appliesTo(platformKeyOf(platform));
+    _message = willPreRun
+        ? '正在执行预启动命令（${profile.preRun.length} 条）…'
+        : '正在启动 flutter run -d $device …';
     _pushState();
     try {
       final r = await launcher.launch(
         device: device,
         target: target,
         cwd: cwd,
+        platform: platform,
         owner: 'gui',
         timeout: const Duration(seconds: 240),
       );
@@ -399,13 +434,24 @@ class DebugHub {
         wsUri: ws,
         pid: r.pid,
         projectRoot: cwd,
-        // 自己拉起的从日志头开始（能看到编译过程）；复用只看新输出。
+        // 自己拉起的从日志头开始（能看到预启动与编译过程）；复用只看新输出。
         followFromStart: !r.reused,
       );
+      // 预启动输出已写在日志文件头部，_startFollow（followFromStart）
+      // 会从文件头读进来，这里不再重复推。
+      final preNote = r.preRunCommands.isEmpty
+          ? ''
+          : '；预启动 ${r.preRunCommands.length} 条命令'
+              '${r.preRunLines.any((l) => l.contains('失败：')) ? '（有失败，已按配置继续）' : '完成'}';
       _message =
           '${r.reused ? '复用已有会话 pid ${r.pid}（未重装包）' : '已启动 pid ${r.pid}（$device）'}'
-          '${note == null ? '' : '；$note'}';
-      return <String, Object?>{'pid': r.pid, 'reused': r.reused};
+          '$preNote${note == null ? '' : '；$note'}';
+      return <String, Object?>{
+        'pid': r.pid,
+        'reused': r.reused,
+        'platform': platform,
+        'preRun': r.preRunCommands,
+      };
     } finally {
       _busy = false;
     }
@@ -455,10 +501,20 @@ class DebugHub {
     _handle = null;
     _wsUri = null;
     _reused = false;
+    for (final line in r.postStopLines) {
+      _onOutput(line);
+    }
+    final postNote = r.postStopLines.isEmpty
+        ? ''
+        : '；停止清理${r.postStopLines.any((l) => l.contains('失败')) ? '有失败（见输出）' : '完成'}';
     _message = r.stopped
-        ? '已停止 pid $pid${r.children.isEmpty ? '' : '（子进程 ${r.children.join(', ')}）'}'
+        ? '已停止 pid $pid${r.children.isEmpty ? '' : '（子进程 ${r.children.join(', ')}）'}$postNote'
         : 'pid $pid 已不在运行';
-    return <String, Object?>{'stopped': r.stopped, 'children': r.children};
+    return <String, Object?>{
+      'stopped': r.stopped,
+      'children': r.children,
+      'postStop': r.postStopLines,
+    };
   }
 
   Future<Map<String, Object?>> _hot(Map<String, Object?> a) async {

@@ -27,6 +27,7 @@ class LaunchRecord {
     required this.cwd,
     required this.startedAt,
     this.target,
+    this.platform,
     this.wsUri,
     this.logPath,
     this.fifo,
@@ -39,6 +40,10 @@ class LaunchRecord {
   /// 启动时的工作目录（复用判定按符号链接归一后的路径比较）。
   final String cwd;
   final String? target;
+
+  /// 目标平台（android / ios / ohos / macos…）；若启动方没传也没识别出来则为 null。
+  /// 停止清理命令要用它展开 `{platform}`，因此与记录一起落盘。
+  final String? platform;
   final String? wsUri;
   final String? logPath;
   final String? fifo;
@@ -52,6 +57,7 @@ class LaunchRecord {
         'device': device,
         'cwd': cwd,
         'target': target,
+        'platform': platform,
         'wsUri': wsUri,
         'logPath': logPath,
         'fifo': fifo,
@@ -72,6 +78,7 @@ class LaunchRecord {
       cwd: cwd,
       startedAt: started,
       target: json['target']?.toString(),
+      platform: json['platform']?.toString(),
       wsUri: json['wsUri']?.toString(),
       logPath: json['logPath']?.toString(),
       fifo: json['fifo']?.toString(),

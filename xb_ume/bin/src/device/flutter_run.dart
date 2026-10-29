@@ -18,6 +18,7 @@ import '../paths.dart';
 import 'bridge.dart';
 import 'live_store.dart';
 import 'process.dart';
+import 'run_profile.dart';
 
 /// 本机已在跑的 `flutter run`（非本服务拉起），用于启动前体检。
 class LocalFlutterRun {
@@ -54,6 +55,39 @@ String resolvePathForCompare(String path) {
   } catch (_) {
     return File(path).absolute.path;
   }
+}
+
+// 设备 → 平台键的进程内缓存（启动时按配置选参数用；设备插拔后可能过期，
+// 但同一进程里很少变，重启 GUI/MCP 自会重建）。
+final Map<String, String> _devicePlatformCache = <String, String>{};
+
+/// 用 `flutter devices --machine` 反查设备平台（android / ios / ohos / macos…）。
+///
+/// 只有运行配置依赖平台时才调用；查不到返回 null（配置只命中 `*`）。
+Future<String?> platformOfDevice(String flutter, String device) async {
+  final hit = _devicePlatformCache[device];
+  if (hit != null) return hit;
+  final r = await runCmd(
+    flutter,
+    <String>['devices', '--machine'],
+    timeout: const Duration(seconds: 20),
+  );
+  if (!r.ok) return null;
+  try {
+    final raw = jsonDecode(r.stdout);
+    if (raw is List) {
+      for (final e in raw) {
+        if (e is! Map) continue;
+        if ('${e['id']}' != device) continue;
+        final key = platformKeyOf('${e['targetPlatform'] ?? ''}');
+        if (key != null) _devicePlatformCache[device] = key;
+        return key;
+      }
+    }
+  } catch (_) {
+    // --machine 输出异常：当未知平台处理。
+  }
+  return null;
 }
 
 /// 从 `Get-CimInstance Win32_Process` 的 CSV（列序 `ProcessId,ParentProcessId`）
@@ -94,6 +128,8 @@ class LaunchResult {
     this.wsUri,
     this.tail = '',
     this.reused = false,
+    this.preRunCommands = const <String>[],
+    this.preRunLines = const <String>[],
   });
 
   final int pid;
@@ -109,6 +145,12 @@ class LaunchResult {
 
   /// true 表示命中已有存活会话，直接复用，没有重新拉起（不会重装包）。
   final bool reused;
+
+  /// 项目运行配置里实际执行过的预启动命令（复用会话时为空）。
+  final List<String> preRunCommands;
+
+  /// 预启动命令的输出行（已带 `[pre-run]` 前缀，同时也是日志文件头部）。
+  final List<String> preRunLines;
 }
 
 /// 正在运行的 flutter run 句柄。
@@ -120,6 +162,7 @@ class LaunchHandle {
     required this.logPath,
     required this.startedAt,
     required this.cwd,
+    this.platform,
     this.process,
     this.fifo,
     this.adopted = false,
@@ -134,6 +177,10 @@ class LaunchHandle {
 
   /// 启动时的工作目录（复用判定按符号链接归一后的路径比较）。
   final String cwd;
+
+  /// 目标平台（android / ios / ohos / macos…）：运行配置按它选参数与展开变量。
+  /// 认领来的旧会话可能为空。
+  final String? platform;
 
   /// 自己拉起的 flutter run 进程；认领来的进程为 null（拿不到句柄）。
   final Process? process;
@@ -194,10 +241,17 @@ class HotReloadResult {
 
 /// 停止结果：flutter run 进程是否被结束，以及随之结束的子进程（app 本体）。
 class StopResult {
-  StopResult({required this.stopped, this.children = const <int>[]});
+  StopResult({
+    required this.stopped,
+    this.children = const <int>[],
+    this.postStopLines = const <String>[],
+  });
 
   final bool stopped;
   final List<int> children;
+
+  /// 停止后执行的项目清理命令输出（已带 `[post-stop]` 前缀）。
+  final List<String> postStopLines;
 }
 
 /// flutter run 进程管理（单实例挂在 McpToolContext 上）。
@@ -299,6 +353,7 @@ class FlutterRunLauncher {
     required String device,
     String? target,
     String? cwd,
+    String? platform,
     bool waitVm = true,
     bool force = false,
     String owner = 'mcp',
@@ -324,6 +379,9 @@ class FlutterRunLauncher {
     var locked = false;
     IOSink? sink;
     String? fifo;
+    // 预启动命令与输出（复用会话时保持为空）。
+    final preRunCommands = <String>[];
+    final preRunLines = <String>[];
     late final Process proc;
     late final LaunchHandle handle;
     try {
@@ -372,11 +430,56 @@ class FlutterRunLauncher {
         }
       }
 
+      // 项目级运行配置：与 IDE 的 preLaunchTask 等价。没有配置 / 配置损坏 /
+      // 配置限定了平台且当前设备不在其中时，active 为 null：下面不执行任何
+      // 额外命令、不追加任何参数。
+      final profile = loadRunProfile(workdir);
+      final platformKey = platformKeyOf(platform) ??
+          (profile != null && profile.needsPlatform()
+              ? await platformOfDevice(flutter, device)
+              : null);
+      final active = (profile != null && profile.appliesTo(platformKey))
+          ? profile
+          : null;
+      if (active != null && active.preRun.isNotEmpty) {
+        for (final raw in active.preRun) {
+          preRunCommands.add(expandRunVars(
+            raw,
+            projectRoot: workdir,
+            device: device,
+            target: target,
+            platform: platformKey,
+          ));
+        }
+        final results = await runProfileCommands(
+          preRunCommands,
+          cwd: workdir,
+          timeout: Duration(seconds: active.timeoutSec),
+          onLine: preRunLines.add,
+        );
+        // 预启动输出写在日志文件头部：FIFO 模式用 >> 追加，GUI 的
+        // 输出区从文件头读，能看到准备过程。
+        if (preRunLines.isNotEmpty) {
+          try {
+            File(logPath).writeAsStringSync(
+              '${preRunLines.join('\n')}\n',
+              mode: FileMode.append,
+            );
+          } catch (_) {
+            // 日志写失败不影响启动。
+          }
+        }
+        final failed = results.where((r) => !r.ok).toList();
+        if (failed.isNotEmpty && !active.continueOnError) {
+          throw DeviceCommandError('flutter-run', 'pre-run', failed.first.errorText);
+        }
+      }
       final runArgs = <String>[
         'run',
         '-d',
         device,
         if (target != null && target.isNotEmpty) ...<String>['--target', target],
+        if (active != null) ...active.argsFor(platformKey),
       ];
       // stdin 换成命名管道：拉起方或任何后续实例都能 `printf 'r\n' > fifo`
       // 触发热重载；exec 不换 pid，kill 依旧精确。
@@ -395,7 +498,7 @@ class FlutterRunLauncher {
           'sh',
           <String>[
             '-c',
-            r'fifo="$1"; log="$2"; shift 2; exec 3<>"$fifo"; exec "$@" > "$log" 2>&1 < "$fifo"',
+            r'fifo="$1"; log="$2"; shift 2; exec 3<>"$fifo"; exec "$@" >> "$log" 2>&1 < "$fifo"',
             'sh',
             fifo0,
             logPath,
@@ -405,7 +508,8 @@ class FlutterRunLauncher {
           workingDirectory: workdir,
         );
       } else {
-        sink = File(logPath).openWrite();
+        // append 而不是 truncate：日志文件开头已经有预启动命令的输出。
+        sink = File(logPath).openWrite(mode: FileMode.append);
         proc = await Process.start(
           flutter,
           runArgs,
@@ -422,6 +526,7 @@ class FlutterRunLauncher {
         logPath: logPath,
         startedAt: DateTime.now(),
         cwd: workdir,
+        platform: platformKey,
         process: proc,
         fifo: fifo,
         owner: owner,
@@ -502,6 +607,8 @@ class FlutterRunLauncher {
         target: target,
         logPath: logPath,
         tail: tail.join('\n'),
+        preRunCommands: preRunCommands,
+        preRunLines: preRunLines,
       );
     }
 
@@ -522,6 +629,8 @@ class FlutterRunLauncher {
       logPath: logPath,
       wsUri: ready,
       tail: tail.join('\n'),
+      preRunCommands: preRunCommands,
+      preRunLines: preRunLines,
     );
   }
   
@@ -544,6 +653,7 @@ class FlutterRunLauncher {
         logPath: r.logPath ?? '',
         startedAt: r.startedAt,
         cwd: r.cwd,
+        platform: r.platform,
         fifo: r.fifo,
         adopted: true,
         owner: r.owner,
@@ -561,6 +671,7 @@ class FlutterRunLauncher {
       cwd: h.cwd,
       startedAt: h.startedAt,
       target: h.target,
+      platform: h.platform,
       wsUri: h.wsUri,
       logPath: h.logPath,
       fifo: h.fifo,
@@ -807,14 +918,17 @@ class FlutterRunLauncher {
   ///
   /// 先 SIGTERM，3 秒后 SIGKILL；子进程必须在杀父进程**之前**取快照，
   /// 否则 parent 退出后它们会被 init 收养，无从得知归属。
+  /// 杀完再跑项目运行配置里的 `postStop`（如 iOS 还原 pbxproj 签名）。
   Future<StopResult> stop(int pid) async {
+    // 清理命令要用启动时的目录/设备/平台，必须在 _cleanupExited 之前取。
+    final h = _live[pid];
     final children = Platform.isWindows
         ? await _descendantsOnWindows(pid)
         : _childrenOf(pid);
     final alive = Process.killPid(pid, ProcessSignal.sigterm);
     if (!alive) {
       _cleanupExited(pid);
-      return StopResult(stopped: false);
+      return StopResult(stopped: false, postStopLines: await _runPostStop(h));
     }
     for (var i = 0; i < 30; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -834,7 +948,41 @@ class FlutterRunLauncher {
     for (final c in killed) {
       if (_isAlive(c)) Process.killPid(c, ProcessSignal.sigkill);
     }
-    return StopResult(stopped: true, children: killed);
+    return StopResult(
+      stopped: true,
+      children: killed,
+      postStopLines: await _runPostStop(h),
+    );
+  }
+
+  /// 执行项目运行配置里的停止后清理命令；失败只回提示，不影响「已停止」。
+  Future<List<String>> _runPostStop(LaunchHandle? h) async {
+    if (h == null) return const <String>[];
+    final profile = loadRunProfile(h.cwd);
+    if (profile == null || profile.postStop.isEmpty) return const <String>[];
+    final cmds = <String>[
+      for (final raw in profile.postStop)
+        expandRunVars(
+          raw,
+          projectRoot: h.cwd,
+          device: h.device,
+          target: h.target,
+          platform: h.platform,
+        ),
+    ];
+    final lines = <String>[];
+    try {
+      await runProfileCommands(
+        cmds,
+        cwd: h.cwd,
+        timeout: Duration(seconds: profile.timeoutSec),
+        tag: 'post-stop',
+        onLine: lines.add,
+      );
+    } catch (_) {
+      // 会话已经停了，清理失败只提示。
+    }
+    return lines;
   }
 
   /// 直接子进程（ps -axo pid,ppid）。

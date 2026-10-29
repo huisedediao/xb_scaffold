@@ -40,6 +40,7 @@ import 'src/debug/source_view.dart';
 // 与本文件同名的本地解析器签名不同，不能整包导入。
 import 'src/device/adb.dart' show adbKeepAwakeArgs;
 import 'src/device/hdc.dart' show hdcKeepAwakeArgs;
+import 'src/device/run_profile.dart' show runProfileFilePath;
 
 /// ide.dart 守护进程的互斥端口与协议令牌（双端约定一致）。
 const int kDaemonLockPort = 46128;
@@ -792,7 +793,19 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/openconfig' && req.method == 'POST') {
-      await openWithSystemApp('$_home/.xb_ume_ide/config.json');
+      // file=run 打开项目运行配置（预启动命令 / 额外参数 / 停止清理）；
+      // 文件不存在时先建一个空壳，避免系统编辑器打开失败。
+      final which = req.uri.queryParameters['file'] ?? '';
+      var target = '$_home/.xb_ume_ide/config.json';
+      if (which == 'run') {
+        target = runProfileFilePath();
+        final f = File(target);
+        if (!f.existsSync()) {
+          f.parent.createSync(recursive: true);
+          f.writeAsStringSync('{\n  "version": 1,\n  "projects": {}\n}\n');
+        }
+      }
+      await openWithSystemApp(target);
       req.response.statusCode = HttpStatus.ok;
       await req.response.close();
       return;
@@ -11495,7 +11508,7 @@ const String guiHtml = r'''
       </div>
       <div class="row" style="margin-top:4px;gap:10px;flex-wrap:wrap">
         <label class="chk" style="display:flex;align-items:center;flex:1 1 260px;min-width:220px" title="Flutter 项目根目录（含 pubspec.yaml），也是断点相对路径的基准">项目目录
-          <input id="dbg-dir" list="dbg-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px" onchange="dbgLoadSaved()">
+          <input id="dbg-dir" list="dbg-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px" onchange="dbgLoadSaved();dbgProfileRefresh()">
           <datalist id="dbg-dir-list"></datalist>
         </label>
         <label class="chk" style="display:flex;align-items:center;flex:0 0 auto" title="flutter run -d 哪台设备。默认 macOS 桌面；手机上的会话请用下方「接入」">设备
@@ -11506,6 +11519,12 @@ const String guiHtml = r'''
         </label>
         <button class="primary" onclick="dbgStart(this)">启动 / 复用</button>
         <button onclick="dbgStop(this)" title="只停本工具（GUI/MCP）拉起的 flutter run，按精确 PID 停">停止</button>
+      </div>
+      <div class="row" style="margin-top:4px;gap:8px;flex-wrap:wrap">
+        <b style="font-size:12px" title="项目级运行配置：启动前要跑的准备命令、按平台追加给 flutter run 的参数、停止后的清理（run_profiles.json，按项目根生效）">运行配置</b>
+        <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
+        <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
+        <button onclick="dbgProfileOpen()" style="flex:0 0 auto" title="打开 run_profiles.json（只读摘要来自它：预启动命令 / 额外参数 / 停止清理）">打开配置</button>
       </div>
       <div class="row" style="margin-top:4px;gap:10px;flex-wrap:nowrap">
         <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
@@ -16852,6 +16871,7 @@ function dbgEl(id){ return document.getElementById(id); }
 function dbgShow(){
   dbgLoadOpts();
   dbgLoadSaved();
+  dbgProfileRefresh();
   refreshDaemon(); // 顺手刷新「接入会话」下拉
   dbgStatus();
 }
@@ -16863,6 +16883,17 @@ function dbgDesktop(){
   if (/Windows/i.test(ua)) return 'windows';
   if (/Linux/i.test(ua) && !/Android/i.test(ua)) return 'linux';
   return 'macos';
+}
+
+// 设备 id → 平台（/api/ai/config 已带回，如 android / ohos / ios-real）。
+// 启动时传给后端，运行配置据此选参数（不传让后端自己识别也行，但会多一次
+// `flutter devices --machine`）。
+var dbgDevPlatforms = {};
+
+function dbgPlatformOf(dev){
+  if (dbgDevPlatforms[dev]) return dbgDevPlatforms[dev];
+  if (dev === 'macos' || dev === 'windows' || dev === 'linux') return dev;
+  return '';
 }
 
 function dbgLoadOpts(){
@@ -16886,7 +16917,9 @@ function dbgLoadOpts(){
     var prev = sel.value;
     var list = d.devices || [];
     var html = '';
+    dbgDevPlatforms = {};
     list.forEach(function(x){
+      if (x.platform) dbgDevPlatforms[x.id] = x.platform;
       html += '<option value="' + esc(x.id) + '">'
         + esc((platformNames[x.platform] || x.platform || '') + ' · ' + (x.name || x.id)) + '</option>';
     });
@@ -16896,6 +16929,7 @@ function dbgLoadOpts(){
     sel.value = prev;
     if (!sel.value) sel.value = hasDesk ? desk : (list.length ? list[0].id : desk);
     dbgLoadSaved(); // 目录默认值已回填，顺手刷新「已记住」
+    dbgProfileRefresh(); // 目录 / 设备都就位了，顺手刷新运行配置摘要
   }).catch(function(){});
 }
 
@@ -16905,6 +16939,48 @@ var dbgSavedAllMode = false;
 var dbgSavedAllProjects = [];
 
 function dbgDirValue(){ return (dbgEl('dbg-dir').value || '').trim(); }
+
+// 运行配置摘要（$XB_UME_HOME/debug/run_profiles.json，按项目根）：
+// 只读展示「启动前要跑什么、额外参数、停止后清理什么」，具体内容是文件里的，
+// 改它用「打开配置」。没配置 / 读不到都只是提示，不影响启动。
+function dbgProfileText(d){
+  var p = d.profile;
+  if (!p) return d.exists ? '未配置（点「打开配置」加本项目的配置）' : '未配置（点「打开配置」新建文件）';
+  var parts = [];
+  if ((p.platforms || []).length) parts.push('仅 ' + p.platforms.join('/'));
+  if ((p.preRun || []).length) parts.push('预启动 ' + p.preRun.length + ' 条');
+  if ((p.postStop || []).length) parts.push('停止清理 ' + p.postStop.length + ' 条');
+  var args = p.runArgs || {};
+  Object.keys(args).forEach(function(k){
+    var v = (args[k] || []).join(' ');
+    if (v) parts.push((k === '*' ? '所有平台' : k) + ': ' + v);
+  });
+  if (p.continueOnError) parts.push('预启动失败仍继续');
+  return esc(parts.length ? parts.join(' · ') : '已配置（无额外动作）');
+}
+
+function dbgProfileRefresh(btn){
+  var box = dbgEl('dbg-profile');
+  if (!box) return Promise.resolve();
+  var dir = dbgDirValue();
+  if (!dir) {
+    box.textContent = '先选项目目录';
+    box.title = '';
+    return Promise.resolve();
+  }
+  // 用 GET 而不走 dbgOp：那个会把返回当成会话状态刷到整页。
+  return fetch('/api/debug/op?op=runProfile&dir=' + encodeURIComponent(dir))
+    .then(function(r){ return r.json(); }).then(function(d){
+      if (!d || d.ok === false) {
+        box.textContent = '读取失败' + (d && d.error ? '：' + d.error : '');
+        return;
+      }
+      box.innerHTML = dbgProfileText(d);
+      box.title = d.path ? (d.path + (d.exists ? '' : '（文件还没创建）')) : '';
+    }).catch(function(){ box.textContent = '读取失败'; });
+}
+
+function dbgProfileOpen(){ fetch('/api/openconfig?file=run', {method: 'POST'}); }
 
 function dbgLoadSaved(){
   dbgSavedAllMode = false;
@@ -17676,7 +17752,7 @@ function dbgStart(btn){
   var done = dbgBusy(btn, '启动中…');
   var msg = dbgEl('dbg-msg');
   if (msg) msg.textContent = '正在启动 flutter run -d ' + dev + '（首次编译较慢，输出区有进度）…';
-  dbgOp('start', {cwd: dir, device: dev, target: target || null}).then(done, done);
+  dbgOp('start', {cwd: dir, device: dev, target: target || null, platform: dbgPlatformOf(dev) || null}).then(done, done);
 }
 
 function dbgStop(btn){

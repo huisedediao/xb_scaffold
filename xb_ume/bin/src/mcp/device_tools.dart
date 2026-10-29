@@ -139,6 +139,8 @@ McpTool _appLaunchTool() => McpTool(
             'string', '已安装包名（via=adb/simctl/hdc 必填；hdc 支持 bundle#Ability）'),
         'target': prop('string', '入口文件（flutter-run，默认 lib/main.dart）'),
         'cwd': prop('string', 'flutter run 的工作目录（默认 MCP 服务进程的当前目录）'),
+        'platform': prop('string',
+            '目标平台 android|ios|ohos|macos|windows（项目运行配置按它选参数；不传则自动识别）'),
         'waitVm': prop('boolean', '是否等待 VM service（flutter-run 默认 true）',
             defaultValue: true),
         'force': prop('boolean',
@@ -163,6 +165,7 @@ McpTool _appLaunchTool() => McpTool(
               device: deviceId,
               target: optionalString(args, 'target'),
               cwd: optionalString(args, 'cwd'),
+              platform: optionalString(args, 'platform'),
               waitVm: optionalBool(args, 'waitVm', fallback: true),
               force: optionalBool(args, 'force'),
               owner: 'mcp',
@@ -174,11 +177,14 @@ McpTool _appLaunchTool() => McpTool(
               sessionId = s.id;
             }
             final action = r.reused ? '复用已有 flutter run' : '已启动 flutter run';
+            final pre = r.preRunCommands.isEmpty
+                ? ''
+                : '；项目运行配置已执行 ${r.preRunCommands.length} 条预启动命令';
             return McpToolResult.text(
               sessionId == null
-                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}'
+                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$pre'
                   : '$action（pid ${r.pid}）并通过临时会话 $sessionId 接入'
-                      '${r.reused ? '（未重装包）' : ''}',
+                      '${r.reused ? '（未重装包）' : ''}$pre',
               structured: <String, Object?>{
                 'ok': true,
                 'via': via,
@@ -188,6 +194,7 @@ McpTool _appLaunchTool() => McpTool(
                 'sessionId': sessionId,
                 'logPath': r.logPath,
                 'reused': r.reused,
+                'preRun': r.preRunCommands,
               },
             );
           } on DeviceCommandError catch (e) {
