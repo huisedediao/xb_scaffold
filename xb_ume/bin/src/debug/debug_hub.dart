@@ -445,7 +445,8 @@ class DebugHub {
               '${r.preRunLines.any((l) => l.contains('失败：')) ? '（有失败，已按配置继续）' : '完成'}';
       _message =
           '${r.reused ? '复用已有会话 pid ${r.pid}（未重装包）' : '已启动 pid ${r.pid}（$device）'}'
-          '$preNote${note == null ? '' : '；$note'}';
+          '$preNote${r.note == null ? '' : '；${r.note}'}'
+          '${note == null ? '' : '；$note'}';
       return <String, Object?>{
         'pid': r.pid,
         'reused': r.reused,

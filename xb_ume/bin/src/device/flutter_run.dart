@@ -148,6 +148,128 @@ String? launchFailureAdvice(String output) {
   return null;
 }
 
+/// hdc 客户端连不上 hdc server（「Connect server failed」）导致的启动失败。
+///
+/// 这类报错几乎总是一次性扰动：设备日志流还在跑、`hdc list targets` 也能
+/// 回，只是那一下新建连接被拒——装包往往已成功，只是 fport 没建起来。
+bool isTransientHdcFailure(String message) =>
+    message.toLowerCase().contains('connect server failed');
+
+/// `hdc list targets` 的输出里是否有 [device]（用来判断目标是不是 OHOS）。
+bool hdcSeesDevice(String output, String device) {
+  final id = device.trim();
+  if (id.isEmpty) return false;
+  for (final line in output.split('\n')) {
+    final t = line.trim();
+    if (t == id || t.startsWith('$id ') || t.startsWith('$id\t')) return true;
+  }
+  return false;
+}
+
+/// 从 `ps -ax -o pid,ppid,args` 的输出里挑出**我们遗留的** hdc 日志流客户端。
+///
+/// 只认「PPID=1（父进程已死）+ `hdc -t <id> hilog`」：这是 GUI「日志」对每台
+/// 设备常驻的流，GUI 被硬杀（旧版 `--install` 是 kill -9）后它就成孤儿，每个
+/// 占一条 hdc server 连接；攒够了 `fport` 就报 `Connect server failed`。
+/// DevEco 的形态是 `hdc -t <id> shell hilog -v time`（多一层 shell 子命令），
+/// 不能误杀。
+List<int> parseOrphanHdcLogClients(String psOutput) {
+  final out = <int>[];
+  for (final line in psOutput.split('\n')) {
+    final m = RegExp(r'^\s*(\d+)\s+(\d+)\s+(.*)$').firstMatch(line);
+    if (m == null) continue;
+    final pid = int.tryParse(m.group(1)!);
+    if (pid == null || m.group(2) != '1') continue;
+    final args = (m.group(3) ?? '').trimRight();
+    if (!RegExp(r'(^|[\s/])hdc\s').hasMatch(args)) continue;
+    if (!RegExp(r'\s-t\s').hasMatch(args) || !args.endsWith('hilog')) continue;
+    if (args.contains(' shell ')) continue;
+    out.add(pid);
+  }
+  return out;
+}
+
+/// hdc 体检用到的外部副作用（单测注入假实现，不碰真实 hdc / ps）。
+class HdcOps {
+  HdcOps({
+    required this.listTargets,
+    required this.listOrphanPids,
+    required this.killPid,
+    required this.restartServer,
+  });
+
+  final Future<CmdResult> Function(Duration timeout) listTargets;
+  final Future<List<int>> Function() listOrphanPids;
+  final bool Function(int pid) killPid;
+  final Future<void> Function() restartServer;
+
+  /// 真实实现；本机没有 hdc 可执行文件时返回 null（非 OHOS 环境直接跳过）。
+  static HdcOps? real() {
+    final exe = findExecutable('hdc');
+    if (exe == null) return null;
+    return HdcOps(
+      listTargets: (t) => runCmd(exe, <String>['list', 'targets'], timeout: t),
+      listOrphanPids: () async {
+        if (Platform.isWindows) return const <int>[];
+        final r = await runCmd('ps', <String>['-ax', '-o', 'pid,ppid,args'],
+            timeout: const Duration(seconds: 5));
+        return r.ok ? parseOrphanHdcLogClients(r.stdout) : const <int>[];
+      },
+      killPid: (pid) {
+        try {
+          // 精确 PID + SIGTERM：严禁宽泛 pkill。
+          return Process.killPid(pid);
+        } catch (_) {
+          return false;
+        }
+      },
+      restartServer: () async {
+        await runCmd(exe, <String>['kill', '-r'],
+            timeout: const Duration(seconds: 15));
+      },
+    );
+  }
+}
+
+/// 启动前给 hdc 做一次体检与自愈（只对 OHOS 有意义）。
+///
+/// 顺序按「能不动 server 就不动」：先回收孤儿 hilog 客户端，再探测
+/// `hdc list targets`；仍不通且目标确定是 OHOS 时才重启 hdc server（会断开
+/// 其它正在跑的 hdc 会话，所以只在确认要连这台设备时做）。
+///
+/// 返回做过的事（一句话，写进状态行 / 工具输出）；什么也没做返回 null。
+Future<String?> hdcPreflight(
+  String device, {
+  bool assumeOhos = false,
+  HdcOps? ops,
+  Duration probeTimeout = const Duration(seconds: 6),
+}) async {
+  final o = ops ?? HdcOps.real();
+  if (o == null) return null;
+  final notes = <String>[];
+
+  var probe = await o.listTargets(probeTimeout);
+  final isOhos = assumeOhos || (probe.ok && hdcSeesDevice(probe.stdout, device));
+  if (!isOhos) return null; // Android / iOS / 桌面：不碰 hdc
+
+  var reaped = 0;
+  for (final pid in await o.listOrphanPids()) {
+    if (o.killPid(pid)) reaped++;
+  }
+  if (reaped > 0) notes.add('回收 hdc 遗留日志客户端 $reaped 个');
+
+  // 回收后可能就通了：再探一次，能不动 server 就不动。
+  if (!probe.ok) probe = await o.listTargets(probeTimeout);
+  if (!probe.ok) {
+    await o.restartServer();
+    probe = await o.listTargets(probeTimeout);
+    notes.add(probe.ok
+        ? 'hdc server 无响应，已自动重启'
+        : 'hdc server 无响应，自动重启后仍不可用（可能拿不到 VM service）');
+  }
+  return notes.isEmpty ? null : notes.join('；');
+}
+
 /// 一次 flutter run 的结果。
 class LaunchResult {
   LaunchResult({
@@ -160,6 +282,7 @@ class LaunchResult {
     this.reused = false,
     this.preRunCommands = const <String>[],
     this.preRunLines = const <String>[],
+    this.note,
   });
 
   final int pid;
@@ -181,6 +304,9 @@ class LaunchResult {
 
   /// 预启动命令的输出行（已带 `[pre-run]` 前缀，同时也是日志文件头部）。
   final List<String> preRunLines;
+
+  /// 给人看的额外说明（如「hdc 拒连，已自动重试一次」）。
+  final String? note;
 }
 
 /// 正在运行的 flutter run 句柄。
@@ -286,6 +412,11 @@ class StopResult {
 
 /// flutter run 进程管理（单实例挂在 McpToolContext 上）。
 class FlutterRunLauncher {
+  FlutterRunLauncher({this.hdcOps});
+
+  /// 启动前 hdc 体检用的副作用集合（null=真实实现；单测注入假实现）。
+  final HdcOps? hdcOps;
+
   final Map<int, LaunchHandle> _live = <int, LaunchHandle>{};
 
   List<LaunchHandle> get live => _live.values.toList(growable: false);
@@ -379,6 +510,10 @@ class FlutterRunLauncher {
   ///   2. 正在启动中的同类进程 → 报错让调用方稍后重试（避免并发重装包）；
   ///   3. 外部（IDE 拉起）的同设备同目录进程 → 报错，除非 `force: true`。
   /// `force: true` 会先停掉自己拉起的同类会话，再重新拉起。
+  ///
+  /// 遇到 hdc 的一次性拒连（[isTransientHdcFailure]）会自动重试一次：
+  /// 编译与装包已经完成，第二次是增量构建，比让用户再点一次（还可能再
+  /// 撞上）划算；第二次仍失败就把错误原样抛给调用方。
   Future<LaunchResult> launch({
     required String device,
     String? target,
@@ -388,6 +523,48 @@ class FlutterRunLauncher {
     bool force = false,
     String owner = 'mcp',
     Duration timeout = const Duration(seconds: 180),
+  }) async {
+    try {
+      return await launchOnce(
+        device: device,
+        target: target,
+        cwd: cwd,
+        platform: platform,
+        waitVm: waitVm,
+        force: force,
+        owner: owner,
+        timeout: timeout,
+      );
+    } on DeviceCommandError catch (e) {
+      if (!isTransientHdcFailure(e.message)) rethrow;
+      // hdc server 那一下拒连：隔一秒再拉一次（第一次启动进程已退出，
+      // 不会与新会话冲突）。
+      await Future<void>.delayed(const Duration(seconds: 1));
+      return launchOnce(
+        device: device,
+        target: target,
+        cwd: cwd,
+        platform: platform,
+        waitVm: waitVm,
+        force: force,
+        owner: owner,
+        timeout: timeout,
+        retryNote: 'hdc 上次拒连（Connect server failed），已自动重试一次',
+      );
+    }
+  }
+
+  /// 单次启动实现（[launch] 的重试外壳会调两次；单测直接覆写它）。
+  Future<LaunchResult> launchOnce({
+    required String device,
+    String? target,
+    String? cwd,
+    String? platform,
+    bool waitVm = true,
+    bool force = false,
+    String owner = 'mcp',
+    Duration timeout = const Duration(seconds: 180),
+    String? retryNote,
   }) async {
     final flutter = findExecutable('flutter');
     if (flutter == null) {
@@ -405,6 +582,18 @@ class FlutterRunLauncher {
         .replaceAll(RegExp(r'[:.]'), '-')
         .substring(0, 19);
     final logPath = '${logDir.path}/$stamp-$device.log';
+
+    // OHOS：起进程前先给 hdc 做一次体检与自愈（拒连时 fport 必然失败，白编译
+    // 一遍还会再多一个孤儿客户端）。放在启动锁外：重启 server 要几秒，不占锁。
+    final preflightNote = await hdcPreflight(
+      device,
+      assumeOhos: platform == 'ohos',
+      ops: hdcOps,
+    );
+    final notes = <String>[
+      if (retryNote != null) retryNote,
+      if (preflightNote != null) preflightNote,
+    ];
 
     var locked = false;
     IOSink? sink;
@@ -639,6 +828,7 @@ class FlutterRunLauncher {
         tail: tail.join('\n'),
         preRunCommands: preRunCommands,
         preRunLines: preRunLines,
+        note: notes.isEmpty ? null : notes.join('；'),
       );
     }
 
@@ -664,6 +854,7 @@ class FlutterRunLauncher {
       tail: tail.join('\n'),
       preRunCommands: preRunCommands,
       preRunLines: preRunLines,
+      note: notes.isEmpty ? null : notes.join('；'),
     );
   }
   

@@ -180,11 +180,12 @@ McpTool _appLaunchTool() => McpTool(
             final pre = r.preRunCommands.isEmpty
                 ? ''
                 : '；项目运行配置已执行 ${r.preRunCommands.length} 条预启动命令';
+            final extra = r.note == null ? '' : '；${r.note}';
             return McpToolResult.text(
               sessionId == null
-                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$pre'
+                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$pre$extra'
                   : '$action（pid ${r.pid}）并通过临时会话 $sessionId 接入'
-                      '${r.reused ? '（未重装包）' : ''}$pre',
+                      '${r.reused ? '（未重装包）' : ''}$pre$extra',
               structured: <String, Object?>{
                 'ok': true,
                 'via': via,
@@ -195,6 +196,7 @@ McpTool _appLaunchTool() => McpTool(
                 'logPath': r.logPath,
                 'reused': r.reused,
                 'preRun': r.preRunCommands,
+                if (r.note != null) 'note': r.note,
               },
             );
           } on DeviceCommandError catch (e) {
