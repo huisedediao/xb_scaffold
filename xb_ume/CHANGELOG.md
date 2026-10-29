@@ -1,5 +1,9 @@
 ## 0.4.0
 
+- 调试 Tab 的变量列表可以逐层展开了（修「`this Instance of _DoorLockHomePageState` 只能看名字，看不到里面的数据」）：原来变量只是纯文本，`DebugVar.objectId` 早在 `getStack` 里就透传了、却没人用。现在：① `DebugClient.objectFields(objectId)` 发 `getObject`，`parseObjectFields` 把普通实例的 `fields`、List 的 `elements`、Map 的 `associations` 统一成「名字 → 值」（实例用字段名、List 用 `[下标]`、Map 用键的可读值，带 `total` / `truncated`）；② `DebugHub` 新增 `getObject` op；③ 前端变量行带 `▶/▼` 箭头、整行可点，点一次只读一层（懒加载 + 缓存，缩进 14px），子项可继续展开，超过 50 条提示「只显示前 N / 总共 M 条」。换帧 / 刷新调用栈会重置展开态（objectId 属于上一次暂停，不能复用）。局限：`getObject` 只给实例字段，Flutter 的 getter（`widget` / `context` / `mounted`）不在里面，看 getter 用下方的「求值」框。新增 5 项测试。
+
+- 修「断点卡片点『刷新』报 `WebSocketException: Unsupported URL scheme 'http'`」：`dbgSt.wsUri` 来自 `flutter run` 输出（`vmPattern` 匹配的就是 `http\S+`），是 `http://127.0.0.1:PORT/TOKEN=/` 形态；`DebugClient` 构造时做了 `normalizeVmUri` 所以调试本身正常，而 `/api/routestack`、`/api/routelocate` 等直连 VM 的接口走 `_SandboxRpc(uri)` 直接 `WebSocket.connect(uri)`，漏了这一步。现在 `_SandboxRpc` 在入口统一 `normalizeVmUri(uri)`（幂等：本来就是 `ws://` 的原样返回，35 处既有调用零行为变化）。新增 1 项带 token 路径的 `normalizeVmUri` 用例 + 1 项源码结构守卫。
+
 - 调试 Tab 断点卡片接上「路由栈」（不用来回切 Tab，直接按路由文件打断点）：断点卡片新增「路由栈」小节 + 刷新按钮，读**当前调试会话**的 Navigator 路由栈（`/api/routestack?uri=`），逐条用 `/api/routelocate?...&open=0` 补出源码位置，显示成 `N1#2 路由名 文件:行`（项目内显示相对路径，项目外显示末两段）；点「文件:行」在下方源码面板打开并定位到该行（再点行号即下断点），点行尾「断点」直接 `addBreakpoint`（与异常/网络页的一键断点同一条路径，位置不属于当前会话时会被拦下）。只认当前调试会话的 `wsUri`，不跟页头 VM 下拉，避免拿到别的会话 / 旧端口的路由。新增 1 项结构守卫测试。
 
 - hdc 启动前体检与自愈（修「同一台机器上反复点启动都失败：界面有日志、会话却连不上」）：`hdc -t <id> fport` 报 `Connect server failed` 时装包其实已成功，只是拿不到 VM service；根因是 GUI「日志」对每台设备常驻一个 `hdc -t <id> hilog` 客户端，旧版重新部署 `kill -9` 让它变孤儿（PPID=1）并一直占着 hdc server 连接，攒够了就拒连。现在 `flutter run` 起进程前（OHOS）先体检：① 回收 PPID=1 的 `hdc -t … hilog` 孤儿（精确 PID + SIGTERM，不碰 DevEco 的 `shell hilog` 形态）；② 探 `hdc list targets`，回收后仍不通才自动 `hdc kill -r` 重启 server；③ 做过的处置写进状态行 / MCP 工具输出。另外 hdc 拒连导致的启动失败会自动重试一次（第二次是增量构建，不用用户再点）。新增 10 项测试。
