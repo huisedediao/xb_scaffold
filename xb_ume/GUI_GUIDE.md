@@ -198,7 +198,8 @@ GUI 在跑时，`--svc stop gui` / `restart` / `redeploy` 会把请求转给页�
 
 - 拼写候选来自**本机源码**：按错误里的类名找到类体，扫字段 / getter / 方法名，再按编辑距离取最近的 1~2 个（不分大小写）；`runtimeType` / `widget` / `context` 这类不写在类体里的继承成员另有一份常用成员兜底；
 - 写错对象时给完整表达式：在**已展开的变量树**里反查同名字段（`controlFinishLoad` → `refreshController.controlFinishLoad`），只查已加载的层，不会因为报错再发一轮 `getObject`；
-- 两种提示都没有（成员名确实不存在、类在依赖包 / SDK 里读不到源码）就只显示「类 X 没有成员 Y」，完整错误在悬停里。
+- 两种提示都没有（成员名确实不存在、类在依赖包 / SDK 里读不到源码）就只显示「类 X 没有成员 Y」，完整错误在悬停里；
+- `_` 开头的私有成员不是写错，而是**读不到**：Dart 的私有名按库区分，求值表达式编译在合成库里，别的库的 `_count` 解析不到。这时提示会直接说明原因，并让你去变量树 / 「实例」Tab 看值，而不是给一个「试试 this.controller._count」式的自指建议（建议与已输入表达式相同时一律丢弃，忽略空白与 `this.` 前缀）；拼写候选会拼回你写的那一行（`controller.controlFinshLoad` → `controller.controlFinishLoad`），提示里的表达式可以直接粘回输入框。
 
 **项目运行配置**（启动前准备 / 额外参数 / 停止清理）：「启动 / 复用」下面多了一行只读摘要 + 「刷新」「打开配置」。摘要来自 `$XB_UME_HOME/debug/run_profiles.json`（按项目根绝对路径索引，与断点落盘同目录），例如 `仅 android/ios/ohos · 预启动 1 条 · 停止清理 1 条 · android: --flavor oversea`；点「打开配置」用系统编辑器打开该文件（不存在时先建一个空壳）。完整字段见 [README](README.md#项目运行配置启动前准备)。
 
