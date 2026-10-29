@@ -19,6 +19,8 @@ import '../scenario/expressions.dart';
 import '../scenario/gestures.dart';
 import '../scenario/inject.dart';
 import '../scenario/vm_client.dart';
+import 'debug_pool.dart';
+import 'gui_bridge.dart';
 import 'protocol.dart';
 import 'scenario_service.dart';
 import 'session_registry.dart';
@@ -31,6 +33,15 @@ class ToolGroup {
   static const String inspect = 'inspect';
   static const String act = 'act';
   static const String deviceWrite = 'device-write';
+
+  /// 调试器（断点 / 单步 / 栈 / 变量）—— 直连 VM，不依赖工具箱。
+  static const String debug = 'debug';
+
+  /// 数据类（Storage / SQLite / 沙盒 / 文件监听）—— 借工具箱的本机能力。
+  static const String data = 'data';
+
+  /// 环境类（IDE 跳转 / 守护进程 / 对比 / 网络重放 / 时间轴控制）。
+  static const String env = 'env';
   static const String ai = 'ai';
   static const String ide = 'ide';
 
@@ -42,6 +53,9 @@ class ToolGroup {
     inspect,
     act,
     deviceWrite,
+    debug,
+    data,
+    env,
     ai,
     ide,
   };
@@ -87,8 +101,16 @@ class McpToolContext {
     FlutterRunLauncher? launcher,
     this.allowEval = false,
     this.deviceBackend = 'auto',
+    DebugSessionPool? debugPool,
+    GuiBridge? guiBridge,
+    this.guiPort,
   })  : devices = devices ?? DeviceRegistry.fromSpec(deviceBackend),
-        launcher = launcher ?? FlutterRunLauncher();
+        launcher = launcher ?? FlutterRunLauncher() {
+    // 调试池必须复用同一个 launcher：live 记录的认领（pidForPort）靠它，
+    // 否则 MCP 拉起的会话在调试池里会被当成外部会话，热重载句柄丢掉。
+    this.debugPool = debugPool ?? DebugSessionPool(launcher: this.launcher);
+    this.guiBridge = guiBridge ?? GuiBridge(port: guiPort);
+  }
 
   final SessionRegistry sessions;
   final ScenarioService scenarios;
@@ -104,6 +126,15 @@ class McpToolContext {
 
   /// 设备后端选择：auto / adb,hdc / mobile-mcp（P2 接入）。
   final String deviceBackend;
+
+  /// 工具箱端口（--gui-port）；为空时桥接层自己探测 46129..46138。
+  final int? guiPort;
+
+  /// 调试器会话池（每个 MCP 会话一个 DebugHub）。
+  late final DebugSessionPool debugPool;
+
+  /// 需要工具箱本机能力时用的 HTTP 桥。
+  late final GuiBridge guiBridge;
 }
 
 // ── 公共辅助 ──
@@ -120,7 +151,8 @@ Map<String, Object?> _sessionIdProp() => prop(
     );
 
 /// 当前会话（含自动发现 + 友好报错）。
-Future<McpSession> _session(
+/// 解析目标会话：显式 sessionId 优先，否则用当前选中会话。
+Future<McpSession> resolveSession(
     McpToolContext ctx, Map<String, Object?> args) async {
   final id = optionalString(args, 'sessionId');
   if (id != null) return ctx.sessions.use(id);
@@ -374,7 +406,7 @@ McpTool _screenshotTool() => McpTool(
         'savePath': prop('string', '落盘路径（限 XB_UME_HOME / 工作目录 / 临时目录）'),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         String b64;
         try {
           b64 = await s.client.screenshotBase64();
@@ -431,7 +463,7 @@ McpTool _findWidgetTool() => McpTool(
         'value'
       ]),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final by = requireString(args, 'by').toLowerCase();
         const dims = <String>['type', 'key', 'text', 'semantics'];
         if (!dims.contains(by)) {
@@ -491,7 +523,7 @@ McpTool _tapTool() => McpTool(
         'waitMs': prop('integer', '点击后等待动画/导航的毫秒数', defaultValue: 350),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final ref = optionalInt(args, 'ref');
         final x = optionalDouble(args, 'x');
         final y = optionalDouble(args, 'y');
@@ -567,7 +599,7 @@ McpTool _inputTool() => McpTool(
         'text'
       ]),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final text = (args['text'] ?? '').toString();
         final r = await ctx.sessions.serializeWrite<String>(
           () => s.client.evalStringOn(kLibTextInput, inputExpr(text)),
@@ -604,7 +636,7 @@ McpTool _swipeTool() => McpTool(
         'ref': prop('integer', '对指定组件中心滑动（配合 direction 使用）'),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final durationMs =
             (optionalInt(args, 'durationMs') ?? 300).clamp(40, 5000);
         final from = args['from'];
@@ -683,7 +715,7 @@ McpTool _navigateTool() => McpTool(
         'back': prop('boolean', 'true 时执行返回上一页', defaultValue: false),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final back = optionalBool(args, 'back');
         final name = optionalString(args, 'routeName');
         if (!back && name == null) {
@@ -743,7 +775,7 @@ McpTool _routeStackTool() => McpTool(
         'sessionId': _sessionIdProp(),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final raw = await s.client.evalStringOn(kLibNavigator, routeStackExpr);
         if (raw == 'NO_ROOT') throw McpToolException('app 尚未渲染首帧');
         if (raw == 'NO_NAV') throw McpToolException('界面没有 Navigator（可能是自定义路由）');
@@ -783,7 +815,7 @@ McpTool _networkTool() => McpTool(
         'limit': prop('integer', '最多返回条数（默认 30）', defaultValue: 30),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final within = optionalInt(args, 'withinLastMs');
         final sinceMs = within == null
             ? null
@@ -858,7 +890,7 @@ McpTool _networkDetailTool() => McpTool(
         'limit': prop('integer', '最多返回几条匹配记录（默认 1）', defaultValue: 1),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final id = optionalString(args, 'id');
         final url = optionalString(args, 'urlContains');
         if ((id == null || id.isEmpty) && (url == null || url.isEmpty)) {
@@ -958,7 +990,7 @@ McpTool _consoleTool() => McpTool(
         'limit': prop('integer', '最多返回条数（默认 50）', defaultValue: 50),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final limit = (optionalInt(args, 'limit') ?? 50).clamp(1, 500);
         final raw = await s.client.evalStringOn(
           kLibXbUme,
@@ -1015,7 +1047,7 @@ McpTool _exceptionsTool() => McpTool(
         'limit': prop('integer', '最多返回条数（默认 20，取最新）', defaultValue: 20),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final limit = (optionalInt(args, 'limit') ?? 20).clamp(1, 100);
         String raw;
         try {
@@ -1152,7 +1184,7 @@ McpTool _timelineTool() => McpTool(
         'limit': prop('integer', '最多返回条数（默认 60）', defaultValue: 60),
       }),
       handler: (ctx, args) async {
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final limit = (optionalInt(args, 'limit') ?? 60).clamp(1, 300);
         const allowed = <String>{'route', 'net', 'log', 'exception'};
         final kinds = <String>{};
@@ -1339,31 +1371,45 @@ McpTool _evalTool() => McpTool(
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
         'expr': prop('string', 'Dart 表达式（单条；如 XBUme.controller.routes.length）'),
+        'expression': prop('string', 'expr 的别名（两个名字任选其一）'),
         'lib': prop('string',
             '求值所用库：完整 uri 或子串（如 main.dart）；省略时用 xb_ume core，失败回退 dart:io'),
         'maxChars': prop('integer', '返回值的最大字符数（默认 4000）',
             defaultValue: 4000),
-      }, <String>['expr']),
+      }),
       handler: (ctx, args) async {
         if (!ctx.allowEval) {
           throw McpToolException('xbume_eval 未启用',
               hint: '启动 MCP 时加 --allow-eval（GUI 托管的服务需在启动参数里加）');
         }
-        final expr =
-            requireString(args, 'expr', hint: '例如 XBUme.controller.logs.length');
+        // expr / expression 两个名字都收：不同模型的习惯不一样，
+        // 只因为参数名不同就失败太不值。
+        final rawExpr =
+            optionalString(args, 'expr') ?? optionalString(args, 'expression');
+        final expr = rawExpr?.trim() ?? '';
+        if (expr.isEmpty) {
+          throw McpToolException('缺少参数 expr',
+              hint: '例如 XBUme.controller.logs.length（也可用 expression）');
+        }
         if (expr.length > 4000) {
           throw McpToolException('表达式过长（${expr.length} 字符，上限 4000）');
         }
-        final s = await _session(ctx, args);
+        final s = await resolveSession(ctx, args);
         final vm = s.client;
-        final uri = await _resolveEvalLib(vm, optionalString(args, 'lib'));
-        Map<String, Object?> r;
-        try {
-          r = await vm.rawRpc('evaluate', <String, Object?>{
-            'isolateId': await vm.isolateId(),
-            'targetId': await vm.libraryId(uri),
+        final wantedLib = optionalString(args, 'lib');
+        var uri = await _resolveEvalLib(vm, wantedLib);
+        final iso = await vm.isolateId();
+        Future<Map<String, Object?>> ev(String libUri) async {
+          final target = await vm.libraryId(libUri);
+          return vm.rawRpc('evaluate', <String, Object?>{
+            'isolateId': iso,
+            'targetId': target,
             'expression': expr,
           });
+        }
+        Map<String, Object?> r;
+        try {
+          r = await ev(uri);
         } catch (e) {
           final m = e.toString();
           if (m.contains('ompilation')) {
@@ -1371,6 +1417,19 @@ McpTool _evalTool() => McpTool(
                 hint: '确认是单条表达式且符号在 $uri 上下文可见；鸿蒙 Flutter 引擎不支持表达式求值');
           }
           throw McpToolException('求值失败：$m');
+        }
+        // 默认上下文编译不过（如用了 Directory / File 这类 dart:io 符号）
+        // 时自动退到 dart:io 再试一次；显式指定 lib 的不猜。
+        if ((wantedLib ?? '').trim().isEmpty &&
+            (r['type'] == 'Error' || r['type'] == '@Error') &&
+            (r['message'] ?? '').toString().startsWith('error:') &&
+            uri != 'dart:io') {
+          try {
+            uri = 'dart:io';
+            r = await ev(uri);
+          } catch (_) {
+            // 回退失败就保留原来的编译错误。
+          }
         }
         final type = (r['type'] ?? '').toString();
         final rawClass = r['class'] is Map
@@ -1442,16 +1501,22 @@ McpTool _hotReloadTool() => McpTool(
             milliseconds:
                 (optionalInt(args, 'timeoutMs') ?? 60000).clamp(5000, 300000));
         var pid = optionalInt(args, 'pid');
+        final s = await resolveSession(ctx, args);
         if (pid == null) {
-          final s = await _session(ctx, args);
           pid = ctx.launcher.pidForPort(s.port);
-          if (pid == null && ctx.launcher.live.length == 1) {
-            pid = ctx.launcher.live.single.pid;
-          }
           if (pid == null) {
             throw McpToolException('当前会话不是由本服务拉起的 flutter run，无法发送热重载',
                 hint: '用 xbume_app_launch(via:"flutter-run") 启动会话，或传 pid=<flutter run 进程号>；'
                     '也可在 flutter run 窗口手动按 r');
+          }
+        } else {
+          // 显式 pid 也要跟当前会话端口对上：热重载会直接打进 app，
+          // 不能把 r 发到用户另一台设备的会话上。
+          final h = ctx.launcher.byPid(pid);
+          final p = h?.wsUri == null ? null : Uri.tryParse(h!.wsUri!)?.port;
+          if (p != null && p != s.port) {
+            throw McpToolException('pid $pid 属于端口 $p 的会话，当前会话是 ${s.port}',
+                hint: '先 xbume_use_session 切到对应会话，避免热重载打到别的 app');
           }
         }
         final HotReloadResult r;

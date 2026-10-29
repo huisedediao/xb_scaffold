@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import '../bin/ide_gui.dart' as gui;
+import '../bin/src/perf/perf_metrics.dart' as gui;
 
 void main() {
   group('perfCpuFromSamples', () {

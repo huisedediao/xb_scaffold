@@ -1069,6 +1069,17 @@ class DebugHub {
       packageName: _packageName,
     );
     await client.connect();
+    // 外部 IDE 起的会话没有运行清单句柄（h == null），也就没有 cwd：从 VM 的入口
+    // 脚本反推项目根，否则断点无处落盘、源码面板与文件清单都用不了。
+    if (_projectRoot == null) {
+      final inferred = await _inferProjectRoot(client);
+      if (inferred != null) {
+        final root = BreakpointStore.normalizeRoot(inferred);
+        _projectRoot = root;
+        _packageName ??= readPubspecName(root);
+        client.retarget(projectRoot: _projectRoot, packageName: _packageName);
+      }
+    }
     _client = client;
     _eventSub = client.events.listen(_onEvent);
     try {
@@ -1086,6 +1097,34 @@ class DebugHub {
     _startFollow(h?.logPath ?? '', fromStart: followFromStart);
     // VM 在客户端断开时会把断点一起删掉：重连到同一项目就把上次的断点重下。
     return _restoreBreakpoints();
+  }
+
+  /// 从 VM 入口脚本（isolate.rootLib）反推项目根。
+  /// 只看入口脚本：path 依赖的库也是 file: 且自带 pubspec，全局扫脚本会误认。
+  Future<String?> _inferProjectRoot(DebugClient c) async {
+    try {
+      final iso = await c.isolateId();
+      final r = await c.rpc('getIsolate', <String, Object?>{'isolateId': iso});
+      final rootLib = r['rootLib'];
+      final uri = rootLib is Map ? _str(rootLib['uri']) : null;
+      if (uri == null) return null;
+      if (uri.startsWith('file:')) return projectRootFromScriptUri(uri);
+      if (!uri.startsWith('package:')) return null;
+      // 入口脚本是 package:<pkg>/main.dart：在已加载脚本里找同包名的 file: 路径，
+      // 再用 pubspec 的 name 校验，避开同样以 file: 出现的 path 依赖。
+      final rest = uri.substring('package:'.length);
+      final pkg = rest.split('/').first;
+      if (pkg.isEmpty) return null;
+      for (final u in await c.loadedScriptUris()) {
+        if (!u.startsWith('file:')) continue;
+        final root = projectRootFromScriptUri(u);
+        if (root == null) continue;
+        if (readPubspecName(root) == pkg) return root;
+      }
+    } catch (_) {
+      // isolate 正在启动 / 已退出：交给调用方按空处理。
+    }
+    return null;
   }
 
   /// 按项目根把上次的断点重下（已存在的同位置跳过）。返回给人看的摘要。

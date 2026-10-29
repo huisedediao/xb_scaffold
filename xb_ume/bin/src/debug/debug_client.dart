@@ -297,6 +297,34 @@ List<String> breakpointScriptUriCandidates(
   return out;
 }
 
+/// 从脚本 URI（设备的入口脚本 rootLib 最准）向上找含 pubspec.yaml 的目录。
+/// 外部 IDE 起的会话没有运行清单句柄，靠它认领项目根。
+String? projectRootFromScriptUri(String scriptUri) {
+  var uri = scriptUri.trim();
+  if (uri.startsWith('package:')) {
+    // package: 没有项目根就解不出本机路径，只能靠别的 file: 脚本。
+    return null;
+  }
+  if (uri.startsWith('file:')) {
+    try {
+      uri = Uri.parse(uri).toFilePath(windows: Platform.isWindows);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (uri.isEmpty) return null;
+  var dir = File(uri).parent;
+  for (var i = 0; i < 8; i++) {
+    if (File('${dir.path}${Platform.pathSeparator}pubspec.yaml').existsSync()) {
+      return dir.path;
+    }
+    final up = dir.parent;
+    if (up.path == dir.path) break;
+    dir = up;
+  }
+  return null;
+}
+
 /// 反向映射：脚本 URI → 本机路径（只认 file: 与「本项目」的 package:）。
 String? debugScriptUriToPath(
   String scriptUri, {
@@ -651,8 +679,15 @@ class DebugClient {
   final String wsUrl;
 
   /// 项目根与本包名：用于生成 / 反解 `package:` 脚本 URI。
-  final String? projectRoot;
-  final String? packageName;
+  /// 接入外部会话时先是空，连上后由 [_inferProjectRoot] 认领再回填。
+  String? projectRoot;
+  String? packageName;
+
+  /// 认领到项目根后回填（不改 wsUrl，不重建连接）。
+  void retarget({String? projectRoot, String? packageName}) {
+    this.projectRoot = _blankToNull(projectRoot);
+    this.packageName = _blankToNull(packageName) ?? this.packageName;
+  }
 
   final StreamController<DebugEvent> _events =
       StreamController<DebugEvent>.broadcast();
@@ -849,8 +884,11 @@ class DebugClient {
     Map<String, Object?> raw;
     try {
       raw = await rpc('addBreakpointWithScriptUri', params);
-    } catch (_) {
-      // Dart < 2.17 没有 add*；set* 会阻塞到解析完成，仅作兜底。
+    } catch (e) {
+      // 只有「方法不存在」（Dart < 2.17）才换 set*；其他错误（行号不可执行、
+      // 脚本未加载）必须原样报出来，不能被兜底盖成「Unknown method」。
+      final text = '$e';
+      if (!text.toLowerCase().contains('unknown method')) rethrow;
       raw = await rpc('setBreakpointWithScriptUri', params);
     }
     final bp = parseBreakpoint(raw);

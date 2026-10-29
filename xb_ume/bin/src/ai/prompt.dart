@@ -109,7 +109,12 @@ String buildAiPrompt({
     ..writeln('- xbume_timeline / xbume_exceptions / xbume_network_detail / '
         'xbume_console：复现之后取证（路由+网络+日志+异常按时间合并）')
     ..writeln('- xbume_route_stack / xbume_navigate：看路由栈、push/pop')
-    ..writeln('- xbume_scenario_run / xbume_scenario_status：把复现路径存成场景后复跑');
+    ..writeln('- xbume_scenario_run / xbume_scenario_status：把复现路径存成场景后复跑')
+    ..writeln('- 需要看运行时数据时，工具列表里有就用（没有就跳过）：'
+        'xbume_debug_breakpoints / xbume_debug_state / xbume_debug_inspect / '
+        'xbume_debug_control（断点、单步、调用栈、变量）、xbume_instances / '
+        'xbume_widget_tree / xbume_perf、xbume_storage / xbume_db / xbume_sandbox；'
+        '后三组走本机 GUI，需要工具箱在跑');
   if (hasEval) {
     sb.writeln('- xbume_eval {"expr": "<单行 Dart 表达式>"}：在 app 进程内求值，'
         '用来验证「这个字段到底是什么值」；能读也能改，改完记得说明改了什么');

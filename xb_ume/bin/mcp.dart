@@ -8,9 +8,11 @@
 //   --stdio                  stdio 传输（默认）
 //   --http <port>            Streamable HTTP 传输（默认 46140；仅绑 127.0.0.1）
 //   --uri <port|ws-url>      手工指定会话（跳过自动发现，可重复）
-//   --tool-groups <list>     all 或逗号分隔的组名：act,device-write（其余组为预留）
+//   --tool-groups <list>     all 或逗号分隔的组名：inspect,act,device-write,
+//                            debug,data,env（ai/ide 预留）
 //   --no-tool-groups         只暴露核心工具（关掉默认开启的 diagnose / run-safe）
 //   --allow-eval             启用 xbume_eval（默认关；可读/改 app 内运行时状态）
+//   --gui-port <port>        工具箱端口（默认自动探测 46129-46138；data/env 组用）
 //   --device-backend <list>  设备后端：auto（默认）/ adb,hdc,simctl,idevice / mobile-mcp
 //   -h, --help               帮助
 //   --version                版本
@@ -22,10 +24,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'src/device/registry.dart';
+import 'src/mcp/bridge_tools.dart';
+import 'src/mcp/debug_tools.dart';
 import 'src/mcp/device_tools.dart';
 import 'src/mcp/scenario_service.dart';
 import 'src/mcp/server.dart';
 import 'src/mcp/session_registry.dart';
+import 'src/mcp/toolbox_tools.dart';
 import 'src/mcp/tools.dart';
 
 const String _usage = '''
@@ -38,16 +43,17 @@ xb_ume MCP 服务
   --stdio                  stdio 传输（默认），供 Qoder / Cursor / Claude Code 接入
   --http <port>            Streamable HTTP（默认 46140，仅绑 127.0.0.1，需 token）
   --uri <port|ws-url>      手工指定 VM service 会话（跳过自动发现，可重复）
-  --tool-groups <list>     all 或逗号分隔：act,device-write（inspect/ai/ide 预留）
+  --tool-groups <list>     all 或逗号分隔：inspect,act,device-write,debug,data,env
   --no-tool-groups         只暴露核心工具
   --allow-eval             启用 xbume_eval（默认关；可读/改 app 内运行时状态）
+  --gui-port <port>        工具箱端口（默认自动探测 46129-46138）
   --device-backend <list>  设备后端：auto / adb,hdc,simctl,idevice / mobile-mcp
   --log-file <path>        额外把启动与运日志追加写入文件（GUI 后台拉起时排障用）
   -h, --help               显示帮助
   --version                显示版本
 
 默认工具 24 个（core 18 + diagnose 3 + run-safe 3）；有副作用的组需显式开启。
-加 --allow-eval 多出 xbume_eval（25 个）。
+加 --allow-eval 多出 xbume_eval，加 --tool-groups all 多出调试 / 数据 / 观测类工具。
 HTTP 模式 token 首次运行生成在 \$XB_UME_HOME/mcp.token。
 ''';
 
@@ -59,6 +65,7 @@ class _Args {
   bool allowEval = false;
   String deviceBackend = 'auto';
   String logFile = '';
+  int? guiPort;
   final List<String> uris = <String>[];
   bool help = false;
   bool version = false;
@@ -107,6 +114,11 @@ _Args _parseArgs(List<String> argv) {
         break;
       case '--device-backend':
         a.deviceBackend = next('--device-backend');
+        break;
+      case '--gui-port':
+        final v = _httpPort(next('--gui-port'));
+        if (v == null) throw const FormatException('--gui-port 需要 1-65535 的端口');
+        a.guiPort = v;
         break;
       default:
         if (s.startsWith('-')) throw FormatException('未知参数 $s');
@@ -239,10 +251,14 @@ Future<void> main(List<String> argv) async {
     allowEval: args.allowEval,
     devices: devices,
     deviceBackend: args.deviceBackend,
+    guiPort: args.guiPort,
   );
   final all = <McpTool>[
     ...coreTools(allowEval: args.allowEval),
     ...deviceTools(),
+    ...debugTools(),
+    ...bridgeTools(),
+    ...toolboxTools(),
   ];
   final enabled = all.where((t) => groups.contains(t.group)).toList();
   final server = McpServer(
@@ -274,6 +290,7 @@ Future<void> main(List<String> argv) async {
       if (done.isCompleted) return;
       await hs.close(force: true);
       await server.close();
+      await ctx.debugPool.disposeAll();
       done.complete();
     }
 
@@ -290,6 +307,7 @@ Future<void> main(List<String> argv) async {
     await server.serveStdio();
   } finally {
     await server.close();
+    await ctx.debugPool.disposeAll();
   }
   // stdin EOF 后显式退出：残留的 WebSocket/审计文件句柄会拖住事件循环。
   exit(0);

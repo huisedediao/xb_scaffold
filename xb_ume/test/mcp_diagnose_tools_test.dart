@@ -61,8 +61,18 @@ void main() {
     final evalTool = coreTools(allowEval: true)
         .firstWhere((t) => t.name == 'xbume_eval');
     expect((evalTool.inputSchema['properties'] as Map).keys,
-        containsAll(<String>['sessionId', 'expr', 'lib', 'maxChars']));
-    expect(evalTool.inputSchema['required'], contains('expr'));
+        containsAll(<String>[
+          'sessionId',
+          'expr',
+          'expression',
+          'lib',
+          'maxChars'
+        ]));
+    // expr / expression 互为别名：哪个都不能标必填，否则传另一个会被 schema 挡掉。
+    final evalRequired =
+        evalTool.inputSchema['required'] as List? ?? const <Object?>[];
+    expect(evalRequired, isNot(contains('expr')));
+    expect(evalRequired, isNot(contains('expression')));
     final mode = ((byName['xbume_hot_reload']!.inputSchema['properties']
         as Map)['mode'] as Map)['enum'] as List;
     expect(mode, containsAll(<String>['reload', 'restart']));
