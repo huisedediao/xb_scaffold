@@ -17,6 +17,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 - [App 内模块详解](#app-内模块详解)
 - [配置项](#配置项)
 - [电脑端 GUI 工具箱](#电脑端-gui-工具箱)
+- [项目运行配置（启动前准备）](#项目运行配置启动前准备)
 - [IDE 跳转](#ide-跳转)
 - [命令行执行场景（CLI / CI）](#命令行执行场景cli--ci)
 - [MCP 接入（AI 直接驱动调试会话）](#mcp-接入ai-直接驱动调试会话)
@@ -447,7 +448,7 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 | Tab | 功能 | 前置 / 说明 |
 |---|---|---|
 | 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon` |
-| 调试 | 起停 `flutter run`（已有会话直接复用）；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
+| 调试 | 起停 `flutter run`（已有会话直接复用），可选的「项目运行配置」在启动前 做准备、停止后清理；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
 | 日志 | 设备日志（logcat / hilog / log stream / idevicesyslog）+ Flutter 输出（未选会话时为全部，选中后只显示该应用） | 设备工具可用；Flutter 输出需 daemon |
 | 时间轴 | 路由 / 网络 / 日志 / 异常按时间合并，可过滤、暂停、展开、跳转对应 Tab | 需选中会话 |
 | 异常 | 实时捕获框架异常与未捕获异常，栈帧可跳 IDE、可一键下断点，Tab 角标 + 红浮层提醒 | daemon 在跑即可，覆盖全部会话（不要求选中） |
@@ -468,6 +469,47 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 - 内存：Android/鸿蒙取 PSS（Android 按 `dumpsys meminfo` 分类，鸿蒙按 DevEco 内存类型），iOS/macOS 取 `phys_footprint`；
 - 依赖 app 内 `XBUmeBinding.ensureInitialized` 注册的 `ext.xbume.processStats`（xb_ume ≥ 0.3.0）；未注册时回退为 Dart 主 isolate CPU + VM 进程内存分桶；
 - GPU memtrack 显存在 app 内不可读，Android 的 Graphics、鸿蒙的 GL/Graph 可能略低于官方工具。
+
+## 项目运行配置（启动前准备）
+
+有的项目在 `flutter run` 之前必须先做本地准备：按「目标平台 + 包名 + buildNumber」生 成构建期密文（如 AKSK 资源）、Android 追加 `--flavor`、iOS 启动时临时切签名并在停止 后还原。IDE（VS Code / Qoder）靠 `launch.json` 的 `preLaunchTask` 完成这步；本工具在 GUI「调试」页与 MCP `xbume_app_launch` 里用一份**按项目生效**的配置达到同样效果 ——不用改项目源码、也不用改 IDE 配置。
+
+配置文件：`$XB_UME_HOME/debug/run_profiles.json`（与断点落盘同目录，按项目根绝对 路径索引）：
+
+```json
+{
+  "version": 1,
+  "projects": {
+    "/path/to/your/app": {
+      "platforms": ["android", "ios", "ohos"],
+      "preRun": ["bash scripts/dev_run.sh --prepare --mode debug --platform {platform}"],
+      "postStop": ["bash scripts/dev_run.sh --restore"],
+      "runArgs": { "android": ["--flavor", "oversea"] },
+      "timeoutSec": 180,
+      "continueOnError": false
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `platforms` | 只在这些平台生效（`android` / `ios` / `ohos` / `macos` / `windows` / `linux`）；空 = 所有平台。桌面端跑同一项目时不会被手机准备脚本影响 |
+| `preRun` | 启动前按顺序执行的命令（shell 语义，工作目录 = 项目根）；失败默认中止启动 |
+| `postStop` | 按精确 PID 停止后执行的清理命令（如还原 iOS 签名） |
+| `runArgs` | 追加给 `flutter run` 的参数，按平台分（`*` 为兜底，平台专属排在后面） |
+| `timeoutSec` | 单条命令超时（5..900，默认 180） |
+| `continueOnError` | `true` = 预启动失败仍继续启动（默认 `false`） |
+
+占位符：`{device}` / `{target}` / `{projectRoot}` / `{platform}`（不认识的 `{xxx}` 原样保留，不误伤 shell 语法）。
+
+行为约束：
+
+- 没配置、配置损坏、或配置限定的平台与当前设备不符时**完全不介入**：`flutter run` 与以前一模一样；
+- 只在**新建**会话时执行 `preRun`，复用已有会话不重复执行（不会多装一次包）；
+- 预启动输出写在本次日志头部，GUI「运行输出」从日志头读，能看到准备过程；失败时中 止启动并回显原因（`continueOnError: true` 可放宽）；
+- GUI 调试页的「运行配置」只显示只读摘要（如 `仅 android/ios/ohos · 预启动 1 条 · android: --flavor oversea`），点「打开配置」用系统编辑器改文件，不做可视化表单；
+- 平台不传时按设备自动识别（`flutter devices --machine`），识别不出且有平台限定时 按「不生效」处理（宁可不做，也不在别的平台上跑别人的准备脚本）。
 
 ## IDE 跳转
 
