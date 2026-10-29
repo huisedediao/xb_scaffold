@@ -11909,7 +11909,8 @@ const String guiHtml = r'''
         <input id="dbg-out-search" class="dbg-outq" placeholder="查找（高亮）" title="在运行输出里查找，命中片段高亮成黄色、行不过滤；Esc 清空" oninput="dbgOutQuery('s', this.value)" onkeydown="if(event.key==='Escape'){this.value='';dbgOutQuery('s','');}">
         <input id="dbg-out-filter" class="dbg-outq" placeholder="筛选（只留匹配行）" title="只保留包含关键字的行，命中片段高亮成绿色；两个框都填时同时命中显示橙色；Esc 清空" oninput="dbgOutQuery('f', this.value)" onkeydown="if(event.key==='Escape'){this.value='';dbgOutQuery('f','');}">
         <label class="chk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="dbg-follow" checked>自动滚到底</label>
-        <button onclick="dbgClearOut()">清屏</button>
+        <span class="lbtns" style="gap:8px"><button onclick="dbgOutCopy(this)" title="复制当前显示的全部输出（筛选后就只复制筛选后的行）">复制</button>
+        <button onclick="dbgClearOut()">清屏</button></span>
       </div>
       <pre id="dbg-out"></pre>
     </div>
@@ -18945,6 +18946,17 @@ function dbgOutHlLine(line, s, f){
   return out + dbgOutEsc(line.substring(at));
 }
 
+// 当前筛选下要显示的行（没筛选就是全部）；渲染与复制共用，避免两处判定漂移。
+function dbgOutShown(){
+  var f = dbgOutQ.f.toLowerCase();
+  if (!f) return dbgOutLines;
+  var out = [];
+  for (var i = 0; i < dbgOutLines.length; i++) {
+    if (dbgOutLines[i].toLowerCase().indexOf(f) >= 0) out.push(dbgOutLines[i]);
+  }
+  return out;
+}
+
 function dbgOutRender(){
   var el = dbgEl('dbg-out');
   if (!el) return;
@@ -18960,11 +18972,9 @@ function dbgOutRender(){
     if (n) n.textContent = dbgOutLines.length ? '（' + dbgOutLines.length + ' 行）' : '';
     return;
   }
-  var shown = 0, hits = 0, parts = [];
-  for (var i = 0; i < dbgOutLines.length; i++) {
-    var line = dbgOutLines[i];
-    if (f && line.toLowerCase().indexOf(f) < 0) continue;
-    shown++;
+  var rows = dbgOutShown(), hits = 0, parts = [];
+  for (var i = 0; i < rows.length; i++) {
+    var line = rows[i];
     if (s) {
       var l = line.toLowerCase(), j = 0;
       while (true) { var k = l.indexOf(s, j); if (k < 0) break; hits++; j = k + s.length; }
@@ -18975,11 +18985,27 @@ function dbgOutRender(){
   if (stick) el.scrollTop = el.scrollHeight;
   if (n) {
     if (!dbgOutLines.length) n.textContent = '';
-    else n.textContent = '（' + (f ? shown + ' / ' + dbgOutLines.length + ' 行' : dbgOutLines.length + ' 行') + (s ? ' · 命中 ' + hits + ' 处' : '') + '）';
+    else n.textContent = '（' + (f ? rows.length + ' / ' + dbgOutLines.length + ' 行' : dbgOutLines.length + ' 行') + (s ? ' · 命中 ' + hits + ' 处' : '') + '）';
   }
 }
 
 function dbgClearOut(){ dbgOutLines = []; dbgOutRender(); }
+
+// 复制当前框里显示的内容：有筛选就只复制筛选后的行（同日志 Tab 的「复制」）。
+// clipboard API 不可用 / 被拒时走 copyLogsFallback（隐藏 textarea + execCommand）。
+function dbgOutCopy(btn){
+  var lines = dbgOutShown();
+  if (!lines.length) {
+    btn.textContent = '无输出';
+    setTimeout(function(){ btn.textContent = '复制'; }, 1200);
+    return;
+  }
+  var text = lines.join('\n');
+  var done = function(){ btn.textContent = '已复制 ' + lines.length + ' 行'; setTimeout(function(){ btn.textContent = '复制'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){ copyLogsFallback(text); done(); });
+  } else { copyLogsFallback(text); done(); }
+}
 
 // 运行输出面板高度：拖卡片上沿调整（同 VS Code 终端），双击手柄复位，值记到 localStorage。
 // 高度写在 #page-debug 的 --dbg-out-h 上，.dbg-outcard 用它（没设过就回 clamp 默认）。

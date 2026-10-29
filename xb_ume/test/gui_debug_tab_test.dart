@@ -70,6 +70,15 @@ void main() {
       // 没关键词走 textContent 快速路径，有关键词才 innerHTML 高亮
       expect(html.contains('if (!s && !f) {'), isTrue);
       expect(html.contains('el.innerHTML = parts.length ?'), isTrue);
+      // 复制：有筛选只复制筛选后的行（渲染与复制共用 dbgOutShown，避免判定漂移）
+      expect(html.contains('onclick="dbgOutCopy(this)"'), isTrue);
+      for (final fn in <String>[
+        'function dbgOutCopy(',
+        'function dbgOutShown(',
+        'var rows = dbgOutShown(), hits = 0, parts = [];',
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
       // 旧的上下双列容器已经不用了，再回来就会变成「一屏看不到变量 / 输出」
       expect(html.contains('dbg-cols'), isFalse);
       // 源码面板是三栏里的右栏：默认隐藏，关掉时中栏自动变宽
