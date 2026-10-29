@@ -40,6 +40,19 @@ void main() {
       expect(html.contains('.dbg-side > .dbg-bpcard { flex:1 1 auto; min-height:190px; }'), isTrue);
       expect(html.contains('.dbg-varcol {'), isTrue);
       expect(html.contains('class="card dbg-outcard"'), isTrue);
+      // 运行输出高度可拖（拖上沿 / 双击复位），默认比原来高
+      expect(html.contains('id="dbg-outgrip"'), isTrue);
+      expect(html.contains('height:var(--dbg-out-h, clamp(170px,26vh,300px))'), isTrue);
+      expect(html.contains('.dbg-outgrip {'), isTrue);
+      for (final fn in <String>[
+        'function dbgOutHDrag(',
+        'function dbgOutHReset(',
+        'function dbgOutHClamp(',
+        'function dbgOutHApply(',
+        "var dbgOutHKey = 'xbume_dbg_out_h';",
+      ]) {
+        expect(html.contains(fn), isTrue, reason: fn);
+      }
       // 旧的上下双列容器已经不用了，再回来就会变成「一屏看不到变量 / 输出」
       expect(html.contains('dbg-cols'), isFalse);
       // 源码面板是三栏里的右栏：默认隐藏，关掉时中栏自动变宽

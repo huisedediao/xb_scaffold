@@ -11579,8 +11579,13 @@ const String guiHtml = r'''
   #dbg-vars { flex:1 1 auto; max-height:none; min-height:60px; margin-top:6px; padding-top:4px; border-top:1px solid var(--line); }
   #dbg-eval-out { flex:0 0 auto; max-height:76px; }
   #dbg-src-code { flex:1 1 auto; max-height:none; min-height:0; }
-  .dbg-outcard { flex:0 0 auto; height:clamp(140px,22vh,220px); display:flex; flex-direction:column; }
+  /* 底部运行输出：高度可拖（拖卡片上沿，同 VS Code 终端；双击手柄复位）。
+     高度存在 #page-debug 的 --dbg-out-h 上，没有就用默认 clamp，刷新后还记得。 */
+  .dbg-outcard { flex:0 0 auto; position:relative; height:var(--dbg-out-h, clamp(170px,26vh,300px)); display:flex; flex-direction:column; }
   .dbg-outcard > #dbg-out { flex:1 1 auto; height:auto; min-height:0; }
+  .dbg-outgrip { position:absolute; left:0; right:0; top:-5px; height:13px; cursor:row-resize; touch-action:none; z-index:2; }
+  .dbg-outgrip::after { content:''; position:absolute; left:14px; right:14px; top:5px; height:3px; border-radius:2px; background:var(--line); }
+  .dbg-outgrip:hover::after, .dbg-outgrip.on::after { background:var(--acc); }
   .dbg-list { max-height:260px; overflow:auto; font-size:12px; }
   /* 小屏 / 窄窗口：退回上下堆叠，整页开始滚（保证不会把面板压成一条缝） */
   @media (max-width:1180px) {
@@ -11594,7 +11599,7 @@ const String guiHtml = r'''
     #dbg-vars { max-height:40vh; }
     #dbg-bps { max-height:40vh; }
     #dbg-src-code { max-height:60vh; }
-    .dbg-outcard { height:auto; }
+    .dbg-outcard { height:var(--dbg-out-h, auto); }
     .dbg-outcard > #dbg-out { height:30vh; }
   }
   /* 窗口矮（笔记本电脑分屏）：一屏装不下就退回整页滚，保证断点区不被压成一条 */
@@ -11603,7 +11608,7 @@ const String guiHtml = r'''
     .dbg-main { min-height:520px; }
     #dbg-vars { max-height:40vh; }
     #dbg-src-code { max-height:60vh; }
-    .dbg-outcard { height:auto; }
+    .dbg-outcard { height:var(--dbg-out-h, auto); }
     .dbg-outcard > #dbg-out { height:22vh; }
   }
   .dbg-bp, .dbg-fr, .dbg-var { display:flex; align-items:center; gap:8px; padding:4px 6px; border-bottom:1px dashed var(--line); }
@@ -11891,8 +11896,9 @@ const String guiHtml = r'''
         <div id="dbg-src-code"></div>
       </div>
     </div>
-    <!-- 底部：运行输出（VS Code 调试控制台的位置，固定高、自己滚） -->
+    <!-- 底部：运行输出（VS Code 调试控制台的位置，自己滚，拖上沿可调高） -->
     <div class="card dbg-outcard">
+      <div class="dbg-outgrip" id="dbg-outgrip" title="拖动调整运行输出高度，双击复位" onpointerdown="dbgOutHDrag(event)" ondblclick="dbgOutHReset()"></div>
       <div class="row"><b>运行输出</b><span id="dbg-out-n" class="muted" style="font-size:12px"></span>
         <label class="chk" style="margin-left:auto;font-size:12px"><input type="checkbox" id="dbg-follow" checked>自动滚到底</label>
         <button onclick="dbgClearOut()">清屏</button>
@@ -18904,6 +18910,65 @@ function dbgOutRender(){
 }
 
 function dbgClearOut(){ dbgOutLines = []; dbgOutRender(); }
+
+// 运行输出面板高度：拖卡片上沿调整（同 VS Code 终端），双击手柄复位，值记到 localStorage。
+// 高度写在 #page-debug 的 --dbg-out-h 上，.dbg-outcard 用它（没设过就回 clamp 默认）。
+var dbgOutHKey = 'xbume_dbg_out_h';
+function dbgOutHSaved(){ try { var v = parseInt(localStorage.getItem(dbgOutHKey) || '', 10); return v > 0 ? v : 0; } catch (e) { return 0; } }
+function dbgOutHClamp(h){
+  var page = document.getElementById('page-debug');
+  if (!page) return h;
+  // 上限：至少给工具条 + 三栏留 300px，否则变量树 / 断点区会被压成一条缝。
+  // 基数取「页面高度」与「外层滚动容器（main）高度」的较小值：窗口矮 / 窄时页面
+  // 退回整页滚、高度是内容高度，只用它算会越拖越大（拖一下就吃掉整屏）。
+  var box = page.parentElement;
+  var avail = Math.min(page.clientHeight || 0, (box && box.clientHeight) || 0) || window.innerHeight;
+  var tools = page.querySelector('.dbg-tools');
+  var max = Math.max(180, avail - ((tools ? tools.offsetHeight : 190) + 330));
+  return Math.max(96, Math.min(Math.round(h), max));
+}
+function dbgOutHApply(h){
+  var page = document.getElementById('page-debug');
+  if (!page) return;
+  if (h > 0) page.style.setProperty('--dbg-out-h', h + 'px');
+  else page.style.removeProperty('--dbg-out-h');
+}
+function dbgOutHSave(h){ try { h > 0 ? localStorage.setItem(dbgOutHKey, String(h)) : localStorage.removeItem(dbgOutHKey); } catch (e) {} }
+function dbgOutHReset(){ dbgOutHApply(0); dbgOutHSave(0); }
+function dbgOutHDrag(e){
+  var card = document.querySelector('.dbg-outcard');
+  if (!card || e.button !== 0) return;
+  e.preventDefault();
+  var grip = e.currentTarget;
+  var y0 = e.clientY, h0 = card.getBoundingClientRect().height;
+  if (grip && grip.classList) grip.classList.add('on');
+  var mv = function(ev){ dbgOutHApply(dbgOutHClamp(h0 + (y0 - ev.clientY))); };
+  var up = function(){
+    window.removeEventListener('pointermove', mv);
+    window.removeEventListener('pointerup', up);
+    if (grip && grip.classList) grip.classList.remove('on');
+    document.body.style.userSelect = '';
+    dbgOutHSave(Math.round(card.getBoundingClientRect().height));
+    var el = document.getElementById('dbg-out'), f = document.getElementById('dbg-follow');
+    if (el && (!f || f.checked)) el.scrollTop = el.scrollHeight;
+  };
+  document.body.style.userSelect = 'none';
+  window.addEventListener('pointermove', mv);
+  window.addEventListener('pointerup', up);
+}
+(function(){
+  var h = dbgOutHSaved();
+  if (h > 0) dbgOutHApply(dbgOutHClamp(h));
+  // 窗口变矮后旧高度可能超过上限，拉回来（不动存储值，窗口回去了下次拖动再定）
+  window.addEventListener('resize', function(){
+    if (!dbgOutHSaved()) return;
+    var card = document.querySelector('.dbg-outcard');
+    if (!card) return;
+    var cur = card.getBoundingClientRect().height;
+    var want = dbgOutHClamp(cur);
+    if (Math.abs(want - cur) > 1) dbgOutHApply(want);
+  });
+})();
 </script>
 </body>
 </html>
