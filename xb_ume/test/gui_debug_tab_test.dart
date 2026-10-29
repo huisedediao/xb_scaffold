@@ -236,6 +236,12 @@ void main() {
       // 断点表 / 暂停状态变化后都要重刷行内标记，否则点了没反馈。
       expect(html.contains('dbgSrcMark();'), isTrue);
       expect(html.contains('dbgSrcFollowPause();'), isTrue);
+      // 面板默认是关的：命中断点要自动打开并定位（否则看不到断点在哪），
+      // 但用户在同一个暂停点上主动收起的不能再弹回来。
+      expect(html.contains("var dbgSrcClosedAt = '';"), isTrue);
+      expect(html.contains('dbgSrcClosedAt = dbgSt.paused ? dbgPauseKey(dbgSt.pause) : \'\';'),
+          isTrue);
+      expect(html.contains('if (!pk || pk === dbgSrcClosedAt) return;'), isTrue);
     });
 
     test('变量行能展开看实例字段（懒加载 getObject）', () {

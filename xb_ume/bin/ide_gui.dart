@@ -18262,6 +18262,7 @@ var dbgSrcAbs = '';     // 当前文件绝对路径（跟断点的 path 对齐�
 var dbgSrcLoaded = 0;   // 已渲染行数（标记断点时不必遍历 DOM 行）
 var dbgSrcKey = '';     // 当前文件标识：项目内相对路径 / 项目外 package: URI 或绝对路径
 var dbgSrcOutside = false; // 当前文件在项目外（Flutter SDK / 依赖包）：只读跟随，不能下断点
+var dbgSrcClosedAt = ''; // 用户主动收起面板时的「暂停键」：同一个暂停点不再自动弹回
 
 function dbgSrcNormPath(p){
   return String(p == null ? '' : p).replace(/^file:\/\//, '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -18493,6 +18494,8 @@ function dbgSrcOpenAtEl(el){
 function dbgSrcClose(){
   var card = dbgEl('dbg-src-card');
   if (card) card.style.display = 'none';
+  // 记住是在哪个暂停点上收起的：同一个暂停点不要再被自动跟随弹回来
+  dbgSrcClosedAt = dbgSt.paused ? dbgPauseKey(dbgSt.pause) : '';
   dbgSrcAbs = '';
   dbgSrcRel = '';
   dbgSrcKey = '';
@@ -18712,7 +18715,23 @@ function dbgSrcToggle(line){
 // 换文件（包括单步进入 Flutter SDK / 依赖包）就自动切过去。
 function dbgSrcFollowPause(){
   var card = dbgEl('dbg-src-card');
-  if (!card || card.style.display === 'none') return;
+  if (!card) return;
+  if (card.style.display === 'none') {
+    // 面板默认是关的（重启 GUI 后就是关的）：命中断点 / 单步暂停不自动打开，
+    // 就完全看不到断点在哪（断点卡片里只有一个「文件:行」）。这里跟 IDE 一样
+    // 自动打开并定位；但用户在**这个暂停点**上主动收起的就不再弹回来，
+    // 换个断点 / 下次暂停照常自动开。
+    var pk = dbgSt.paused ? dbgPauseKey(dbgSt.pause) : '';
+    if (!pk || pk === dbgSrcClosedAt) return;
+    // 面板没开过时 dbgSrcRoot 还是空（或上一个项目），先对齐当前会话的项目根，
+    // 否则暂停帧会被当成项目外文件、定位不到行。
+    var root = dbgProjRoot();
+    if (!root) return;
+    dbgSrcRoot = root;
+    card.style.display = '';
+    dbgSrcLoadFiles();
+    return;
+  }
   var t = dbgSrcPauseTarget();
   if (!t) { dbgSrcMark(); return; }
   if (t.key === dbgSrcKey) { dbgSrcMark(); dbgSrcReveal(t.line); return; }
