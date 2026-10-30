@@ -11472,7 +11472,43 @@ const String guiHtml = r'''
   .dbg-tools2 { display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; }
   #page-debug .dbg-tools2 > .row { flex:1 1 400px; margin-bottom:0; }
   #dbg-bps { flex:1 1 auto; max-height:none; min-height:52px; }
-  #dbg-routes { max-height:16vh; min-height:40px; }
+  #dbg-routes { max-height:24vh; min-height:40px; }
+  /* 路由栈小节：一条路由一块——首行「序号 + 路由名 / 当前 / 类型 + 跳转」，
+     次行文件（整行省略），第三行 Widget/State/VM/Notifier 芯片（可换行、留间距）。
+     300px 窄侧栏里也不再全挤在一行、类名换行叠在一起。 */
+  .dbg-rtitem { padding:6px 0 7px; border-bottom:1px dashed var(--line); }
+  .dbg-rtitem:last-child { border-bottom:none; padding-bottom:1px; }
+  .dbg-rtrow { display:flex; align-items:center; gap:6px; min-width:0; }
+  .dbg-rtidx { flex:0 0 auto; font:11px/16px ui-monospace,Menlo,Consolas,monospace;
+    color:var(--dim); background:#182231; border:1px solid var(--line);
+    border-radius:4px; padding:0 5px; }
+  .dbg-rtname { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .dbg-rtcur { color:var(--acc); font-weight:600; }
+  .dbg-rttype { color:var(--dim); font-size:11px; }
+  .dbg-rtjump { flex:0 0 auto; font-size:11px; line-height:16px; padding:0 7px;
+    border:1px solid var(--line); border-radius:9px; color:var(--dim);
+    text-decoration:none; white-space:nowrap; }
+  .dbg-rtjump:hover { color:var(--acc); border-color:var(--acc); }
+  .dbg-rtfile { margin-top:3px; min-width:0; font:11.5px/17px ui-monospace,Menlo,Consolas,monospace;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dbg-rtfile a { display:inline-block; max-width:100%; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom;
+    color:#7cc4ff; text-decoration:none; }
+  .dbg-rtfile a:hover { color:var(--acc); text-decoration:underline; }
+  .dbg-rtfile a.dbg-rtmiss { color:var(--dim); font-style:italic; }
+  /* 类名芯片：一个类一个块，不再用「/」连成一条挤在一起的长行 */
+  .dbg-rtcls { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+  .dbg-rtchip { display:inline-flex; align-items:center; gap:2px; max-width:100%;
+    padding:0 5px; border:1px solid var(--line); border-radius:9px;
+    background:#141c26; font:11px/17px ui-monospace,Menlo,Consolas,monospace; }
+  .dbg-rtchip > a { min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; color:#9ecbff; text-decoration:none; }
+  .dbg-rtchip > a:hover { color:var(--acc); }
+  .dbg-rtchip > span.muted { min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .dbg-rtchip-i { flex:0 0 auto; color:var(--dim); text-decoration:none; }
+  .dbg-rtchip-i:hover { color:var(--acc); }
   #dbg-saved { max-height:13vh; min-height:34px; }
   #dbg-stack { flex:0 0 auto; max-height:min(24vh,200px); min-height:56px; }
   #dbg-vars { flex:1 1 auto; max-height:none; min-height:60px; margin-top:6px; padding-top:4px; border-top:1px solid var(--line); }
@@ -11756,7 +11792,7 @@ const String guiHtml = r'''
             <b style="font-size:12px">路由栈</b>
             <button onclick="dbgRtLoad(this)" style="margin-left:auto;flex:0 0 auto" title="读取当前调试会话的 Navigator 路由栈，并列出每条路由对应的源码文件">刷新</button>
           </div>
-          <div id="dbg-rt-n" class="muted" style="font-size:11px;line-height:1.4;margin-bottom:4px">刷新后列出当前会话的路由与文件：点文件在下方源码面板打开，点「断点」直接下</div>
+          <div id="dbg-rt-n" class="muted" style="font-size:11px;line-height:1.4;margin-bottom:4px">刷新后列出当前会话的路由与文件：点文件名在下方源码面板打开，点行号即下断点；类名后的 ◎ 去「实例」查对象</div>
           <div id="dbg-routes" class="dbg-list"></div>
         </div>
         <div class="card dbg-sec">
@@ -18260,17 +18296,23 @@ function dbgRtLoad(btn){
         return;
       }
       if (n) n.textContent = flat.length + ' 条 · 来自当前调试会话';
+      // 一条路由一块：首行序号 + 路由名（当前 / 类型）+ 跳转，次行文件，最后类名芯片。
+      // 窄侧栏里分三行铺开，不再把「序号 / 名字 / 文件 / 跳转」硬挤在一行。
       box.innerHTML = flat.map(function(it, k){
         var name = it.r.name ? esc(it.r.name) : '<span class="muted">&lt;unnamed&gt;</span>';
-        var cur = it.r.current ? ' <span style="color:var(--acc);font-weight:600">● 当前</span>' : '';
-        var type = it.r.type ? ' <span class="muted">' + esc(it.r.type) + '</span>' : '';
-        return '<div style="display:flex;gap:6px;align-items:center;padding:2px 0">'
-          + '<span class="muted" style="flex:0 0 auto">N' + (it.nav + 1) + '#' + (it.idx + 1) + '</span>'
-          + '<span style="flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + name + cur + type + '</span>'
-          + '<a href="javascript:void(0)" id="dbg-rtf-' + k + '" class="muted" style="flex:0 0 auto">定位中…</a>'
-          + '<a href="javascript:void(0)" id="dbg-rtj-' + k + '" class="muted" style="flex:0 0 auto;display:none">跳转</a>'
+        var cur = it.r.current ? ' <span class="dbg-rtcur">● 当前</span>' : '';
+        var type = it.r.type ? ' <span class="dbg-rttype">' + esc(it.r.type) + '</span>' : '';
+        return '<div class="dbg-rtitem">'
+          + '<div class="dbg-rtrow">'
+          + '<span class="dbg-rtidx">N' + (it.nav + 1) + '#' + (it.idx + 1) + '</span>'
+          + '<span class="dbg-rtname">' + name + cur + type + '</span>'
+          + '<a href="javascript:void(0)" id="dbg-rtj-' + k + '" class="dbg-rtjump" style="display:none">跳转</a>'
           + '</div>'
-          + '<div id="dbg-rtc-' + k + '" style="display:none;font-size:12px;padding:0 0 2px 34px"></div>';
+          + '<div class="dbg-rtfile">'
+          + '<a href="javascript:void(0)" id="dbg-rtf-' + k + '" class="dbg-rtmiss">定位中…</a>'
+          + '</div>'
+          + '<div id="dbg-rtc-' + k + '" class="dbg-rtcls" style="display:none"></div>'
+          + '</div>';
       }).join('');
       flat.forEach(function(it, k){ dbgRtLocate(uri, it, k); });
     })
@@ -18286,7 +18328,7 @@ function dbgRtLocate(uri, it, k){
       var a = dbgEl('dbg-rtf-' + k);
       if (!a) return;
       if (!d || d.error || !d.file) {
-        a.className = 'muted';
+        a.className = 'dbg-rtmiss';
         a.textContent = '未定位到文件';
         a.title = rtLocErr((d && d.error) || '');
         return;
@@ -18311,7 +18353,7 @@ function dbgRtLocate(uri, it, k){
     })
     .catch(function(e){
       var a = dbgEl('dbg-rtf-' + k);
-      if (a) { a.className = 'muted'; a.textContent = '定位失败'; a.title = String(e); }
+      if (a) { a.className = 'dbg-rtmiss'; a.textContent = '定位失败'; a.title = String(e); }
     });
 }
 
@@ -18330,25 +18372,30 @@ function dbgRtInfo(k, cls, file){
       if (d.state) names.push(d.state);
       (d.vm || []).forEach(function(n){ if (n) names.push(n); });
       (d.cn || []).forEach(function(n){ if (n) names.push(n); });
+      // 一个类一个芯片：名字（可点开源码面板）在左，小 ◎（跳实例 Tab）在右。
+      // 芯片之间靠 flex gap 留白，不用「/」串成一条，换行后也不会黏在一起。
       var parts = names.map(function(nm){
         var safe = escAttr(nm);
-        var inst = '<a href="javascript:void(0)" class="muted" style="font-size:11px;text-decoration:none"'
+        var inst = '<a href="javascript:void(0)" class="dbg-rtchip-i"'
           + ' title="在「实例」Tab 查找 ' + safe + ' 的对象"'
           + ' onclick="rtToInstances(\'' + safe + '\')">◎</a>';
         var at = loc[nm];
+        var label;
         if (at && at.file) {
           var pos = at.file + (at.line ? ':' + at.line : '');
-          return '<a href="javascript:void(0)" style="font-family:monospace"'
+          label = '<a href="javascript:void(0)"'
             + ' title="' + escAttr(pos + '（点开下方源码面板，点行号即下断点）') + '"'
             + ' data-file="' + escAttr(at.file) + '" data-line="' + (at.line || 0) + '"'
-            + ' onclick="dbgSrcOpenAtEl(this)">' + esc(nm) + '</a>' + inst;
+            + ' onclick="dbgSrcOpenAtEl(this)">' + esc(nm) + '</a>';
+        } else {
+          label = '<span class="muted" title="本机项目里没找到 ' + safe + ' 的源码（可能在依赖包 / SDK）">'
+            + esc(nm) + '</span>';
         }
-        return '<span class="muted" title="本机项目里没找到 ' + safe + ' 的源码（可能在依赖包 / SDK）">'
-          + esc(nm) + '</span>' + inst;
+        return '<span class="dbg-rtchip">' + label + inst + '</span>';
       });
       if (!parts.length) return;
       box.style.display = '';
-      box.innerHTML = parts.join(' <span class="muted">/</span> ');
+      box.innerHTML = parts.join('');
     })
     .catch(function(){});
 }

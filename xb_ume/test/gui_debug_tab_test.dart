@@ -457,8 +457,16 @@ void main() {
     test('路由栈小节显示 Widget / State / VM / Notifier，点名字开源码面板', () {
       const html = gui.guiHtml;
       for (final s in <String>[
-        // 第二行的容器（单独一行，第一行的 文件:行 / 跳转 不动）。
-        "+ '<div id=\"dbg-rtc-' + k + '\"",
+        // 一条路由分三行：序号+名字 / 文件（整行省略）/ 类名芯片，不再挤成一行。
+        "'<div class=\"dbg-rtitem\">'",
+        "'<div class=\"dbg-rtrow\">'",
+        "'<div class=\"dbg-rtfile\">'",
+        "+ '<div id=\"dbg-rtc-' + k + '\" class=\"dbg-rtcls\"",
+        // 类名一个一块芯片，用 flex gap 留白（不是「/」串成一条）。
+        "'<span class=\"dbg-rtchip\">' + label + inst + '</span>'",
+        "box.innerHTML = parts.join('')",
+        '.dbg-rtchip {',
+        '.dbg-rtcls { display:flex; flex-wrap:wrap; gap:4px;',
         'function dbgRtInfo(',
         'function dbgSrcOpenAtEl(',
         '/api/routeinfo?class=',
@@ -468,6 +476,7 @@ void main() {
         // 名字后的小 ◎ 跳实例 Tab 查对象（复用路由栈 Tab 的入口）。
         // 源码里是拼接出来的 onclick="rtToInstances(\'…\')"，故带反斜杠。
         "onclick=\"rtToInstances(\\'",
+        'dbg-rtchip-i',
         // 找不到源码的降级为灰字，不误报可点。
         '本机项目里没找到',
       ]) {
