@@ -373,13 +373,25 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 与源码片段，不用再让 AI 猜是哪个组件）→ `xbume_network_detail`（按 id 或
 URL 片段取完整响应体）。
 
-**⑦ 改代码 → 热重载 → 复跑**
+**⑦ 改代码 → 选重载级别 → 复跑**
 
 > 把这个标题改成「已修复」，热重载，然后重新点一次提交，确认不再报错。
 
 `xbume_hot_reload`(`mode: reload`，实测空改动 ~150ms、改一个文件 ~230ms) → 改动大时用
 `mode: restart`（isolate 会换，缓存自动重建）→ `xbume_tap` / `xbume_scenario_run` 复跑。
 前提：会话由 `xbume_app_launch(via: "flutter-run")` 或 GUI「调试」页拉起（落盘清单里有 FIFO），或在 GUI「调试」页「接入」认领到句柄；外部 IDE 终端里的进程不归 MCP 管，只能手动按 `r`。
+
+**三档重载：选错会在旧进程上得出「已修复」**
+
+| 档位 | 调用 | 适用 | 边界 |
+| --- | --- | --- | --- |
+| ① 热重载 | `xbume_hot_reload {mode:"reload"}` | 函数体 / widget / 文案 / 局部逻辑 | 状态保留，初始化只跑一次的东西不会重跑 |
+| ② 热重启 | `xbume_hot_reload {mode:"restart"}` | `initState` / 全局单例 / 路由表初值 / `main()` 里的初始化顺序 | 重跑 `main`、Dart 状态清空，但**不会重装包、也不会重编原生** |
+| ③ 进程级重启 | `xbume_app_launch {…, "force": true}` | `pubspec.yaml` / 依赖与资源、原生侧（gradle / plist / 权限 / 插件注册 / MethodChannel 实现）、启动参数（`--dart-define` / flavor / 入口 target）、只在启动那一刻读一次的东西 | 会先按精确 PID 停旧会话（含 app 子进程）再重新编译装包启动，新会话自动设为当前；重启后要重新走一遍路径 |
+
+判断不了属于哪一档时按最重的来（③）：宁可多等一次构建，也不要在旧进程上验收。只想单独停掉进程（不重启）用 `xbume_debug_control`(`action: "stop"`，debug 组)，它只停本服务 / GUI 拉起的会话，IDE 终端里自己起的 `flutter run` 会明确拒绝。
+
+实测（macOS example，`tmp_test/force_restart_probe.py`）：首启 31s → 再调一次 `reused:true`（同 pid、未重装包）→ 改 `main()` 启动标记后 `force:true`，24s 拿到新 pid 且落盘日志里读到新标记 → `stop` 精确结束该 pid 与 3 个子进程。
 
 **⑧ 命中断点看现场**
 
