@@ -121,16 +121,33 @@ String buildAiPrompt({
   }
   sb
     ..writeln()
-    ..writeln('## 第三步：改完代码就热重载')
-    ..writeln('xbume_hot_reload {"mode": "reload"} —— 改了 widget/文案/局部逻辑用它；')
-    ..writeln('xbume_hot_reload {"mode": "restart"} —— 改了初始化逻辑、全局状态、'
-        'main() 用它（isolate 会重建，之前的缓存自动清掉）。')
+    ..writeln('## 第三步：改完代码按改动类型选重载级别（选错会误判「已修复」）')
+    ..writeln('① xbume_hot_reload {"mode": "reload"} —— 只改了函数体 / widget / 文案 / 局部逻辑，'
+        '状态保留，最快；')
+    ..writeln('② xbume_hot_reload {"mode": "restart"} —— 改了 initState / 全局单例 / '
+        '路由表初值 / main() 里的初始化顺序：isolate 重建、Dart 状态清空，'
+        '但不会重装包、也不会重编原生；')
+    ..writeln('③ xbume_app_launch {…, "force": true} —— 进程级重启（等于先点停止再点启动）。'
+        '下列任何一种都必须走它，热重载 / 热重启验证不出来：')
+    ..writeln('   · pubspec.yaml / 依赖（含 assets、字体、flutter 版本）')
+    ..writeln('   · 原生侧（android/ios/ohos/windows/macos 下的 gradle、plist、'
+        '权限、插件注册、MethodChannel 原生实现）')
+    ..writeln('   · 启动参数（--dart-define / flavor / 入口 target / 环境变量）')
+    ..writeln('   · 只在 app 启动那一刻读一次的东西（平台通道注册、首次读配置、'
+        '顶层常量与静态初始化）')
+    ..writeln('   用法：{"deviceId": "$deviceId", "via": "flutter-run", '
+        '"cwd": "$projectDir", "force": true}；'
+        '它先按精确 PID 停掉旧会话（含 app 子进程）再重新编译装包启动，'
+        '新会话自动设为当前。重启后必须重新走一遍同样的路径再下结论。')
     ..writeln('只对带·可热重载标记的会话有效；·只读 会话会直接报错，不要反复重试，'
         '改让那个会话的主人自己重跑（IDE 里按 r），或先问我要不要 force 重启。')
+    ..writeln('判断不了属于哪一档时按最重的来（force）：宁可多等一次构建，'
+        '也不要在旧进程上得出「已修复」的结论。')
     ..writeln('热重载失败时把编译错误原样读出来再改，不要凭猜测绕过。')
     ..writeln()
     ..writeln('## 规则')
-    ..writeln('1. 每次只改一处，改完立刻热重载并复跑同一条路径，确认是修好还是没修好。')
+    ..writeln('1. 每次只改一处，改完按第三步选对重载级别并复跑同一条路径，'
+        '确认是修好还是没修好。')
     ..writeln('2. 定位结论必须落到「文件:行」——xbume_find_widget 返回的 source 字段直接可用。')
     ..writeln('3. 不要改与问题无关的代码，不要顺手重构。')
     ..writeln('4. 结束前给一句话结论：问题在哪、改了什么、验证结果（截图为证）。');

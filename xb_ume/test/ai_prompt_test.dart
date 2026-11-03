@@ -67,6 +67,32 @@ void main() {
       expect(p, contains('不要反复重试'));
     });
 
+    test('三档重载级别写进指令，并点名必须进程级重启的改动', () {
+      final p = buildAiPrompt(
+        projectDir: project,
+        deviceId: device,
+        hasEval: true,
+      );
+      expect(p, contains('按改动类型选重载级别'));
+      expect(p, contains('① xbume_hot_reload'));
+      expect(p, contains('② xbume_hot_reload'));
+      expect(p, contains('③ xbume_app_launch'));
+      // 热重启的能力边界必须写清：不重装包、不重编原生。
+      expect(p, contains('不会重装包、也不会重编原生'));
+      // 四类必须 force 的改动，少一类 AI 就会在旧进程上得出「已修复」。
+      for (final s in <String>[
+        'pubspec.yaml',
+        'MethodChannel',
+        '--dart-define',
+        '只在 app 启动那一刻读一次',
+      ]) {
+        expect(p, contains(s), reason: '缺少 $s');
+      }
+      // 判断不了就按最重的来，且重启后要重新走一遍。
+      expect(p, contains('判断不了属于哪一档时按最重的来'));
+      expect(p, contains('重启后必须重新走一遍同样的路径再下结论'));
+    });
+
     test('eval 未开启时不出现 xbume_eval', () {
       final p = buildAiPrompt(
         projectDir: project,
