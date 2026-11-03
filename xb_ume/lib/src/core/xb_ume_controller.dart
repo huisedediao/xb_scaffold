@@ -15,6 +15,8 @@ import '../models/xb_ume_snapshot.dart';
 import '../models/xb_ume_widget_node.dart';
 import '../persistence/xb_ume_persistence.dart';
 import 'xb_ring_buffer.dart';
+import 'xb_ume_log_file.dart';
+import 'xb_ume_log_file_factory.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_storage_adapter.dart';
 
@@ -26,7 +28,16 @@ class XBUmeController extends ChangeNotifier {
         _routes = XBRingBuffer<XBUmeRouteItem>(config.maxRouteRecords),
         _frames = XBRingBuffer<XBUmeFrameItem>(config.maxPerformanceRecords),
         _exceptions =
-            XBRingBuffer<XBUmeExceptionItem>(config.maxExceptionRecords);
+            XBRingBuffer<XBUmeExceptionItem>(config.maxExceptionRecords) {
+    if (config.logFileEnabled) {
+      _logFile = buildXbUmeLogFile(
+        dir: config.logFileDir,
+        fileName: config.logFileName,
+        maxBytes: config.logFileMaxBytes,
+        backups: config.logFileBackups,
+      );
+    }
+  }
 
   final XBUmeConfig config;
   final XBUmePersistence persistence;
@@ -35,6 +46,9 @@ class XBUmeController extends ChangeNotifier {
   final XBRingBuffer<XBUmeRouteItem> _routes;
   final XBRingBuffer<XBUmeFrameItem> _frames;
   final XBRingBuffer<XBUmeExceptionItem> _exceptions;
+
+  /// app 日志落盘（Web 端或关闭时为空）。
+  XBUmeLogFile? _logFile;
 
   final LinkedHashMap<String, XBUmeNetworkItem> _networkItems =
       LinkedHashMap<String, XBUmeNetworkItem>();
@@ -68,6 +82,16 @@ class XBUmeController extends ChangeNotifier {
       _storageAdapters.values.toList(growable: false);
 
   bool get restored => _restored;
+
+  /// 落盘文件路径（未开启落盘时为 null）。MCP 侧用 `xbume_sandbox` 分页读。
+  String? get logFilePath => _logFile?.path;
+
+  /// 立刻把日志落盘缓冲刷到磁盘（进程退出前 / 需要立刻取证时调用）。
+  Future<void> flushLogFile() async {
+    final logFile = _logFile;
+    if (logFile == null) return;
+    await logFile.flush();
+  }
 
   void showPanel() => _setPanelVisible(true);
 
@@ -125,15 +149,26 @@ class XBUmeController extends ChangeNotifier {
     required String message,
     String? stack,
   }) {
+    final now = DateTime.now();
+    final clipped = _clip(message);
+    final clippedStack = stack == null ? null : _clip(stack);
     _logs.add(
       XBUmeLogItem(
         id: nextId('log'),
-        time: DateTime.now(),
+        time: now,
         level: level,
         tag: tag,
-        message: _clip(message),
-        stack: stack == null ? null : _clip(stack),
+        message: clipped,
+        stack: clippedStack,
       ),
+    );
+    // 落盘与内存缓冲同一份内容：AI 用 sandbox 读到的东西跟 Console Tab 一致。
+    _logFile?.append(
+      time: now,
+      level: level.name,
+      tag: tag,
+      message: clipped,
+      stack: clippedStack,
     );
     _emitConsoleChanged();
   }
@@ -143,6 +178,13 @@ class XBUmeController extends ChangeNotifier {
     _consoleUiTimer = null;
     _hasPendingConsoleUiUpdate = false;
     _logs.clear();
+    // 清屏只清内存：落盘文件留一条分隔标记，之前的证据不会被误删。
+    _logFile?.append(
+      time: DateTime.now(),
+      level: 'info',
+      tag: 'xb_ume',
+      message: '---- console cleared（内存缓冲已清，落盘文件继续追加）----',
+    );
     _emitChanged();
   }
 
@@ -585,6 +627,9 @@ class XBUmeController extends ChangeNotifier {
     for (final plugin in _plugins.values) {
       plugin.onUnregister(this);
     }
+    final logFile = _logFile;
+    _logFile = null;
+    if (logFile != null) unawaited(logFile.close());
     panelVisible.dispose();
     changeTick.dispose();
     super.dispose();

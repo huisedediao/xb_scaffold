@@ -20,6 +20,9 @@ enum DeviceCapability {
   crashList,
   crashGet,
 
+  /// 抓一次设备系统日志快照（logcat / hilog / iOS log）：不驻留进程。
+  logDump,
+
   /// 调试期间保持屏幕常亮（防长场景 / AI 循环中途熄屏）。
   keepAwake,
 }
@@ -125,6 +128,30 @@ class CrashReport {
       };
 }
 
+/// 一次设备日志快照。
+///
+/// 各平台行格式不同，过滤/裁剪统一交给 [filterDeviceLog]（log_lines.dart），
+/// 后端只负责把原始 dump 抓回来 —— 这样每个后端都只有一条命令，好验证。
+class DeviceLogDump {
+  DeviceLogDump({
+    required this.backend,
+    required this.command,
+    required this.raw,
+    this.note,
+  });
+
+  final String backend;
+
+  /// 实际执行的命令行（透明可复核，出问题能直接复现）。
+  final String command;
+
+  /// 原始文本（未过滤）。
+  final String raw;
+
+  /// 平台限制说明（如 iOS 真机只能限时流式读取）。
+  final String? note;
+}
+
 /// 能力不支持：不是错误，是后端边界。
 class DeviceUnsupported implements Exception {
   DeviceUnsupported(this.capability, this.backend, this.reason);
@@ -206,6 +233,18 @@ abstract class DeviceBridge {
 
   Future<String> crashGet(String deviceId, String crashId) =>
       _unsupported(DeviceCapability.crashGet);
+
+  /// 抓一次系统日志快照（不驻留进程）。
+  ///
+  /// [lines] 是希望抓到的最后多少行；[sinceMinutes] 只对 iOS 模拟器的
+  /// `log show --last` 有意义；[durationMs] 只对 iOS 真机的流式 syslog 有意义。
+  Future<DeviceLogDump> logDump(
+    String deviceId, {
+    int lines = 1000,
+    int sinceMinutes = 5,
+    int durationMs = 3000,
+  }) =>
+      _unsupported(DeviceCapability.logDump);
 
   /// 调试期间保持屏幕常亮；返回可读说明（命令输出 / 生效范围）。
   ///

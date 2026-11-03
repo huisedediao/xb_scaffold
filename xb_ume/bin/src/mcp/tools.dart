@@ -979,7 +979,12 @@ McpTool _consoleTool() => McpTool(
       name: 'xbume_console',
       title: '读取 app 日志',
       description:
-          '读取 app 内 XBUme 日志（debug/info/warn/error/fatal），支持级别、关键字、时间窗过滤。',
+          '读取 app 内 XBUme 日志（debug/info/warn/error/fatal），支持级别、关键字、时间窗过滤。'
+          '默认取最新 limit 条（tail=true）；做验收/回归时把上一轮返回的 nextSinceMs '
+          '传给 sinceMs，就只拿新增日志（游标式增量，不会重复也不漏）。'
+          '返回的 logFilePath 是 app 端落盘的同内容日志文件（enableLogFile），'
+          'AI 可用 xbume_sandbox(action: "read", path: logFilePath, offset, max) 按字节分页读完，'
+          '不受内存 2000 条限制，也不怕 app 重启。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
@@ -988,6 +993,12 @@ McpTool _consoleTool() => McpTool(
         'keyword': prop('string', '消息或 tag 包含的关键字'),
         'sinceMs': prop('integer', '只看该时间戳（毫秒）之后的记录'),
         'limit': prop('integer', '最多返回条数（默认 50）', defaultValue: 50),
+        'offset': prop('integer', 'tail=false 时从第几条开始取（默认 0）',
+            defaultValue: 0),
+        'tail': prop('boolean', '取最新 limit 条（默认 true）；false 则从 offset 往后取',
+            defaultValue: true),
+        'maxChars': prop('integer', '单条消息最多多少字符（默认 500）',
+            defaultValue: 500),
       }),
       handler: (ctx, args) async {
         final s = await resolveSession(ctx, args);
@@ -999,11 +1010,21 @@ McpTool _consoleTool() => McpTool(
             keyword: optionalString(args, 'keyword'),
             sinceMs: optionalInt(args, 'sinceMs'),
             limit: limit,
+            offset: (optionalInt(args, 'offset') ?? 0).clamp(0, 100000),
+            tail: optionalBool(args, 'tail', fallback: true),
+            maxChars: (optionalInt(args, 'maxChars') ?? 500).clamp(50, 4000),
+            withPath: true,
           ),
         );
         final items = <Map<String, Object?>>[];
+        String? logFilePath;
         for (final row in raw.split('\u0003')) {
           if (row.isEmpty) continue;
+          if (row.startsWith('#path\u0001')) {
+            final p = row.substring(6).trim();
+            if (p.isNotEmpty) logFilePath = p;
+            continue;
+          }
           final f = row.split('\u0001');
           if (f.length < 4) continue;
           items.add(<String, Object?>{
@@ -1021,10 +1042,20 @@ McpTool _consoleTool() => McpTool(
             sb.write('[${e['level']}] ${e['tag']}: ${e['message']}\n');
           }
         }
+        // 游标：最后一条的时间 +1ms，下次作为 sinceMs 传回来就只拿新增。
+        var nextSinceMs = optionalInt(args, 'sinceMs') ?? 0;
+        for (final e in items) {
+          final t = DateTime.tryParse('${e['time']}');
+          if (t == null) continue;
+          final ms = t.millisecondsSinceEpoch + 1;
+          if (ms > nextSinceMs) nextSinceMs = ms;
+        }
         return McpToolResult.text(sb.toString().trimRight(),
             structured: <String, Object?>{
               'count': items.length,
               'items': items,
+              'nextSinceMs': nextSinceMs,
+              if (logFilePath != null) 'logFilePath': logFilePath,
             });
       },
     );

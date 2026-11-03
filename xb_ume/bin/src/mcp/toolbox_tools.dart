@@ -15,6 +15,7 @@ import 'tools.dart';
 
 List<McpTool> toolboxTools() => <McpTool>[
       _timelineControlTool(),
+      _logHistoryTool(),
       _networkControlTool(),
       _exceptionsTool(),
       _automationTool(),
@@ -90,6 +91,74 @@ McpTool _timelineControlTool() => McpTool(
             'items': tail,
           },
         );
+      },
+    );
+
+McpTool _logHistoryTool() => McpTool(
+      name: 'xbume_log_history',
+      title: 'GUI 日志历史（设备日志 + flutter 输出）',
+      description: '读工具箱一直在采集的日志历史：设备 logcat / hilog / iOS log 与所有调试会话的 '
+          'stdout/stderr 混在同一份缓冲里（每来源 1000 条、总量 5000 条）。支持 source / keyword / '
+          '时间窗过滤与两个游标：nextOffset 翻页读完、nextSinceMs 增量跟（传回 sinceMs，不重不漏）。'
+          '和 xbume_device_logs 的区别：那个是「现在抓一次设备快照」，这个是 GUI 累积的历史，'
+          '含 iOS 真机拿不到的历史日志；需要工具箱在跑。',
+      group: ToolGroup.env,
+      inputSchema: _schema(<String, Object?>{
+        'keyword': prop('string', '消息或 tag 包含该关键字（忽略大小写）'),
+        'source': prop('string',
+            '来源精确匹配：flutter / logcat / hilog / ios …（返回里的 sources 就是候选）'),
+        'sinceMs': prop('integer', '只看收到时间 >= 该毫秒时间戳的行（传上一轮的 nextSinceMs）'),
+        'offset': prop('integer', '逻辑起始下标（配 tail=false 翻页，默认 0）',
+            defaultValue: 0),
+        'limit': prop('integer', '本次最多多少条（默认 200，上限 1000）',
+            defaultValue: 200),
+        'tail': prop('boolean',
+            'offset<=0 时取末尾 limit 条（默认 true）；false 则从 offset 往后',
+            defaultValue: true),
+        'maxChars': prop('integer', '单条消息最多多少字符（默认 400）',
+            defaultValue: 400),
+      }),
+      handler: (ctx, args) async {
+        final q = <String, Object?>{};
+        final keyword = optionalString(args, 'keyword');
+        if (keyword != null && keyword.trim().isNotEmpty) {
+          q['keyword'] = keyword.trim();
+        }
+        final source = optionalString(args, 'source');
+        if (source != null && source.trim().isNotEmpty) {
+          q['source'] = source.trim();
+        }
+        final sinceMs = optionalInt(args, 'sinceMs');
+        if (sinceMs != null) q['sinceMs'] = sinceMs;
+        q['offset'] = (optionalInt(args, 'offset') ?? 0).clamp(0, 1000000);
+        q['limit'] = (optionalInt(args, 'limit') ?? 200).clamp(1, 1000);
+        q['tail'] = optionalBool(args, 'tail', fallback: true) ? '1' : '0';
+        q['maxChars'] = (optionalInt(args, 'maxChars') ?? 400).clamp(40, 4000);
+
+        final j = await _gui(ctx, '/api/logs', q: q);
+        final items = (j['items'] as List?) ?? const <Object?>[];
+        final total = j['total'] ?? 0;
+        final nextOffset = j['nextOffset'] ?? 0;
+        final hasMore = j['hasMore'] == true;
+        final sources = ((j['sources'] as List?) ?? const <Object?>[])
+            .map((e) => '$e')
+            .join(' / ');
+        final head = '日志历史 · 命中 $total 条 · 返回 ${items.length} 条 · '
+            'nextOffset=$nextOffset · nextSinceMs=${j['nextSinceMs']}'
+            '${hasMore ? ' · 还有更多（继续传 offset=$nextOffset）' : ''}'
+            '${sources.isEmpty ? '' : '\n可用来源：$sources'}';
+        if (items.isEmpty) {
+          return McpToolResult.text('$head\n没有匹配的日志（工具箱没在跑或还没采到）。',
+              structured: <String, Object?>{'ok': true, ...j});
+        }
+        final buf = StringBuffer(head);
+        for (final raw in items) {
+          final e = raw is Map ? raw : const <String, Object?>{};
+          buf.write('\n${e['ts'] ?? ''} [${e['source'] ?? ''}] '
+              '${e['level'] ?? ''}/${e['tag'] ?? ''}: ${e['msg'] ?? ''}');
+        }
+        return McpToolResult.text(buf.toString(),
+            structured: <String, Object?>{'ok': true, ...j});
       },
     );
 

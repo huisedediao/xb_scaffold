@@ -21,6 +21,22 @@ class XBUmeConfig {
   final int maxPerformanceRecords;
   final int maxNetworkRecords;
 
+  /// app 日志是否同时落盘。开启后 `xbume_console` 会返回 `logFilePath`，
+  /// AI 可用 `xbume_sandbox`(`read`) 按字节分页读完，不受内存缓冲条数限制。
+  final bool logFileEnabled;
+
+  /// 落盘目录；空字符串 = 系统临时目录下的 `xb_ume_logs`（均在本 app 沙盒内）。
+  final String logFileDir;
+
+  /// 落盘文件名。
+  final String logFileName;
+
+  /// 单个文件大小上限，超过就轮转（默认 4MB）。
+  final int logFileMaxBytes;
+
+  /// 保留几个历史文件（`console.log.1` …），默认 2。
+  final int logFileBackups;
+
   /// 结构化异常（FlutterError / PlatformError）环形缓冲容量。
   final int maxExceptionRecords;
 
@@ -62,11 +78,16 @@ class XBUmeConfig {
     this.captureDebugPrint = true,
     this.captureFlutterError = true,
     this.capturePlatformError = true,
-    this.maxConsoleRecords = 400,
+    this.maxConsoleRecords = 2000,
     this.maxRouteRecords = 300,
     this.maxPerformanceRecords = 600,
     this.maxNetworkRecords = 300,
     this.maxExceptionRecords = 200,
+    this.logFileEnabled = true,
+    this.logFileDir = '',
+    this.logFileName = 'console.log',
+    this.logFileMaxBytes = 4 * 1024 * 1024,
+    this.logFileBackups = 2,
     this.networkBodyMaxLength = 65536,
     this.maxInspectorNodes = 1500,
     this.performanceUiUpdateInterval = const Duration(milliseconds: 240),
@@ -119,6 +140,11 @@ class XBUmeConfig {
     int? maxPerformanceRecords,
     int? maxNetworkRecords,
     int? maxExceptionRecords,
+    bool? logFileEnabled,
+    String? logFileDir,
+    String? logFileName,
+    int? logFileMaxBytes,
+    int? logFileBackups,
     int? networkBodyMaxLength,
     int? maxInspectorNodes,
     Duration? performanceUiUpdateInterval,
@@ -153,6 +179,11 @@ class XBUmeConfig {
           maxPerformanceRecords ?? this.maxPerformanceRecords,
       maxNetworkRecords: maxNetworkRecords ?? this.maxNetworkRecords,
       maxExceptionRecords: maxExceptionRecords ?? this.maxExceptionRecords,
+      logFileEnabled: logFileEnabled ?? this.logFileEnabled,
+      logFileDir: logFileDir ?? this.logFileDir,
+      logFileName: logFileName ?? this.logFileName,
+      logFileMaxBytes: logFileMaxBytes ?? this.logFileMaxBytes,
+      logFileBackups: logFileBackups ?? this.logFileBackups,
       networkBodyMaxLength: networkBodyMaxLength ?? this.networkBodyMaxLength,
       maxInspectorNodes: maxInspectorNodes ?? this.maxInspectorNodes,
       performanceUiUpdateInterval:

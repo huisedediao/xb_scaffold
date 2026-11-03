@@ -9,6 +9,7 @@ library;
 import 'dart:io';
 
 import '../device/bridge.dart';
+import '../device/log_lines.dart';
 import 'protocol.dart';
 import 'tools.dart';
 
@@ -22,6 +23,7 @@ List<McpTool> deviceTools() => <McpTool>[
       _pressKeyTool(),
       _nativeTapTool(),
       _keepAwakeTool(),
+      _deviceLogsTool(),
       _crashListTool(),
       _crashGetTool(),
     ];
@@ -530,6 +532,83 @@ McpTool _nativeTapTool() => McpTool(
               });
         } on DeviceCommandError catch (e) {
           _fail(e);
+        }
+      },
+    );
+
+McpTool _deviceLogsTool() => McpTool(
+      name: 'xbume_device_logs',
+      title: '设备系统日志（logcat / hilog / iOS log）',
+      description: '抓一次设备系统日志快照（一次性 dump，不驻留进程、不留孤儿）：'
+          'Android 跑 adb logcat -d、鸿蒙跑 hdc hilog、iOS 模拟器跑 simctl log show、'
+          'iOS 真机跑 idevicesyslog（只能限时流式读取）。'
+          '支持 keyword / tag / level 过滤，回最后的 lines 条。',
+      group: ToolGroup.diagnose,
+      inputSchema: toolSchema(<String, Object?>{
+        'deviceId': _deviceIdProp(),
+        'keyword': prop('string', '只留包含该关键字的行（忽略大小写）'),
+        'tag': prop('string', '只留 tag 包含该子串的行（如 flutter / AndroidRuntime）'),
+        'level': prop('string', '最低级别（低于它的行丢掉；认不出级别的行保留）',
+            enumValues: <String>['V', 'D', 'I', 'W', 'E', 'F']),
+        'lines': prop('integer', '返回最后多少条（默认 300，上限 5000）',
+            defaultValue: 300),
+        'dumpLines': prop('integer', '从设备抓多少行原始日志（默认 2000，上限 20000）',
+            defaultValue: 2000),
+        'sinceMinutes': prop('integer', 'iOS 模拟器 log show 的时间窗（分钟，默认 5）',
+            defaultValue: 5),
+        'durationMs': prop('integer', 'iOS 真机流式采集时长（毫秒，默认 3000）',
+            defaultValue: 3000),
+      }, <String>[
+        'deviceId'
+      ]),
+      handler: (ctx, args) async {
+        final (bridge, device) = await _requireDevice(ctx, args);
+        if (!bridge.supports(DeviceCapability.logDump)) {
+          return _unsupported(DeviceUnsupported(DeviceCapability.logDump,
+              bridge.backend, '该后端未声明 logDump 能力'));
+        }
+        final dumpLines =
+            (optionalInt(args, 'dumpLines') ?? 2000).clamp(100, 20000);
+        final limit = (optionalInt(args, 'lines') ?? 300).clamp(1, 5000);
+        try {
+          final dump = await bridge.logDump(
+            device.id,
+            lines: dumpLines,
+            sinceMinutes: (optionalInt(args, 'sinceMinutes') ?? 5).clamp(1, 120),
+            durationMs: (optionalInt(args, 'durationMs') ?? 3000).clamp(500, 15000),
+          );
+          final f = filterDeviceLog(
+            dump.raw,
+            query: DeviceLogQuery(
+              keyword: optionalString(args, 'keyword'),
+              tag: optionalString(args, 'tag'),
+              level: optionalString(args, 'level'),
+              limit: limit,
+            ),
+          );
+          final head = '${bridge.backend} · ${device.id} · 原始 ${f.total} 行 · '
+              '命中 ${f.matched} 行 · 返回 ${f.lines.length} 行';
+          final note = dump.note == null ? '' : '\n（${dump.note}）';
+          return McpToolResult.text(
+            f.lines.isEmpty
+                ? '$head\n没有匹配的日志。$note'
+                : '$head\n${f.lines.join('\n')}$note',
+            structured: <String, Object?>{
+              'ok': true,
+              'backend': bridge.backend,
+              'deviceId': device.id,
+              'command': dump.command,
+              'totalLines': f.total,
+              'matched': f.matched,
+              'returned': f.lines.length,
+              'lines': f.lines,
+              if (dump.note != null) 'note': dump.note,
+            },
+          );
+        } on DeviceCommandError catch (e) {
+          _fail(e);
+        } on DeviceUnsupported catch (e) {
+          return _unsupported(e);
         }
       },
     );

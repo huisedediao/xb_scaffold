@@ -15,12 +15,14 @@ class IDeviceBridge extends DeviceBridge {
     _installerExe = findExecutable('ideviceinstaller');
     _crashExe = findExecutable('idevicecrashreport');
     _nameExe = findExecutable('idevicename');
+    _syslogExe = findExecutable('idevicesyslog');
   }
 
   String? _idExe;
   String? _installerExe;
   String? _crashExe;
   String? _nameExe;
+  String? _syslogExe;
   final Map<String, String> _crashCache = <String, String>{};
 
   @override
@@ -46,7 +48,34 @@ class IDeviceBridge extends DeviceBridge {
           DeviceCapability.crashList,
           DeviceCapability.crashGet,
         },
+        if (available && _syslogExe != null) DeviceCapability.logDump,
       };
+
+  @override
+  Future<DeviceLogDump> logDump(
+    String deviceId, {
+    int lines = 1000,
+    int sinceMinutes = 5,
+    int durationMs = 3000,
+  }) async {
+    final exe = _syslogExe;
+    if (exe == null) {
+      throw DeviceUnsupported(DeviceCapability.logDump, backend,
+          '未安装 idevicesyslog（brew install libimobiledevice）');
+    }
+    // 真机 syslog 只能流式读（没历史 dump、不发 EOF）：限时采集后由
+    // runCmd 超时 SIGKILL 收尸，不驻留进程。
+    final ms = durationMs.clamp(500, 15000);
+    final r = await runCmd(exe, <String>['-u', deviceId],
+        timeout: Duration(milliseconds: ms));
+    return DeviceLogDump(
+      backend: backend,
+      command: 'idevicesyslog -u $deviceId（限时 ${ms}ms）',
+      raw: r.stdout,
+      note: 'iOS 真机没有历史 dump：只含观察窗口内的日志；'
+          '要覆盖整个操作过程就“先开抓再操作”，或用 GUI 设备日志的持续采集',
+    );
+  }
 
   @override
   Future<List<DeviceInfo>> listDevices() async {

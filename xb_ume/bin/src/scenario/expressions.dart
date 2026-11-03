@@ -516,8 +516,24 @@ String timelineExpr({int? sinceMs, int limit = 60}) {
 }
 
 /// app 内 console 记录（XBUme.controller.logs）。
-/// 输出每行：level\u0001tag\u0001message\u0001time\u0003（stack 只在末尾附加，避免撑爆）
-String consoleExpr({String? level, String? keyword, int? sinceMs, int limit = 50}) {
+/// 输出每行：level\u0001tag\u0001message\u0001time\u0003
+///
+/// 取窗口规则（AI 验收靠这几个参数自己翻页，而不是一次贴全量）：
+/// - [tail] true：取**最新** limit 条（默认；旧实现从头取，缓冲满了就看不到新日志）；
+/// - [tail] false：从 [offset] 开始取 limit 条，配合 sinceMs 做增量游标；
+/// - [maxChars] 单条消息截断（默认 500），超长日志不会一个人吃满上下文；
+/// - [withPath] 额外在最前面插一行 `#path\u0001<落盘文件绝对路径>\u0003`，
+///   让调用方一次 eval 同时拿到日志和「全量日志文件在哪」。
+String consoleExpr({
+  String? level,
+  String? keyword,
+  int? sinceMs,
+  int limit = 50,
+  int offset = 0,
+  bool tail = true,
+  int maxChars = 500,
+  bool withPath = false,
+}) {
   final filters = <String>[];
   if (level != null && level.isNotEmpty) {
     filters.add("e.level.name == '${escapeEvalString(level)}'");
@@ -530,15 +546,23 @@ String consoleExpr({String? level, String? keyword, int? sinceMs, int limit = 50
     filters.add('e.time.isAfter(DateTime.fromMillisecondsSinceEpoch($sinceMs))');
   }
   final where = filters.isEmpty ? '' : '.where((e) => ${filters.join(' && ')}) ';
-  return "(() { final l = XBUme.controller.logs; "
+  return "(() { final l = XBUme.controller.logs$where.toList(); "
       "final sep = String.fromCharCode(1); final row = String.fromCharCode(3); "
-      "final out = StringBuffer(); var c = 0; "
+      "final out = StringBuffer(); "
+      // logFilePath 是新增 getter：用 dynamic + try 兜底，旧 app 不会编译报错。
+      "if ($withPath) { String? p; "
+      "try { p = (XBUme.controller as dynamic).logFilePath as String?; } catch (_) {} "
+      "if (p != null && p.isNotEmpty) {"
+      "out..write('#path')..write(sep)..write(p)..write(row); } } "
+      "final n = l.length; "
+      "final start = $tail ? (n > $limit ? n - $limit : 0) : ($offset < 0 ? 0 : $offset); "
+      "final stop = $tail ? n : (start + $limit); "
       "String clean(Object? s) { final t = (s ?? '').toString(); "
       "return t.replaceAll(String.fromCharCode(1), ' ').replaceAll(String.fromCharCode(2), ' ') "
       ".replaceAll(String.fromCharCode(3), ' '); } "
-      "for (final e in l$where) { if (c >= $limit) break; c++; "
+      "for (var i = start; i < stop && i < n; i++) { final e = l[i]; "
       "out.write(clean(e.level.name)); out.write(sep); out.write(clean(e.tag)); out.write(sep); "
-      "var m = clean(e.message); if (m.length > 500) { m = m.substring(0, 500); } "
+      "var m = clean(e.message); if (m.length > $maxChars) { m = m.substring(0, $maxChars); } "
       "out.write(m); out.write(sep); out.write(e.time.toIso8601String()); out.write(row); } "
       "return out.toString(); })()";
 }

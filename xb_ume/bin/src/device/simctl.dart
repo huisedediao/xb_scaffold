@@ -38,12 +38,42 @@ class SimctlBridge extends DeviceBridge {
           DeviceCapability.terminate,
           DeviceCapability.crashList,
           DeviceCapability.crashGet,
+          DeviceCapability.logDump,
         }
       : <DeviceCapability>{};
 
   Future<CmdResult> _simctl(List<String> args,
           {Duration timeout = const Duration(seconds: 60)}) =>
       runCmd(_xcrun ?? 'xcrun', <String>['simctl', ...args], timeout: timeout);
+
+  @override
+  Future<DeviceLogDump> logDump(
+    String deviceId, {
+    int lines = 1000,
+    int sinceMinutes = 5,
+    int durationMs = 3000,
+  }) async {
+    // simctl spawn <udid> log show 是一次性 dump（--last 限定时间窗），
+    // 不像 log stream 那样需要长期驻留进程。
+    final mins = sinceMinutes <= 0 ? 5 : sinceMinutes;
+    final args = <String>[
+      'spawn',
+      deviceId,
+      'log',
+      'show',
+      '--style',
+      'compact',
+      '--last',
+      '${mins}m',
+    ];
+    final r = await _simctl(args, timeout: const Duration(seconds: 90));
+    requireOk(r, backend, 'xcrun simctl spawn log show');
+    return DeviceLogDump(
+      backend: backend,
+      command: 'xcrun simctl ${args.join(' ')}',
+      raw: r.stdout,
+    );
+  }
 
   @override
   Future<List<DeviceInfo>> listDevices() async {

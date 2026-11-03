@@ -48,6 +48,7 @@ class HdcBridge extends DeviceBridge {
           DeviceCapability.launch,
           DeviceCapability.terminate,
           DeviceCapability.pressKey,
+          DeviceCapability.logDump,
           DeviceCapability.keepAwake,
         }
       : <DeviceCapability>{};
@@ -57,6 +58,37 @@ class HdcBridge extends DeviceBridge {
       runCmd(_exe ?? 'hdc',
           <String>[if (deviceId != null && deviceId.isNotEmpty) ...<String>['-t', deviceId], ...args],
           timeout: timeout);
+
+  @override
+  Future<DeviceLogDump> logDump(
+    String deviceId, {
+    int lines = 1000,
+    int sinceMinutes = 5,
+    int durationMs = 3000,
+  }) async {
+    // hilog -x：非阻塞读一遍就退出（不留驻、不留孤儿）。
+    final dump = await _run(deviceId, <String>['shell', 'hilog', '-x'],
+        timeout: const Duration(seconds: 40));
+    if (dump.ok) {
+      return DeviceLogDump(
+        backend: backend,
+        command: 'hdc -t $deviceId shell hilog -x',
+        raw: dump.stdout,
+      );
+    }
+    // 个别设备/版本不认 -x：回退成限时流式采集（超时由 runCmd 杀进程）。
+    final stream = await _run(deviceId, <String>['hilog'],
+        timeout: Duration(milliseconds: durationMs));
+    if (stream.stdout.trim().isEmpty) {
+      throw DeviceCommandError(backend, 'hdc hilog', oneLine(stream.errorText));
+    }
+    return DeviceLogDump(
+      backend: backend,
+      command: 'hdc -t $deviceId hilog（限时 ${durationMs}ms）',
+      raw: stream.stdout,
+      note: 'hilog -x 不可用，已回退为限时流式采集；要看更早历史请用 GUI 设备日志',
+    );
+  }
 
   @override
   Future<List<DeviceInfo>> listDevices() async {

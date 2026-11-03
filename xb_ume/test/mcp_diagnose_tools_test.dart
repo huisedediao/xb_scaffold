@@ -33,8 +33,8 @@ void main() {
     }
     // 工具名唯一（server 按 name 分发）。
     expect(byName.length, all.length);
-    // 文档口径：core 18 + diagnose 3 + run-safe 3 + act 3 + device-write 3。
-    expect(all.length, 30, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
+    // 文档口径：core 18 + diagnose 4 + run-safe 3 + act 3 + device-write 3。
+    expect(all.length, 31, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
     // 热重载默认可用；eval 必须显式 --allow-eval。
     expect(byName['xbume_hot_reload']?.group, ToolGroup.core);
     expect(byName.containsKey('xbume_eval'), isFalse);
@@ -148,6 +148,24 @@ void main() {
     expect(e, contains('} catch (_) {}'));
     expect(e, contains('1700000000000'));
     expect(e, contains('30'), reason: 'limit 用于每段取末尾 N 条');
+  });
+
+  test('console 表达式支持两个游标，并可回传落盘路径', () {
+    final e = consoleExpr(limit: 20, offset: 40, tail: false, withPath: true);
+    expect(e.contains('\n'), isFalse, reason: 'VM eval 需要单行 IIFE');
+    expect(e, contains('XBUme.controller.logs'));
+    // tail=false + offset 才能从头翻页；默认 tail 取末尾。
+    expect(consoleExpr(tail: false, offset: 40), contains('(40 < 0 ? 0 : 40)'));
+    expect(consoleExpr(limit: 20), contains('(n > 20 ? n - 20 : 0)'));
+    // sinceMs 做增量跟日志的游标。
+    expect(consoleExpr(sinceMs: 1700000000000),
+        contains('e.time.isAfter(DateTime.fromMillisecondsSinceEpoch(1700000000000))'));
+    // 开启 withPath 才读 logFilePath；且必须走 dynamic + try，
+    // 否则旧 app 没这个 getter 会直接编译失败（不只是运行时报错）。
+    expect(e, contains('(XBUme.controller as dynamic).logFilePath'));
+    expect(e, contains('try {'));
+    expect(e, contains("'#path'"));
+    expect(consoleExpr(), contains('if (false)'));
   });
 
   test('旧 app 没有异常缓冲时给出升级提示，而不是把 VM 报错直接抛出', () {

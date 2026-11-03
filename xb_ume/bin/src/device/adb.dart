@@ -55,6 +55,7 @@ class AdbBridge extends DeviceBridge {
           DeviceCapability.tapNative,
           DeviceCapability.crashList,
           DeviceCapability.crashGet,
+          DeviceCapability.logDump,
           DeviceCapability.keepAwake,
         }
       : <DeviceCapability>{};
@@ -65,6 +66,25 @@ class AdbBridge extends DeviceBridge {
   Future<CmdResult> _run(String? deviceId, List<String> args,
           {Duration timeout = const Duration(seconds: 30)}) =>
       runCmd(_exe ?? 'adb', <String>[..._base(deviceId), ...args], timeout: timeout);
+
+  @override
+  Future<DeviceLogDump> logDump(
+    String deviceId, {
+    int lines = 1000,
+    int sinceMinutes = 5,
+    int durationMs = 3000,
+  }) async {
+    // -d：dump 完就退出（不驻留、不留孤儿）；-t：只要最后 N 行。
+    // 过滤（tag/level/keyword）统一在工具层做，这里只管把原文抓回来。
+    final args = <String>['logcat', '-d', '-v', 'time', '-t', '$lines'];
+    final r = await _run(deviceId, args, timeout: const Duration(seconds: 40));
+    requireOk(r, backend, 'adb logcat -d');
+    return DeviceLogDump(
+      backend: backend,
+      command: 'adb -s $deviceId ${args.join(' ')}',
+      raw: r.stdout,
+    );
+  }
 
   @override
   Future<List<DeviceInfo>> listDevices() async {

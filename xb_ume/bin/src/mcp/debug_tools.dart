@@ -9,6 +9,7 @@ library;
 import 'dart:io';
 
 import '../debug/debug_hub.dart';
+import '../debug/log_file.dart';
 import '../debug/source_view.dart';
 import 'protocol.dart';
 import 'tools.dart';
@@ -511,17 +512,33 @@ McpTool _inspectTool() => McpTool(
 McpTool _outputTool() => McpTool(
       name: 'xbume_debug_output',
       title: '运行输出 / 源码面板',
-      description: 'tail：读 flutter run 的运行输出（debugPrint / 异常 / 热重载日志，'
-          '可关键字过滤）；source：读项目里的 Dart 源码（定位到的行前后）；'
+      description: 'tail：读 flutter run 的运行输出头部镜像（最近 300 行，可按关键字过滤）；'
+          'log：直接分页读 flutter run 落盘的日志文件（**全量、无 300 行上限**），'
+          '支持 keyword / regex 过滤与 offsetLine 游标，返回 nextLine + hasMore，'
+          '反复调用即可读完整个文件 —— 验收、排障、回归确认用这个；'
+          'source：读项目里的 Dart 源码（定位到的行前后）；'
           'files：列项目里的 Dart 文件（找断点位置用）。源码路径相对项目根，'
           '也可传绝对路径读 SDK / 依赖包里的文件（只读）。',
       group: ToolGroup.debug,
       inputSchema: _schema(<String, Object?>{
-        'action': prop('string', '操作', enumValues: <String>['tail', 'source', 'files'],
+        'action': prop('string', '操作',
+            enumValues: <String>['tail', 'log', 'source', 'files'],
             defaultValue: 'tail'),
         'sessionId': prop('string', '会话 id（省略用当前会话）'),
-        'lines': prop('integer', 'tail 返回最后几行（默认 80）', defaultValue: 80),
-        'keyword': prop('string', 'tail 只留包含该关键字的行'),
+        'lines': prop('integer', 'tail / log 返回多少行（tail 默认 80；log 默认 200）',
+            defaultValue: 80),
+        'keyword': prop('string', 'tail / log 只留包含该关键字的行'),
+        'regex': prop('string',
+            'log 的正则过滤（比 keyword 强，需转义；与 keyword 二选一，正则优先）'),
+        'offsetLine': prop('integer',
+            'log 的起始行号（1-based 游标）。省略且无过滤时取文件末尾 lines 行'),
+        'scanLines': prop('integer',
+            'log 单次最多扫描多少行（默认 20000，用来限制单次耗时）',
+            defaultValue: 20000),
+        'maxChars': prop('integer', 'log 单行最多保留多少字符（默认 400）',
+            defaultValue: 400),
+        'withLineNo': prop('boolean', 'log 是否加 [行号] 前缀（默认 true）',
+            defaultValue: true),
         'path': prop('string', 'source 的文件路径（相对项目根或绝对路径）'),
         'centerLine': prop('integer', 'source 的焦点行（给了就只回它前后 window 行）'),
         'window': prop('integer', 'source 焦点行前后各取几行（默认 30）', defaultValue: 30),
@@ -559,6 +576,50 @@ McpTool _outputTool() => McpTool(
             },
           );
         }
+        if (action == 'log') {
+          final logPath = st['logPath']?.toString() ?? '';
+          if (logPath.isEmpty || !File(logPath).existsSync()) {
+            throw McpToolException(
+              '没有可读的运行日志文件',
+              hint: '只有本服务 / GUI 拉起的 flutter run 才落盘；外部 IDE 会话的日志在'
+                  '它自己的终端里，改用 xbume_console（app 内缓冲）或让 AI 直接读终端',
+            );
+          }
+          final LogFilePage page;
+          try {
+            page = await readLogPage(
+              logPath,
+              offsetLine: optionalInt(args, 'offsetLine') ?? 0,
+              maxHits: (optionalInt(args, 'lines') ?? 200).clamp(1, 2000),
+              scanLines: (optionalInt(args, 'scanLines') ?? 20000)
+                  .clamp(1000, 200000),
+              keyword: optionalString(args, 'keyword'),
+              regex: optionalString(args, 'regex'),
+              maxChars: (optionalInt(args, 'maxChars') ?? 400).clamp(100, 4000),
+              withLineNo: optionalBool(args, 'withLineNo', fallback: true),
+            );
+          } on FormatException catch (e) {
+            throw McpToolException('regex 不是合法正则：${e.message}',
+                hint: '需要转义时用 \\\\ 或改用 keyword');
+          }
+          final head = '${page.lines.length} 行'
+              '（已扫 ${page.scanned} 行，游标 nextLine=${page.nextLine}'
+              '${page.hasMore ? '，还有更多：继续传 offsetLine=${page.nextLine}' : '，已到末尾'}）';
+          return McpToolResult.text(
+            page.lines.isEmpty ? '$head\n没有匹配的行。' : '$head\n${page.lines.join('\n')}',
+            structured: <String, Object?>{
+              'ok': true,
+              'action': action,
+              'logPath': logPath,
+              'count': page.lines.length,
+              'lines': page.lines,
+              'nextLine': page.nextLine,
+              'hasMore': page.hasMore,
+              'scanned': page.scanned,
+              'totalLines': page.totalLines,
+            },
+          );
+        }
         if (action == 'files') {
           if (root == null || root.isEmpty) {
             throw McpToolException('没有项目根',
@@ -582,7 +643,7 @@ McpTool _outputTool() => McpTool(
         }
         if (action != 'source') {
           throw McpToolException('未知 action：$action',
-              hint: '可用：tail / source / files');
+              hint: '可用：tail / log / source / files');
         }
         final raw = requireString(args, 'path',
             hint: '例如 lib/main.dart，或 /abs/path/file.dart');

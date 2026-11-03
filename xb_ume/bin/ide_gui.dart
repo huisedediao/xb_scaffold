@@ -43,6 +43,7 @@ import 'src/device/hdc.dart' show hdcKeepAwakeArgs;
 import 'src/device/run_profile.dart' show runProfileFilePath;
 // 服务控制：GUI / daemon 的启停、重启与重新部署（与 bin/ide.dart 共用同一
 // 份实现，避免两边各写一套进程管理、再次和 LaunchAgent 的 KeepAlive 抢实例）。
+import 'src/control/log_history.dart';
 import 'src/control/svc_control.dart';
 import 'src/perf/perf_metrics.dart';
 // 只取 VM service 地址归一：前端各处的 uri 来源不一（flutter run 输出是
@@ -1006,6 +1007,47 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           '${entry['level']}/${entry['app'] ?? entry['tag']}: $msg\n',
         );
       }
+      await req.response.close();
+      return;
+    }
+    // -- 日志历史分页（JSON） -------------------------------------------------
+    // /api/logs.txt 是整包导出（人工看），这里是给 AI / 脚本的：关键字、来源、
+    // 时间窗过滤 + 两个游标（nextOffset 翻页、nextSinceMs 增量），一行都不用少。
+    if (path == '/api/logs') {
+      final page = queryGuiLog(
+        state.buffer,
+        GuiLogQuery(
+          keyword: req.uri.queryParameters['keyword'],
+          source: req.uri.queryParameters['source'],
+          sinceMs: int.tryParse(req.uri.queryParameters['sinceMs'] ?? ''),
+          offset: int.tryParse(req.uri.queryParameters['offset'] ?? '0') ?? 0,
+          limit: (int.tryParse(req.uri.queryParameters['limit'] ?? '') ?? 200)
+              .clamp(1, 1000),
+          tail: (req.uri.queryParameters['tail'] ?? '1') != '0',
+          maxChars: (int.tryParse(req.uri.queryParameters['maxChars'] ?? '') ?? 400)
+              .clamp(40, 4000),
+        ),
+      );
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(
+        jsonEncode(<String, Object?>{
+          'ok': true,
+          'total': page.total,
+          'count': page.items.length,
+          // 与 /api/logs.txt 一致：VM service token 不外泄。
+          'items': <Object?>[
+            for (final item in page.items)
+              <String, Object?>{
+                ...item,
+                if (item['msg'] != null) 'msg': maskVmTokens('${item['msg']}'),
+              },
+          ],
+          'nextOffset': page.nextOffset,
+          'hasMore': page.hasMore,
+          'nextSinceMs': page.nextSinceMs,
+          'sources': page.sources,
+        }),
+      );
       await req.response.close();
       return;
     }

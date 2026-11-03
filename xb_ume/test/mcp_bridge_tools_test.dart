@@ -189,6 +189,7 @@ void main() {
       expect(byName['xbume_daemon']?.group, ToolGroup.env);
       expect(byName['xbume_route_locate']?.group, ToolGroup.env);
       expect(byName['xbume_timeline_control']?.group, ToolGroup.env);
+      expect(byName['xbume_log_history']?.group, ToolGroup.env);
       expect(byName['xbume_network_control']?.group, ToolGroup.env);
       expect(byName['xbume_exceptions_hub']?.group, ToolGroup.env);
       expect(byName['xbume_automation']?.group, ToolGroup.env);
@@ -222,7 +223,21 @@ void main() {
       expect(props('xbume_compare'),
           containsAll(<String>['action', 'sessionA', 'sessionB', 'uriA', 'uriB', 'steps']));
       expect(props('xbume_ide'), containsAll(<String>['action', 'file', 'line', 'ideOrder']));
+      // log_history 不需要 action：一个动作读到底，靠游标推进。
+      expect(props('xbume_log_history'), isNot(contains('action')));
       expect(props('xbume_network_control'), containsAll(<String>['action', 'id', 'url', 'headers']));
+      // GUI 日志历史：过滤 + 双游标（offset 翻页 / sinceMs 增量跟）。
+      expect(
+          props('xbume_log_history'),
+          containsAll(<String>[
+            'keyword',
+            'source',
+            'sinceMs',
+            'offset',
+            'limit',
+            'tail',
+            'maxChars',
+          ]));
       expect(props('xbume_automation'),
           containsAll(<String>['action', 'name', 'steps', 'file', 'saveTo']));
       expect(props('xbume_ai'), containsAll(<String>['action', 'goal', 'sessionId']));
