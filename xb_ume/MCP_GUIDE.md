@@ -103,9 +103,9 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 **53 个**工具（core 19 + diagnose 3 + run-safe 3 + act 3 + device-write 3 +
-  debug 6 + inspect 4 + data 4 + env 7 + ai 1）；其中 `xbume_eval` 还要 `--allow-eval`
-  （不加是 52 个），「AI 调试」入口会自动带上：
+- 一次开全 **55 个**工具（core 19 + diagnose 4 + run-safe 3 + act 3 + device-write 3 +
+  debug 6 + inspect 4 + data 4 + env 8 + ai 1）；其中 `xbume_eval` 还要 `--allow-eval`
+  （不加是 54 个），「AI 调试」入口会自动带上：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
   stdio 拉起的进程要去客户端里关。
@@ -183,7 +183,7 @@ claude mcp add --transport http xb_ume http://127.0.0.1:46140/mcp \
 ### 只想给某类操作临时放权
 
 ```bash
-# 默认：core + diagnose + run-safe（24 个工具，全是只读或 app 内注入）
+# 默认：core + diagnose + run-safe（25 个工具，全是只读或 app 内注入）
 dart run xb_ume:mcp
 
 # 断点 / 单步 / 调用栈 / 变量 / 运行输出（直连 VM，不依赖 GUI）
@@ -201,7 +201,7 @@ dart run xb_ume:mcp --tool-groups act
 # 加上装包 / 卸包 / 停进程（高危，见「安全模型」）
 dart run xb_ume:mcp --tool-groups act,device-write
 
-# 全开（53 个，含 xbume_eval）
+# 全开（55 个，含 xbume_eval）
 dart run xb_ume:mcp --tool-groups all --allow-eval
 
 # 再加可选后端（会拉起 npx，首次需联网下载）
@@ -212,9 +212,9 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 3. 工具清单
 
-工具名统一前缀 `xbume_`。默认暴露 **24 个**（core 18 + diagnose 3 + run-safe 3）；
-加 `--allow-eval` 再多出 `xbume_eval`（25 个）。`--tool-groups all` 全开是 **53 个**
-（debug 6 + inspect 4 + data 4 + env 7 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 52）。
+工具名统一前缀 `xbume_`。默认暴露 **25 个**（core 18 + diagnose 4 + run-safe 3）；
+加 `--allow-eval` 再多出 `xbume_eval`（26 个）。`--tool-groups all` 全开是 **55 个**
+（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 54）。
 
 debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四组通过本机 GUI 的 HTTP
 接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
@@ -235,7 +235,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_route_stack` | — | 从底到顶：路由名 / Route 类型 / 参数类型 / isPresent |
 | `xbume_network` | `urlContains?`, `method?`, `minStatus?`, `withinLastMs?`, `limit?` | app 内 xb_ume 拦截记录（需 app 接入 Network 模块） |
 | `xbume_network_detail` | `id?` 或 `urlContains`(+`method?`), `maxChars?`, `limit?` | 完整请求/响应头、body、发起点调用栈（敏感头已 `***` 脱敏）；答「这个 500 返回了什么」 |
-| `xbume_console` | `level?`, `keyword?`, `sinceMs?`, `limit?` | app 内 xb_ume 日志 |
+| `xbume_console` | `level?`, `keyword?`, `sinceMs?`, `limit?`, `offset?`, `tail?`, `maxChars?` | app 内 xb_ume 日志；默认取**最新** `limit` 条（`tail: true`），`tail: false` 时从 `offset` 往后取；返回 `nextSinceMs` 当游标，下一轮传 `sinceMs` 只拿新增 |
 | `xbume_exceptions` | `kind?`(flutter/platform/app/all), `typeContains?`, `keyword?`, `sinceMs?`, `limit?` | 结构化异常：类型 / 摘要 / 库 / 上下文 / 栈 / 重复次数（比日志多出结构与合并计数）；渲染 / build 类错误额外给 `widget` 与 `source{file,line,column,snippet}`——直接指出出错的组件与业务源码位置，`snippet` 是 daemon 读的源码 ±2 行（真机调试时源码不在本机则只给路径） |
 | `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
@@ -252,11 +252,12 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_scenario_stop` | `runId?` | 请求停止；已执行步骤保留，剩余标 skip |
 | `xbume_report` | `runId?` | 自包含 HTML 报告的路径与大小 |
 
-### diagnose（3 个，默认开启）
+### diagnose（4 个，默认开启）
 
 | 工具 | 主要参数 | 说明 |
 | --- | --- | --- |
 | `xbume_devices` | `refresh?` | 各后端可用性 + 能力矩阵 + 设备清单（不可用后端带 reason） |
+| `xbume_device_logs` | `deviceId`, `keyword?`, `tag?`, `level?`, `lines?`, `dumpLines?`, `sinceMinutes?`, `durationMs?` | 设备系统日志**一次性 dump**：Android `adb logcat -d`、鸿蒙 `hdc hilog`、iOS 模拟器 `simctl log show`、iOS 真机 `idevicesyslog`（限时流式）。先抓 `dumpLines` 行原始日志再本地过滤，返回最后 `lines` 条；`level` 过滤会保留认不出级别的续行，异常栈不会断头。不驻留进程、不留孤儿 |
 | `xbume_crash_list` | `deviceId`, `packageId?`, `limit?` | Android logcat crash 缓冲区 / iOS DiagnosticReports / idevicecrashreport |
 | `xbume_crash_get` | `deviceId`, `crashId` | 取原始日志（超 64KB 截断） |
 
@@ -287,7 +288,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_debug_breakpoints` | `action`(list/add/remove/update/toggle/toggleAll/remember/enableSaved/forget/saved/forgetSaved/savedAll), `path?`, `line?`, `column?`, `condition?`, `logMessage?`, `id?`, `enabled?`, `dir?` | 会话断点与落盘清单两套：add/remove/update/toggle 可按 `path+line`（不必先查 id）；remember/saved 跨重启保存；`logMessage` 是日志断点（不暂停） |
 | `xbume_debug_control` | `action`(pause/continue/resume/stepOver/stepInto/stepOut/detach/hot/stop) | pause 会等到真的暂停再返回；单步要求当前暂停；hot 只作用于本服务/GUI 拉起的 `flutter run`（外部 IDE 会话会明确拒绝，不会误发按键） |
 | `xbume_debug_inspect` | `action`(stack/vars/eval), `frameIndex?`, `withVars?`, `objectId?`, `keyword?`, `expression?` | 调用栈、逐层展开变量（`getObject`，配合 `objectId`）、暂停帧内求值（能读私有作用域里的局部变量） |
-| `xbume_debug_output` | `action`(tail/source/files), `lines?`, `keyword?`, `path?`, `centerLine?`, `window?`, `maxLines?`, `max?` | 运行输出尾部 / 源码窗口（相对路径按项目根解析，`centerLine` 居中）/ 项目 dart 文件列表 |
+| `xbume_debug_output` | `action`(tail/log/source/files), `lines?`, `keyword?`, `regex?`, `offsetLine?`, `scanLines?`, `maxChars?`, `withLineNo?`, `path?`, `centerLine?`, `window?`, `maxLines?`, `max?` | 运行输出尾部（300 行镜像）/ **`log`：分页读 `flutter run` 落盘的日志文件（全量、无 300 行上限）**，`kw`/`regex` 过滤 + `offsetLine` 游标返回 `nextLine` / `hasMore` / `totalLines` / 源码窗口 / 项目 dart 文件列表 |
 
 ### inspect（4 个，需 `--tool-groups inspect`）
 
@@ -307,7 +308,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_sandbox` | `action`(list/read/download/downloadDir/upload/delete), `path?`, `offset?`, `max?`, `content?`, `contentBase64?`, `name?`, `saveTo?` | 浏览 / 读写 app 沙盒；`upload` 的 `path` 是目标目录 + `name` 是文件名（也可以直接传完整文件路径，工具会拆）；`downloadDir` 打成 tar |
 | `xbume_watch` | `action`(add/list/events/pause/remove/clear), `kind?`, `expr?`, `targetId?`, `lib?`, `condition?`, `id?`, `on?` | 监听**表达式 / 字段**的变化（不是文件监听），可带命中条件；事件按时间返回 |
 
-### env（7 个，需 `--tool-groups env`）
+### env（8 个，需 `--tool-groups env`）
 
 | 工具 | 主要参数 | 说明 |
 | --- | --- | --- |
@@ -315,6 +316,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_daemon` | `action`(status/restart/svc/svcLog/clientLog), `offset?`, `tag?`, `msg?` | 守护进程 / GUI 状态、重启、服务控制（start/stop/restart）、daemon 与前端日志 |
 | `xbume_route_locate` | `action`(locate/stack/info/op), `sessionId?`, `uri?`, `idx?`, `nav?`, `open?`, `file?`, `class?`, `op?`, `name?` | 路由栈、按路由定位到源码（`info` 支持相对路径，`locate` 的 `nav/idx` 省略时取栈顶）、GUI 侧路由操作 |
 | `xbume_timeline_control` | `action`(list/sub/off/clear), `limit?` | 时间轴订阅开关与清空（GUI 侧），配合只读的 `xbume_timeline` 使用 |
+| `xbume_log_history` | `keyword?`, `source?`, `sinceMs?`, `offset?`, `limit?`, `tail?`, `maxChars?` | GUI 一直在采集的日志历史（设备日志 + `flutter run` 输出，跨会话留存、含 iOS 真机拿不到的部分）；`source` 精确过滤、`keyword` 忽略大小写；两个游标：`nextOffset` 从头翻页读全量，`nextSinceMs` 只取增量 |
 | `xbume_network_control` | `action`(replay/clear), `id?`, `url?`, `headers?`, `body?`, `maxBody?` | 重放某条请求（可改 URL / 头 / 体）与清空记录；replay 真的会再发一次请求 |
 | `xbume_exceptions_hub` | `action`(list/clear/analyze), `id?`, `limit?` | 跨会话异常汇总；analyze 调 AI 给出根因与修复建议（需先在 GUI 配好模型） |
 | `xbume_automation` | `action`(list/get/save/delete/run/status/stop/artifact), `name?`, `steps?`, `continueOnFail?`, `file?`, `saveTo?` | 自动化场景的存取、执行、进度与产物（报告 / 截图）下载 |
@@ -394,6 +396,48 @@ URL 片段取完整响应体）。
 
 `xbume_storage`(`list` → `read`，必要时 `write` 改回) → `xbume_db`(`open` → `schema` → `query`)
 → `xbume_sandbox`(`list` → `read`，大文件 `download` / `downloadDir` 到本机)。
+
+### 日志取证闭环：让 AI 真的能「读完」日志
+
+验收任务 / 修 bug 的证据链都是「跑一遍 → 读日志 → 判断 → 再改再跑」。五条读日志的通道，
+按「要内存里的还是要落盘的」选：
+
+| 通道 | 工具 | 覆盖面 | 上限 |
+| --- | --- | --- | --- |
+| **运行输出全量** | `xbume_debug_output`(`action: "log"`) | `flutter run` 落盘的 stdout/stderr，等于 IDE 里看到的全部打印 | 无硬上限，靠游标分页 |
+| 运行输出尾部 | `xbume_debug_output`(`action: "tail"`) | 同一份输出的内存镜像 | 最近 300 行 |
+| app 内日志（内存） | `xbume_console` | app 内 xb_ume 缓冲（含 `debugPrint` 钩子 + 业务日志），`tail` / `offset` / `sinceMs` 三种取法 | 环形缓冲 2000 条 |
+| app 内日志（落盘） | `xbume_console` → `logFilePath` + `xbume_sandbox`(`read`) | app 自己把日志写进沙盒文件（默认 `${tmp}/xb_ume_logs/console.log`），跨会话 / 重启可回溯 | 单文件 4MB 轮转，保留 2 个历史文件，按字节分页读 |
+| **GUI 日志历史** | `xbume_log_history` | GUI 一直在采集的设备日志 + `flutter run` 输出（含 iOS 真机 `idevicesyslog` 拿不到的历史） | 服务端缓冲 5000 行 / 每来源 1000 行，靠游标分页 |
+| 设备系统日志 | `xbume_device_logs` | Android logcat / 鸿蒙 hilog / iOS 模拟器 log show / iOS 真机 idevicesyslog | 单次 dump 的最后 `lines` 条（最多 5000） |
+
+**读完整个文件的正确姿势**（不要用大 `limit` 硬拉，几万行会直接吃掉上下文）：
+
+1. 先带过滤：`{"action":"log","keyword":"ERROR"}`，或 `regex` 精确匹配——大多数排障一次就够；
+2. 不知道关键字的先看尾：`offsetLine` 省略（或 ≤0）**且**不带 `keyword` / `regex` 时是
+   **tail 语义**，直接给最后 `lines` 行；
+3. 要通读就用返回的 `nextLine` 当游标反复调：
+   `{"action":"log","lines":200}` → 回 `nextLine: 200, hasMore: true` →
+   `{"action":"log","offsetLine":200,"lines":200}` → …直到 `hasMore: false`
+   （`offsetLine` 是 1-based，翻页不重不漏）；
+4. 命中行要原样贴时传 `withLineNo: false`；单行过长用 `maxChars`（默认 400）截断，
+   `scanLines`（默认 20000）限制单次扫描量；
+5. 设备侧崩溃 / 系统日志用 `xbume_device_logs`，先 `keyword` / `tag` 过滤，
+   `level: "E"` 只留 E 及以上、认不出级别的续行照旧保留；
+6. 增量跟日志用游标而不是重拉：`xbume_console` / `xbume_log_history` 都把上一轮的
+   `nextSinceMs` 传回 `sinceMs`（只拿新行，开销与历史量无关）；
+7. app 重启 / 换会话后要跨会话回溯，读落盘文件：`xbume_console` 返回的 `logFilePath`
+   直接喂给 `xbume_sandbox`(`action: "read"`, `offset` / `max` 分页) 或 `download` 到本机
+    grep——内存缓冲只有 2000 条，文件才是完整历史；
+8. 设备日志历史（包括已经滚出终端窗口的）用 `xbume_log_history`，
+   `source` 先看返回值里的 `sources` 有哪几路（如 `logcat` / `flutter` / `hilog`）；
+9. 再补结构化证据：`xbume_exceptions`（合并计数 + 源码位置）、`xbume_timeline`
+   （路由 / 网络 / 日志 / 异常合成时间线）、`xbume_network_detail`（请求 / 响应体）。
+
+AI 侧一句话模板：
+
+> 跑完之后用 `xbume_debug_output`(`action: "log"`) 按 `nextLine` 游标把日志读完，
+> 只把命中关键字的行贴给我；再用 `xbume_device_logs`(`level: "E"`) 确认系统层没有崩溃。
 
 ---
 
@@ -488,6 +532,7 @@ dart run xb_ume:run ~/.xb_ume_ide/scenarios/login.json --uri 52111 --json
 | `tapNative` | ✓ | — | — | — | 按适配器工具探测 |
 | `crashList` | ✓ | — | ✓ | ✓ | 按适配器工具探测 |
 | `crashGet` | ✓ | — | ✓ | ✓ | — |
+| `logDump` | ✓ | ✓ | ✓ | ✓（需 `idevicesyslog`） | 按适配器工具探测 |
 
 说明：
 
@@ -531,6 +576,11 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | `xbume_input` 返回 NO_CONN | 没有焦点输入框：先用 `xbume_tap` 点输入框（用 `ref` 更稳），再 input。 |
 | `xbume_navigate` 报 `NO_ROUTE_TABLE` | app 没配 `onGenerateRoute`/`routes`；改用 `xbume_tap` 点入口按钮。 |
 | `xbume_network` / `xbume_console` 空 | app 未接入 xb_ume 的 Network / Console 模块，这两个工具读的是 app 内缓冲。 |
+| `xbume_console` 看不到刚打的日志 | 老版本默认从最旧处往后取，`limit` 小时拿的是「最早的 N 条」；现在默认 `tail: true` 取最新的。真拿不到再看 app 是否改动了日志模块、或缓冲已满 2000 条环回（更早的读 `logFilePath` 里的落盘文件）。 |
+| `xbume_debug_output`(`log`) 报「没有可读的运行日志文件」 | 这个会话不是本服务/GUI 拉起的 `flutter run`（外部 IDE 终端的日志在它自己的控制台），或落盘文件已被清理；用 `xbume_app_launch(via: "flutter-run")` 重新拉起，或改用 `action: "tail"` / `xbume_console`。 |
+| `xbume_debug_output`(`log`) 翻页出现重复 / 漏行 | `offsetLine` 是 **1-based** 的下一行位置，把上一轮返回的 `nextLine` 原值传回去即可（不要 ±1）；带过滤时 `nextLine` 指向最后一个命中行的下一行。 |
+| `xbume_device_logs` 报 unsupported | 当前后端没声明 `logDump`（`mobile-mcp` 按适配器工具探测，iOS 真机需要本机有 `idevicesyslog`）；`xbume_devices` 的能力矩阵里能直接看到。 |
+| `xbume_device_logs` 返回 0 行 | Android 先确认 `adb logcat -d` 能出内容；鸿蒙 `hilog -x` 个别固件不支持时会回退限时流式，此时只衔接到调用那一刻的日志，先把 `durationMs` 调大再重试；iOS 模拟器看 `sinceMinutes` 窗口是否太小。 |
 | HTTP 模式 401 | 请求少了 `X-XBUME-Token`；从 `~/.xb_ume_ide/mcp.token` 读，或看 GUI「守护进程」页复制的配置。 |
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
@@ -553,6 +603,16 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 ## 9. 已知缺口
 
 按「不做假装支持」原则显式列出，后续版本补齐：
+
+- **日志通道是「拉」不是「推」**：MCP 是请求-响应，没有推送订阅；要看最新的就再调一次
+  （`xbume_debug_output`(`log`) 不带 `offsetLine` 即取尾部，`xbume_console` 传上一轮的
+  `nextSinceMs` 只拿新增），不要在客户端等通知。
+- **`xbume_debug_output`(`log`) 只覆盖本服务/GUI 拉起的 `flutter run`**：外部 IDE / 终端起的进程
+  日志在它自己的控制台，落盘文件不在 `~/.xb_ume_ide` 下，只能走 `action: "tail"`（内存镜像，300 行）
+  或 App 内缓冲（`xbume_console`）。
+- **设备日志只能取快照**：`xbume_device_logs` 是一次性 dump（不驻留进程），iOS 真机经
+  `idevicesyslog` 只能限时流式读、没有历史回溯；真正的「长时间、全量、可回溯」靠 app 自己
+  将日志写入沙盒文件，再用 `xbume_sandbox`(`read` / `download`) 分页读。
 
 - **`record` 场景步骤未实现**：录屏涉及设备端进程生命周期，未实测前不提供假实现；
   请用系统录屏。GUI 与 CLI 都会明确报「尚未实现」。

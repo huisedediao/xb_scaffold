@@ -41,7 +41,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | 电脑端 | GUI 工具箱 | 15 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化/调试等 |
 | App 内 / 电脑端 | IDE 跳转 | 点源码行尾 ↗ 或 GUI 栈帧「跳转」→ 在 VS Code / Android Studio 等打开对应行列 |
 | 命令行 | `xb_ume run` | 同一份场景 JSON 在 CI 中回放并产出 HTML 报告 |
-| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：断点单步、控件树、实例/性能/泄漏、共享存储/数据库/沙盒、路由/网络/时间轴、IDE 跳转与守护进程，共 53 个工具 |
+| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：断点单步、控件树、实例/性能/泄漏、共享存储/数据库/沙盒、路由/网络/时间轴、日志（全量落盘分页读 + app 内日志文件 + GUI 日志历史 + 设备系统日志）、IDE 跳转与守护进程，共 55 个工具 |
 
 ## 环境与平台支持
 
@@ -232,7 +232,9 @@ XBUme.log(
 
 **面板操作**：顶部按级别过滤（ALL / DEBUG / INFO / WARN / ERROR / FATAL）+ 关键字搜索；`Export` 把当前过滤结果以 JSON 复制到剪贴板；`Clear` 清空；点条目查看详情并复制。
 
-**限制**：`maxConsoleRecords` 默认 400；控制台 UI 刷新节流 `consoleUiUpdateInterval`（默认 120ms），高频日志不会逐条重建列表。
+**限制**：`maxConsoleRecords` 默认 2000；控制台 UI 刷新节流 `consoleUiUpdateInterval`（默认 120ms），高频日志不会逐条重建列表。
+
+**落盘**：`logFileEnabled` 默认开，日志同时写进沙盒里的 `logFileDir`（默认 `${系统临时目录}/xb_ume_logs`）+ `logFileName`（默认 `console.log`），单个文件超过 `logFileMaxBytes`（默认 4MB）就轮转，保留 `logFileBackups`（默认 2）个历史文件。`XBUme.controller.logFilePath` 给出完整路径，`xbume_console` 会带上它，AI 可用 `xbume_sandbox` 按字节分页读完——内存环形缓冲只有 2000 条，文件才是跨会话的完整历史；`Clear` 只清内存，文件继续追加（写入一行分隔标记）。
 
 ### Route
 
@@ -426,7 +428,8 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 | `enableConsole` / `enableRoute` / `enablePerformance` / `enableNetwork` | `true` | 各插件开关 |
 | `enableInspector` / `enableWidgetLocator` / `enableDevice` / `enableStorage` | `true` | 各插件开关 |
 | `captureDebugPrint` / `captureFlutterError` / `capturePlatformError` | `true` | 全局日志/异常钩子 |
-| `maxConsoleRecords` / `maxRouteRecords` / `maxPerformanceRecords` / `maxNetworkRecords` | `400 / 300 / 600 / 300` | 各模块环形缓冲条数 |
+| `maxConsoleRecords` / `maxRouteRecords` / `maxPerformanceRecords` / `maxNetworkRecords` | `2000 / 300 / 600 / 300` | 各模块环形缓冲条数 |
+| `logFileEnabled` / `logFileDir` / `logFileName` / `logFileMaxBytes` / `logFileBackups` | `true / ''（系统临时目录下 xb_ume_logs） / console.log / 4MB / 2` | 日志落盘：目录、文件名、单文件上限（超了轮转）、保留历史文件数 |
 | `networkBodyMaxLength` | `65536` | 请求/响应 Body 最大字符数，超出截断 |
 | `maxInspectorNodes` | `1500` | Inspector 单次快照最大节点数 |
 | `consoleUiUpdateInterval` / `performanceUiUpdateInterval` | `120ms / 240ms` | 面板 UI 刷新节流 |
@@ -614,14 +617,14 @@ dart run xb_ume:mcp --http 46140
 }
 ```
 
-默认暴露 24 个工具（core 18 + diagnose 3 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 `flutter run` 发热重载/热重启。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
+默认暴露 25 个工具（core 18 + diagnose 4 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志（app 内缓冲 + `flutter run` 全量落盘文件的分页读）、设备系统日志（logcat / hilog / iOS log）、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 `flutter run` 发热重载/热重启。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
 
-另四组按需开启，`--tool-groups all` 共 53 个工具：
+另四组按需开启，`--tool-groups all` 共 55 个工具：
 
 - `debug`（6）：断点（含条件与日志断点、落盘与恢复）、暂停/继续/单步、调用栈、变量树、暂停帧求值、运行输出与源码窗口——直连 VM service，不依赖 GUI；
 - `inspect`（4）：Widget 树与点选、实例查找/字段树/改值、CPU/内存/帧快照与泄漏检测、双会话场景对比；
 - `data`（4）：shared_prefs 读写、沙盒内 SQLite 查询、沙盒文件浏览/下载/上传、表达式监听；
-- `env`（7）：IDE 跳转与顺序、守护进程/服务控制与日志、路由定位与操作、时间轴开关、网络重放/清空、异常 AI 归因、自动化场景执行；
+- `env`（8）：IDE 跳转与顺序、守护进程/服务控制与日志、路由定位与操作、时间轴开关、GUI 日志历史（设备日志 + 运行输出，双游标分页）、网络重放/清空、异常 AI 归因、自动化场景执行；
 - `ai`（1）：自然语言目标驱动的自动操作。
 
 后四组（inspect / data / env / ai）通过本机 GUI 的 HTTP 接口执行，需要工具箱在跑；工具清单、参数、典型 prompt 与排障见 [MCP_GUIDE.md](MCP_GUIDE.md)。
