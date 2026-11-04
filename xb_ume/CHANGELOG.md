@@ -6,11 +6,11 @@
 
 - `xbume_sessions` 的 launcher 标记改成**真标记**：原来只要「有 FIFO 或拿得到 `Process` 句柄」就标 `·可热重载`，而 FIFO 存在并不代表按键有用（正是上面那个坑）。现在与 `hot_reload` 同源（`reloadChannelOf`），标成 `mcp拉起·可热重载(signal)` / `gui认领·可热重载(signal)` / `…·只读`，并额外给出 `reloadChannel` 与 `flutterRunPid` 两个字段。`xbume_use_session` 选完顺手附一行自检结论（不发重载）。
 
-- 贴给 AI 的指令（`buildAiPrompt`）新增「第一步半：接上之后先自检」：给出 `xbume_session_check` 的调用参数、四类探测内容与六个 `verdict` 的分流动作，并明写「不要跳过这一步直接发 hot_reload——通道不通时那是几十秒白等」；第三步补一句热重载按通道发信号、`SIGUSR1` 对普通进程是终止信号所以工具会先校验。
+- 贴给 AI 的指令（`buildAiPrompt`）新增「第一步半：接上之后先自检」：给出 `xbume_session_check` 的调用参数、四类探测内容与六个 `verdict` 的分流动作，并明写「不要跳过这一步直接发 hot_reload——通道不通时那是几十秒白等」；第三步补一句热重载按通道发信号、`SIGUSR1` 对普通进程是终止信号所以工具会先校验。第一步里「·只读」的旧解释（认领到的进程拿不到输入句柄）也改掉了：POSIX 上认领到的会话走 signal 通道、是可热重载的，只有真没通道（Windows 拿不到句柄）才叫只读；`sessions` 标记后面括号里直接写通道名。GUI「AI 调试」Tab 的页面说明同步补上自检与 `SIGUSR1` / `SIGUSR2` 的说法。
 
 - 顺手修 `resolvePathForCompare` 的尾斜杠问题：调用方写 `cwd: "/a/b/"` 与 flutter run 记录的 `/a/b` 会被判成两个项目（复用失败、自检误报 `wrong_project`），现在统一去掉多余尾分隔符（根目录除外）。
 
-- 工具数：core 18 → **19**，默认暴露 25 → **26**，`--tool-groups all` 55 → **56**（不加 `--allow-eval` 时 55）。新增 `test/session_check_test.dart` 16 项（来源解析 / 信号参数 / 通道选路 / 六种 verdict 判定 / 结论文本 / 工具注册与 schema / 「不再往 FIFO 写按键」源码守卫），`ai_prompt_test` 补 6 条，`mcp_diagnose_tools_test` 工具数 31 → 32；`dart analyze bin test` 无问题。文档：MCP_GUIDE 新增「接上会话的第一件事：自检」一节（verdict 分流表）、core 表加 `xbume_session_check` 并更新 `sessions` / `hot_reload` 行、排障行改成新报错文案；README / CHANGELOG 工具数同步。
+- 工具数：core 18 → **19**，默认暴露 25 → **26**，`--tool-groups all` 55 → **56**（不加 `--allow-eval` 时 55）。新增 `test/session_check_test.dart` 17 项（来源解析 / 信号参数 / 通道选路 / 六种 verdict 判定 / 结论文本 / 工具注册与 schema / GUI 会话设备号兜底 / 「不再往 FIFO 写按键」源码守卫），`ai_prompt_test` 补 10 条，`mcp_diagnose_tools_test` 工具数 31 → 32；`dart analyze bin test` 无问题。文档：MCP_GUIDE 新增「接上会话的第一件事：自检」一节（verdict 分流表）、core 表加 `xbume_session_check` 并更新 `sessions` / `hot_reload` 行、排障行改成新报错文案；README / CHANGELOG 工具数同步。
 
 ## 0.6.0
 

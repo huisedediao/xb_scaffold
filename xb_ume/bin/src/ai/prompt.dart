@@ -85,11 +85,12 @@ String buildAiPrompt({
     ..writeln('设备：$deviceId')
     ..writeln()
     ..writeln('## 第一步：接上 app（复用优先，只做一次）')
-    ..writeln('先调 xbume_sessions，按每个会话的 launcher 标记分流：')
+    ..writeln('先调 xbume_sessions，按每个会话的 launcher 标记分流（·可热重载 后面括号里就是通道：'
+        'signal / stdin / none）：')
     ..writeln('- 带 launcher 标记且标了·可热重载（本工具 / GUI 拉起或认领；我可能已经在「调试」Tab '
         '点过「启动 / 复用」）→ 直接 xbume_use_session 选它，不要 app_launch 重跑；')
-    ..writeln('- 带 launcher 标记但标了·只读（认领到的进程拿不到输入句柄）→ 看现场、下断点都能用，'
-        '热重载按第三步的回落处理；')
+    ..writeln('- 带 launcher 标记但标了·只读（没有可用通道：Windows 上拿不到输入句柄、也发不了信号）'
+        '→ 看现场、下断点都能用，热重载按第三步的回落处理；')
     ..writeln('- 只有这个项目的会话、但没有 launcher 标记（IDE 拉起）→ 先问我要哪种，不要自己选：')
     ..writeln('  (a) 只读接入：xbume_use_session 选它，界面 / 断点 / eval / 时间轴都能用，'
         '改完回 IDE 按 r；')

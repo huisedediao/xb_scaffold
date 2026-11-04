@@ -65,6 +65,9 @@ void main() {
       expect(p, contains('复用优先'));
       expect(p, contains('·可热重载'));
       expect(p, contains('·只读'));
+      // 只有真没通道（Windows 无句柄）才叫只读；认领到的 POSIX 会话是可热重载的。
+      expect(p, contains('signal / stdin / none'));
+      expect(p, contains('没有可用通道'));
       expect(p, contains('(a) 只读接入'));
       expect(p, contains('(b) 由 xb_ume 接管'));
       // 热重载的回落：只读会话会报错，别反复重试。
@@ -161,6 +164,9 @@ void main() {
       expect(src, isNot(contains('AI 调试不复用它')));
       expect(src, contains('AI 调试会直接<b>复用</b>'));
       expect(src, contains('IDE 拉起的只能只读接入'));
+      // 页面说明要跟上自检与信号通道，否则用户看到的还是旧描述。
+      expect(src, contains('xbume_session_check'));
+      expect(src, contains('SIGUSR1'));
     });
   });
 }
