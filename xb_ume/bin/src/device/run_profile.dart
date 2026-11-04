@@ -55,6 +55,265 @@ class RunCommandResult {
   }
 }
 
+/// 一条具名运行配置：GUI 里新建/编辑/删除，MCP 与 AI 按名字选。
+///
+/// 字段都是 `flutter run` 的通用能力，与具体项目无关（flavor / dart-define /
+/// --profile 都是 [args] 的一部分）。没有这一层时只能按平台写死一套参数。
+class RunConfig {
+  const RunConfig({
+    required this.name,
+    this.device,
+    this.target,
+    this.args = const <String>[],
+    this.env = const <String, String>{},
+    this.preRun = const <String>[],
+    this.postStop = const <String>[],
+    this.platforms = const <String>[],
+    this.note,
+  });
+
+  /// 配置名（项目内唯一，GUI 下拉、MCP `config` 参数都用它）。
+  final String name;
+
+  /// 绑定的设备 id（可选；GUI 选中配置时回填设备）。
+  final String? device;
+
+  /// 入口文件（可选；缺省用 flutter 默认的 lib/main.dart）。
+  final String? target;
+
+  /// 追加给 `flutter run` 的参数（如 `--flavor oversea`、`--profile`）。
+  final List<String> args;
+
+  /// 注入子进程的环境变量。
+  final Map<String, String> env;
+
+  /// 启动前要跑的命令；空则回退项目顶层 `preRun`。
+  final List<String> preRun;
+
+  /// 停止后的清理命令；空则回退项目顶层 `postStop`。
+  final List<String> postStop;
+
+  /// 限定的平台（归一后的键）；空 = 所有平台。
+  final List<String> platforms;
+
+  /// 给人看的备注（GUI 摘要里显示）。
+  final String? note;
+
+  /// 配置是否对 [platform]（设备 id 或平台键都可）生效。
+  bool appliesTo(String? platform) {
+    if (platforms.isEmpty) return true;
+    final key = platformKeyOf(platform);
+    return key != null && platforms.contains(key);
+  }
+
+  static RunConfig? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final name = _optText(raw['name']);
+    if (name == null) return null;
+    final env = <String, String>{};
+    final rawEnv = raw['env'];
+    if (rawEnv is Map) {
+      for (final e in rawEnv.entries) {
+        final k = '${e.key}'.trim();
+        if (k.isEmpty) continue;
+        env[k] = '${e.value}';
+      }
+    }
+    return RunConfig(
+      name: name,
+      device: _optText(raw['device']),
+      target: _optText(raw['target']),
+      args: _stringList(raw['args']),
+      env: env,
+      preRun: _stringList(raw['preRun']),
+      postStop: _stringList(raw['postStop']),
+      platforms: <String>[
+        for (final e in _stringList(raw['platforms']))
+          if (platformKeyOf(e) case final String k) k,
+      ],
+      note: _optText(raw['note']),
+    );
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'name': name,
+        if (device != null) 'device': device,
+        if (target != null) 'target': target,
+        if (args.isNotEmpty) 'args': args,
+        if (env.isNotEmpty) 'env': env,
+        if (preRun.isNotEmpty) 'preRun': preRun,
+        if (postStop.isNotEmpty) 'postStop': postStop,
+        if (platforms.isNotEmpty) 'platforms': platforms,
+        if (note != null) 'note': note,
+      };
+}
+
+/// 「上次用过的」配置与额外参数：GUI 重开、AI 调用都按它回填。
+class LastRun {
+  const LastRun({this.config, this.args = const <String>[]});
+
+  final String? config;
+  final List<String> args;
+
+  static LastRun? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final config = _optText(raw['config']);
+    final args = _stringList(raw['args']);
+    if (config == null && args.isEmpty) return null;
+    return LastRun(config: config, args: args);
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        if (config != null) 'config': config,
+        if (args.isNotEmpty) 'args': args,
+      };
+}
+
+/// 把一行参数文本切成参数表：支持单/双引号包裹与反斜杠转义，
+/// 空格 / 制表 / 换行分隔。GUI 的「额外参数」输入框与 preRun 共用这一套。
+List<String> splitArgs(String text) {
+  final out = <String>[];
+  final buf = StringBuffer();
+  String? quote;
+  var has = false;
+  void flush() {
+    if (!has) return;
+    out.add(buf.toString());
+    buf.clear();
+    has = false;
+  }
+
+  for (var i = 0; i < text.length; i++) {
+    final c = text[i];
+    if (quote != null) {
+      if (c == quote) {
+        quote = null;
+        continue;
+      }
+      if (c == r'\' && i + 1 < text.length) {
+        final next = text[i + 1];
+        // 引号内只认「转义引号」与 `\\`：否则 Windows 路径
+        // （--path="C:\tmp"）里的反斜杠会被吃掉。单引号内按 shell 惯例不转义。
+        final isEscape =
+            quote == '"' && (next == '"' || next == r'\');
+        if (isEscape) {
+          buf.write(next);
+          i++;
+          continue;
+        }
+        buf.write(c);
+        continue;
+      }
+      buf.write(c);
+      continue;
+    }
+    if (c == '"' || c == "'") {
+      quote = c;
+      has = true;
+      continue;
+    }
+    if (c == r'\' && i + 1 < text.length) {
+      buf.write(text[++i]);
+      has = true;
+      continue;
+    }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      flush();
+      continue;
+    }
+    buf.write(c);
+    has = true;
+  }
+  flush();
+  return out;
+}
+
+/// 合并「要追加给 flutter run 的参数」：
+/// 顶层 `runArgs['*']` → 顶层 `runArgs[平台]` → 选中配置的 args → 本次额外参数。
+List<String> mergeRunArgs({
+  RunProfile? profile,
+  RunConfig? config,
+  String? platform,
+  List<String> extraArgs = const <String>[],
+}) {
+  final out = <String>[ ...?profile?.runArgs['*'] ];
+  final key = platformKeyOf(platform);
+  if (profile != null && key != null) out.addAll(profile.runArgs[key] ?? const <String>[]);
+  if (config != null) out.addAll(config.args);
+  out.addAll(extraArgs);
+  return out;
+}
+
+/// 本次启动该跑的 preRun 命令模板：配置里写了就用配置的，否则回退项目顶层。
+List<String> preRunFor(RunProfile? profile, RunConfig? config) =>
+    (config != null && config.preRun.isNotEmpty)
+        ? config.preRun
+        : (profile?.preRun ?? const <String>[]);
+
+/// 本次停止该跑的 postStop 命令模板：配置里写了就用配置的，否则回退项目顶层。
+List<String> postStopFor(RunProfile? profile, RunConfig? config) =>
+    (config != null && config.postStop.isNotEmpty)
+        ? config.postStop
+        : (profile?.postStop ?? const <String>[]);
+
+/// 本次入口文件：显式传的优先，其次配置里的；都没有则 null（用 flutter 默认）。
+String? targetFor(String? explicit, RunConfig? config) =>
+    (explicit != null && explicit.trim().isNotEmpty) ? explicit : config?.target;
+
+/// 「给了配置名但项目里没有这条」时的报错文案（GUI/MCP 直接能照做）。
+String missingRunConfigMessage({
+  required String? configName,
+  required String projectRoot,
+  RunProfile? profile,
+}) {
+  final names = profile?.configs.map((c) => c.name).toList() ?? const <String>[];
+  if (names.isEmpty) {
+    return '项目 $projectRoot 还没有运行配置：在调试页新建一个，或不传 config 参数。';
+  }
+  return '没有名为「${(configName ?? '').trim()}」的运行配置。可用：${names.join('、')}';
+}
+
+/// 把「弹窗提交的原始字段」归一成 [RunConfig.fromJson] 能吃的结构：
+/// args / platforms 接受一行文本（分词），preRun / postStop 接受多行文本，
+/// env 接受 `KEY=VALUE` 每行一条。已经是数组 / 对象的原样保留。
+Object? normalizeConfigRequest(Object? raw) {
+  if (raw is! Map) return raw;
+  final m = Map<String, Object?>.from(raw);
+  final args = m['args'];
+  if (args is String) m['args'] = splitArgs(args);
+  final platforms = m['platforms'];
+  if (platforms is String) m['platforms'] = splitArgs(platforms);
+  for (final key in const <String>['preRun', 'postStop']) {
+    final v = m[key];
+    if (v is String) m[key] = splitLines(v);
+  }
+  final env = m['env'];
+  if (env is String) m['env'] = parseEnvText(env);
+  return m;
+}
+
+/// 按行切（preRun / postStop 文本框）：去首尾空白，跳过空行。
+List<String> splitLines(String text) => <String>[
+      for (final line in text.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    ];
+
+/// `KEY=VALUE` 每行一条（env 文本框）；没写 `=` 的按空值处理，`#` 开头是注释。
+Map<String, String> parseEnvText(String text) {
+  final out = <String, String>{};
+  for (final line in text.split('\n')) {
+    final t = line.trim();
+    if (t.isEmpty || t.startsWith('#')) continue;
+    final i = t.indexOf('=');
+    if (i <= 0) {
+      out[t] = '';
+      continue;
+    }
+    out[t.substring(0, i).trim()] = t.substring(i + 1).trim();
+  }
+  return out;
+}
+
 /// 项目级运行配置。
 class RunProfile {
   const RunProfile({
@@ -64,6 +323,8 @@ class RunProfile {
     this.runArgs = const <String, List<String>>{},
     this.timeoutSec = 180,
     this.continueOnError = false,
+    this.configs = const <RunConfig>[],
+    this.last,
   });
 
   /// 生效平台（归一后的键）；空 = 所有平台。
@@ -84,7 +345,25 @@ class RunProfile {
   /// preRun 失败是否仍继续启动（默认 false：中止，避免起一个必然不可用的 app）。
   final bool continueOnError;
 
-  bool get isEmpty => preRun.isEmpty && postStop.isEmpty && runArgs.isEmpty;
+  /// 具名运行配置（GUI 新建/编辑/删除，MCP 按名字选）。
+  final List<RunConfig> configs;
+
+  /// 上次选中的配置与额外参数（服务端记住，GUI 与 AI 共用）。
+  final LastRun? last;
+
+  /// 按名字取配置（精确匹配，忽略名称两侧空白）。不存在返回 null。
+  RunConfig? configNamed(String? name) {
+    final want = (name ?? '').trim();
+    if (want.isEmpty) return null;
+    for (final c in configs) {
+      if (c.name == want) return c;
+    }
+    return null;
+  }
+
+  /// 只算「有实质配置」：仅记住上次选择（last）不算，避免影响未配置项目的启动。
+  bool get isEmpty =>
+      preRun.isEmpty && postStop.isEmpty && runArgs.isEmpty && configs.isEmpty;
 
   /// 这套配置是否对 [platform]（已归一）生效。
   ///
@@ -122,6 +401,17 @@ class RunProfile {
     var timeout = 180;
     final t = raw['timeoutSec'];
     if (t is num) timeout = t.toInt().clamp(5, 900);
+    final configs = <RunConfig>[];
+    final rawConfigs = raw['configs'];
+    if (rawConfigs is List) {
+      final seen = <String>{};
+      for (final e in rawConfigs) {
+        final c = RunConfig.fromJson(e);
+        // 重名只认第一条：手写文件时重复了不会让下拉出现两个同名项。
+        if (c == null || !seen.add(c.name)) continue;
+        configs.add(c);
+      }
+    }
     return RunProfile(
       platforms: platforms,
       preRun: preRun,
@@ -129,6 +419,8 @@ class RunProfile {
       runArgs: args,
       timeoutSec: timeout,
       continueOnError: raw['continueOnError'] == true,
+      configs: configs,
+      last: LastRun.fromJson(raw['last']),
     );
   }
 
@@ -154,7 +446,16 @@ class RunProfile {
         'runArgs': runArgs,
         'timeoutSec': timeoutSec,
         'continueOnError': continueOnError,
+        if (configs.isNotEmpty)
+          'configs': <Object?>[for (final c in configs) c.toJson()],
+        if (last != null) 'last': last!.toJson(),
       };
+}
+
+String? _optText(Object? raw) {
+  if (raw == null) return null;
+  final t = '$raw'.trim();
+  return (t.isEmpty || t == 'null') ? null : t;
 }
 
 List<String> _stringList(Object? raw) {
@@ -170,8 +471,16 @@ String runProfileFilePath() => '${xbUmeHome()}/debug/run_profiles.json';
 
 /// 读某个项目的运行配置；未配置 / 文件损坏 / 项目不匹配都返回 null。
 ///
+/// 「只记住了上次选择（last）、没有任何实质配置」也算未配置，保持启动链路原行为。
 /// [filePath] 仅供测试注入，正常调用走 [runProfileFilePath]。
 RunProfile? loadRunProfile(String projectRoot, {String? filePath}) {
+  final p = loadProjectProfile(projectRoot, filePath: filePath);
+  return (p == null || p.isEmpty) ? null : p;
+}
+
+/// 读项目配置（不筛「空配置」）：GUI 要拿 `configs` 与 `last` 回填，
+/// 即使该项目只记住了上次选择也得能读到。
+RunProfile? loadProjectProfile(String projectRoot, {String? filePath}) {
   if (projectRoot.trim().isEmpty) return null;
   final f = File(filePath ?? runProfileFilePath());
   if (!f.existsSync()) return null;
@@ -186,8 +495,154 @@ RunProfile? loadRunProfile(String projectRoot, {String? filePath}) {
   if (projects is! Map) return null;
   final key = _findProjectKey(projects, projectRoot);
   if (key == null) return null;
-  final p = RunProfile.fromJson(projects[key]);
-  return (p == null || p.isEmpty) ? null : p;
+  return RunProfile.fromJson(projects[key]);
+}
+
+// --------------------------------------------------------------- 配置增删改
+
+/// 新建或覆盖一条配置（同名即覆盖），返回落盘后的配置列表。
+///
+/// 写入时保留项目下其他字段（顶层 preRun / runArgs 等）与其它项目的配置：
+/// 手写文件里的自定义键不会被吃掉。
+List<RunConfig> saveRunConfig(
+  String projectRoot,
+  RunConfig config, {
+  String? filePath,
+}) {
+  final name = config.name.trim();
+  if (name.isEmpty) throw ArgumentError('配置名不能为空');
+  if (projectRoot.trim().isEmpty) throw ArgumentError('缺少项目目录');
+  late List<RunConfig> out;
+  _mutateProject(projectRoot, filePath, (m) {
+    final kept = <RunConfig>[];
+    for (final raw in _rawConfigs(m)) {
+      final c = RunConfig.fromJson(raw);
+      if (c == null || c.name == name) continue;
+      kept.add(c);
+    }
+    kept.add(RunConfig(
+      name: name,
+      device: config.device,
+      target: config.target,
+      args: config.args,
+      env: config.env,
+      preRun: config.preRun,
+      postStop: config.postStop,
+      platforms: config.platforms,
+      note: config.note,
+    ));
+    m['configs'] = <Object?>[for (final c in kept) c.toJson()];
+    // 同名覆盖时 last 里的配置名依旧有效，不用动；改名等于新建一条，
+    // 旧名由 deleteRunConfig 负责清 last。
+    out = kept;
+  });
+  return out;
+}
+
+/// 删除一条配置；不存在返回 false。若正是「上次选中的」，同时清掉 last。
+bool deleteRunConfig(
+  String projectRoot,
+  String name, {
+  String? filePath,
+}) {
+  final want = name.trim();
+  if (want.isEmpty) return false;
+  var removed = false;
+  _mutateProject(projectRoot, filePath, (m) {
+    final kept = <Object?>[];
+    for (final raw in _rawConfigs(m)) {
+      final c = RunConfig.fromJson(raw);
+      if (c == null) continue;
+      if (c.name == want) {
+        removed = true;
+        continue;
+      }
+      kept.add(c.toJson());
+    }
+    if (removed) m['configs'] = kept;
+    final last = m['last'];
+    if (removed && last is Map && '${last['config'] ?? ''}'.trim() == want) {
+      m.remove('last');
+    }
+  });
+  return removed;
+}
+
+/// 记住「上次选的配置 + 额外参数」；两者都空则清掉 last。
+void rememberLastRun(
+  String projectRoot, {
+  String? config,
+  List<String> args = const <String>[],
+  String? filePath,
+}) {
+  if (projectRoot.trim().isEmpty) return;
+  final name = (config ?? '').trim();
+  _mutateProject(projectRoot, filePath, (m) {
+    if (name.isEmpty && args.isEmpty) {
+      m.remove('last');
+      return;
+    }
+    m['last'] = LastRun(
+      config: name.isEmpty ? null : name,
+      args: args,
+    ).toJson();
+  });
+}
+
+List<Object?> _rawConfigs(Map<String, Object?> project) {
+  final raw = project['configs'];
+  return raw is List ? List<Object?>.of(raw) : const <Object?>[];
+}
+
+/// 读全量 → 改本项目节点 → 原子写回。
+void _mutateProject(
+  String projectRoot,
+  String? filePath,
+  void Function(Map<String, Object?> project) change,
+) {
+  final path = filePath ?? runProfileFilePath();
+  final data = _readAllRaw(path);
+  final projects = data['projects'] is Map
+      ? Map<String, Object?>.from(data['projects'] as Map)
+      : <String, Object?>{};
+  final key = _findProjectKey(projects, projectRoot) ??
+      normalizeProjectRoot(projectRoot);
+  final node = projects[key] is Map
+      ? Map<String, Object?>.from(projects[key] as Map)
+      : <String, Object?>{};
+  change(node);
+  projects[key] = node;
+  data['version'] = 2;
+  data['projects'] = projects;
+  _writeAll(path, data);
+}
+
+Map<String, Object?> _readAllRaw(String path) {
+  final f = File(path);
+  if (!f.existsSync()) {
+    return <String, Object?>{'version': 2, 'projects': <String, Object?>{}};
+  }
+  try {
+    final raw = jsonDecode(f.readAsStringSync());
+    if (raw is Map) return Map<String, Object?>.from(raw);
+  } catch (_) {
+    // 坏 JSON：先备份再重建，避免用户手写时的小错误导致内容被默默吃掉。
+    try {
+      final stamp = DateTime.now().toIso8601String().replaceAll(':', '-');
+      f.copySync('$path.broken-$stamp');
+    } catch (_) {}
+  }
+  return <String, Object?>{'version': 2, 'projects': <String, Object?>{}};
+}
+
+void _writeAll(String path, Map<String, Object?> data) {
+  final f = File(path);
+  f.parent.createSync(recursive: true);
+  final tmp = File('$path.tmp');
+  tmp.writeAsStringSync(
+    '${const JsonEncoder.withIndent('  ').convert(data)}\n',
+  );
+  tmp.renameSync(path);
 }
 
 String? _findProjectKey(Map projects, String root) {

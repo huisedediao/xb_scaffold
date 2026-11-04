@@ -21,6 +21,8 @@ void main() {
         x += i & 7;
       }
     }
+    // 读一下：造负载的累加值不用，analyze 会当未使用变量。
+    expect(x, greaterThanOrEqualTo(0));
     final b = readProcessUsage()!;
     expect(b.cpuNs!, greaterThan(cpu0!));
     // macOS 用 proc_pid_rusage 取 footprint；Linux 无此口径，允许为空。
@@ -40,6 +42,7 @@ void main() {
         x += i & 7;
       }
     }
+    expect(x, greaterThanOrEqualTo(0));
     final s = XBUmeProcessStats.sample();
     expect(s['supported'], isTrue);
     expect(s['cpuPercent'], isA<num>());

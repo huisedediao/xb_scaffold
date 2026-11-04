@@ -10,6 +10,7 @@ import 'dart:io';
 
 import '../device/bridge.dart';
 import '../device/log_lines.dart';
+import '../device/run_profile.dart';
 import 'protocol.dart';
 import 'tools.dart';
 
@@ -141,6 +142,12 @@ McpTool _appLaunchTool() => McpTool(
             'string', '已安装包名（via=adb/simctl/hdc 必填；hdc 支持 bundle#Ability）'),
         'target': prop('string', '入口文件（flutter-run，默认 lib/main.dart）'),
         'cwd': prop('string', 'flutter run 的工作目录（默认 MCP 服务进程的当前目录）'),
+        'config': prop('string',
+            '运行配置名（调试页里保存的配置；会叠加它自带的参数与预启动/停止后命令）'),
+        'args': arrayProp('追加给 flutter run 的额外参数，如 ["--dart-define=K=V"]', 'string'),
+        'listConfigs': prop('boolean',
+            '只列出当前 cwd 的运行配置与上次选择，不启动（true 时忽略其余的启动参数）',
+            defaultValue: false),
         'platform': prop('string',
             '目标平台 android|ios|ohos|macos|windows（项目运行配置按它选参数；不传则自动识别）'),
         'waitVm': prop('boolean', '是否等待 VM service（flutter-run 默认 true）',
@@ -153,6 +160,10 @@ McpTool _appLaunchTool() => McpTool(
         'deviceId'
       ]),
       handler: (ctx, args) async {
+        // 只查配置清单：不需要设备，也不碰 flutter run（AI 先看有哪些可选）。
+        if (optionalBool(args, 'listConfigs')) {
+          return _listRunConfigs(optionalString(args, 'cwd'));
+        }
         final deviceId = requireString(args, 'deviceId',
             hint: '先调用 xbume_devices；桌面可用 $_desktopDevice');
         final via =
@@ -172,6 +183,8 @@ McpTool _appLaunchTool() => McpTool(
               force: optionalBool(args, 'force'),
               owner: 'mcp',
               timeout: timeout,
+              config: optionalString(args, 'config'),
+              extraArgs: optionalStringList(args, 'args'),
             );
             String? sessionId;
             if (r.wsUri != null) {
@@ -183,11 +196,15 @@ McpTool _appLaunchTool() => McpTool(
                 ? ''
                 : '；项目运行配置已执行 ${r.preRunCommands.length} 条预启动命令';
             final extra = r.note == null ? '' : '；${r.note}';
+            final cfgNote = r.config == null ? '' : '；配置「${r.config}」';
+            final argNote = r.effectiveArgs.isEmpty
+                ? ''
+                : '；参数 ${r.effectiveArgs.join(' ')}';
             return McpToolResult.text(
               sessionId == null
-                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$pre$extra'
+                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$cfgNote$argNote$pre$extra'
                   : '$action（pid ${r.pid}）并通过临时会话 $sessionId 接入'
-                      '${r.reused ? '（未重装包）' : ''}$pre$extra',
+                      '${r.reused ? '（未重装包）' : ''}$cfgNote$argNote$pre$extra',
               structured: <String, Object?>{
                 'ok': true,
                 'via': via,
@@ -197,6 +214,9 @@ McpTool _appLaunchTool() => McpTool(
                 'sessionId': sessionId,
                 'logPath': r.logPath,
                 'reused': r.reused,
+                'target': r.target,
+                'config': r.config,
+                'args': r.effectiveArgs,
                 'preRun': r.preRunCommands,
                 if (r.note != null) 'note': r.note,
               },
@@ -695,3 +715,40 @@ McpTool _crashGetTool() => McpTool(
         }
       },
     );
+
+/// 列出某个项目的运行配置与上次选择（`listConfigs=true`）。
+///
+/// 只读文件，不要求设备在线：AI 先看有哪些可选，再传 `config` 启动。
+McpToolResult _listRunConfigs(String? cwd) {
+  final dir = (cwd == null || cwd.trim().isEmpty)
+      ? Directory.current.path
+      : cwd;
+  final profile = loadProjectProfile(dir);
+  final configs = profile?.configs ?? const <RunConfig>[];
+  final last = profile?.last;
+  final sb = StringBuffer('项目 $dir 的运行配置（${configs.length} 条）');
+  if (configs.isEmpty) {
+    sb.write('：还没有配置。\n'
+        '在 GUI 调试页「配置 → 新建」里建一条（参数/预启动命令都存在服务端，'
+        '建好后这里就能选；也可以不传 config 直接启动）。');
+  } else {
+    for (final c in configs) {
+      sb.write('\n  · ${c.name}');
+      if (c.platforms.isNotEmpty) sb.write('（限 ${c.platforms.join('/')}）');
+      if (c.target != null) sb.write(' target=${c.target}');
+      if (c.args.isNotEmpty) sb.write(' 参数 ${c.args.join(' ')}');
+      if (c.preRun.isNotEmpty) sb.write(' 预启动 ${c.preRun.length} 条');
+      if (c.note != null) sb.write(' — ${c.note}');
+    }
+  }
+  if (last != null) {
+    sb.write('\n上次：${last.config ?? '（未选配置）'}'
+        '${last.args.isEmpty ? '' : '，额外参数 ${last.args.join(' ')}'}');
+  }
+  return McpToolResult.text(sb.toString(), structured: <String, Object?>{
+    'ok': true,
+    'cwd': dir,
+    'configs': <Object?>[for (final c in configs) c.toJson()],
+    if (last != null) 'last': last.toJson(),
+  });
+}

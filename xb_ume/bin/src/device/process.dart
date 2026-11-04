@@ -69,14 +69,24 @@ Future<CmdResult> runCmd(
   final out = StringBuffer();
   final err = StringBuffer();
   final done = Completer<void>();
+  // 输出流各自的完成信号：进程退出不等于管道已读完（高负载下最后几行
+  // 还在事件队列里，直接 cancel 会把它们丢掉，如 `echo one` 读成空串）。
+  final outDone = Completer<void>();
+  final errDone = Completer<void>();
+  void finish(Completer<void> c) {
+    if (!c.isCompleted) c.complete();
+  }
+
   final subOut = proc.stdout
       .transform(utf8.decoder)
       .transform(const LineSplitter())
-      .listen((String line) => out.writeln(line));
+      .listen((String line) => out.writeln(line),
+          onError: (_) => finish(outDone), onDone: () => finish(outDone));
   final subErr = proc.stderr
       .transform(utf8.decoder)
       .transform(const LineSplitter())
-      .listen((String line) => err.writeln(line));
+      .listen((String line) => err.writeln(line),
+          onError: (_) => finish(errDone), onDone: () => finish(errDone));
   unawaited(proc.exitCode.then((_) {
     if (!done.isCompleted) done.complete();
   }));
@@ -86,10 +96,17 @@ Future<CmdResult> runCmd(
   } on TimeoutException {
     timedOut = true;
     proc.kill(ProcessSignal.sigkill);
-  } finally {
-    await subOut.cancel();
-    await subErr.cancel();
   }
+  // 先等两个输出流读完（最多 2 秒）：子进程把管道留给孙进程时流不会关，
+  // 这时不再等，直接取消。
+  try {
+    await Future.wait(<Future<void>>[outDone.future, errDone.future])
+        .timeout(const Duration(seconds: 2));
+  } on TimeoutException {
+    // 有残留孙进程握着管道：不阻塞调用方，拿到已收到的部分。
+  }
+  await subOut.cancel();
+  await subErr.cancel();
   final code = timedOut ? -1 : await proc.exitCode.timeout(
         const Duration(seconds: 2),
         onTimeout: () => -1,

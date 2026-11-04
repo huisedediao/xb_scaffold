@@ -112,6 +112,28 @@ void main() {
       expect(launchFailureAdvice(line), isNull);
     });
 
+    test('provider authority 冲突提示改 manifest 或卸载占用方', () {
+      final s = launchFailureSummary(const <String>[
+        "adb: failed to install app.apk: Failure [INSTALL_FAILED_CONFLICTING_PROVIDER: "
+            'Can not install because provider name com.jf.jlink.fileProvider '
+            '(in package com.jf.jlink) is already used by com.jf.jlinkiot]',
+      ]);
+      expect(s, contains('provider authority'));
+      expect(s, contains('.xxx'));
+      expect(s, contains('卸载'));
+    });
+
+    test('版本降级与存储不足各给一条建议', () {
+      expect(
+        launchFailureAdvice('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]'),
+        contains('versionCode'),
+      );
+      expect(
+        launchFailureAdvice('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]'),
+        contains('存储不足'),
+      );
+    });
+
     test('空输出不抛异常', () {
       expect(launchFailureSummary(const <String>[]), '');
     });
@@ -274,6 +296,8 @@ class _FlakyLauncher extends FlutterRunLauncher {
     String owner = 'mcp',
     Duration timeout = const Duration(seconds: 180),
     String? retryNote,
+    String? config,
+    List<String> extraArgs = const <String>[],
   }) async {
     calls++;
     if (calls <= failures) {

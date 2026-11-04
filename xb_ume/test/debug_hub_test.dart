@@ -27,6 +27,8 @@ class _ThrowingLauncher extends FlutterRunLauncher {
     String? target,
     String? cwd,
     String? platform,
+    String? config,
+    List<String> extraArgs = const <String>[],
     bool waitVm = true,
     bool force = false,
     String owner = 'mcp',

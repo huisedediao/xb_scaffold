@@ -11785,9 +11785,16 @@ const String guiHtml = r'''
       <div class="dbg-tools2" style="margin-top:4px">
         <div class="row" style="gap:8px;flex-wrap:wrap">
           <b style="font-size:12px" title="项目级运行配置：启动前要跑的准备命令、按平台追加给 flutter run 的参数、停止后的清理（run_profiles.json，按项目根生效）">运行配置</b>
+          <select id="dbg-cfg" style="width:210px" onchange="dbgConfigPicked(this)" title="选择要跑的运行配置（参数/预启动命令都按它来）；不选就只跑项目默认"></select>
+          <button onclick="dbgConfigEdit()" style="flex:0 0 auto" title="新建一条配置，或编辑当前选中的配置（存在服务端，重启不丢）">新建/编辑</button>
+          <button onclick="dbgConfigDelete()" style="flex:0 0 auto" title="删除当前选中的配置">删除</button>
+          <button onclick="dbgConfigImport(this)" style="flex:0 0 auto" title="把项目 .vscode/launch.json（含 tasks.json 里的预启动任务）导成普通配置；导入后运行时不读它">导入 launch.json</button>
+          <label class="chk" style="display:flex;align-items:center;flex:0 1 300px;min-width:200px" title="只对本次启动生效的额外参数（不写进配置）；回车/失焦即记住，下次自动带上">追加参数
+            <input id="dbg-args" placeholder="--dart-define=K=V" style="flex:1;min-width:0;width:0;margin-left:6px;font-size:12px" oninput="dbgArgsDirty()" onchange="dbgArgsChanged()">
+          </label>
           <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
           <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
-          <button onclick="dbgProfileOpen()" style="flex:0 0 auto" title="打开 run_profiles.json（只读摘要来自它：预启动命令 / 额外参数 / 停止清理）">打开配置</button>
+          <button onclick="dbgProfileOpen()" style="flex:0 0 auto" title="打开 run_profiles.json（摘要来自它：配置列表 / 预启动命令 / 额外参数 / 停止清理）">打开配置</button>
         </div>
         <div class="row" style="gap:10px;flex-wrap:nowrap">
           <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
@@ -12298,6 +12305,48 @@ const String guiHtml = r'''
   <button onclick="document.getElementById('dbg-bar').classList.remove('on')" title="收起（从调试页刷新或重新操作可再现）">✕</button>
 </div>
 <div id="dbg-toast"></div>
+<!-- 运行配置编辑弹窗：新建 / 编辑一条具名配置（存服务端，重启不丢） -->
+<div id="dbg-cfg-mask" style="position:fixed;inset:0;z-index:120;display:none;align-items:center;justify-content:center;background:rgba(6,10,14,.72)">
+  <div style="width:min(640px,92vw);max-height:86vh;overflow:auto;background:#0d141c;border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="dbg-cfg-title">新建运行配置</b>
+      <button onclick="dbgCfgClose()" title="关闭（不保存）">关闭</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin:6px 0 10px;line-height:1.6">
+      存在服务端（run_profiles.json，按项目根），重启 / 换机器不丢；AI 通过 MCP 也能按名字选它。
+    </div>
+    <label class="chk" style="display:block;margin:6px 0">名称（项目内唯一，同名即覆盖）
+      <input id="dbg-cfg-name" placeholder="例如 cn debug / oversea release" style="width:100%;margin-top:4px">
+    </label>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <label class="chk" style="display:block;flex:1 1 240px">入口（可选，留空用 lib/main.dart）
+        <input id="dbg-cfg-target" placeholder="lib/main.dart" style="width:100%;margin-top:4px;font-size:12px">
+      </label>
+      <label class="chk" style="display:block;flex:1 1 240px">限定平台（可选，空格分隔）
+        <input id="dbg-cfg-platforms" placeholder="android ios ohos（留空 = 所有平台）" style="width:100%;margin-top:4px;font-size:12px">
+      </label>
+    </div>
+    <label class="chk" style="display:block;margin:6px 0">参数（一行，引号包裹含空格的值）
+      <input id="dbg-cfg-args" placeholder="--flavor oversea --dart-define=K=V" style="width:100%;margin-top:4px;font-size:12px">
+    </label>
+    <label class="chk" style="display:block;margin:6px 0">预启动命令（每行一条，可用 {projectRoot}/{device}/{target}/{platform}）
+      <textarea id="dbg-cfg-prerun" rows="3" placeholder="bash scripts/dev_run.sh --prepare --platform {platform}" style="width:100%;margin-top:4px;font-size:12px"></textarea>
+    </label>
+    <label class="chk" style="display:block;margin:6px 0">停止后命令（每行一条，如还原签名 / 清理临时文件）
+      <textarea id="dbg-cfg-poststop" rows="2" style="width:100%;margin-top:4px;font-size:12px"></textarea>
+    </label>
+    <label class="chk" style="display:block;margin:6px 0">环境变量（每行 KEY=VALUE，注入 flutter run 子进程）
+      <textarea id="dbg-cfg-env" rows="2" style="width:100%;margin-top:4px;font-size:12px"></textarea>
+    </label>
+    <label class="chk" style="display:block;margin:6px 0">备注（可选，下拉里会显示）
+      <input id="dbg-cfg-note" style="width:100%;margin-top:4px;font-size:12px">
+    </label>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">
+      <button onclick="dbgCfgClose()">取消</button>
+      <button class="primary" onclick="dbgCfgSave(this)">保存</button>
+    </div>
+  </div>
+</div>
 <script>
 var XBUME_TOKEN = (document.querySelector('meta[name="xbume-token"]') || {}).content || '';
 // 同源 fetch 统一带令牌：Cookie 之外的双保险（SameSite=Strict 已挡跨站）。
@@ -17415,18 +17464,24 @@ function dbgDirValue(){ return (dbgEl('dbg-dir').value || '').trim(); }
 // 改它用「打开配置」。没配置 / 读不到都只是提示，不影响启动。
 function dbgProfileText(d){
   var p = d.profile;
-  if (!p) return d.exists ? '未配置（点「打开配置」加本项目的配置）' : '未配置（点「打开配置」新建文件）';
+  var cfgs = (d && d.configs) || [];
   var parts = [];
-  if ((p.platforms || []).length) parts.push('仅 ' + p.platforms.join('/'));
-  if ((p.preRun || []).length) parts.push('预启动 ' + p.preRun.length + ' 条');
-  if ((p.postStop || []).length) parts.push('停止清理 ' + p.postStop.length + ' 条');
-  var args = p.runArgs || {};
-  Object.keys(args).forEach(function(k){
-    var v = (args[k] || []).join(' ');
-    if (v) parts.push((k === '*' ? '所有平台' : k) + ': ' + v);
-  });
-  if (p.continueOnError) parts.push('预启动失败仍继续');
-  return esc(parts.length ? parts.join(' · ') : '已配置（无额外动作）');
+  if (cfgs.length) parts.push(cfgs.length + ' 条配置');
+  if (p) {
+    if ((p.platforms || []).length) parts.push('仅 ' + p.platforms.join('/'));
+    if ((p.preRun || []).length) parts.push('预启动 ' + p.preRun.length + ' 条');
+    if ((p.postStop || []).length) parts.push('停止清理 ' + p.postStop.length + ' 条');
+    var args = p.runArgs || {};
+    Object.keys(args).forEach(function(k){
+      var v = (args[k] || []).join(' ');
+      if (v) parts.push((k === '*' ? '所有平台' : k) + ': ' + v);
+    });
+    if (p.continueOnError) parts.push('预启动失败仍继续');
+  }
+  if (!parts.length) {
+    return d.exists ? '未配置（点「新建/编辑」加本项目的第一条）' : '未配置（点「新建/编辑」新建配置）';
+  }
+  return esc(parts.join(' · '));
 }
 
 function dbgProfileRefresh(btn){
@@ -17446,11 +17501,223 @@ function dbgProfileRefresh(btn){
         return;
       }
       box.innerHTML = dbgProfileText(d);
+      dbgCfgRender(d);
       box.title = d.path ? (d.path + (d.exists ? '' : '（文件还没创建）')) : '';
     }).catch(function(){ box.textContent = '读取失败'; });
 }
 
 function dbgProfileOpen(){ fetch('/api/openconfig?file=run', {method: 'POST'}); }
+
+// ---------------------------------------------------------------- 运行配置
+// 具名配置：新建/编辑/删除都在服务端（run_profiles.json），下拉里选、启动时带。
+// 「追加参数」只对本次生效，失焦即记住（服务端 last）。
+var dbgCfgList = [];
+var dbgCfgLast = null;
+var dbgCfgName = '';
+
+function dbgCfgSelected(){
+  var s = dbgEl('dbg-cfg');
+  return s ? (s.value || '') : '';
+}
+
+function dbgCfgFind(name){
+  for (var i = 0; i < dbgCfgList.length; i++){
+    if (dbgCfgList[i].name === name) return dbgCfgList[i];
+  }
+  return null;
+}
+
+function dbgArgsText(){
+  var a = dbgEl('dbg-args');
+  return a ? (a.value || '').trim() : '';
+}
+
+function dbgArgsDirty(){
+  var a = dbgEl('dbg-args');
+  if (a) a.dataset.dirty = '1';
+}
+
+function dbgCfgLabel(c){
+  var parts = [c.name];
+  if ((c.platforms || []).length) parts.push('限 ' + c.platforms.join('/'));
+  if ((c.args || []).length) parts.push(c.args.join(' '));
+  if (c.note) parts.push(c.note);
+  return parts.join(' · ');
+}
+
+// 下拉与「追加参数」回填：优先保留当前选择，其次服务端 last。
+// 用户正在输入额外参数（dirty）时不去覆盖它。
+function dbgCfgRender(d){
+  var sel = dbgEl('dbg-cfg');
+  if (!sel) return;
+  dbgCfgList = (d && d.configs) || [];
+  dbgCfgLast = (d && d.last) || null;
+  var wanted = dbgCfgName || (dbgCfgLast && dbgCfgLast.config) || '';
+  var html = '<option value="">（不选，按项目默认）</option>';
+  dbgCfgList.forEach(function(c){
+    html += '<option value="' + esc(c.name) + '">' + esc(dbgCfgLabel(c)) + '</option>';
+  });
+  sel.innerHTML = html;
+  var hit = dbgCfgList.some(function(c){ return c.name === wanted; });
+  sel.value = hit ? wanted : '';
+  dbgCfgName = sel.value;
+  var args = dbgEl('dbg-args');
+  if (args && !args.dataset.dirty) {
+    args.value = (dbgCfgLast && (dbgCfgLast.args || []).join(' ')) || '';
+  }
+}
+
+// 切下拉：回填该配置的入口/设备（不覆盖用户已填的），并记住选择。
+function dbgConfigPicked(sel){
+  dbgCfgName = (sel && sel.value) || '';
+  var args = dbgEl('dbg-args');
+  if (args) args.dataset.dirty = '';
+  var c = dbgCfgFind(dbgCfgName);
+  if (c) {
+    var t = dbgEl('dbg-target');
+    if (c.target && t && !(t.value || '').trim()) t.value = c.target;
+    if (c.device) {
+      var dv = dbgEl('dbg-device');
+      if (dv && Array.prototype.some.call(dv.options, function(o){ return o.value === c.device; })) {
+        dv.value = c.device;
+      }
+    }
+  }
+  dbgRememberLast(false);
+}
+
+function dbgArgsChanged(){
+  if (!dbgDirValue()) return;
+  dbgRememberLast(true);
+}
+
+// 记住「当前选中 + 追加参数」：不启动也记（换项目回来还是上次那套）。
+function dbgRememberLast(toast){
+  var dir = dbgDirValue();
+  if (!dir) return Promise.resolve(null);
+  return dbgOp('rememberLast', {
+    dir: dir,
+    config: dbgCfgName || null,
+    args: dbgArgsText() || null
+  }).then(function(d){
+    if (d && d.ok) {
+      dbgCfgLast = d.last || null;
+      var a = dbgEl('dbg-args');
+      if (a) a.dataset.dirty = '';
+      if (toast) dbgToast('已记住：下次启动自动带上');
+    }
+    return d;
+  });
+}
+
+function dbgCfgOpen(name){
+  var mask = dbgEl('dbg-cfg-mask');
+  if (!mask) return;
+  var c = dbgCfgFind(name || '');
+  dbgEl('dbg-cfg-title').textContent = c ? ('编辑运行配置 · ' + c.name) : '新建运行配置';
+  dbgEl('dbg-cfg-name').value = c ? c.name : '';
+  dbgEl('dbg-cfg-target').value = (c && c.target) || '';
+  dbgEl('dbg-cfg-platforms').value = (c && (c.platforms || []).join(' ')) || '';
+  dbgEl('dbg-cfg-args').value = (c && (c.args || []).join(' ')) || '';
+  dbgEl('dbg-cfg-prerun').value = (c && (c.preRun || []).join('\n')) || '';
+  dbgEl('dbg-cfg-poststop').value = (c && (c.postStop || []).join('\n')) || '';
+  var env = '';
+  if (c && c.env) {
+    env = Object.keys(c.env).map(function(k){ return k + '=' + c.env[k]; }).join('\n');
+  }
+  dbgEl('dbg-cfg-env').value = env;
+  dbgEl('dbg-cfg-note').value = (c && c.note) || '';
+  mask.style.display = 'flex';
+  dbgEl('dbg-cfg-name').focus();
+}
+
+function dbgCfgClose(){
+  var m = dbgEl('dbg-cfg-mask');
+  if (m) m.style.display = 'none';
+}
+
+function dbgConfigEdit(){
+  dbgCfgOpen(dbgCfgSelected());
+}
+
+function dbgCfgSave(btn){
+  var dir = dbgDirValue();
+  if (!dir) { dbgToast('先选项目目录'); return; }
+  var name = (dbgEl('dbg-cfg-name').value || '').trim();
+  if (!name) { dbgToast('配置名不能为空'); return; }
+  var cfg = {
+    name: name,
+    target: (dbgEl('dbg-cfg-target').value || '').trim() || null,
+    platforms: (dbgEl('dbg-cfg-platforms').value || '').trim() || null,
+    args: (dbgEl('dbg-cfg-args').value || '').trim() || null,
+    preRun: dbgEl('dbg-cfg-prerun').value || null,
+    postStop: dbgEl('dbg-cfg-poststop').value || null,
+    env: dbgEl('dbg-cfg-env').value || null,
+    note: (dbgEl('dbg-cfg-note').value || '').trim() || null
+  };
+  var done = dbgBusy(btn, '保存中…');
+  dbgOp('saveConfig', {dir: dir, config: cfg}).then(function(d){
+    done();
+    if (d && d.ok) {
+      dbgCfgName = name;
+      dbgCfgRender(d);
+      dbgCfgClose();
+      dbgToast('已保存配置「' + name + '」');
+    }
+  }, done);
+}
+
+function dbgConfigDelete(){
+  var dir = dbgDirValue();
+  var name = dbgCfgSelected();
+  if (!dir) { dbgToast('先选项目目录'); return; }
+  if (!name) { dbgToast('先在下拉里选中要删除的配置'); return; }
+  if (!confirm('删除运行配置「' + name + '」？（不影响已启动的会话）')) return;
+  dbgOp('deleteConfig', {dir: dir, name: name}).then(function(d){
+    if (d && d.ok) {
+      if (dbgCfgName === name) dbgCfgName = '';
+      dbgCfgRender(d);
+      dbgToast(d.removed ? ('已删除「' + name + '」') : ('没有「' + name + '」'));
+    }
+  });
+}
+
+// 从 .vscode/launch.json 导入：先预览（含同名覆盖/警告），确认后落盘。
+function dbgConfigImport(btn){
+  var dir = dbgDirValue();
+  if (!dir) { dbgToast('先选项目目录'); return; }
+  var done = dbgBusy(btn, '读取中…');
+  dbgOp('importLaunch', {dir: dir}).then(function(d){
+    done();
+    if (!d || !d.ok) return;
+    var found = d.found || [];
+    if (!found.length) {
+      dbgToast((d.warnings || []).join('；') || 'launch.json 里没有可导入的配置');
+      return;
+    }
+    var lines = found.map(function(c){
+      var s = '· ' + c.name;
+      if ((c.args || []).length) s += '  ' + c.args.join(' ');
+      if ((c.preRun || []).length) s += '  [预启动 ' + c.preRun.length + ' 条]';
+      return s;
+    });
+    var over = d.overwrites || [];
+    var warn = d.warnings || [];
+    var tip = '从 .vscode/launch.json 导入 ' + found.length + ' 条配置：\n' + lines.join('\n')
+      + (over.length ? '\n\n同名会覆盖：' + over.join('、') : '')
+      + (warn.length ? '\n\n提示：\n' + warn.join('\n') : '')
+      + '\n\n导入后就是普通运行配置（运行时不读 launch.json）。继续？';
+    if (!confirm(tip)) return;
+    var done2 = dbgBusy(btn, '导入中…');
+    dbgOp('importLaunch', {dir: dir, apply: true}).then(function(r2){
+      done2();
+      if (r2 && r2.ok) {
+        dbgCfgRender(r2);
+        dbgToast('已导入 ' + ((r2.found || []).length) + ' 条配置');
+      }
+    }, done2);
+  }, done);
+}
 
 function dbgLoadSaved(){
   dbgSavedAllMode = false;
@@ -18918,10 +19185,26 @@ function dbgStart(btn){
   var dev = (dbgEl('dbg-device').value || '').trim() || dbgDesktop();
   var target = (dbgEl('dbg-target').value || '').trim();
   if (!dir) { dbgToast('先填项目目录（含 pubspec.yaml）'); return; }
+  var cfg = dbgCfgSelected();
+  var args = dbgArgsText();
   var done = dbgBusy(btn, '启动中…');
   var msg = dbgEl('dbg-msg');
-  if (msg) msg.textContent = '正在启动 flutter run -d ' + dev + '（首次编译较慢，输出区有进度）…';
-  dbgOp('start', {cwd: dir, device: dev, target: target || null, platform: dbgPlatformOf(dev) || null}).then(done, done);
+  if (msg) {
+    msg.textContent = '正在启动' + (cfg ? ('配置「' + cfg + '」 ') : '') + 'flutter run -d ' + dev
+      + '（首次编译较慢，输出区有进度）…';
+  }
+  // args 传原始文本：后端用与 preRun 同一套分词规则（引号包裹的含空格值不会拆错）。
+  dbgOp('start', {
+    cwd: dir, device: dev, target: target || null, platform: dbgPlatformOf(dev) || null,
+    config: cfg || null, args: args || null
+  }).then(function(d){
+    done();
+    if (d && d.ok) {
+      // 服务端已把这次的选择写成 last，同步一下下拉与额外参数。
+      var a = dbgEl('dbg-args');
+      if (a) a.dataset.dirty = '';
+    }
+  }, done);
 }
 
 function dbgStop(btn){

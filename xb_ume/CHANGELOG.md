@@ -1,3 +1,15 @@
+## 0.6.0
+
+- 运行配置从「项目一套」升级成 **按名字选着跑**（用户：「我希望的是通用的，可以自己增加配置，然后保存，之后选择配置运行即可……要给其他项目使用」）：同一项目常有几个入口 / 包（国内包 `--flavor cn` + `lib/main_cn.dart`、海外包 `--flavor oversea`、`--profile` 包名），原来只能按平台写死一套 `runArgs`，想换包就得改文件。现在 `run_profiles.json` 的项目节点下多出 `configs[]`（`name` / `target` / `args` / `env` / `preRun` / `postStop` / `platforms` / `device` / `note`）与 `last`（上次选的配置 + 追加参数）。GUI 调试页新增「运行配置」下拉 + 新建/编辑弹窗 + 删除 + 导入 launch.json + 「追加参数」输入框：参数与 env 都是文本框，分词/拆行在后端做（与启动链路共用 `splitArgs` / `splitLines` / `parseEnvText`）；切换下拉、改追加参数都会写 `last`，重启 GUI 自动回填。MCP 侧 `xbume_app_launch` 增 `config` / `args` / `listConfigs`（仍是同一个工具，不新增工具名）：`listConfigs: true` 只列当前项目的配置与上次选择、不启动。
+
+- 启动链路的合并规则写死成一套（`launchOnce(config, extraArgs)`）：`runArgs['*']` → `runArgs[平台]` → 选中配置的 `args` → 本次追加参数；配置写了 `preRun` / `postStop` / `target` 就用配置的，空则回退项目级；配置的 `env` 注入 `flutter run` 子进程（与 `execEnvironment` 同一条路径）。**复用判定带上配置名**（同设备 + 同目录 + 同 target 但配置不同视为不同会话，两个 flavor 是两个包）；`LaunchRecord` 落盘也带 `config`，GUI 重启后认领旧会话仍能对齐。名字写错、配置限定平台与当前设备不符都**当场报错**（列出可用配置名 / 当前平台），不会默默用默认参数跑错包；成功启动 / 只切下拉都记 `last`（只记选择不算配置，启动链路仍按「无配置」处理）。
+
+- `.vscode/launch.json` 变成**可选导入源**（不是运行时依赖）：`importVsCodeLaunch` 能读 JSONC（`//`、`/* */` 注释与尾逗号，字符串里的不动）、`toolArgs` + `args` 合并去重、`flutterMode` 补 `--profile` / `--release`、`program` → 入口、`env` → 配置环境变量（`envFile` 只给提示，不静默丢变量）、`preLaunchTask` 按 `tasks.json` 的 label 取 `command + args` 转成 `preRun`、`${workspaceFolder}` → `{projectRoot}`。GUI「导入 launch.json」先预览（`found` / `overwrites` / `warnings`）再 `apply: true` 落盘；导入后运行时不再读它。
+
+- 数据层与测试：`saveRunConfig` / `deleteRunConfig` / `rememberLastRun` 读全量 → 改本项目节点 → 临时文件 + rename 原子写，保留手写的顶层字段与其它项目；坏 JSON 先备份成 `run_profiles.json.broken-<ts>` 再重建；v1 旧文件照常读（`version` 升到 2 只是标记）。`splitArgs` 修正引号内转义规则，`--path="C:\tmp"` 不会被吃掉反斜杠；`DebugHub` 增 `profilePath` 测试注入（单测不碰真实 `$XB_UME_HOME`）。新增 `test/debug_run_config_test.dart`（8 项：runProfile / saveConfig 文本归一与同名覆盖 / deleteConfig 清 last / rememberLast 回填 / importLaunch 预览与落盘 / 缺 launch.json 报错 / MCP `xbume_app_launch` 的 `config`·`args`·`listConfigs` schema 与「只列不启动」）、`test/launch_import_test.dart`（8 项）；`run_profile_test` 扩到 39 项（模型 / 分词 / 合并 / CRUD / 坏文件 / 归一文案），`gui_debug_tab_test` 的「运行配置」结构守卫补 13 条，`ai_prompt_test` 补 4 条（先 `listConfigs` 再选 `config`，临时参数走 `args`）；`debug_hub_test` / `flutter_run_guard_test` 的假 launcher 补新参数；`dart analyze bin test` 无问题，`flutter test -j 1` 全量 575 项全过。
+
+- 顺手修 `runCmd` 的一处竞态：进程退出后不等 stdout/stderr 读空就直接 `cancel()` 订阅，高负载下最后几行会丢（`runProfileCommands` 的 `echo one` 偶尔读成空串，报 `Expected ['one','two'] Actual ['','two']`）。现在先等两个流各自 `onDone`（最多 2 秒；子进程把管道留给孙进程时不再等、直接用已收到的部分）再取消订阅。
+
 ## 0.5.0
 
 - App 内新增 **Memory** 插件（第 9 个 Tab，`id=memory`、图标 `Icons.memory`、`enableMemory` 默认开）：把原先放在宿主工程里的 Memory 面板整套搬进包里，宿主不再需要自己写插件、也不再需要任何原生通道。面板与旧实现保持一致——1s 刷新、`Current Memory` / `Current RSS` / `Sample Count`、CPU / FPS / Threads / Footprint / Total Mem 五个 chip、最近 20 次采样历史、`Floating memory badge` 开关（Mem / RSS / CPU / FPS / Threads / Sys Mem，可拖动，挂在根 Overlay 上，面板关闭继续刷新）。

@@ -98,6 +98,14 @@ String buildAiPrompt({
     ..writeln('- 没有可用会话 → 用 xbume_app_launch 启动，参数：')
     ..writeln(
         '{"deviceId": "$deviceId", "via": "flutter-run", "cwd": "$projectDir"}')
+    ..writeln('启动前先查这个项目有没有具名运行配置：')
+    ..writeln(
+        '  先调 xbume_app_launch {"cwd": "$projectDir", "listConfigs": true}（只列不启动）；')
+    ..writeln('  有配置就按名字选：{"deviceId": "$deviceId", "via": "flutter-run", '
+        '"cwd": "$projectDir", "config": "<配置名>"}——入口 / flavor / dart-define / '
+        'env / 预启动都按它来，不要自己猜参数；名字写错工具会列出可用名。')
+    ..writeln('  只对本次生效的临时参数用 args（如 ["--dart-define=LOG=1"]），'
+        '不要把它写进配置；配置与 args 都会记住，下次不传也按它回填。')
     ..writeln('它会由 xb_ume 启动 flutter run 并把新会话设为当前；'
         '返回 reused=true 表示复用了已有进程（未重装包），这是期望行为，不要因为它再 force 一次。')
     ..writeln('同设备同目录已有 IDE 拉起的 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'

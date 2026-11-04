@@ -145,6 +145,21 @@ String? launchFailureAdvice(String output) {
         '多余的 hdc 客户端，或执行 `hdc kill -r` 重启 hdc server（会断开其它'
         '正在跑的 hdc 会话），再重新点启动。';
   }
+  // 同一个工程有多个 applicationId（cn / oversea 这类 flavor）时，如果
+  // AndroidManifest 里的 provider authority 是写死的，两个包会互相冲突：
+  // 系统不允许两个 app 声明同一个 authority，装机直接被拒。
+  if (t.contains('install_failed_conflicting_provider')) {
+    return '装机被系统拒绝：AndroidManifest 里的 provider authority 已被设备上另一个 app '
+        '占用（同一个工程的不同 applicationId 共用写死的 authority 时最常见）。'
+        '把 android:authorities 改成 \${applicationId}.xxx 这类随包名变化的值并重新构建；'
+        '或先卸载/覆盖设备上占用该 authority 的那个包。';
+  }
+  if (t.contains('install_failed_insufficient_storage')) {
+    return '设备存储不足，清理后重试（flutter run 不会自动腾空间）。';
+  }
+  if (t.contains('install_failed_version_downgrade')) {
+    return '设备上已装同包名的更高版本：先卸载该包，或把 versionCode 提上去。';
+  }
   return null;
 }
 
@@ -282,6 +297,8 @@ class LaunchResult {
     this.reused = false,
     this.preRunCommands = const <String>[],
     this.preRunLines = const <String>[],
+    this.config,
+    this.effectiveArgs = const <String>[],
     this.note,
   });
 
@@ -305,6 +322,13 @@ class LaunchResult {
   /// 预启动命令的输出行（已带 `[pre-run]` 前缀，同时也是日志文件头部）。
   final List<String> preRunLines;
 
+  /// 本次选中的具名运行配置（没选则为 null）。
+  final String? config;
+
+  /// 实际追加给 `flutter run` 的参数（合并后的结果，含额外参数），
+  /// 回给调用方确认「到底跑了什么」。
+  final List<String> effectiveArgs;
+
   /// 给人看的额外说明（如「hdc 拒连，已自动重试一次」）。
   final String? note;
 }
@@ -319,6 +343,7 @@ class LaunchHandle {
     required this.startedAt,
     required this.cwd,
     this.platform,
+    this.config,
     this.process,
     this.fifo,
     this.adopted = false,
@@ -337,6 +362,10 @@ class LaunchHandle {
   /// 目标平台（android / ios / ohos / macos…）：运行配置按它选参数与展开变量。
   /// 认领来的旧会话可能为空。
   final String? platform;
+
+  /// 启动时选中的具名运行配置（没选则为 null）。
+  /// 复用判定与停止清理都按它对齐：不同配置 = 不同 flavor / 入口，不能混用。
+  final String? config;
 
   /// 自己拉起的 flutter run 进程；认领来的进程为 null（拿不到句柄）。
   final Process? process;
@@ -523,6 +552,8 @@ class FlutterRunLauncher {
     bool force = false,
     String owner = 'mcp',
     Duration timeout = const Duration(seconds: 180),
+    String? config,
+    List<String> extraArgs = const <String>[],
   }) async {
     try {
       return await launchOnce(
@@ -534,6 +565,8 @@ class FlutterRunLauncher {
         force: force,
         owner: owner,
         timeout: timeout,
+        config: config,
+        extraArgs: extraArgs,
       );
     } on DeviceCommandError catch (e) {
       if (!isTransientHdcFailure(e.message)) rethrow;
@@ -549,6 +582,8 @@ class FlutterRunLauncher {
         force: force,
         owner: owner,
         timeout: timeout,
+        config: config,
+        extraArgs: extraArgs,
         retryNote: 'hdc 上次拒连（Connect server failed），已自动重试一次',
       );
     }
@@ -565,6 +600,8 @@ class FlutterRunLauncher {
     String owner = 'mcp',
     Duration timeout = const Duration(seconds: 180),
     String? retryNote,
+    String? config,
+    List<String> extraArgs = const <String>[],
   }) async {
     final flutter = resolveFlutter();
     if (flutter == null) {
@@ -606,6 +643,12 @@ class FlutterRunLauncher {
     // 预启动命令与输出（复用会话时保持为空）。
     final preRunCommands = <String>[];
     final preRunLines = <String>[];
+    // 运行配置解析结果：在 try 内赋值，传回结果与后续进程环境都要用。
+    var configName = '';
+    RunConfig? selected;
+    String? platformKey;
+    String? effectiveTarget;
+    var effectiveArgs = const <String>[];
     late final Process proc;
     late final LaunchHandle handle;
     try {
@@ -613,7 +656,64 @@ class FlutterRunLauncher {
       locked = acquireLaunchLock();
       // 先把磁盘清单里的旧进程纳入视野（自己或对方重启后仍能复用）。
       adoptRecords();
-      final existing = _findLiveSameRun(device: device, cwd: workdir, target: target);
+
+      // 项目级运行配置：与 IDE 的 preLaunchTask 等价。没有配置 / 配置损坏 /
+      // 配置限定了平台且当前设备不在其中时，active 为 null：下面不执行任何
+      // 额外命令、不追加任何参数。
+      //
+      // 具名配置（config）是叠加出来的一层：参数按
+      // 顶层 `*` → 顶层平台段 → 配置 args → 本次额外参数 合并；
+      // preRun / postStop 配置里有就用配置的，没写就回退项目顶层。
+      final profile0 = loadRunProfile(workdir);
+      configName = (config ?? '').trim();
+      selected =
+          configName.isEmpty ? null : profile0?.configNamed(configName);
+      if (configName.isNotEmpty && selected == null) {
+        throw DeviceCommandError(
+          'flutter-run',
+          '运行配置',
+          missingRunConfigMessage(
+            configName: configName,
+            projectRoot: workdir,
+            profile: profile0,
+          ),
+        );
+      }
+      platformKey = platformKeyOf(platform) ??
+          (profile0 != null &&
+                  (profile0.needsPlatform() ||
+                      selected?.platforms.isNotEmpty == true)
+              ? await platformOfDevice(flutter, device)
+              : null);
+      if (selected != null && !selected.appliesTo(platformKey)) {
+        throw DeviceCommandError(
+          'flutter-run',
+          '运行配置',
+          '配置「${selected.name}」只对 ${selected.platforms.join('、')} 生效，'
+              '当前平台是 ${platformKey ?? '未知'}；换设备或改用匹配的配置。',
+        );
+      }
+      final active = (profile0 != null && profile0.appliesTo(platformKey))
+          ? profile0
+          : null;
+      effectiveTarget = targetFor(target, selected);
+      effectiveArgs = mergeRunArgs(
+        profile: active,
+        config: selected,
+        platform: platformKey,
+        extraArgs: extraArgs,
+      );
+      // 记住上次选择：GUI 重开、AI 下一次调用都按它回填。
+      if (configName.isNotEmpty || extraArgs.isNotEmpty) {
+        rememberLastRun(workdir, config: configName, args: extraArgs);
+      }
+
+      final existing = _findLiveSameRun(
+        device: device,
+        cwd: workdir,
+        target: effectiveTarget,
+        config: configName.isEmpty ? null : configName,
+      );
       if (existing != null) {
         if (force) {
           // 显式重启语义：先精确停掉旧会话，再走下面的启动流程。
@@ -622,10 +722,12 @@ class FlutterRunLauncher {
           return LaunchResult(
             pid: existing.pid,
             device: device,
-            target: target,
+            target: effectiveTarget,
             logPath: existing.logPath,
             wsUri: existing.wsUri,
             reused: true,
+            config: existing.config,
+            effectiveArgs: effectiveArgs,
             tail: existing.recent.length > 20
                 ? existing.recent.sublist(existing.recent.length - 20).join('\n')
                 : existing.recent.join('\n'),
@@ -654,31 +756,21 @@ class FlutterRunLauncher {
         }
       }
 
-      // 项目级运行配置：与 IDE 的 preLaunchTask 等价。没有配置 / 配置损坏 /
-      // 配置限定了平台且当前设备不在其中时，active 为 null：下面不执行任何
-      // 额外命令、不追加任何参数。
-      final profile = loadRunProfile(workdir);
-      final platformKey = platformKeyOf(platform) ??
-          (profile != null && profile.needsPlatform()
-              ? await platformOfDevice(flutter, device)
-              : null);
-      final active = (profile != null && profile.appliesTo(platformKey))
-          ? profile
-          : null;
-      if (active != null && active.preRun.isNotEmpty) {
-        for (final raw in active.preRun) {
+      final preRunTpl = preRunFor(active, selected);
+      if (preRunTpl.isNotEmpty) {
+        for (final raw in preRunTpl) {
           preRunCommands.add(expandRunVars(
             raw,
             projectRoot: workdir,
             device: device,
-            target: target,
+            target: effectiveTarget,
             platform: platformKey,
           ));
         }
         final results = await runProfileCommands(
           preRunCommands,
           cwd: workdir,
-          timeout: Duration(seconds: active.timeoutSec),
+          timeout: Duration(seconds: active?.timeoutSec ?? 180),
           onLine: preRunLines.add,
         );
         // 预启动输出写在日志文件头部：FIFO 模式用 >> 追加，GUI 的
@@ -694,7 +786,7 @@ class FlutterRunLauncher {
           }
         }
         final failed = results.where((r) => !r.ok).toList();
-        if (failed.isNotEmpty && !active.continueOnError) {
+        if (failed.isNotEmpty && active?.continueOnError != true) {
           throw DeviceCommandError('flutter-run', 'pre-run', failed.first.errorText);
         }
       }
@@ -702,8 +794,9 @@ class FlutterRunLauncher {
         'run',
         '-d',
         device,
-        if (target != null && target.isNotEmpty) ...<String>['--target', target],
-        if (active != null) ...active.argsFor(platformKey),
+        if (effectiveTarget != null && effectiveTarget.isNotEmpty)
+          ...<String>['--target', effectiveTarget],
+        ...effectiveArgs,
       ];
       // stdin 换成命名管道：拉起方或任何后续实例都能 `printf 'r\n' > fifo`
       // 触发热重载；exec 不换 pid，kill 依旧精确。
@@ -730,7 +823,7 @@ class FlutterRunLauncher {
             ...runArgs,
           ],
           workingDirectory: workdir,
-          environment: execEnvironment(),
+          environment: execEnvironment(selected?.env),
         );
       } else {
         // append 而不是 truncate：日志文件开头已经有预启动命令的输出。
@@ -739,7 +832,7 @@ class FlutterRunLauncher {
           flutter,
           runArgs,
           workingDirectory: workdir,
-          environment: execEnvironment(),
+          environment: execEnvironment(selected?.env),
           // Windows 上 flutter 是 flutter.bat：CreateProcess 不能直接执行批处理，
           // 必须走 cmd；其他平台（或原生 .exe）保持直启。
           runInShell: needsShellOnWindows(flutter),
@@ -748,11 +841,12 @@ class FlutterRunLauncher {
       handle = LaunchHandle(
         pid: proc.pid,
         device: device,
-        target: target,
+        target: effectiveTarget,
         logPath: logPath,
         startedAt: DateTime.now(),
         cwd: workdir,
         platform: platformKey,
+        config: configName.isEmpty ? null : configName,
         process: proc,
         fifo: fifo,
         owner: owner,
@@ -830,23 +924,35 @@ class FlutterRunLauncher {
       return LaunchResult(
         pid: proc.pid,
         device: device,
-        target: target,
+        target: effectiveTarget,
         logPath: logPath,
         tail: tail.join('\n'),
+        config: configName.isEmpty ? null : configName,
+        effectiveArgs: effectiveArgs,
         preRunCommands: preRunCommands,
         preRunLines: preRunLines,
         note: notes.isEmpty ? null : notes.join('；'),
       );
     }
 
-    final ready = await _waitVm(vmReady.future, exited, timeout);
+    // exitedEarly 只为把「进程已退出」与「真的等超时」区分开：装包失败、
+    // Gradle 报错这类会立刻退，文案不该让用户以为白等了 240 秒。
+    var exitedEarly = false;
+    final exitedProbe = exited.then((int code) {
+      exitedEarly = true;
+      return code;
+    });
+    final ready = await _waitVm(vmReady.future, exitedProbe, timeout);
     if (ready == null) {
       // 超时/早退：留进程继续跑（可能只是编译慢），把日志尾部回给调用方判断。
       // 带上 logPath：GUI 据此把完整日志接到「运行输出」，不只给一条摘要。
+      final reason = exitedEarly
+          ? 'flutter run 进程已退出，没拿到 VM service'
+          : '等待 VM service 超时（${timeout.inSeconds}s）';
       throw DeviceCommandError(
         'flutter-run',
         'flutter run',
-        '等待 VM service 超时（${timeout.inSeconds}s）或进程退出\n'
+        '$reason\n'
             '${launchFailureSummary(tail)}\n'
             '完整日志：$logPath',
         logPath: logPath,
@@ -855,10 +961,12 @@ class FlutterRunLauncher {
     return LaunchResult(
       pid: proc.pid,
       device: device,
-      target: target,
+      target: effectiveTarget,
       logPath: logPath,
       wsUri: ready,
       tail: tail.join('\n'),
+      config: configName.isEmpty ? null : configName,
+      effectiveArgs: effectiveArgs,
       preRunCommands: preRunCommands,
       preRunLines: preRunLines,
       note: notes.isEmpty ? null : notes.join('；'),
@@ -885,6 +993,7 @@ class FlutterRunLauncher {
         startedAt: r.startedAt,
         cwd: r.cwd,
         platform: r.platform,
+        config: r.config,
         fifo: r.fifo,
         adopted: true,
         owner: r.owner,
@@ -903,6 +1012,7 @@ class FlutterRunLauncher {
       startedAt: h.startedAt,
       target: h.target,
       platform: h.platform,
+      config: h.config,
       wsUri: h.wsUri,
       logPath: h.logPath,
       fifo: h.fifo,
@@ -918,19 +1028,25 @@ class FlutterRunLauncher {
     h.dispose();
   }
   
-  /// 同设备 + 同目录 + 同 target 的本服务会话；不存在返回 null。
+  /// 同设备 + 同目录 + 同 target + 同运行配置 的本服务会话；不存在返回 null。
+  ///
+  /// 配置不同不复用：同一个工程的不同 flavor / 入口是两个包，直接复用会把
+  /// 用户选的新配置默默当成旧的跑。
   LaunchHandle? _findLiveSameRun({
     required String device,
     required String cwd,
     String? target,
+    String? config,
   }) {
     final normalized = resolvePathForCompare(cwd);
+    final wantConfig = (config ?? '').trim();
     LaunchHandle? hit;
     final dead = <int>[];
     for (final h in _live.values) {
       if (h.device != device) continue;
       if (resolvePathForCompare(h.cwd) != normalized) continue;
       if ((h.target ?? '') != (target ?? '')) continue;
+      if ((h.config ?? '').trim() != wantConfig) continue;
       if (!_isAlive(h.pid)) {
         dead.add(h.pid);
         continue;
@@ -1190,9 +1306,11 @@ class FlutterRunLauncher {
   Future<List<String>> _runPostStop(LaunchHandle? h) async {
     if (h == null) return const <String>[];
     final profile = loadRunProfile(h.cwd);
-    if (profile == null || profile.postStop.isEmpty) return const <String>[];
+    // 启动时选了具名配置且它自己有 postStop：用配置的，否则回退项目顶层。
+    final cmdsTpl = postStopFor(profile, profile?.configNamed(h.config));
+    if (cmdsTpl.isEmpty) return const <String>[];
     final cmds = <String>[
-      for (final raw in profile.postStop)
+      for (final raw in cmdsTpl)
         expandRunVars(
           raw,
           projectRoot: h.cwd,
@@ -1206,7 +1324,7 @@ class FlutterRunLauncher {
       await runProfileCommands(
         cmds,
         cwd: h.cwd,
-        timeout: Duration(seconds: profile.timeoutSec),
+        timeout: Duration(seconds: profile?.timeoutSec ?? 180),
         tag: 'post-stop',
         onLine: lines.add,
       );

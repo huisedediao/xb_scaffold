@@ -186,6 +186,20 @@ bool optionalBool(Map<String, Object?> args, String key,
   return s == 'true' || s == '1' || s == 'yes';
 }
 
+/// 可选字符串数组：数组原样收，单个字符串当一个参数（不当成命令行拆开）。
+List<String> optionalStringList(Map<String, Object?> args, String key) {
+  final v = args[key];
+  if (v == null) return const <String>[];
+  if (v is List) {
+    return <String>[
+      for (final e in v)
+        if (e != null && '$e'.trim().isNotEmpty) '$e'.trim(),
+    ];
+  }
+  final s = '$v'.trim();
+  return s.isEmpty ? const <String>[] : <String>[s];
+}
+
 /// 参数名到 JSON Schema 属性的便捷构造。
 Map<String, Object?> prop(
   String type,

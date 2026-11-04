@@ -240,7 +240,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_timeline` | `kinds?`(route/net/log/exception), `keyword?`, `sinceMs?`, `limit?` | 路由 + 网络 + 日志 + 异常按时间合并成一条流，定位「点一下之后发生了什么」 |
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
-| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `waitVm?`, `cwd?`, `force?`, `platform?` | `via=flutter-run` 顺带把新会话设为当前；**同设备 + 同目录 + 同 target 已有本服务/GUI 拉起的会话时直接复用**（回 `reused: true`，不重装包）；`force: true` = 先停掉本服务那一个再重起；外部 IDE 起的同设 备同目录会话仍默认拒绝（继续会顶掉它），确认顶掉才传 `force: true`；配置了「项目运行配置」的项目会先跑预启动命令（`structured.preRun` 回命令列表，`platform` 不传时按设备自动识别） |
+| `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `config?`, `args?`, `listConfigs?`, `waitVm?`, `cwd?`, `force?`, `platform?` | `via=flutter-run` 顺带把新会话设为当前；**同设备 + 同目录 + 同 target + 同 config 已有本服务/GUI 拉起的会话时直接复用**（回 `reused: true`，不重装包）；`force: true` = 先停掉本服务那一个再重起；外部 IDE 起的同设 备同目录会话仍默认拒绝（继续会顶掉它），确认顶掉才传 `force: true`。`config` 指项目里的具名运行配置（`configs[].name`，GUI「调试」页下拉里看到的那些），决定入口 / 参数 / env / 预启动；名字写错当场报错并列出可用名。`args` 是**只对本次**生效的追加参数（不写进配置）；两者都会记成该项目的 `last`，下次不传也按它回填。`listConfigs: true` 只列出当前项目（`cwd`）的配置与上次选择，不启动。配置了「项目运行配置」的项目会先跑预启动命令（`structured.preRun` 回命令列表，`platform` 不传时按设备自动识别） |
 | `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 向本服务拉起的 `flutter run` 写 `r`/`R`：改完代码就地热重载/热重启，返回耗时与完成行；热重启会清 isolate 缓存 |
 | `xbume_eval` | `expr`, `lib?`, `maxChars?` | **需 `--allow-eval`**：在 app 进程内求值单行表达式，返回 `值` + 库 + 类型；编译错误与运行时异常分开报 |
 

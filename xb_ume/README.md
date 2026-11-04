@@ -18,7 +18,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 - [配置项](#配置项)
 - [电脑端 GUI 工具箱](#电脑端-gui-工具箱)
 - [服务控制（一键重启 / 停止 / 开启）](#服务控制一键重启--停止--开启)
-- [项目运行配置（启动前准备）](#项目运行配置启动前准备)
+- [项目运行配置（按名字选着跑）](#项目运行配置按名字选着跑)
 - [IDE 跳转](#ide-跳转)
 - [命令行执行场景（CLI / CI）](#命令行执行场景cli--ci)
 - [MCP 接入（AI 直接驱动调试会话）](#mcp-接入ai-直接驱动调试会话)
@@ -469,7 +469,7 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 | Tab | 功能 | 前置 / 说明 |
 |---|---|---|
 | 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon`；页头「服务」菜单是同一套实现 |
-| 调试 | 起停 `flutter run`（已有会话直接复用），可选的「项目运行配置」在启动前 做准备、停止后清理；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
+| 调试 | 起停 `flutter run`（已有会话直接复用），运行配置可按名字新建/切换（启动前做准备、按配置追加参数/环境变量、停止后清理）；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
 | 日志 | 设备日志（logcat / hilog / log stream / idevicesyslog）+ Flutter 输出（未选会话时为全部，选中后只显示该应用） | 设备工具可用；Flutter 输出需 daemon |
 | 时间轴 | 路由 / 网络 / 日志 / 异常按时间合并，可过滤、暂停、展开、跳转对应 Tab | 需选中会话 |
 | 异常 | 实时捕获框架异常与未捕获异常，栈帧可跳 IDE、可一键下断点，Tab 角标 + 红浮层提醒 | daemon 在跑即可，覆盖全部会话（不要求选中） |
@@ -521,27 +521,43 @@ dart run xb_ume:ide --ensure-daemon           # 幂等：没跑就拉起，跑�
 
 - GUI 在跑时 `--svc` 会把请求转给页面进程（`POST /api/svc/<stop|restart|redeploy>?target=`，带 `X-XBUME-Token`），这样「重启 GUI」也能走优雅退出；GUI 没在跑时直接控制守护进程。
 
-## 项目运行配置（启动前准备）
+## 项目运行配置（按名字选着跑）
 
-有的项目在 `flutter run` 之前必须先做本地准备：按「目标平台 + 包名 + buildNumber」生 成构建期密文（如 AKSK 资源）、Android 追加 `--flavor`、iOS 启动时临时切签名并在停止 后还原。IDE（VS Code / Qoder）靠 `launch.json` 的 `preLaunchTask` 完成这步；本工具在 GUI「调试」页与 MCP `xbume_app_launch` 里用一份**按项目生效**的配置达到同样效果 ——不用改项目源码、也不用改 IDE 配置。
+有的项目在 `flutter run` 之前必须先做本地准备：按「目标平台 + 包名 + buildNumber」生 成构建期密文（如 AKSK 资源）、Android 追加 `--flavor`、iOS 启动时临时切签名并在停止 后还原。同一个项目还常有几个入口 / 包（国内包 `--flavor cn` + `lib/main_cn.dart`、海外包 `--flavor oversea`、`--profile` 包名……）。这些一起收成**具名运行配置**：GUI 调试页新建 / 编辑 / 下拉选一条点「启动 / 复用」；AI 侧用 `xbume_app_launch(config: "cn debug")` 选同一条。
 
-配置文件：`$XB_UME_HOME/debug/run_profiles.json`（与断点落盘同目录，按项目根绝对 路径索引）：
+配置文件：`$XB_UME_HOME/debug/run_profiles.json`（与断点落盘同目录，按项目根绝对 路径索引；v1 旧文件照常读）：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "projects": {
     "/path/to/your/app": {
-      "platforms": ["android", "ios", "ohos"],
-      "preRun": ["bash scripts/dev_run.sh --prepare --mode debug --platform {platform}"],
+      "platforms": ["android", "ios"],
+      "preRun": ["bash scripts/dev_run.sh --prepare --platform {platform}"],
       "postStop": ["bash scripts/dev_run.sh --restore"],
-      "runArgs": { "android": ["--flavor", "oversea"] },
+      "runArgs": { "*": ["--dart-define=APP_ENV=dev"] },
       "timeoutSec": 180,
-      "continueOnError": false
+      "continueOnError": false,
+      "configs": [
+        {
+          "name": "cn debug",
+          "target": "lib/main_cn.dart",
+          "platforms": ["android"],
+          "args": ["--flavor", "cn", "--dart-define=APP_ENV=cn"],
+          "env": { "HTTP_PROXY": "http://127.0.0.1:8888" },
+          "preRun": ["bash scripts/prepare_aksk.sh --flavor cn"],
+          "postStop": ["bash scripts/restore.sh"],
+          "note": "国内包"
+        },
+        { "name": "oversea release", "args": ["--flavor", "oversea", "--release"] }
+      ],
+      "last": { "config": "cn debug", "args": ["--dart-define=LOG=1"] }
     }
   }
 }
 ```
+
+**项目级字段**（对所有配置生效；配置里写了同名字段则以配置为准）：
 
 | 字段 | 说明 |
 |---|---|
@@ -552,14 +568,38 @@ dart run xb_ume:ide --ensure-daemon           # 幂等：没跑就拉起，跑�
 | `timeoutSec` | 单条命令超时（5..900，默认 180） |
 | `continueOnError` | `true` = 预启动失败仍继续启动（默认 `false`） |
 
-占位符：`{device}` / `{target}` / `{projectRoot}` / `{platform}`（不认识的 `{xxx}` 原样保留，不误伤 shell 语法）。
+占位符：`{device}` / `{target}` / `{projectRoot}` / `{platform}`（预启动 / 停止后命令里可用；不认识的 `{xxx}` 原样保留，不误伤 shell 语法）。
+
+**`configs[]` 字段**（GUI 弹窗里填的就是这些）：
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 配置名（项目内唯一；GUI 下拉与 MCP `config` 都用它） |
+| `target` | 入口文件；不填用 flutter 默认的 `lib/main.dart` |
+| `args` | 追加给 `flutter run` 的参数（flavor / dart-define / `--profile` / `--release` 都在这里） |
+| `env` | 注入 `flutter run` 子进程的环境变量 |
+| `preRun` / `postStop` | 写了就用配置自己的，空则回退项目级 |
+| `platforms` | 只在这些平台生效；空 = 所有平台 |
+| `device` | 绑定的设备 id（GUI 选中该配置时回填设备下拉） |
+| `note` | 备注（GUI 摘要里显示） |
+| `last` | 上次选的配置 + 追加参数（GUI 重开自动回填；只记选择不算配置） |
+
+追加给 `flutter run` 的参数按这个顺序拼：`runArgs['*']` → `runArgs[平台]` → 选中的 `configs[].args` → 「追加参数」输入框（MCP 的 `args`）。
+
+GUI 调试页：
+
+- 「运行配置」下拉选一条，右侧「新建/编辑」打开表单（名称 / 入口 / 限定平台 / 参数 / 预启动 / 停止后 / env / 备注，参数与 env 都是文本框，分词与拆行由后端做）；「删除」删当前选中的那条；
+- 「导入 launch.json」把项目里 `.vscode/launch.json`（含 tasks.json 的 `preLaunchTask`）转成普通配置（同名会提示覆盖）：先预览再确认，导入后运行时不读它；
+- 「追加参数」只对本次启动生效（不写进配置），回车 / 失焦即写进 `last`，下次自动带上；
+- 切换下拉也会记住选择；摘要行显示配置条数与当前配置，文件本身仍可用「打开配置」手改。
 
 行为约束：
 
 - 没配置、配置损坏、或配置限定的平台与当前设备不符时**完全不介入**：`flutter run` 与以前一模一样；
 - 只在**新建**会话时执行 `preRun`，复用已有会话不重复执行（不会多装一次包）；
 - 预启动输出写在本次日志头部，GUI「运行输出」从日志头读，能看到准备过程；失败时中 止启动并回显原因（`continueOnError: true` 可放宽）；
-- GUI 调试页的「运行配置」只显示只读摘要（如 `仅 android/ios/ohos · 预启动 1 条 · android: --flavor oversea`），点「打开配置」用系统编辑器改文件，不做可视化表单；
+- 选中的配置不存在、或其限定平台与当前设备不符时**当场报错**（列出可用配置名 / 当前平台），不会悄悄用默认参数跑错包；
+- 复用判定带上配置名：设备 + 目录 + target 相同但配置不同，视为不同会话（两个 flavor 是两个包）；
 - 平台不传时按设备自动识别（`flutter devices --machine`），识别不出且有平台限定时 按「不生效」处理（宁可不做，也不在别的平台上跑别人的准备脚本）。
 
 ## IDE 跳转

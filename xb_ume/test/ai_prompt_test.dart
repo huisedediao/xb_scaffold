@@ -55,6 +55,11 @@ void main() {
       expect(p, contains('xbume_use_session'));
       expect(p, contains('reused=true'));
       expect(p, contains('force: true'));
+      // 具名运行配置优先：先列配置再选，不自己拼 flavor / dart-define。
+      expect(p, contains('listConfigs'));
+      expect(p, contains('"config": "<配置名>"'));
+      expect(p, contains('不要自己猜参数'));
+      expect(p, contains('只对本次生效的临时参数用 args'));
       // 复用优先，且区分「·可热重载」与「·只读」：只读会话也能接（看现场 /
       // 下断点），不要为了看数据就把 IDE 拉起的会话重启掉。
       expect(p, contains('复用优先'));

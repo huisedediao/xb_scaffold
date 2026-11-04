@@ -438,7 +438,7 @@ void main() {
       expect(html.contains("msg.type === 'debugOutput'"), isTrue);
     });
 
-    test('运行配置：只读摘要 + 打开配置文件 + 启动带平台', () {
+    test('运行配置：下拉选择 + 新建/编辑/删除 + 追加参数 + 导入 + 打开文件', () {
       const html = gui.guiHtml;
       for (final s in <String>[
         'id="dbg-profile"',
@@ -449,6 +449,22 @@ void main() {
         'dbgPlatformOf(',
         // 启动时把设备平台一并交给后端，配置才能按平台选参数。
         "platform: dbgPlatformOf(dev) || null",
+        // 具名配置：下拉选择 + 新建/编辑/删除 + 追加参数（都走 /api/debug/op）。
+        'id="dbg-cfg"',
+        'function dbgConfigPicked(',
+        'function dbgConfigEdit(',
+        'function dbgConfigDelete(',
+        'function dbgConfigImport(',
+        "dbgOp('saveConfig'",
+        "dbgOp('deleteConfig'",
+        "dbgOp('importLaunch'",
+        "dbgOp('rememberLast'",
+        'id="dbg-args"',
+        'config: cfg || null, args: args || null',
+        'id="dbg-cfg-mask"',
+        // 弹窗保存时 args / preRun / postStop / env 都交后端分词，前端不自己拆。
+        'function dbgCfgSave(',
+        'function dbgCfgRender(',
       ]) {
         expect(html.contains(s), isTrue, reason: s);
       }

@@ -15,6 +15,7 @@ import 'dart:io';
 
 import '../device/bridge.dart' show DeviceCommandError;
 import '../device/flutter_run.dart';
+import '../device/launch_import.dart';
 import '../device/live_store.dart' show pidAlive;
 import '../device/run_profile.dart';
 import 'breakpoint_store.dart';
@@ -351,11 +352,16 @@ class DebugHub {
     required this.push,
     FlutterRunLauncher? launcher,
     BreakpointStore? store,
+    String? profilePath,
   })  : launcher = launcher ?? FlutterRunLauncher(),
-        store = store ?? BreakpointStore();
+        store = store ?? BreakpointStore(),
+        _profilePath = profilePath;
 
   final DebugPush push;
   final FlutterRunLauncher launcher;
+
+  /// run_profiles.json 的路径；仅测试注入，正常走 [runProfileFilePath]。
+  final String? _profilePath;
 
   /// 断点落盘：VM 会把断开客户端的断点删掉，重连后靠它恢复。
   final BreakpointStore store;
@@ -543,6 +549,14 @@ class DebugHub {
         };
       case 'runProfile':
         return _runProfile(a);
+      case 'saveConfig':
+        return _saveConfig(a);
+      case 'deleteConfig':
+        return _deleteConfig(a);
+      case 'rememberLast':
+        return _rememberLast(a);
+      case 'importLaunch':
+        return _importLaunch(a);
       case 'eval':
         return _eval(a);
       default:
@@ -552,26 +566,139 @@ class DebugHub {
 
   // ---------------------------------------------------------------- 运行
 
-  /// 当前项目的运行配置（GUI 只读展示 + 「打开配置」用）。
+  /// 当前项目的运行配置（GUI 下拉 / 弹窗 / 摘要都读它）。
   ///
   /// 没有目录 / 没配置都正常返回（`profile` 缺席），前端据此显示「未配置」。
+  /// 即使项目只记住了 last（没任何配置内容）也返回，GUI 要回填上次选择。
   Map<String, Object?> _runProfile(Map<String, Object?> a) {
     final dir = _str(a['dir']) ?? _projectRoot;
-    final path = runProfileFilePath();
+    final path = _profilePath ?? runProfileFilePath();
     if (dir == null) {
       return <String, Object?>{
         'dir': null,
         'path': path,
         'exists': File(path).existsSync(),
+        'configs': const <Object?>[],
       };
     }
-    final p = loadRunProfile(dir);
+    final p = loadProjectProfile(dir, filePath: _profilePath);
     return <String, Object?>{
       'dir': normalizeProjectRoot(dir),
       'path': path,
       'exists': File(path).existsSync(),
       if (p != null) 'profile': p.toJson(),
+      'configs': <Object?>[
+        for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
+      ],
+      if (p?.last != null) 'last': p!.last!.toJson(),
     };
+  }
+
+  /// 新建 / 覆盖一条运行配置（同名覆盖），返回最新的配置清单与 last。
+  ///
+  /// 弹窗里 args / preRun / postStop / env / platforms 都是文本框：后端统一
+  /// 分词与拆行（与启动链路共用一套规则，不在前端再实现一遍）。
+  Map<String, Object?> _saveConfig(Map<String, Object?> a) {
+    final dir = _str(a['dir']) ?? _projectRoot;
+    if (dir == null) throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    final cfg = RunConfig.fromJson(normalizeConfigRequest(a['config']));
+    if (cfg == null) throw DebugException('配置名不能为空');
+    saveRunConfig(dir, cfg, filePath: _profilePath);
+    _message = '已保存配置「${cfg.name}」';
+    return _configsOf(dir);
+  }
+
+  /// 删除一条配置（不存在也算成功：幂等，方便前端重试）。
+  Map<String, Object?> _deleteConfig(Map<String, Object?> a) {
+    final dir = _str(a['dir']) ?? _projectRoot;
+    if (dir == null) throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    final name = _str(a['name'])?.trim();
+    if (name == null || name.isEmpty) throw DebugException('缺少要删除的配置名');
+    final removed = deleteRunConfig(dir, name, filePath: _profilePath);
+    _message = removed ? '已删除配置「$name」' : '没有名为「$name」的配置';
+    return <String, Object?>{'removed': removed, ..._configsOf(dir)};
+  }
+
+  /// 只记住「选了哪条配置 / 填了什么额外参数」，不启动（切下拉即记住）。
+  Map<String, Object?> _rememberLast(Map<String, Object?> a) {
+    final dir = _str(a['dir']) ?? _projectRoot;
+    if (dir == null) throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    rememberLastRun(
+      dir,
+      config: _str(a['config']),
+      args: _argsOf(a),
+      filePath: _profilePath,
+    );
+    return _configsOf(dir);
+  }
+
+  Map<String, Object?> _configsOf(String dir) {
+    final p = loadProjectProfile(dir, filePath: _profilePath);
+    return <String, Object?>{
+      'configs': <Object?>[
+        for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
+      ],
+      if (p?.last != null) 'last': p!.last!.toJson(),
+    };
+  }
+
+  /// 从 `.vscode/launch.json`（+ tasks.json）导入：默认只预览，`apply=true` 才落盘。
+  ///
+  /// 导入源是可选的：导入后就只是普通配置，运行时不读 launch.json。
+  Map<String, Object?> _importLaunch(Map<String, Object?> a) {
+    final dir = _str(a['dir']) ?? _projectRoot;
+    if (dir == null) throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    final launchFile = File('$dir/.vscode/launch.json');
+    if (!launchFile.existsSync()) {
+      throw DebugException('$dir/.vscode/launch.json 不存在：这个项目没有 VS Code 启动配置');
+    }
+    final tasksFile = File('$dir/.vscode/tasks.json');
+    final result = importVsCodeLaunch(
+      launchText: launchFile.readAsStringSync(),
+      tasksText: tasksFile.existsSync() ? tasksFile.readAsStringSync() : null,
+    );
+    final existing = <String>{
+      for (final c
+          in loadProjectProfile(dir, filePath: _profilePath)?.configs ??
+              const <RunConfig>[])
+        c.name,
+    };
+    final applied = a['apply'] == true;
+    if (applied) {
+      for (final c in result.configs) {
+        saveRunConfig(dir, c, filePath: _profilePath);
+      }
+      _message = result.configs.isEmpty
+          ? 'launch.json 里没有可导入的配置'
+          : '已导入 ${result.configs.length} 条配置';
+    } else {
+      _message = 'launch.json 里发现 ${result.configs.length} 条配置';
+    }
+    return <String, Object?>{
+      'path': launchFile.path,
+      'apply': applied,
+      'found': <Object?>[for (final c in result.configs) c.toJson()],
+      'overwrites': <Object?>[
+        for (final c in result.configs)
+          if (existing.contains(c.name)) c.name,
+      ],
+      'warnings': result.warnings,
+      ..._configsOf(dir),
+    };
+  }
+
+  /// 请求里的「额外参数」：MCP 用数组，GUI 用一行文本；两种都接。
+  List<String> _argsOf(Map<String, Object?> a) {
+    final raw = a['args'];
+    if (raw is List) {
+      return <String>[
+        for (final e in raw)
+          if ('$e'.trim().isNotEmpty) '$e'.trim(),
+      ];
+    }
+    final text = _str(a['argsText']) ?? (raw is String ? raw : null);
+    if (text == null) return const <String>[];
+    return splitArgs(text);
   }
 
   Future<Map<String, Object?>> _start(Map<String, Object?> a) async {
@@ -580,16 +707,32 @@ class DebugHub {
     final target = _str(a['target']);
     final platform = _str(a['platform']);
     final cwd = _str(a['cwd']) ?? _handle?.cwd ?? _projectRoot;
+    final configName = _str(a['config'])?.trim();
+    final extraArgs = _argsOf(a);
+    final profile =
+        cwd == null ? null : loadRunProfile(cwd, filePath: _profilePath);
+    final selected = (configName == null || configName.isEmpty)
+        ? null
+        : profile?.configNamed(configName);
+    // 名字写错就当场报，不要拖到 flutter run 里去猜。
+    if (configName != null && configName.isNotEmpty && selected == null) {
+      throw DebugException(missingRunConfigMessage(
+        configName: configName,
+        projectRoot: cwd ?? '',
+        profile: profile,
+      ));
+    }
     _busy = true;
-    final profile = cwd == null ? null : loadRunProfile(cwd);
     // 只在「配置对当前平台生效」时才提示预启动；平台未知时按后端识别的结果算，
     // 这里不抢话术（宁可说“启动中”）。
+    final preTpl = preRunFor(profile, selected);
     final willPreRun = profile != null &&
-        profile.preRun.isNotEmpty &&
+        preTpl.isNotEmpty &&
         profile.appliesTo(platformKeyOf(platform));
+    final label = selected == null ? '' : '配置「${selected.name}」';
     _message = willPreRun
-        ? '正在执行预启动命令（${profile.preRun.length} 条）…'
-        : '正在启动 flutter run -d $device …';
+        ? '正在执行$label预启动命令（${preTpl.length} 条）…'
+        : '正在启动$label flutter run -d $device …';
     _pushState();
     try {
       final r = await launcher.launch(
@@ -599,6 +742,8 @@ class DebugHub {
         platform: platform,
         owner: 'gui',
         timeout: const Duration(seconds: 240),
+        config: selected?.name,
+        extraArgs: extraArgs,
       );
       _reused = r.reused;
       final ws = _str(r.wsUri);
@@ -627,6 +772,9 @@ class DebugHub {
         'pid': r.pid,
         'reused': r.reused,
         'platform': platform,
+        'target': r.target,
+        'config': r.config,
+        'args': r.effectiveArgs,
         'preRun': r.preRunCommands,
       };
     } on DeviceCommandError catch (e) {

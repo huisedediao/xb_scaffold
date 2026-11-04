@@ -28,6 +28,7 @@ class LaunchRecord {
     required this.startedAt,
     this.target,
     this.platform,
+    this.config,
     this.wsUri,
     this.logPath,
     this.fifo,
@@ -44,6 +45,10 @@ class LaunchRecord {
   /// 目标平台（android / ios / ohos / macos…）；若启动方没传也没识别出来则为 null。
   /// 停止清理命令要用它展开 `{platform}`，因此与记录一起落盘。
   final String? platform;
+
+  /// 启动时选中的具名运行配置（没选则为 null）。
+  /// 停止时用它找到配置自己的 postStop；重启后认领也能保留选择。
+  final String? config;
   final String? wsUri;
   final String? logPath;
   final String? fifo;
@@ -58,6 +63,7 @@ class LaunchRecord {
         'cwd': cwd,
         'target': target,
         'platform': platform,
+        'config': config,
         'wsUri': wsUri,
         'logPath': logPath,
         'fifo': fifo,
@@ -79,6 +85,7 @@ class LaunchRecord {
       startedAt: started,
       target: json['target']?.toString(),
       platform: json['platform']?.toString(),
+      config: json['config']?.toString(),
       wsUri: json['wsUri']?.toString(),
       logPath: json['logPath']?.toString(),
       fifo: json['fifo']?.toString(),
