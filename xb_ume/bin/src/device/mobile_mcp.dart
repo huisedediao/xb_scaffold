@@ -67,6 +67,8 @@ class MobileMcpBridge extends DeviceBridge {
       _proc = await Process.start(
         exe,
         <String>['-y', '@mobilenext/mobile-mcp@latest', '--listen', '$port'],
+        // 精简 PATH（GUI 从 Finder / launchd 起）下 npx 自己也要能找到 node。
+        environment: execEnvironment(),
         // Windows 上 npx 是 npx.cmd：CreateProcess 不能直接执行批处理。
         runInShell: needsShellOnWindows(exe),
       );

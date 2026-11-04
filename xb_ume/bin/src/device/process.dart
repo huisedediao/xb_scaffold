@@ -60,7 +60,7 @@ Future<CmdResult> runCmd(
       exe,
       args,
       workingDirectory: workingDirectory,
-      environment: environment,
+      environment: execEnvironment(environment),
       runInShell: needsShellOnWindows(exe),
     );
   } on ProcessException catch (e) {
@@ -97,7 +97,128 @@ Future<CmdResult> runCmd(
   return CmdResult(code, out.toString(), err.toString(), timedOut: timedOut);
 }
 
-/// 在 PATH 中定位可执行文件；找不到返回 null（不调用 which，跨平台一致）。
+String? _envOf(String key) {
+  final v = Platform.environment[key];
+  if (v == null || v.trim().isEmpty) return null;
+  return v.trim();
+}
+
+List<String>? _fallbackDirsCache;
+
+/// 兜底搜索目录（只回本机真实存在的，PATH 仍然优先）。
+///
+/// GUI 与 daemon 常由 Finder、launchd 或 IDE 的图形界面拉起，PATH 往往只有
+/// `/usr/bin:/bin:/usr/sbin:/sbin`：这时 flutter / adb / hdc 全都定位不到，
+/// 用户看到的就是「未找到 flutter 可执行文件（检查 PATH）」。这里按
+/// 「能自证的位置优先」补齐：当前进程的 dart 所在的 SDK → 环境变量声明的
+/// SDK → 常见安装位置。
+List<String> fallbackBinDirs() {
+  final cached = _fallbackDirsCache;
+  if (cached != null) return cached;
+  final dirs = <String>[];
+  final seen = <String>{};
+  void add(String? dir) {
+    final t = dir?.trim();
+    if (t == null || t.isEmpty) return;
+    final norm = (t.length > 1 && (t.endsWith('/') || t.endsWith(r'\')))
+        ? t.substring(0, t.length - 1)
+        : t;
+    if (!seen.add(norm)) return;
+    if (Directory(norm).existsSync()) dirs.add(norm);
+  }
+
+  final home = _envOf('HOME') ?? _envOf('USERPROFILE');
+  final sep = Platform.pathSeparator;
+
+  // 1) flutter SDK：GUI/daemon 自己就是被 SDK 里的 dart 拉起来的，这是最可靠
+  //    的自证信号；其次是 FLUTTER_ROOT 与常见安装位置。
+  var probe = File(Platform.resolvedExecutable).parent;
+  for (var i = 0; i < 6; i++) {
+    if (File('${probe.path}${sep}bin${sep}flutter').existsSync()) {
+      add('${probe.path}${sep}bin');
+      break;
+    }
+    final parent = probe.parent;
+    if (parent.path == probe.path) break;
+    probe = parent;
+  }
+  final flutterRoot = _envOf('FLUTTER_ROOT');
+  if (flutterRoot != null) add('$flutterRoot${sep}bin');
+  if (home != null) {
+    add('$home/flutter/bin');
+    add('$home/development/flutter/bin');
+    add('$home/fvm/default/bin');
+    add('$home/.pub-cache/bin');
+    add('$home/.local/bin');
+  }
+  add('/opt/homebrew/bin');
+  add('/usr/local/bin');
+
+  // 2) Android platform-tools。
+  final androidSdks = <String?>[
+    _envOf('ANDROID_HOME'),
+    _envOf('ANDROID_SDK_ROOT'),
+    if (home != null) '$home/Library/Android/sdk',
+  ];
+  for (final sdk in androidSdks) {
+    if (sdk != null) add('$sdk/platform-tools');
+  }
+
+  // 3) DevEco：hdc 在各 SDK 版本的 toolchains 下（version 目录要先列举）。
+  final deveco =
+      _envOf('DEVECO_SDK_HOME') ?? '/Applications/DevEco-Studio.app/Contents/sdk';
+  final sdkDir = Directory(deveco);
+  if (sdkDir.existsSync()) {
+    for (final e in sdkDir.listSync(followLinks: false)) {
+      if (e is Directory) add('${e.path}${sep}openharmony${sep}toolchains');
+    }
+  }
+  add('$deveco/openharmony/toolchains');
+  for (final tool in <String>['node', 'ohpm', 'hvigor']) {
+    add('/Applications/DevEco-Studio.app/Contents/tools/$tool/bin');
+  }
+
+  _fallbackDirsCache = dirs;
+  return dirs;
+}
+
+/// 子进程用的 PATH：原 PATH + [fallbackBinDirs]，去重保序。
+String execSearchPath() {
+  final sep = Platform.isWindows ? ';' : ':';
+  final out = <String>{};
+  for (final dir in (Platform.environment['PATH'] ?? '').split(sep)) {
+    if (dir.trim().isNotEmpty) out.add(dir.trim());
+  }
+  out.addAll(fallbackBinDirs());
+  return out.join(sep);
+}
+
+/// 子进程完整环境：默认继承本进程环境，只把 PATH 换成 [execSearchPath]。
+///
+/// `Process.start` 的 environment 是「整体替换」而非合并，所以必须带上
+/// 完整环境；补 PATH 是为了让 flutter run 这类子进程自己也能找到 adb / hdc。
+Map<String, String> execEnvironment([Map<String, String>? extra]) {
+  final map = <String, String>{...Platform.environment};
+  map.removeWhere((k, _) => k.toUpperCase() == 'PATH');
+  map['PATH'] = execSearchPath();
+  if (extra != null) map.addAll(extra);
+  return map;
+}
+
+/// 定位也可显式指定：`XB_UME_FLUTTER` 给 flutter 可执行文件或 SDK 根目录。
+String? resolveFlutter() {
+  final explicit = _envOf('XB_UME_FLUTTER');
+  if (explicit != null) {
+    if (File(explicit).existsSync()) return explicit;
+    final inner =
+        '$explicit${Platform.pathSeparator}bin${Platform.pathSeparator}flutter';
+    if (File(inner).existsSync()) return inner;
+  }
+  return findExecutable('flutter');
+}
+
+/// 在 PATH 中定位可执行文件，找不到再走 [fallbackBinDirs]；都没有返回 null
+/// （不调用 which，跨平台一致）。
 String? findExecutable(String name) {
   if (name.contains('/') || name.contains(r'\')) {
     return File(name).existsSync() ? name : null;
@@ -107,8 +228,11 @@ String? findExecutable(String name) {
   final exts = Platform.isWindows
       ? <String>['.exe', '.bat', '.cmd', '']
       : <String>[''];
-  for (final dir in path.split(sep)) {
-    if (dir.trim().isEmpty) continue;
+  final dirs = <String>[
+    ...path.split(sep).where((d) => d.trim().isNotEmpty),
+    ...fallbackBinDirs(),
+  ];
+  for (final dir in dirs) {
     for (final ext in exts) {
       final f = File('$dir${Platform.pathSeparator}$name$ext');
       if (f.existsSync()) return f.path;

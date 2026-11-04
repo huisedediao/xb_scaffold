@@ -566,10 +566,15 @@ class FlutterRunLauncher {
     Duration timeout = const Duration(seconds: 180),
     String? retryNote,
   }) async {
-    final flutter = findExecutable('flutter');
+    final flutter = resolveFlutter();
     if (flutter == null) {
       throw DeviceCommandError(
-          'flutter-run', 'flutter run', '未找到 flutter 可执行文件（检查 PATH）');
+        'flutter-run',
+        'flutter run',
+        '未找到 flutter 可执行文件：PATH 里没有，也没在常见安装位置找到。'
+            '把 flutter 的 bin 目录加进 PATH，或用环境变量 XB_UME_FLUTTER 指定'
+            '（可给 flutter 可执行文件或 SDK 根目录）。',
+      );
     }
     final workdir = (cwd == null || cwd.trim().isEmpty) ? Directory.current.path : cwd;
     if (!Directory(workdir).existsSync()) {
@@ -725,6 +730,7 @@ class FlutterRunLauncher {
             ...runArgs,
           ],
           workingDirectory: workdir,
+          environment: execEnvironment(),
         );
       } else {
         // append 而不是 truncate：日志文件开头已经有预启动命令的输出。
@@ -733,6 +739,7 @@ class FlutterRunLauncher {
           flutter,
           runArgs,
           workingDirectory: workdir,
+          environment: execEnvironment(),
           // Windows 上 flutter 是 flutter.bat：CreateProcess 不能直接执行批处理，
           // 必须走 cmd；其他平台（或原生 .exe）保持直启。
           runInShell: needsShellOnWindows(flutter),
