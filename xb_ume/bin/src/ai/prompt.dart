@@ -111,6 +111,17 @@ String buildAiPrompt({
     ..writeln('同设备同目录已有 IDE 拉起的 flutter run 时它会拒绝启动并给出 pid：把情况告诉我，'
         '由我选 (a) 还是 (b)。')
     ..writeln()
+    ..writeln('## 第一步半：接上之后先自检（一次调用，别靠试错）')
+    ..writeln('use_session / app_launch 返回后，立刻调：')
+    ..writeln('  xbume_session_check {"deviceId": "$deviceId", "cwd": "$projectDir"}')
+    ..writeln('一次拿到：VM 通不通、是不是这个项目的这台设备、截图 / 点按 / 读运行时状态能不能用、'
+        '热重载走哪条通道（signal / stdin / none），并顺带真发一次重载实测'
+        '（没改动时 flutter run 只回 No changes detected，不会扰动 app）。')
+    ..writeln('按 verdict 决定下一步：ready 才动手改代码；ready_no_reload 只能只读排查；'
+        'degraded 先看 warnings 与 next；wrong_device / wrong_project 立即停手换会话；'
+        'stale 用 xbume_sessions {"refresh": true} 重扫或重启 app。')
+    ..writeln('不要跳过这一步直接发 hot_reload——通道不通时那是几十秒白等。')
+    ..writeln()
     ..writeln('## 第二步：按需使用工具')
     ..writeln('- xbume_screenshot / xbume_find_widget / xbume_tap / xbume_input：'
         '看界面、按类型/文字/Key 找组件、点击、输入')
@@ -147,7 +158,8 @@ String buildAiPrompt({
         '"cwd": "$projectDir", "force": true}；'
         '它先按精确 PID 停掉旧会话（含 app 子进程）再重新编译装包启动，'
         '新会话自动设为当前。重启后必须重新走一遍同样的路径再下结论。')
-    ..writeln('只对带·可热重载标记的会话有效；·只读 会话会直接报错，不要反复重试，'
+    ..writeln('只对带·可热重载标记的会话有效（工具按通道发：POSIX 上发 SIGUSR1 / SIGUSR2，'
+        '不再往管道里写 r 键）；·只读 会话会直接报错，不要反复重试，'
         '改让那个会话的主人自己重跑（IDE 里按 r），或先问我要不要 force 重启。')
     ..writeln('判断不了属于哪一档时按最重的来（force）：宁可多等一次构建，'
         '也不要在旧进程上得出「已修复」的结论。')

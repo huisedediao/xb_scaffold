@@ -212,20 +212,21 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 3. 工具清单
 
-工具名统一前缀 `xbume_`。默认暴露 **25 个**（core 18 + diagnose 4 + run-safe 3）；
-加 `--allow-eval` 再多出 `xbume_eval`（26 个）。`--tool-groups all` 全开是 **55 个**
-（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 54）。
+工具名统一前缀 `xbume_`。默认暴露 **26 个**（core 19 + diagnose 4 + run-safe 3）；
+加 `--allow-eval` 再多出 `xbume_eval`（27 个）。`--tool-groups all` 全开是 **56 个**
+（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 55）。
 
 debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四组通过本机 GUI 的 HTTP
 接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
 连的是「GUI 当前选中的会话」，传 `sessionId` / `uri` 可覆盖。
 
-### core（18 个）
+### core（19 个）
 
 | 工具 | 主要参数 | 返回 |
 | --- | --- | --- |
-| `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中；有 `launcher` 标记的会话由本服务或 GUI 拉起（`mcp拉起·可热重载` / `gui认领·可热重载` / `…只读`），可直接复用 |
-| `xbume_use_session` | `sessionId` | 选定后续工具默认会话，并读一次路由栈做连通性验证 |
+| `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中；有 `launcher` 标记的会话由本服务或 GUI 拉起（`mcp拉起·可热重载(signal)` / `gui认领·可热重载(signal)` / `…·只读`），可直接复用。标记与 `xbume_hot_reload` 同源判定：`signal` = 发 `SIGUSR1`/`SIGUSR2`，`stdin` = 写自己进程 stdin，`none` = 没有通道（IDE 拉起） |
+| `xbume_use_session` | `sessionId` | 选定后续工具默认会话，并读一次路由栈做连通性验证；顺手附一行自检结论（不发重载） |
+| `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs` |
 | `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |
 | `xbume_find_widget` | `by`(type/key/text/semantics), `value`, `exact?`, `limit?` | `ref` / 类型 / Key / 文本 / 逻辑像素 bounds / 源码位置 |
 | `xbume_tap` | `ref?` 或 `by`+`value` 或 `x`+`y`；`phys?`, `waitMs?` | 是否命中 + 操作后路由名 |
@@ -241,7 +242,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_scenario_run` | `name?` 或 `steps?`, `continueOnFail?`, `shotEveryStep?` | 异步运行，立刻返回 `runId` |
 | `xbume_scenario_status` | `runId?` | 逐步骤 pass/fail/skip + 错误 + 耗时 + 报告路径 |
 | `xbume_app_launch` | `deviceId`, `via?`(flutter-run 默认), `packageId?`, `target?`, `config?`, `args?`, `listConfigs?`, `waitVm?`, `cwd?`, `force?`, `platform?` | `via=flutter-run` 顺带把新会话设为当前；**同设备 + 同目录 + 同 target + 同 config 已有本服务/GUI 拉起的会话时直接复用**（回 `reused: true`，不重装包）；`force: true` = 先停掉本服务那一个再重起；外部 IDE 起的同设 备同目录会话仍默认拒绝（继续会顶掉它），确认顶掉才传 `force: true`。`config` 指项目里的具名运行配置（`configs[].name`，GUI「调试」页下拉里看到的那些），决定入口 / 参数 / env / 预启动；名字写错当场报错并列出可用名。`args` 是**只对本次**生效的追加参数（不写进配置）；两者都会记成该项目的 `last`，下次不传也按它回填。`listConfigs: true` 只列出当前项目（`cwd`）的配置与上次选择，不启动。配置了「项目运行配置」的项目会先跑预启动命令（`structured.preRun` 回命令列表，`platform` 不传时按设备自动识别） |
-| `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 向本服务拉起的 `flutter run` 写 `r`/`R`：改完代码就地热重载/热重启，返回耗时与完成行；热重启会清 isolate 缓存 |
+| `xbume_hot_reload` | `sessionId?` 或 `pid?`, `mode?`(reload/restart), `timeoutMs?` | 改完代码就地热重载 / 热重启，返回通道、耗时与完成行。**按通道发**：POSIX 上 `kill -USR1`（热重载）/ `-USR2`（热重启）——本工具与 GUI 拉起的 `flutter run` 的 stdin 是管道，按键会被静默丢弃，所以不再写 `r`；没有通道时立即报错（不会干等超时），发信号前会校验该 pid 仍是 `flutter run`。热重启会清 isolate 缓存 |
 | `xbume_eval` | `expr`, `lib?`, `maxChars?` | **需 `--allow-eval`**：在 app 进程内求值单行表达式，返回 `值` + 库 + 类型；编译错误与运行时异常分开报 |
 
 ### run-safe（3 个，默认开启）
@@ -329,6 +330,34 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 
 ---
 
+### 接上会话的第一件事：自检（`xbume_session_check`）
+
+`xbume_sessions` → `xbume_use_session` / `xbume_app_launch` 之后，先跑一次：
+
+```json
+{"deviceId": "26KUT23C26001579", "cwd": "/path/to/project"}
+```
+
+一次拿回四件事：VM 是否可连（顺便得到已加载库数量）、是不是你要的设备和项目、
+截图 / 点按 / 读运行时状态所需的 inspector 与求值是否可用、热重载走哪条通道。
+默认 `verifyReload: true` 会真发一次重载：没有文件改动时 `flutter run` 只回
+`No changes detected`，不改 app 状态；但如果你已经改了代码，它会真的把改动热重载进去
+（想只读探测就传 `verifyReload: false`）。
+
+按 `verdict` 分流，不要靠试错：
+
+| verdict | 含义 | 下一步 |
+| --- | --- | --- |
+| `ready` | 全通 | 直接干活，改完按三档重载 |
+| `ready_no_reload` | 能看能点，但进程是 IDE 拉起的（拿不到句柄） | 只做只读排查；要改代码就让拉起方按 `r`，或问过用户后 `app_launch{force:true}` |
+| `degraded` | 能用但缺能力（release 包没 inspector / 通道实测失败） | 看 `warnings` 与 `next`，只做它能做的 |
+| `wrong_device` / `wrong_project` | 不是你要的会话 | 立即停手换会话：热重载会打到错的包上 |
+| `stale` | 端口在但 VM 连不上（进程已退 / 转发断了） | `xbume_sessions{"refresh":true}` 重扫，仍失败就重启 app |
+
+这条检查存在的意义：过去 AI 接上会话后会先盲发一次热重载，通道不通时要干等 60–120 秒才知道，现在几百毫秒就有结论。
+
+---
+
 ## 4. 典型 prompt
 
 自然语言直接说目标即可，模型会自己串工具。以下是实测可用的九个：
@@ -379,7 +408,7 @@ URL 片段取完整响应体）。
 
 `xbume_hot_reload`(`mode: reload`，实测空改动 ~150ms、改一个文件 ~230ms) → 改动大时用
 `mode: restart`（isolate 会换，缓存自动重建）→ `xbume_tap` / `xbume_scenario_run` 复跑。
-前提：会话由 `xbume_app_launch(via: "flutter-run")` 或 GUI「调试」页拉起（落盘清单里有 FIFO），或在 GUI「调试」页「接入」认领到句柄；外部 IDE 终端里的进程不归 MCP 管，只能手动按 `r`。
+前提：会话由 `xbume_app_launch(via: "flutter-run")` 或 GUI「调试」页拉起，或在 GUI「调试」页「接入」/`app_launch` 认领（live 清单里有 pid）。工具按通道发：POSIX 上 `SIGUSR1` / `SIGUSR2`——本工具与 GUI 拉起的 `flutter run` 的 stdin 是管道，写 `r` 会被静默丢弃，所以不再走按键；没有通道时立即报错。外部 IDE 终端里的进程拿不到句柄，只能手动按 `r`。先跑 `xbume_session_check` 能直接告诉你属于哪种。
 
 **三档重载：选错会在旧进程上得出「已修复」**
 
@@ -597,7 +626,8 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
 | macOS 上自动化卡在导航 | app 在后台时帧会被冻结：`open -a <绝对路径>` 把它切到前台再跑。 |
-| `xbume_hot_reload` 报「未找到由本服务拉起」 | 会话来自外部 IDE/终端的 `flutter run`（没有本服务的落盘清单 / FIFO）；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或手动按 `r`。 |
+| `xbume_hot_reload` 报「没有可用的热重载通道」 | 会话来自外部 IDE/终端（拿不到句柄），或 Windows 上认领来的进程（没有 SIGUSR）。先 `xbume_session_check` 看 `caps.reloadChannel`：`none` 就不要再试；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或让拉起方自己按 `r`。 |
+| `xbume_hot_reload` 超时但在日志里看得到 `Reloaded …` | 极少数引擎沿用旧行为：`SIGUSR1` 已生效但没输出完成标记。调大 `timeoutMs`，或改用 `xbume_sessions` 看 pid 后用 `kill -USR1 <pid>` 手动验证（工具发信号前会校验该 pid 仍是 `flutter run`）。 |
 | `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | 外部（IDE/终端）已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。只是要接入就 `xbume_sessions` → `xbume_use_session`（只读，无热重载），或在 GUI「调试」页「接入」；确认顶掉才传 `force: true`。 |
 | `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
 | debug 组报「连不上 VM service」 | 会话必须是 debug 模式且端口可达；release / AOT 没有 VM service，做不了断点与单步。 |
@@ -632,7 +662,7 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
   （不直连 VM），GUI 关着就只能用 core / debug；debug 组不受影响。
 - **`xbume_instances` 只认已加载的类**：底层是 VM `getInstances`，JIT 懒加载导致
   没进过内存的类查不到；`xbume_perf`(`leak`) 的自动普查同理，只覆盖已加载的 State。
-- **`xbume_hot_reload` / `xbume_debug_control`(`hot`) 只作用于本服务/GUI 拉起或认领的 `flutter run`**：不接管外部 IDE/终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。`xbume_app_launch` 对**同设备 + 同目录 + 同 target 的本服务会话**直接复用（返回 `reused: true`，不重装包），对外部会话仍默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
+- **`xbume_hot_reload` / `xbume_debug_control`(`hot`) 只作用于本服务/GUI 拉起或认领的 `flutter run`**：不接管外部 IDE/终端里的进程，也不按名字杀进程，那种情况只能手动按 `r` / `R`。POSIX 上传的是 `SIGUSR1` / `SIGUSR2`（stdin 是管道时按键会被静默丢弃），发信号前校验该 pid 仍是 `flutter run`——`SIGUSR1` 对普通进程是终止信号，不能发错。接上会话先跑 `xbume_session_check`，能直接告诉你走哪条通道。`xbume_app_launch` 对**同设备 + 同目录 + 同 target 的本服务会话**直接复用（返回 `reused: true`，不重装包），对外部会话仍默认拒绝启动（它不会主动 kill 外部进程，但重装包会间接顶掉那个会话）。
 - **有副作用的桥接动作要显式调用**：`xbume_automation`(`run` / `stop`)、
   `xbume_network_control`(`replay`)、`xbume_compare`(`run`)、`xbume_ai`(`run`) 会真的操作 app / 发请求；
   只读排查不要顺手带上。

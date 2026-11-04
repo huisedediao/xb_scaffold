@@ -23,6 +23,7 @@ import 'debug_pool.dart';
 import 'gui_bridge.dart';
 import 'protocol.dart';
 import 'scenario_service.dart';
+import 'session_check.dart';
 import 'session_registry.dart';
 
 /// 工具分组（配合 --tool-groups 开关）。
@@ -278,6 +279,7 @@ String _realPath(String path) {
 List<McpTool> coreTools({bool allowEval = false}) => <McpTool>[
       _sessionsTool(),
       _useSessionTool(),
+      _sessionCheckTool(),
       _screenshotTool(),
       _findWidgetTool(),
       _tapTool(),
@@ -316,18 +318,26 @@ McpTool _sessionsTool() => McpTool(
         final list = await ctx.sessions.refresh(force: force);
         final cur = ctx.sessions.currentId;
         // 标注哪些会话是本服务/GUI 拉起的（可跨进程热重载），便于 AI 直接复用。
+        // 判定与 hot_reload 同源（[reloadChannelOf]），不再只看“有没有 FIFO”：
+        // FIFO 存在但 stdin 不是终端时，按键会被 flutter run 静默丢弃。
         final managed = <int, String>{};
         for (final h in ctx.launcher.live) {
           final port = Uri.tryParse(h.wsUri ?? '')?.port;
           if (port == null) continue;
-          final hot = (h.fifo != null && h.fifo!.isNotEmpty) || h.process != null;
+          final channel = h.reloadChannel;
           managed[port] = '${h.owner}${h.adopted ? '认领' : '拉起'}'
-              '${hot ? '·可热重载' : '·只读'}';
+              '${channel == ReloadChannel.none ? '·只读' : '·可热重载(${reloadChannelName(channel)})'}';
         }
         final items = list.map((s) {
           final json = s.toJson(current: s.id == cur);
           final tag = managed[s.port];
           if (tag != null) json['launcher'] = tag;
+          final h = ctx.launcher.byPort(s.port);
+          if (h != null) {
+            json['reloadChannel'] =
+                reloadChannelName(h.reloadChannel);
+            json['flutterRunPid'] = h.pid;
+          }
           return json;
         }).toList(growable: false);
         final sb = StringBuffer();
@@ -381,9 +391,20 @@ McpTool _useSessionTool() => McpTool(
         final route = await _topRoute(s.client);
         final app =
             (s.appName.isEmpty || s.appName == 'vm') ? '' : ' ${s.appName}';
+        // 顺手附一行自检（不发重载）：选完就知道能看 / 能点 / 能不能重载。
+        String tail;
+        try {
+          final c = await runSessionCheck(s, ctx.launcher, verifyReload: false);
+          tail = '；自检 ${sessionVerdictName(c.verdict)}'
+              '（重载通道 ${c.caps['reloadChannel']}）'
+              '${c.judgement.usable ? '' : '；先看 xbume_session_check 的结论'}'
+              '。完整能力用 xbume_session_check（默认会真发一次重载实测）';
+        } catch (e) {
+          tail = '；自检未完成：$e';
+        }
         return McpToolResult.text(
           '已切换到 ${s.id}$app（端口 ${s.port}）'
-          '${route == null ? '，路由栈读取失败（可能不是 Flutter 界面）' : '，当前路由 $route'}',
+          '${route == null ? '，路由栈读取失败（可能不是 Flutter 界面）' : '，当前路由 $route'}$tail',
           structured: <String, Object?>{
             'sessionId': s.id,
             'wsUrl': s.wsUrl,
@@ -392,6 +413,43 @@ McpTool _useSessionTool() => McpTool(
             'route': route,
           },
         );
+      },
+    );
+
+McpTool _sessionCheckTool() => McpTool(
+      name: 'xbume_session_check',
+      title: '会话可用性自检（能看 / 能点 / 能重载）',
+      description: '接上会话后先调它：一次探清 VM 是否可连、是不是你要的设备/项目、'
+          '截图与点按所需的 inspector / 求值是否可用、以及热重载走哪条通道。'
+          '默认会真发一次热重载实测：没有文件改动时 flutter run 只回 '
+          'No changes detected（不改 app 状态），已有改动则会真的重载。'
+          '结论 verdict：ready / ready_no_reload / degraded / wrong_device / '
+          'wrong_project / stale；warnings 与 next 直接告诉下一步该做什么。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'deviceId': prop('string',
+            '期望设备号；不一致直接判 wrong_device（防止热重载打到另一台手机）'),
+        'cwd': prop('string', '期望项目根；与 flutter run 的启动目录不一致判 wrong_project'),
+        'verifyReload': prop('boolean',
+            '真发一次热重载验证通道（默认 true；无改动时无副作用）',
+            defaultValue: true),
+        'timeoutMs': prop('integer', '实测等待完成标记的超时（毫秒，默认 20000）',
+            defaultValue: 20000),
+      }),
+      handler: (ctx, args) async {
+        final s = await resolveSession(ctx, args);
+        final c = await runSessionCheck(
+          s,
+          ctx.launcher,
+          expectDevice: optionalString(args, 'deviceId'),
+          expectCwd: optionalString(args, 'cwd'),
+          verifyReload: optionalBool(args, 'verifyReload', fallback: true),
+          verifyTimeout: Duration(
+              milliseconds: (optionalInt(args, 'timeoutMs') ?? 20000)
+                  .clamp(5000, 180000)),
+        );
+        return McpToolResult.text(c.describe(), structured: c.toJson());
       },
     );
 
@@ -1513,9 +1571,11 @@ McpTool _evalTool() => McpTool(
 McpTool _hotReloadTool() => McpTool(
       name: 'xbume_hot_reload',
       title: '触发热重载 / 热重启',
-      description: '向本服务通过 xbume_app_launch(via:"flutter-run") 拉起的 flutter run '
-          '发送 r（热重载）或 R（热重启），等输出里的完成标记后返回；编译错误原样带回。'
-          '只碰自己拉起的进程；热重启后 isolate 会更换，工具会自动清掉 isolate 缓存。',
+      description: '向本服务/GUI 拉起的 flutter run 触发重载并等完成标记后返回；'
+          'POSIX 上发 SIGUSR1（热重载）/ SIGUSR2（热重启）——这类会话的 stdin '
+          '是管道，写 r 键会被 flutter run 静默丢弃，所以不再走按键。'
+          '没有可用通道时立即报错，不会干等超时；编译错误原样带回。'
+          '热重启后 isolate 会更换，工具会自动清掉 isolate 缓存。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
@@ -1567,17 +1627,19 @@ McpTool _hotReloadTool() => McpTool(
           }
         }
         final modeName = restart ? '热重启' : '热重载';
+        final channel = reloadChannelName(r.channel);
         final tail = r.lines.isEmpty
             ? ''
             : '\n最近输出：\n${r.lines.take(20).join('\n')}';
         final text = r.ok
-            ? '$modeName完成（pid ${r.pid}，${r.elapsedMs}ms）：${r.message}'
-            : '$modeName未完成（pid ${r.pid}，${r.elapsedMs}ms）：${r.message}$tail';
+            ? '$modeName完成（pid ${r.pid}，通道 $channel，${r.elapsedMs}ms）：${r.message}'
+            : '$modeName未完成（pid ${r.pid}，通道 $channel，${r.elapsedMs}ms）：${r.message}$tail';
         return McpToolResult.text(text,
             structured: <String, Object?>{
               'ok': r.ok,
               'mode': restart ? 'restart' : 'reload',
               'pid': r.pid,
+              'channel': channel,
               'elapsedMs': r.elapsedMs,
               'marker': r.message,
               'lines': r.lines,

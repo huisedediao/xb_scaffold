@@ -70,6 +70,14 @@ void main() {
       // 热重载的回落：只读会话会报错，别反复重试。
       expect(p, contains('只对带·可热重载标记的会话有效'));
       expect(p, contains('不要反复重试'));
+      // 接上后先自检：这是省掉「发一次重载白等一分钟」的关键一步。
+      expect(p, contains('xbume_session_check'));
+      expect(p, contains('"deviceId": "$device"'));
+      expect(p, contains('ready_no_reload'));
+      expect(p, contains('wrong_device'));
+      expect(p, contains('不要跳过这一步直接发 hot_reload'));
+      // 热重载现在按通道发信号，不再往管道写 r 键。
+      expect(p, contains('SIGUSR1'));
     });
 
     test('三档重载级别写进指令，并点名必须进程级重启的改动', () {

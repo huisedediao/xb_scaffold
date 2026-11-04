@@ -50,11 +50,19 @@ String? parseFlutterRunDevice(String commandLine) {
 
 /// 路径比较用规范形式：能解析符号链接就解析（macOS 的 `/var` → `/private/var`）。
 String resolvePathForCompare(String path) {
+  String resolved;
   try {
-    return Directory(path).resolveSymbolicLinksSync();
+    resolved = Directory(path).resolveSymbolicLinksSync();
   } catch (_) {
-    return File(path).absolute.path;
+    resolved = File(path).absolute.path;
   }
+  // 调用方手写的 cwd 常带尾斜杠（`/a/b/`），而 flutter run 记录的是 `/a/b`：
+  // 不归一就会被判成两个项目（复用失败 / 自检误报 wrong_project）。根目录除外。
+  while (resolved.length > 1 &&
+      (resolved.endsWith('/') || resolved.endsWith(r'\'))) {
+    resolved = resolved.substring(0, resolved.length - 1);
+  }
+  return resolved;
 }
 
 // 设备 → 平台键的进程内缓存（启动时按配置选参数用；设备插拔后可能过期，
@@ -379,6 +387,9 @@ class LaunchHandle {
   /// 拉起方：mcp / gui。仅用于展示。
   final String owner;
 
+  /// 该会话可用的热重载通道（与 `xbume_sessions` 的标记同源）。
+  ReloadChannel get reloadChannel => reloadChannelOf(this);
+
   String? wsUri;
 
   final StreamController<String> _lines = StreamController<String>.broadcast();
@@ -401,6 +412,58 @@ class LaunchHandle {
   }
 }
 
+/// 热重载能走的通道。
+///
+/// 关键事实：flutter run 只在 **stdin 是终端** 时安装按键处理器；xb_ume/GUI
+/// 拉起时 stdin 是管道（FIFO），`r` / `R` 会被静默丢弃（实测写进 FIFO 后既无
+/// 报错也无输出）。所以这类会话只能走 POSIX 信号：`SIGUSR1` = 热重载、
+/// `SIGUSR2` = 热重启（flutter 的 resident runner 自己监听）。
+enum ReloadChannel {
+  /// POSIX 信号（macOS / Linux）——本工具与 GUI 拉起的会话都走这里。
+  signal,
+
+  /// 自己进程写 stdin（Windows 没有 SIGUSR；或拿得到句柄的兜底）。
+  stdin,
+
+  /// 没有可用通道：IDE 拉起的进程拿不到句柄，Windows 认领的会话也没有信号。
+  none,
+}
+
+/// 线上标记（MCP 返回 / 文本里用，避免各写一套字符串）。
+String reloadChannelName(ReloadChannel c) {
+  switch (c) {
+    case ReloadChannel.signal:
+      return 'signal';
+    case ReloadChannel.stdin:
+      return 'stdin';
+    case ReloadChannel.none:
+      return 'none';
+  }
+}
+
+/// `kill` 的参数（纯函数，便于单测）：USR1 = 热重载，USR2 = 热重启。
+List<String> reloadSignalArgs(int pid, {required bool restart}) =>
+    <String>[restart ? '-USR2' : '-USR1', '$pid'];
+
+/// pid 是否仍是一条 flutter run。
+///
+/// 发信号前必须校验：`SIGUSR1` 对普通进程的默认处置是**终止**，发错就是把
+/// 别人的进程杀掉。拿不到命令行（Windows）一律返回 false。
+bool pidLooksLikeFlutterRun(int pid) {
+  if (Platform.isWindows || pid <= 1) return false;
+  if (!pidAlive(pid)) return false;
+  final cmd = processCommand(pid);
+  return cmd != null && commandLooksLikeFlutterRun(cmd);
+}
+
+/// 该句柄可用的热重载通道。
+ReloadChannel reloadChannelOf(LaunchHandle h) {
+  if (h.pid <= 1) return ReloadChannel.none;
+  if (!Platform.isWindows && pidAlive(h.pid)) return ReloadChannel.signal;
+  if (h.process != null) return ReloadChannel.stdin;
+  return ReloadChannel.none;
+}
+
 /// 一次热重载 / 热重启的结果。
 class HotReloadResult {
   HotReloadResult({
@@ -409,6 +472,7 @@ class HotReloadResult {
     required this.pid,
     required this.elapsedMs,
     required this.message,
+    this.channel = ReloadChannel.none,
     this.lines = const <String>[],
   });
 
@@ -416,6 +480,9 @@ class HotReloadResult {
   final bool restart;
   final int pid;
   final int elapsedMs;
+
+  /// 本次实际用的通道（signal / stdin / none）。
+  final ReloadChannel channel;
 
   /// 命中的完成标记行，或超时/失败说明。
   final String message;
@@ -1079,20 +1146,24 @@ class FlutterRunLauncher {
 
   /// 按端口反查自己拉起的 flutter run（会话 → 进程）。
   int? pidForPort(int port) {
+    return byPort(port)?.pid;
+  }
+
+  /// 按端口取句柄（认领来的会话也在内）。
+  LaunchHandle? byPort(int port) {
     for (final h in _live.values) {
       final u = h.wsUri;
       if (u == null) continue;
-      if (Uri.tryParse(u)?.port == port) return h.pid;
+      if (Uri.tryParse(u)?.port == port) return h;
     }
     return null;
   }
 
-  /// 触发热重载（r）或热重启（R）。
+  /// 触发热重载或热重启。
   ///
-  /// 对本服务或 GUI 拉起的会话都生效：优先向 FIFO 写按键（跨进程），没有
-  /// FIFO 时退回自己进程的 stdin。flutter run 虽在非 TTY 下不会进
-  /// singleCharMode，但 `TerminalHandler` 仍监听 stdin（`processTerminalInput`
-  /// 会 trim），所以管道写入可用。
+  /// 通道按能力选（[ReloadChannel]）：POSIX 上发 `SIGUSR1` / `SIGUSR2`，
+  /// Windows 写自己进程的 stdin。**不再往 FIFO 写 `r`**：stdin 不是终端时
+  /// flutter run 不装按键处理器，写了也是静默丢弃（会让 AI 白等一分钟）。
   Future<HotReloadResult> hotReload(
     int pid, {
     bool restart = false,
@@ -1103,6 +1174,7 @@ class FlutterRunLauncher {
       throw DeviceCommandError(
           'flutter-run', 'hot reload', '未找到由本服务拉起的 flutter run 进程（pid $pid）');
     }
+    final channel = h.reloadChannel;
     final sw = Stopwatch()..start();
     final captured = <String>[];
     final done = Completer<HotReloadResult>();
@@ -1121,6 +1193,7 @@ class FlutterRunLauncher {
         pid: pid,
         elapsedMs: sw.elapsedMilliseconds,
         message: message,
+        channel: channel,
         lines: List<String>.of(captured),
       ));
     }
@@ -1150,33 +1223,60 @@ class FlutterRunLauncher {
 
     final sub = h.lines.listen(onLine);
 
-    // 写 r / R：FIFO 优先（拉起者重启、GUI/MCP 交叉控制都能用）。
-    var wrote = false;
-    final fifo = h.fifo;
-    if (fifo != null && fifo.isNotEmpty) {
-      wrote = await writeLaunchFifo(fifo, restart ? 'R\n' : 'r\n');
-    }
-    if (!wrote && proc != null) {
-      try {
-        proc.stdin.writeln(restart ? 'R' : 'r');
-        await proc.stdin.flush();
-        wrote = true;
-      } catch (e) {
+    // 先选通道再发：没有通道就立即报错，不进入“等 60 秒再超时”的路径。
+    final action = restart ? '热重启' : '热重载';
+    switch (channel) {
+      case ReloadChannel.signal:
+        // SIGUSR1 对普通进程的默认处置是终止：发错就是杀进程，必须再校验。
+        if (!pidLooksLikeFlutterRun(pid)) {
+          stopped = true;
+          await sub.cancel();
+          throw DeviceCommandError(
+              'flutter-run',
+              'hot reload',
+              'pid $pid 已不是 flutter run（或已退出），不发信号'
+                  '（SIGUSR1 对普通进程会直接结束它）');
+        }
+        final r =
+            Process.runSync('kill', reloadSignalArgs(pid, restart: restart));
+        if (r.exitCode != 0) {
+          stopped = true;
+          await sub.cancel();
+          throw DeviceCommandError(
+              'flutter-run',
+              'hot reload',
+              '向 pid $pid 发 SIG${restart ? 'USR2' : 'USR1'} 失败：'
+                  '${'${r.stderr}'.trim().isEmpty ? '退出码 ${r.exitCode}' : '${r.stderr}'.trim()}');
+        }
+        break;
+      case ReloadChannel.stdin:
+        final p = proc;
+        if (p == null) {
+          stopped = true;
+          await sub.cancel();
+          throw DeviceCommandError('flutter-run', 'hot reload',
+              'pid $pid 拿不到 stdin 句柄，无法$action');
+        }
+        try {
+          p.stdin.writeln(restart ? 'R' : 'r');
+          await p.stdin.flush();
+        } catch (e) {
+          stopped = true;
+          await sub.cancel();
+          throw DeviceCommandError(
+              'flutter-run', 'hot reload', 'stdin 写入失败（进程可能已退出）：$e');
+        }
+        break;
+      case ReloadChannel.none:
         stopped = true;
         await sub.cancel();
         throw DeviceCommandError(
-            'flutter-run', 'hot reload', 'stdin 写入失败（进程可能已退出）：$e');
-      }
-    }
-    if (!wrote) {
-      stopped = true;
-      await sub.cancel();
-      throw DeviceCommandError(
-        'flutter-run',
-        'hot reload',
-        '无法向 pid $pid 写 stdin（该会话由上一个实例拉起且没有可用 FIFO）：'
-            'Windows 或旧版会话只能查看输出与停止；需要热重载请停止后用 app_launch 重新拉起。',
-      );
+          'flutter-run',
+          'hot reload',
+          '会话 pid $pid 没有可用的$action通道：进程由 IDE/终端拉起（拿不到句柄），'
+              'Windows 上也没有 SIGUSR。需要重载让那边自己按 r，'
+              '或用 app_launch(via:"flutter-run", force:true) 由本服务重新拉起。',
+        );
     }
 
     final result = await done.future.timeout(
@@ -1186,7 +1286,9 @@ class FlutterRunLauncher {
         restart: restart,
         pid: pid,
         elapsedMs: sw.elapsedMilliseconds,
-        message: '等待 ${timeout.inSeconds}s 未看到${restart ? '热重启' : '热重载'}完成标记',
+        message: '等待 ${timeout.inSeconds}s 未看到$action完成标记'
+            '（通道 ${reloadChannelName(channel)}）',
+        channel: channel,
         lines: <String>[...h.recent.length > 20
             ? h.recent.sublist(h.recent.length - 20)
             : h.recent],

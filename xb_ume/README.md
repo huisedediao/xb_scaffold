@@ -674,9 +674,9 @@ dart run xb_ume:mcp --http 46140
 }
 ```
 
-默认暴露 25 个工具（core 18 + diagnose 4 + run-safe 3）：会话发现/选定、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志（app 内缓冲 + `flutter run` 全量落盘文件的分页读）、设备系统日志（logcat / hilog / iOS log）、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 `flutter run` 发热重载/热重启。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
+默认暴露 26 个工具（core 19 + diagnose 4 + run-safe 3）：会话发现/选定、**会话自检（`xbume_session_check`：一次告诉你 VM 通不通、是不是这台设备/这个项目、截图 / 点按 / 读状态能不能用、热重载走哪条通道）**、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志（app 内缓冲 + `flutter run` 全量落盘文件的分页读）、设备系统日志（logcat / hilog / iOS log）、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 / GUI 拉起的 `flutter run` 发热重载/热重启（POSIX 发 `SIGUSR1`/`SIGUSR2`，不再往管道写 `r`）。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
 
-另四组按需开启，`--tool-groups all` 共 55 个工具：
+另四组按需开启，`--tool-groups all` 共 56 个工具：
 
 - `debug`（6）：断点（含条件与日志断点、落盘与恢复）、暂停/继续/单步、调用栈、变量树、暂停帧求值、运行输出与源码窗口——直连 VM service，不依赖 GUI；
 - `inspect`（4）：Widget 树与点选、实例查找/字段树/改值、CPU/内存/帧快照与泄漏检测、双会话场景对比；

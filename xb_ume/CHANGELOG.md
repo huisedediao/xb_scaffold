@@ -1,3 +1,17 @@
+## 0.7.0
+
+- 新增 MCP 工具 **`xbume_session_check`（会话自检）**：AI 接上会话后一次调用就能知道「这个会话能干什么」，不再靠试错——之前最贵的一段是先盲发一次 `xbume_hot_reload`，通道不通就干等 60–120 秒才回头排查（实测：GUI 拉起的 `flutter run` 的 stdin 是命名管道，`r` 被静默丢弃，AI 白白等了两分多钟）。现在一次 `getIsolate` 顺带拿 `extensionRPCs`，再比对 live 记录里的 pid / cwd / device，几百毫秒给出结论：`ready`（能看 / 能点 / 能改并生效）、`ready_no_reload`（能看能点，进程是 IDE 拉起的，拿不到句柄）、`degraded`（release 包没 inspector，或通道实测失败）、`wrong_device` / `wrong_project`（不是你要的会话，立即停手）、`stale`（端口在但 VM 连不上）；`caps` 给出 `eval` / `inspector` / `screenshot` / `widgetTree` / `perf` / `reloadChannel`，`warnings` 与 `next` 直接写下一步该干什么。`deviceId` / `cwd` 传了就校验归属（防止热重载打到另一台手机上）；`verifyReload` 默认 true，真发一次重载实测——没有文件改动时 `flutter run` 只回 `No changes detected`，不改 app 状态，已经改了代码则会真的热重载进去（只读探测传 `false`）。
+
+- 热重载改为**按通道发送**，把「白等超时」从根上修掉：`flutter run` 只在 stdin 是终端时才安装按键处理器，本工具 / GUI 拉起的会话 stdin 是管道，`r` / `R` 写了也是静默丢弃。现在 POSIX 上发 `SIGUSR1`（热重载）/ `SIGUSR2`（热重启），Windows 保留写自己进程 stdin 的兜底；**没有通道时立即报错**（带一句「让拉起方自己按 r，或用 `app_launch{force:true}`」），不再进入等完成标记的路径。发信号前用 `pidAlive` + 命令行校验该 pid 仍是 `flutter run`——`SIGUSR1` 对普通进程的默认处置是**终止**，发错就是杀进程。`HotReloadResult` 增 `channel`，返回值与日志都标明本次走的哪条通道。
+
+- `xbume_sessions` 的 launcher 标记改成**真标记**：原来只要「有 FIFO 或拿得到 `Process` 句柄」就标 `·可热重载`，而 FIFO 存在并不代表按键有用（正是上面那个坑）。现在与 `hot_reload` 同源（`reloadChannelOf`），标成 `mcp拉起·可热重载(signal)` / `gui认领·可热重载(signal)` / `…·只读`，并额外给出 `reloadChannel` 与 `flutterRunPid` 两个字段。`xbume_use_session` 选完顺手附一行自检结论（不发重载）。
+
+- 贴给 AI 的指令（`buildAiPrompt`）新增「第一步半：接上之后先自检」：给出 `xbume_session_check` 的调用参数、四类探测内容与六个 `verdict` 的分流动作，并明写「不要跳过这一步直接发 hot_reload——通道不通时那是几十秒白等」；第三步补一句热重载按通道发信号、`SIGUSR1` 对普通进程是终止信号所以工具会先校验。
+
+- 顺手修 `resolvePathForCompare` 的尾斜杠问题：调用方写 `cwd: "/a/b/"` 与 flutter run 记录的 `/a/b` 会被判成两个项目（复用失败、自检误报 `wrong_project`），现在统一去掉多余尾分隔符（根目录除外）。
+
+- 工具数：core 18 → **19**，默认暴露 25 → **26**，`--tool-groups all` 55 → **56**（不加 `--allow-eval` 时 55）。新增 `test/session_check_test.dart` 16 项（来源解析 / 信号参数 / 通道选路 / 六种 verdict 判定 / 结论文本 / 工具注册与 schema / 「不再往 FIFO 写按键」源码守卫），`ai_prompt_test` 补 6 条，`mcp_diagnose_tools_test` 工具数 31 → 32；`dart analyze bin test` 无问题。文档：MCP_GUIDE 新增「接上会话的第一件事：自检」一节（verdict 分流表）、core 表加 `xbume_session_check` 并更新 `sessions` / `hot_reload` 行、排障行改成新报错文案；README / CHANGELOG 工具数同步。
+
 ## 0.6.0
 
 - 运行配置从「项目一套」升级成 **按名字选着跑**（用户：「我希望的是通用的，可以自己增加配置，然后保存，之后选择配置运行即可……要给其他项目使用」）：同一项目常有几个入口 / 包（国内包 `--flavor cn` + `lib/main_cn.dart`、海外包 `--flavor oversea`、`--profile` 包名），原来只能按平台写死一套 `runArgs`，想换包就得改文件。现在 `run_profiles.json` 的项目节点下多出 `configs[]`（`name` / `target` / `args` / `env` / `preRun` / `postStop` / `platforms` / `device` / `note`）与 `last`（上次选的配置 + 追加参数）。GUI 调试页新增「运行配置」下拉 + 新建/编辑弹窗 + 删除 + 导入 launch.json + 「追加参数」输入框：参数与 env 都是文本框，分词/拆行在后端做（与启动链路共用 `splitArgs` / `splitLines` / `parseEnvText`）；切换下拉、改追加参数都会写 `last`，重启 GUI 自动回填。MCP 侧 `xbume_app_launch` 增 `config` / `args` / `listConfigs`（仍是同一个工具，不新增工具名）：`listConfigs: true` 只列当前项目的配置与上次选择、不启动。
