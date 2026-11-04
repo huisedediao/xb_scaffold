@@ -6,6 +6,7 @@ class XBUmeConfig {
   final bool enableConsole;
   final bool enableRoute;
   final bool enablePerformance;
+  final bool enableMemory;
   final bool enableNetwork;
   final bool enableInspector;
   final bool enableWidgetLocator;
@@ -70,6 +71,7 @@ class XBUmeConfig {
     this.enableConsole = true,
     this.enableRoute = true,
     this.enablePerformance = true,
+    this.enableMemory = true,
     this.enableNetwork = true,
     this.enableInspector = true,
     this.enableWidgetLocator = true,
@@ -127,6 +129,7 @@ class XBUmeConfig {
     bool? enableConsole,
     bool? enableRoute,
     bool? enablePerformance,
+    bool? enableMemory,
     bool? enableNetwork,
     bool? enableInspector,
     bool? enableWidgetLocator,
@@ -165,6 +168,7 @@ class XBUmeConfig {
       enableConsole: enableConsole ?? this.enableConsole,
       enableRoute: enableRoute ?? this.enableRoute,
       enablePerformance: enablePerformance ?? this.enablePerformance,
+      enableMemory: enableMemory ?? this.enableMemory,
       enableNetwork: enableNetwork ?? this.enableNetwork,
       enableInspector: enableInspector ?? this.enableInspector,
       enableWidgetLocator: enableWidgetLocator ?? this.enableWidgetLocator,

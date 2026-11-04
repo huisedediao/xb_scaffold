@@ -16,6 +16,7 @@ export 'src/models/xb_ume_widget_node.dart';
 export 'src/persistence/xb_ume_persistence.dart';
 export 'src/plugins/network/xb_ume_dio_interceptor.dart';
 export 'src/plugins/locator/xb_ume_widget_locator_plugin.dart';
+export 'src/plugins/memory/xb_ume_memory_plugin.dart';
 export 'src/plugins/network/xb_ume_network_adapter.dart';
 export 'src/plugins/network/xb_ume_http_client.dart';
 export 'src/plugins/network/xb_ume_network_reporter.dart';

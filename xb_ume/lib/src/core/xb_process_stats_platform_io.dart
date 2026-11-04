@@ -14,6 +14,21 @@ typedef _GetPidNative = Int32 Function();
 typedef _GetPidDart = int Function();
 typedef _MallocNative = Pointer<Uint8> Function(IntPtr);
 typedef _MallocDart = Pointer<Uint8> Function(int);
+// Apple：mach task_threads 取线程数（与 Xcode 调试器看到的线程列表同一来源），
+// sysctlbyname("hw.memsize") 取系统物理内存总量。
+typedef _MachTaskSelfNative = Uint32 Function();
+typedef _MachTaskSelfDart = int Function();
+typedef _TaskThreadsNative = Int32 Function(
+    Uint32, Pointer<Uint32>, Pointer<Uint32>);
+typedef _TaskThreadsDart = int Function(int, Pointer<Uint32>, Pointer<Uint32>);
+typedef _MachPortDeallocateNative = Int32 Function(Uint32, Uint32);
+typedef _MachPortDeallocateDart = int Function(int, int);
+typedef _VmDeallocateNative = Int32 Function(Uint32, UintPtr, UintPtr);
+typedef _VmDeallocateDart = int Function(int, int, int);
+typedef _SysctlByNameNative = Int32 Function(
+    Pointer<Uint8>, Pointer<Uint8>, Pointer<UintPtr>, Pointer<Uint8>, UintPtr);
+typedef _SysctlByNameDart = int Function(
+    Pointer<Uint8>, Pointer<Uint8>, Pointer<UintPtr>, Pointer<Uint8>, int);
 // Windows：kernel32!GetProcessTimes + psapi!GetProcessMemoryInfo（全进程口径）。
 typedef _GetCurrentProcessNative = IntPtr Function();
 typedef _GetCurrentProcessDart = int Function();
@@ -30,6 +45,15 @@ _ProcPidRusageDart? _procPidRusage;
 _GetPidDart? _getpid;
 Pointer<Uint8>? _rusageBuf;
 Pointer<Uint8>? _procBuf;
+_MachTaskSelfDart? _machTaskSelf;
+_TaskThreadsDart? _taskThreads;
+_MachPortDeallocateDart? _machPortDeallocate;
+_VmDeallocateDart? _vmDeallocate;
+_SysctlByNameDart? _sysctlByName;
+Pointer<Uint8>? _threadBuf;
+Pointer<Uint8>? _sysctlNameBuf;
+Pointer<Uint8>? _sysctlValueBuf;
+Pointer<Uint8>? _sysctlLenBuf;
 bool _appleReady = false;
 bool _extensionInstalled = false;
 _GetCurrentProcessDart? _getCurrentProcess;
@@ -178,15 +202,61 @@ XBUmeProcessUsage? _appleUsage() {
     }
   }
   rss ??= _currentRss();
+  final threads = _appleThreadCount();
+  final totalMemory = _appleTotalMemory();
   if (cpuNs == null && rss == null) return null;
   return XBUmeProcessUsage(
     cpuNs: cpuNs,
     rss: rss,
     footprint: footprint,
     cpuCores: Platform.numberOfProcessors,
+    threads: threads,
+    totalMemory: totalMemory,
     cpuScope: 'core',
     platform: Platform.operatingSystem,
   );
+}
+
+/// 进程线程数：`task_threads` 返回的端口数组长度（与 Xcode 调试器线程列表同一来源）。
+/// 取到后必须归还每个线程端口并释放数组，否则每次采样都会漏 mach port。
+int? _appleThreadCount() {
+  final taskThreads = _taskThreads;
+  final self = _machTaskSelf;
+  final buf = _threadBuf;
+  if (taskThreads == null || self == null || buf == null) return null;
+  final task = self();
+  // 出参布局：偏移 0 = thread_act_array_t（指针），偏移 8 = count（4 字节）。
+  buf.cast<Uint64>()[0] = 0;
+  buf.cast<Uint32>()[2] = 0;
+  if (taskThreads(task, buf.cast(), buf.cast<Uint32>() + 2) != 0) return null;
+  final arrayAddr = buf.cast<IntPtr>()[0];
+  final count = buf.cast<Uint32>()[2];
+  if (arrayAddr != 0) {
+    final array = Pointer<Uint32>.fromAddress(arrayAddr);
+    final deallocPort = _machPortDeallocate;
+    if (deallocPort != null) {
+      for (var i = 0; i < count; i++) {
+        deallocPort(task, array[i]);
+      }
+    }
+    _vmDeallocate?.call(task, arrayAddr, count * 4);
+  }
+  return count > 0 ? count : null;
+}
+
+/// 系统物理内存总量：`sysctlbyname("hw.memsize")`，与 NSProcessInfo.physicalMemory 同值。
+int? _appleTotalMemory() {
+  final sysctlByName = _sysctlByName;
+  final name = _sysctlNameBuf;
+  final value = _sysctlValueBuf;
+  final len = _sysctlLenBuf;
+  if (sysctlByName == null || name == null || value == null || len == null) {
+    return null;
+  }
+  len.cast<UintPtr>()[0] = 8;
+  if (sysctlByName(name, value, len.cast(), nullptr, 0) != 0) return null;
+  final total = value.cast<Uint64>()[0];
+  return total > 0 ? total : null;
 }
 
 void _initApple() {
@@ -216,6 +286,35 @@ void _initApple() {
               _ProcPidRusageNative, _ProcPidRusageDart>('proc_pid_rusage');
     }
     if (malloc != null && _getpid != null) _procBuf = malloc(2048);
+  } catch (_) {}
+  try {
+    _machTaskSelf =
+        libc.lookupFunction<_MachTaskSelfNative, _MachTaskSelfDart>(
+            'mach_task_self');
+    _taskThreads = libc.lookupFunction<_TaskThreadsNative, _TaskThreadsDart>(
+        'task_threads');
+    _machPortDeallocate = libc.lookupFunction<
+        _MachPortDeallocateNative,
+        _MachPortDeallocateDart>('mach_port_deallocate');
+    _vmDeallocate = libc.lookupFunction<_VmDeallocateNative,
+        _VmDeallocateDart>('vm_deallocate');
+  } catch (_) {}
+  try {
+    _sysctlByName = libc.lookupFunction<_SysctlByNameNative,
+        _SysctlByNameDart>('sysctlbyname');
+    if (malloc != null) {
+      _threadBuf = malloc(16);
+      _sysctlLenBuf = malloc(16);
+      _sysctlValueBuf = malloc(16);
+      // 名字写进 C 字符串：“hw.memsize” + \0，进程生命周期内复用。
+      const key = 'hw.memsize';
+      final nameBuf = malloc(key.length + 1);
+      for (var i = 0; i < key.length; i++) {
+        nameBuf[i] = key.codeUnitAt(i);
+      }
+      nameBuf[key.length] = 0;
+      _sysctlNameBuf = nameBuf;
+    }
   } catch (_) {}
 }
 
@@ -251,6 +350,15 @@ XBUmeProcessUsage? _procUsage() {
   } catch (_) {}
   rss ??= _currentRss();
   final pss = _readPss(os == 'ohos');
+  int? threads;
+  try {
+    threads = parseProcStatusThreads(
+        File('/proc/self/status').readAsStringSync());
+  } catch (_) {}
+  int? totalMemory;
+  try {
+    totalMemory = parseMemTotalBytes(File('/proc/meminfo').readAsStringSync());
+  } catch (_) {}
   if (cpuNs == null && rss == null && pss == null) return null;
   return XBUmeProcessUsage(
     cpuNs: cpuNs,
@@ -258,57 +366,98 @@ XBUmeProcessUsage? _procUsage() {
     pss: pss?.$1,
     pssItems: pss?.$2,
     cpuCores: Platform.numberOfProcessors,
+    threads: threads,
+    totalMemory: totalMemory,
     cpuScope: (os == 'android' || os == 'ohos') ? 'total' : 'core',
     platform: os,
   );
 }
 
-/// 读取 PSS 总量与官方分类。优先整份 smaps（分类所需）；权限受限时退回
-/// smaps_rollup（只有总量）。HarmonyOS 对 /proc 有额外限制，读不到时返回 null，
-/// 前端自动降级到 RSS。
+/// `/proc/self/status` 的 `Threads:` 字段（行首可能是若干空格）。
+int? parseProcStatusThreads(String content) {
+  for (final line in content.split('\n')) {
+    final field = line.trimLeft();
+    if (!field.startsWith('Threads:')) continue;
+    final value = int.tryParse(field.substring(8).trim().split(RegExp(r'\s+')).first);
+    if (value != null && value > 0) return value;
+  }
+  return null;
+}
+
+/// `/proc/meminfo` 的 `MemTotal:`（单位 kB，返回字节）。
+int? parseMemTotalBytes(String content) {
+  for (final line in content.split('\n')) {
+    final field = line.trimLeft();
+    if (!field.startsWith('MemTotal:')) continue;
+    final kb =
+        int.tryParse(field.substring(9).trim().split(RegExp(r'\s+')).first);
+    if (kb != null && kb > 0) return kb * 1024;
+  }
+  return null;
+}
+
+/// 读取 PSS 总量与官方分类。
 ///
-/// 解析整份 smaps 是 O(映射数) 的字符串处理，属于主 isolate 开销，因此缓存
-/// 3 秒：PSS 变化慢，内存曲线仍然连续，CPU 百分比不受影响。
+/// 总量取自 `/proc/self/smaps_rollup`（642 字节）：Android 11+ 的
+/// `dumpsys meminfo` 与 Android Studio Memory Profiler 的 Total 都是这个
+/// 汇总值；逐 VMA 遍历整份 smaps 求和会系统性偏低（实测 API 31 低 ~13%），
+/// 不能直接当总量。
+///
+/// 分类只能用整份 smaps（rollup 没有分类）。读整份 smaps 要解码 2MB+ 文本、
+/// 串行 7 万行，开销明显，因此分类降频到 15 秒；总量仍然 3 秒一取。
+/// HarmonyOS 对 /proc 有额外限制，两个文件都读不到时返回 null，
+/// 前端自动降级到 RSS。
 int _pssAtMs = 0;
+int _pssItemsAtMs = 0;
 int? _pssTotal;
 Map<String, int>? _pssItems;
-bool _pssMissing = false;
 
 (int, Map<String, int>?)? _readPss(bool ohos) {
   final now = DateTime.now().millisecondsSinceEpoch;
-  if (now - _pssAtMs < 3000) {
-    if (_pssTotal != null) return (_pssTotal!, _pssItems);
-    if (_pssMissing) return null;
+  if (now - _pssAtMs >= 3000) {
+    _pssAtMs = now;
+    _pssTotal = _readRollupPss();
   }
-  _pssAtMs = now;
-  _pssTotal = null;
-  _pssItems = null;
-  _pssMissing = false;
-  try {
-    final entries = parseSmapsEntries(File('/proc/self/smaps').readAsStringSync());
-    final breakdown =
-        ohos ? ohosPssBreakdown(entries) : androidPssBreakdown(entries);
+  // 总量读不到时每次都用整份 smaps 兜底，再读不到就降级 RSS；
+  // 总量正常时分类每 15 秒刷一次就够。
+  final itemsTtl = _pssTotal == null ? 3000 : 15000;
+  if (now - _pssItemsAtMs >= itemsTtl) {
+    _pssItemsAtMs = now;
+    final breakdown = _readSmapsBreakdown(ohos);
     if (breakdown != null && breakdown.total > 0) {
-      _pssTotal = breakdown.total;
       _pssItems = breakdown.items;
-      return (breakdown.total, breakdown.items);
+      _pssTotal ??= breakdown.total;
     }
-  } catch (_) {}
+  }
+  if (_pssTotal != null) {
+    return (_pssTotal!, _pssItems);
+  }
+  return null;
+}
+
+/// `smaps_rollup` 的 `Pss:` 总量（字节）；读不到返 null。
+int? _readRollupPss() {
   try {
     final text = File('/proc/self/smaps_rollup').readAsStringSync();
     for (final line in text.split('\n')) {
-      // smaps_rollup 的字段行在不同内核上可能缩进，也可能顶格。
+      // 字段行在不同内核上可能缩进，也可能顶格。
       final field = line.trimLeft();
       if (!field.startsWith('Pss:')) continue;
       final kb = int.tryParse(field.substring(4).trim().split(RegExp(r'\s+')).first);
-      if (kb != null && kb > 0) {
-        _pssTotal = kb * 1024;
-        return (_pssTotal!, null);
-      }
+      return (kb != null && kb > 0) ? kb * 1024 : null;
     }
   } catch (_) {}
-  _pssMissing = true;
   return null;
+}
+
+/// 整份 smaps 按官方分类汇总；读不到返 null。
+XBUmePssBreakdown? _readSmapsBreakdown(bool ohos) {
+  try {
+    final entries = parseSmapsEntries(File('/proc/self/smaps').readAsStringSync());
+    return ohos ? ohosPssBreakdown(entries) : androidPssBreakdown(entries);
+  } catch (_) {
+    return null;
+  }
 }
 
 int? _currentRss() {

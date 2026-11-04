@@ -7,6 +7,8 @@ class XBUmeProcessUsage {
     this.pss,
     this.pssItems,
     this.cpuCores,
+    this.threads,
+    this.totalMemory,
     this.cpuScope = 'core',
     this.platform = '',
   });
@@ -30,6 +32,12 @@ class XBUmeProcessUsage {
 
   /// 逻辑核数，用于把进程 CPU 时间换算成「占总容量」的百分比。
   final int? cpuCores;
+
+  /// 进程线程数；平台不允许读取时为 null。
+  final int? threads;
+
+  /// 系统物理内存总量（字节）；平台不允许读取时为 null。
+  final int? totalMemory;
 
   /// CPU 百分比口径：`core` = 单核占满 100%（Xcode / top）；
   /// `total` = 全部核心容量合计 100%（Android Studio / DevEco Profiler）。

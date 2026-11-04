@@ -2,7 +2,7 @@
 
 `xb_ume` 是纯 Flutter 的 in-app 调试工具箱（思路参考 `flutter_ume`），由两部分组成：
 
-- **App 内面板**：悬浮球 + 底部面板，内置 Console / Route / Performance / Network / Inspector / Locator / Device / Storage 八个插件；
+- **App 内面板**：悬浮球 + 底部面板，内置 Console / Route / Performance / Memory / Network / Inspector / Locator / Device / Storage 九个插件；
 - **电脑端 GUI 工具箱**：本机 Web 页面，提供设备与调试会话管理、日志、时间轴、异常、沙盒、数据库、路由栈、Network、Storage、实例、截图、性能、自动化、对比等能力；
 - 另含 **IDE 跳转**（App 内点源码行尾 ↗ → 电脑端 IDE）、**命令行场景执行**（CLI / CI）与 **MCP 服务**（Qoder / Cursor / Claude Code 直连调试会话）。
 
@@ -33,6 +33,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | App 内 | Console | 捕获 `debugPrint` / Flutter 异常 / 平台异常，过滤、搜索、导出 |
 | App 内 | Route | 路由事件时间线（push / pop / replace / remove）及触发阶段、调用栈 |
 | App 内 | Performance | 逐帧 build / raster / total 耗时、平均 FPS、Jank 统计 |
+| App 内 | Memory | 进程内存（footprint / PSS）、CPU、线程数、系统总内存、FPS，含可拖动悬浮徽标 |
 | App 内 | Network | Dio / package:http / 自定义请求的完整记录与发起位置 |
 | App 内 | Inspector | Element 树快照、按类型/Key 搜索、节点详情 |
 | App 内 | Locator | 屏幕拾取组件：宽高、间距、组件链、源码位置、点行尾 ↗ 跳 IDE |
@@ -198,14 +199,14 @@ GUI 只监听 `127.0.0.1` 并校验 Host / Origin；启动时生成一次性访�
 
 1. `flutter run` 启动 App，控制台出现 `A Dart VM Service ... is available at: http://127.0.0.1:<port>/`；
 2. 打开 GUI，页头右侧的会话下拉框出现该会话（显示应用包名与端口）；
-3. App 内点击悬浮球，底部弹出面板并显示 8 个插件 Tab；
+3. App 内点击悬浮球，底部弹出面板并显示 9 个插件 Tab；
 4. 选中设备后，「日志」Tab 能看到 logcat / hilog / log stream 输出。
 
 ## 快速使用（App 内面板）
 
 - **打开/关闭**：点击悬浮球切换面板；**拖动**悬浮球可换位置（初始位置 `floatingInitialOffset`，默认 `(16, 180)`）。
 - **面板布局**：底部弹出、宽度铺满，高度由 `panelSize.height` 控制（默认 640，最小 280）；点面板外的遮罩或悬浮球关闭。
-- **插件 Tab**：按注册顺序排列，默认 `Route → Performance → Network → Console → Inspector → Locator → Device → Storage`；每个 Tab 内容在首次打开时创建并缓存。
+- **插件 Tab**：按注册顺序排列，默认 `Route → Performance → Memory → Network → Console → Inspector → Locator → Device → Storage`；每个 Tab 内容在首次打开时创建并缓存。
 - **数据上限**：各模块用环形缓冲限制条数（默认日志 400、路由 300、帧 600、网络 300），超出丢弃最早记录。
 - **快照持久化**：`persistenceEnabled: true` 时按 `persistenceDebounce`（默认 1s）防抖写 `Directory.systemTemp/<persistenceFileName>`，重启后恢复；默认关闭。
 
@@ -257,6 +258,21 @@ XBUme.log(
 **面板操作**：`Clear` 清空当前记录。
 
 **限制**：`maxPerformanceRecords` 默认 600，UI 节流 `performanceUiUpdateInterval`（默认 240ms）。这是**帧耗时**面板；电脑端 GUI「性能」Tab 的整进程 CPU / 内存是另一套指标，两者互补。
+
+### Memory
+
+**功能**：进程级资源监视，「App 内 Memory Tab」与「电脑端 GUI 性能 Tab」共用同一份采样实现（`XBUmeProcessStats`），两边读数一致。
+
+**展示**：`Current Memory`（主数字）、`Current RSS`、`Sample Count`，chips 行为 CPU / FPS / Threads / Footprint / Total Mem，以及最近 20 次采样的历史；`Floating memory badge` 开关可把 Mem / RSS / CPU / FPS / Threads / Sys Mem 贴到屏幕上的可拖动徽标里（默认关，打开后挂在根 Overlay 上，面板关闭也继续刷新）。
+
+**口径（对齐官方开发工具）**
+
+- 内存主数字：iOS / macOS 取 `phys_footprint`（Xcode 内存 gauge）；Android / 鸿蒙 取 `/proc/self/smaps_rollup` 的 PSS（Android 11+ 的 `dumpsys meminfo` 与 Android Studio Memory Profiler 的 Total 就是它），读不到时退回逐块 smaps 求和，再读不到回退 RSS。分类（Java / Native / Code / Stack / Graphics / Private Other / System）仍来自整份 `smaps`，15 秒刷一次。真机实测：Android（API 31）与 `dumpsys meminfo` 的 TOTAL PSS 差 <2%；鸿蒙与 `hidumper --mem` 的 Total Pss 扣除 `GL` + `Graph` 后差 <1%（这两个是 memtrack 的 GPU 显存，app 自己读不到）。
+- CPU：iOS / macOS 为整进程 user+sys，以单核占满 100%（Xcode 口径）；Android / 鸿蒙 以全部核心容量合计 100%（Android Studio / DevEco Profiler 口径）。
+- 线程数：Apple 走 mach `task_threads`（同 Xcode 调试器线程列表），Android / 鸿蒙 读 `/proc/self/status` 的 `Threads:`；系统总内存：Apple `sysctlbyname("hw.memsize")`（同 `NSProcessInfo.physicalMemory`），Android / 鸿蒙 `/proc/meminfo`。
+- FPS：最近 60 帧 `totalSpan` 平均（与 Performance Tab 同源帧数据），1 秒刷新。
+
+**限制**：Windows 桌面没有官方同类读数，线程数 / 总内存显示 `N/A`；鸿蒙对 `/proc` 有额外限制，读不到 PSS 时自动回退 RSS（主数字标签会随之变成 `Current Memory (RSS)`）；GPU memtrack 部分 app 内不可读，所以 Android 的 Graphics 分类、鸿蒙的 `GL` / `Graph`（真机上合计 150 MB 量级）都不计入主数字，与官方工具会差这一块。
 
 ### Network
 
@@ -426,6 +442,7 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 |---|---|---|
 | `enable` | `true` | 总开关；false 时不渲染悬浮球与面板 |
 | `enableConsole` / `enableRoute` / `enablePerformance` / `enableNetwork` | `true` | 各插件开关 |
+| `enableMemory` | `true` | Memory 插件开关（进程内存 / CPU / 线程数 / FPS，含悬浮徽标） |
 | `enableInspector` / `enableWidgetLocator` / `enableDevice` / `enableStorage` | `true` | 各插件开关 |
 | `captureDebugPrint` / `captureFlutterError` / `capturePlatformError` | `true` | 全局日志/异常钩子 |
 | `maxConsoleRecords` / `maxRouteRecords` / `maxPerformanceRecords` / `maxNetworkRecords` | `2000 / 300 / 600 / 300` | 各模块环形缓冲条数 |

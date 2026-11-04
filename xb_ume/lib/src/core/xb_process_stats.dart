@@ -3,15 +3,17 @@ import 'package:flutter/foundation.dart';
 import 'xb_process_stats_platform_stub.dart'
     if (dart.library.io) 'xb_process_stats_platform_io.dart' as platform;
 
-/// 进程级资源采样（CPU / 常驻内存 / footprint / PSS）。
+/// 进程级资源采样（CPU / 常驻内存 / footprint / PSS / 线程数 / 系统总内存）。
 ///
 /// CPU 覆盖进程内所有线程（Dart、UI、光栅、IO、平台线程）的 user+sys：
 /// iOS/macOS 按 Xcode 调试导航器口径以单核占满为 100%；Android/OHOS 按
 /// Android Studio / DevEco Profiler 口径以全部核心容量合计为 100%。
 /// 与 VM service 的 `getCpuSamples` 不同，后者只覆盖 Dart 主 isolate。
 ///
-/// GUI 通过服务扩展 `ext.xbume.processStats` 拉取；未注册（旧版 SDK /
-/// release 构建）时调用方回退到 isolate 采样。
+/// 两个消费方共用这一份实现，保证两边读数一致：
+/// - GUI 通过服务扩展 `ext.xbume.processStats` 拉取；未注册（旧版 SDK /
+///   release 构建）时调用方回退到 isolate 采样；
+/// - App 内 Memory 插件（`XBUmeMemoryPlugin`）每秒直接调 [sample]。
 class XBUmeProcessStats {
   XBUmeProcessStats._();
 
@@ -40,7 +42,34 @@ class XBUmeProcessStats {
     out['footprint'] = raw.footprint;
     out['pss'] = raw.pss;
     out['pssItems'] = raw.pssItems;
+    out['threads'] = raw.threads;
+    out['totalMemory'] = raw.totalMemory;
     out['platform'] = raw.platform;
+    // 主数字取官方工具口径：Android/OHOS 的 PSS（Android Studio Total /
+    // DevEco Memory 泳道）、Apple 的 phys_footprint（Xcode 内存 gauge），
+    // 都取不到时回退 RSS。`memoryScope` 告诉前端这个数字是什么口径。
+    final pss = raw.pss;
+    final footprint = raw.footprint;
+    final rss = raw.rss;
+    final int? primary;
+    final String scope;
+    if (pss != null && pss > 0) {
+      primary = pss;
+      scope = 'pss';
+    } else if (footprint != null && footprint > 0) {
+      primary = footprint;
+      scope = 'footprint';
+    } else if (rss != null && rss > 0) {
+      primary = rss;
+      scope = 'rss';
+    } else {
+      primary = null;
+      scope = '';
+    }
+    if (primary != null) {
+      out['primaryMemory'] = primary;
+      out['memoryScope'] = scope;
+    }
     final cores = raw.cpuCores ?? 1;
     out['cpuCores'] = cores;
     out['cpuScope'] = raw.cpuScope;

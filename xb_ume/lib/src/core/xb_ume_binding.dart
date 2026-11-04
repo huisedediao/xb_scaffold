@@ -13,6 +13,7 @@ import '../plugins/console/xb_ume_console_plugin.dart';
 import '../plugins/device/xb_ume_device_plugin.dart';
 import '../plugins/inspector/xb_ume_inspector_plugin.dart';
 import '../plugins/locator/xb_ume_widget_locator_plugin.dart';
+import '../plugins/memory/xb_ume_memory_plugin.dart';
 import '../plugins/network/xb_ume_network_plugin.dart';
 import '../plugins/performance/xb_ume_performance_plugin.dart';
 import '../plugins/route/xb_ume_route_plugin.dart';
@@ -87,6 +88,9 @@ class XBUmeBinding {
     }
     if (config.enablePerformance) {
       controller.registerPlugin(XBUmePerformancePlugin());
+    }
+    if (config.enableMemory) {
+      controller.registerPlugin(XBUmeMemoryPlugin());
     }
     if (config.enableNetwork) {
       controller.registerPlugin(XBUmeNetworkPlugin());

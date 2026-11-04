@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xb_ume/src/core/xb_process_stats.dart';
 import 'package:xb_ume/src/core/xb_process_stats_platform_io.dart';
@@ -45,6 +47,30 @@ void main() {
     expect((s['windowMs'] as num) > 0, isTrue);
     expect(s['cpuScope'], anyOf('core', 'total'));
     expect(s['platform'], isNotEmpty);
+  });
+
+  test('readProcessUsage 带线程数与系统总内存', () {
+    final usage = readProcessUsage();
+    expect(usage, isNotNull);
+    if (Platform.isMacOS || Platform.isIOS) {
+      // task_threads / sysctlbyname("hw.memsize") 在 Apple 平台必须能读到。
+      expect(usage!.threads, greaterThan(0));
+      expect(usage.totalMemory, greaterThan(0));
+    }
+  });
+
+  test('sample 给出主内存口径 primaryMemory / memoryScope', () {
+    XBUmeProcessStats.sample();
+    final s = XBUmeProcessStats.sample();
+    expect(s['primaryMemory'], isA<num>());
+    expect((s['primaryMemory'] as num) > 0, isTrue);
+    expect(s['threads'], isA<num>());
+    expect(s['totalMemory'], isA<num>());
+    // Apple 取 phys_footprint（Xcode 口径），为 0/不可用时才回退。
+    if (Platform.isMacOS || Platform.isIOS) {
+      expect(s['memoryScope'], 'footprint');
+      expect(s['footprint'], isA<num>());
+    }
   });
 
   test('windowsCpuNsFromFileTime 按 100ns 换算成纳秒', () {

@@ -13,12 +13,13 @@ void main() {
     expect(ids, contains('console'));
     expect(ids, contains('route'));
     expect(ids, contains('performance'));
+    expect(ids, contains('memory'));
     expect(ids, contains('network'));
     expect(ids, contains('inspector'));
     expect(ids, contains('widget_locator'));
     expect(ids, contains('device'));
     expect(ids, contains('storage'));
-    expect(ids.length, 8);
+    expect(ids.length, 9);
 
     binding.dispose();
   });
@@ -44,6 +45,7 @@ void main() {
         enableConsole: false,
         enableRoute: false,
         enablePerformance: false,
+        enableMemory: false,
         enableNetwork: false,
         enableInspector: false,
         enableWidgetLocator: false,
@@ -65,6 +67,7 @@ void main() {
         enableConsole: true,
         enableRoute: false,
         enablePerformance: false,
+        enableMemory: false,
         enableNetwork: true,
         enableInspector: false,
         enableWidgetLocator: false,

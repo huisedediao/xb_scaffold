@@ -37,9 +37,10 @@ class XBUmePssBreakdown {
 
 /// 解析 `/proc/self/smaps` 文本；无法解析出任何 Pss 时返回空列表。
 ///
-/// 每个映射块以非空白开头的头行开始：
-/// `start-end perms offset dev inode [pathname]`，随后是 `Pss: N kB`、
-/// `Private_Clean: N kB` 等字段（单位统一为 kB = 1024 字节）。
+/// 每个映射块以映射头行开始：`start-end perms offset dev inode [pathname]`，
+/// 随后是 `Pss: N kB`、`Private_Clean: N kB` 等字段（单位统一为
+/// kB = 1024 字节）。字段行在旧内核里缩进、新内核（Android 12+ / 5.x）顶格，
+/// 两者都必须能解析。
 List<XBUmeSmapsEntry> parseSmapsEntries(String text) {
   if (text.isEmpty) return const <XBUmeSmapsEntry>[];
   final entries = <XBUmeSmapsEntry>[];
@@ -49,13 +50,16 @@ List<XBUmeSmapsEntry> parseSmapsEntries(String text) {
   var privateDirty = 0;
   var sharedClean = 0;
   var sharedDirty = 0;
+  // 只有看到映射头之后的字段行才算数，避免乱码文本里的 `Pss:` 被误计。
+  var inBlock = false;
 
   void flush() {
-    if (pss > 0 ||
-        privateClean > 0 ||
-        privateDirty > 0 ||
-        sharedClean > 0 ||
-        sharedDirty > 0) {
+    if (inBlock &&
+        (pss > 0 ||
+            privateClean > 0 ||
+            privateDirty > 0 ||
+            sharedClean > 0 ||
+            sharedDirty > 0)) {
       entries.add(XBUmeSmapsEntry(
         name: name,
         pss: pss,
@@ -65,13 +69,12 @@ List<XBUmeSmapsEntry> parseSmapsEntries(String text) {
         sharedDirty: sharedDirty,
       ));
     }
+    inBlock = false;
   }
 
   for (final line in const LineSplitter().convert(text)) {
     if (line.isEmpty) continue;
-    final first = line.codeUnitAt(0);
-    if (first != 0x20 && first != 0x09) {
-      // 头行：先结算上一条映射，再记录新映射名。
+    if (_isHeaderLine(line)) {
       flush();
       name = _mappingName(line);
       pss = 0;
@@ -79,9 +82,11 @@ List<XBUmeSmapsEntry> parseSmapsEntries(String text) {
       privateDirty = 0;
       sharedClean = 0;
       sharedDirty = 0;
+      inBlock = true;
       continue;
     }
-    // 字段行在 smaps 中统一缩进，去掉缩进后再比较字段名。
+    if (!inBlock) continue;
+    // 字段行可能带缩进，先去掉缩进再比较字段名。
     final field = line.trimLeft();
     if (field.startsWith('Pss:')) {
       pss = _kb(field);
@@ -178,6 +183,18 @@ String _ohosCategory(String n) {
     return 'AnonPage Other';
   }
   return 'FilePage Other';
+}
+
+/// 是否为映射头行：`start-end perms ...`。首字符必为十六进制地址数字，
+/// 字段行（`Pss:` 等）首字符是字母或缩进，两者不会混淆。
+bool _isHeaderLine(String line) {
+  final c = line.codeUnitAt(0);
+  final isHex = (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x61 && c <= 0x66) ||
+      (c >= 0x41 && c <= 0x46);
+  if (!isHex) return false;
+  final dash = line.indexOf('-');
+  return dash > 0 && dash < 24;
 }
 
 String _mappingName(String header) {

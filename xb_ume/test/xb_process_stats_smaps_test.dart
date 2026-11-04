@@ -92,6 +92,26 @@ void main() {
       expect(parseSmapsEntries(''), isEmpty);
       expect(parseSmapsEntries('garbage\nPss: 1 kB\n'), isEmpty);
     });
+
+    test('新内核（Android 12+）字段行顶格也能解析', () {
+      // 实测 Android 12 / 5.x 内核的 smaps 字段行不再缩进，不能靠缩进判断。
+      const text = '12c00000-42c00000 rw-p 00000000 00:00 0   '
+          '[anon:dalvik-main space (region space)]\n'
+          'Name:           [anon:dalvik-main space (region space)]\n'
+          'Size:             786432 kB\n'
+          'KernelPageSize:        4 kB\n'
+          'Rss:              251404 kB\n'
+          'Pss:                1496 kB\n'
+          'Shared_Clean:          0 kB\n'
+          'Private_Clean:         0 kB\n'
+          'Private_Dirty:      1496 kB\n'
+          'VmFlags: rd wr mr mw me ac\n';
+      final entries = parseSmapsEntries(text);
+      expect(entries, hasLength(1));
+      expect(entries.single.name, '[anon:dalvik-main space (region space)]');
+      expect(entries.single.pss, 1496 * 1024);
+      expect(entries.single.privateDirty, 1496 * 1024);
+    });
   });
 
   group('androidPssBreakdown', () {

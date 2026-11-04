@@ -1,3 +1,15 @@
+## 0.5.0
+
+- App 内新增 **Memory** 插件（第 9 个 Tab，`id=memory`、图标 `Icons.memory`、`enableMemory` 默认开）：把原先放在宿主工程里的 Memory 面板整套搬进包里，宿主不再需要自己写插件、也不再需要任何原生通道。面板与旧实现保持一致——1s 刷新、`Current Memory` / `Current RSS` / `Sample Count`、CPU / FPS / Threads / Footprint / Total Mem 五个 chip、最近 20 次采样历史、`Floating memory badge` 开关（Mem / RSS / CPU / FPS / Threads / Sys Mem，可拖动，挂在根 Overlay 上，面板关闭继续刷新）。
+
+- 采样层复用包里已有的 `XBUmeProcessStats`（纯 Dart + FFI，与电脑端 GUI 性能 Tab 同源），因此手机端面板与 GUI 读数一致，也不再依赖 `MethodChannel('app/performance')`：iOS 内存仍是 `phys_footprint`（Xcode 内存 gauge 口径，`proc_pid_rusage`  与原生 `task_vm_info` 同源，数值不变）；**Android / 鸿蒙的主内存口径从 RSS 改为 PSS**，RSS 保留为第二行，`/proc` 读不到时自动回退 RSS 并把主 数字标签变成 `Current Memory (RSS)`。CPU 保持既有官方口径（Apple 单核 100% / Android·鸿蒙 全核容量 100%）；线程数与系统总内存改成包内实现（Apple `task_threads` + `sysctlbyname("hw.memsize")`，Android / 鸿蒙 `/proc/self/status` + `/proc/meminfo`）；FPS 改为直接读 `controller.frames` 的最近 60 帧（不再自己再挂 timings callback 与引用计数）。
+
+- **PSS 两处口径修正（真机对照 `dumpsys meminfo` 得出）**：① 总量改取 `/proc/self/smaps_rollup` 的 `Pss:`（642 字节）——Android 11+ 的 `dumpsys meminfo` 与 Android Studio Memory Profiler 的 Total 都是这个汇总值；逐 VMA 遍历整份 smaps 求和会系统性偏低（Android 12 / API 31 实测低约 13%，同一次读取里 rollup 为 272215 kB、逐块求和只有 234463 kB），所以它只用来出分类、不再当总量。② `parseSmapsEntries` 原来靠「行首空格」判断字段行，遇到新内核（Android 12+ / 5.x）字段行**不缩进**的格式会把 `Pss:` 当成映射头、解析出 0 条，一直静默退回 rollup；现在按「首字符为十六进制地址 + 含 `-`」识别映射头，新老内核都能解析，并补了一条顶格字段的单测。分类需要解码 2 MB+ 文本，因此降频到 15 秒一次，总量仍 3 秒一取。
+
+- `XBUmeProcessStats.sample()` 增补 `threads` / `totalMemory` / `primaryMemory` / `memoryScope`（`pss` / `footprint` / `rss`），纯增量键，电脑端 GUI 原有读取不受影响；徽标数值行加 `Flexible` + 省略号，窄屏 / 大字体下不再溢出。新增 `test/xb_ume_memory_plugin_test.dart`（解析、口径选择、面板与徽标结构、开关联动），`xb_process_stats_test` 补线程数 / 总内存 / `memoryScope` 断言。
+
+- 宿主工程迁移：升级到 `^0.5.0` 后删掉自己的 Memory 插件与 `XBSysMetricUtil`、以及 iOS `AppDelegate` 里的 `performanceChannel` 即可（详见 README 的 Memory 一节）。
+
 ## 0.4.0
 
 - AI 调试指令补上「三档重载级别」，并实测进程级重启闭环（用户场景：「有些修改需要重新运行才可以验证」）：原来的 prompt 只有「改完就热重载」+「改动大用 restart」，没有告诉模型**哪些改动连热重启都验不出来**，于是改完 pubspec / 原生 / `main()` 初始化后只热重启一次就敢下「已修复」的结论。现在第三步改写成三档：① `xbume_hot_reload {mode:"reload"}`（函数体 / widget / 文案）；② `{mode:"restart"}`（`initState` / 全局单例 / 路由表初值 / `main()` 初始化顺序，重跑 main 但**不会重装包、也不会重编原生**）；③ `xbume_app_launch {…, force:true}`（进程级重启，等于调试页先点「停止」再点「启动 / 复用」），并点名四类必须走 ③ 的改动：pubspec / 依赖与资源、原生侧（gradle / plist / 权限 / 插件注册 / MethodChannel 实现）、启动参数（`--dart-define` / flavor / 入口 target）、只在 app 启动那一刻读一次的东西；补两句兜底规则：「判断不了属于哪一档时按最重的来（force）」「重启后必须重新走一遍同样的路径再下结论」。实测（macOS example，`tmp_test/force_restart_probe.py`，不碰手机）：首启 31s 拿到 pid A → 再调一次返回 `reused:true`（同 pid、未重装包）→ 把 `main()` 首行启动标记改成 v2 后 `force:true`，24s 拿到新 pid B 且落盘日志里读到 `[[FORCE_PROBE]] boot v2` → `xbume_debug_control {action:"stop"}` 精确结束 pid B 与三个子进程。三档与「只能停自己拉起的会话」的限制同步写进 MCP_GUIDE 第 ⑦ 条（含三档对照表与实测数字）；`ai_prompt_test` 新增 1 项断言（三档存在 / 热重启边界 / 四类改动 / 兜底规则）。工具数与分组口径不变（仍 55 / env 8 / 默认 25）。
