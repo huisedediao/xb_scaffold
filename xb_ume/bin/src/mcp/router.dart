@@ -88,7 +88,9 @@ class PoolEntry {
       'version': version,
       'hasEval': tools.any((t) => t.name == 'xbume_eval'),
       'toolCount': tools.length,
-      'groups': <String>['core'],
+      // 从实际清单推导，和 worker 登记的口径一致（写死 ['core'] 会出现
+      // 「59 个工具但 groups 只有 core」这种自相矛盾的登记）。
+      'groups': tools.map((t) => t.group).toSet().toList()..sort(),
       'role': 'pool-entry',
       'poolMax': pool.max,
       'startedAt': DateTime.now().toIso8601String(),

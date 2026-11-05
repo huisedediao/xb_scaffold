@@ -8,7 +8,7 @@
 
 - 新增 core 工具 **`xbume_pool`**（`op`: `status` / `release` / `steal`，`slot?`）：看 5 个槽各绑给谁、在干什么、还剩多久、自己绑的是哪个；`release` 立刻让出；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。`xbume_clients` 末尾新增服务池段并带 `structured.pool`。`xbume mcp` 增 `--pool-entry` / `--pool-max <n>`（默认 5，1..9）/ `--slot <n>`（入口拉起时自动传入），worker 实例登记多一个 `poolSlot`。
 
-- **GUI**：`/api/pool`（GET 状态、POST `op=release|stop` 手动释放或按精确 pid 停掉某个 worker），「守护进程」页「MCP 服务」卡片下方新增 5 个槽的实时列表（谁绑着 / 在干什么 / 剩余时间）+ 每行「释放」「停止」；无名启动默认带 `--pool-entry`（具名实例仍是普通 worker）。GUI 单文件部署不引 `bin/src`，直接读同一份 `pool/slot-*.json`，字段名保持一致。
+- **GUI**：`/api/pool`（GET 状态、POST `op=release|stop` 手动释放或按精确 pid 停掉某个 worker），「守护进程」页「MCP 服务」卡片下方新增 5 个槽的实时列表（谁绑着 / 在干什么 / 剩余时间）+ 每行「释放」「停止」；无名启动默认带 `--pool-entry`（具名实例仍是普通 worker）。GUI 单文件部署不引 `bin/src`，直接读同一份 `pool/slot-*.json`，字段名保持一致。停止默认服务时把池里的 worker 一起收掉（否则「停止」之后还留一串 `pool-N` 进程）；状态探测跳过带 `poolSlot` 的实例端口（池 worker 也答 `initialize`，不跳过会被误判成「默认服务在跑」，46140 反而空着）。池入口的实例登记 `groups` 改成从实际工具清单推导（原来写死 `['core']`，与 `toolCount=59` 自相矛盾）。
 
 - 贴给 AI 的指令（`buildAiPrompt` 第零步）补两条：一个窗口（一条连接）绑一个实例、`xbume_pool` 看池 / `release` 让位、池满时先告诉人不要硬抢；「同一个助手开多个窗口」条目改成「走池入口时各自绑一个实例」。
 

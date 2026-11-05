@@ -9515,8 +9515,13 @@ String readMcpToken() {
 /// 探测本机 MCP 服务状态（供 /api/mcp）。
 Future<Map<String, Object?>> probeMcpStatus() async {
   final token = readMcpToken();
+  // 池里的 worker 也监听 46141..46149 并答 initialize，扫到它们会被误判成
+  // 「默认服务在跑」，于是点「启动」被拦住、46140 反而空着。按实例登记里的
+  // poolSlot 认出来跳过（它们是池成员，不是客户端该连的入口）。
+  final poolPorts = _poolWorkerPorts();
   // 端口被改到相邻值时也能发现；本机未监听端口会立刻 RST，扫 10 个不慢。
   for (var port = kMcpDefaultPort; port < kMcpDefaultPort + 10; port++) {
+    if (poolPorts.contains(port)) continue;
     final hit = await _probeMcpHttp(port, token);
     if (hit != null) return hit;
   }
@@ -9535,6 +9540,24 @@ Future<Map<String, Object?>> probeMcpStatus() async {
     'hint': 'dart run xb_ume:mcp（stdio）或 dart run xb_ume:mcp --http $kMcpDefaultPort',
     'hasToken': token.isNotEmpty,
   };
+}
+
+/// 池 worker 占的端口（实例登记里带 poolSlot 的那几个）。
+Set<int> _poolWorkerPorts() {
+  final out = <int>{};
+  try {
+    if (!_mcpInstancesDir.existsSync()) return out;
+    for (final e in _mcpInstancesDir.listSync()) {
+      if (e is! File || !e.path.endsWith('.json')) continue;
+      final rec = _readJsonMap(e);
+      if (rec['poolSlot'] == null) continue;
+      final p = int.tryParse('${rec['port'] ?? 0}') ?? 0;
+      if (p > 0) out.add(p);
+    }
+  } catch (_) {
+    // 读不到就正常扫（总比一个都不扫好）。
+  }
+  return out;
 }
 
 // ── MCP 服务启停（守护进程页的「启动/停止」）───────────────────────────
@@ -9899,10 +9922,22 @@ Future<Map<String, Object?>> stopMcp({String? name}) async {
       if (f.existsSync()) f.deleteSync();
     }
   } catch (_) {}
+  // 池入口停了，池里的 worker 就再没有入口调它们：一起收掉（只按池文件里
+  // 记的精确 pid），否则「停止」之后还留着一串 pool-N 进程在跑。
+  var poolStopped = 0;
+  if (want.isEmpty) {
+    for (var i = 1; i <= _kGuiPoolMax; i++) {
+      final r = releasePoolSlot(i, stopWorker: true);
+      if (r['killed'] == true) poolStopped++;
+    }
+  }
   return <String, Object?>{
     'ok': true,
     'name': want.isEmpty ? null : want,
-    'message': killed ? 'MCP 服务已停止（pid $pid）' : '进程 $pid 已不存在，已清理记录',
+    'poolStopped': poolStopped,
+    'message': killed
+        ? 'MCP 服务已停止（pid $pid）${poolStopped > 0 ? '，并停掉池里 $poolStopped 个实例' : ''}'
+        : '进程 $pid 已不存在，已清理记录',
   };
 }
 
