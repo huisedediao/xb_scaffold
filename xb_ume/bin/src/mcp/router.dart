@@ -33,6 +33,7 @@ class PoolEntry {
     this.allowEval = false,
     this.guiPort,
     this.deviceBackend = 'auto',
+    this.log,
     String? home,
     int? max,
   })  : home = home ?? xbUmeHome(),
@@ -53,6 +54,10 @@ class PoolEntry {
   final int? guiPort;
   final String deviceBackend;
 
+  /// 日志出口（mcp.dart 的 `_log`）：订阅式启动后 stdout 没人看，回收记录
+  /// 写进同一份 --log-file 才查得到。
+  final void Function(String)? log;
+
   final String home;
   final PoolStore pool;
 
@@ -64,13 +69,36 @@ class PoolEntry {
 
   // ── 生命周期 ──
 
+  /// 回收扫描间隔：绑定过期 / 进程残留都由它清掉（严格模式：空闲槽不留进程）。
+  static const Duration kPoolSweepEvery = Duration(seconds: 30);
+
+  bool _disposed = false;
+
   Future<HttpServer> serve() async {
     final hs = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+    unawaited(_sweepLoop());
     unawaited(_accept(hs));
     return hs;
   }
 
+  /// 后台回收：过期绑定、残留进程、已死进程一律收掉；有场景在跑的槽跳过。
+  Future<void> _sweepLoop() async {
+    while (!_disposed) {
+      try {
+        // 启动先扫一遍：上一个入口留下的进程不该继续占着槽。
+        final n = await pool.sweep();
+        if (n > 0) {
+          log?.call('[pool] 回收 $n 个槽（过期绑定 / 残留进程）');
+        }
+      } catch (_) {
+        // 池目录读写失败不该把入口带下去。
+      }
+      await Future<void>.delayed(kPoolSweepEvery);
+    }
+  }
+
   void dispose() {
+    _disposed = true;
     try {
       _hc.close(force: true);
     } catch (_) {
@@ -323,7 +351,7 @@ class PoolEntry {
 
     final text = await _forward(slot.port, body, sid);
     if (text == null) {
-      // 后端没了（崩了 / 被停）：退回绑定，下一次调用重新分配。
+      // 后端没了（崩了 / 被停）：释放并收掉这个槽，下一次调用会拉起全新实例。
       await pool.releaseFor(sid);
       final left = pool.boundSlots().length;
       _json(
@@ -331,8 +359,8 @@ class PoolEntry {
         mcpResult(
           id,
           McpToolResult.text(
-            '槽 ${slot.slot}（${slot.name}:${slot.port}）没有响应，已把绑定退回池'
-            '（现在 $left/${pool.max} 被绑）。重试一次通常会换到别的槽，'
+            '槽 ${slot.slot}（${slot.name}:${slot.port}）没有响应，已停掉它并把槽退回池'
+            '（现在 $left/${pool.max} 被绑）。重试一次会给你拉起一个全新实例，'
             '代价是当前会话要重新 xbume_sessions 选择。\n'
             '日志：$home/logs/${poolSlotName(slot.slot)}.log',
             isError: true,
@@ -349,15 +377,21 @@ class PoolEntry {
 
   // ── 分配 ──
 
-  /// 保证这条连接有一个能用的后端实例：已绑 → 续期；空闲 → 复用；没满 → 拉起；满 → null。
+  /// 保证这条连接有一个能用的后端实例：已绑 → 续期；空闲 → 拉起全新实例；满 → null。
+  ///
+  /// 严格模式：除了「自己一直绑着的那个」，不会复用任何别的进程——空闲槽里
+  /// 的残留进程由 [PoolStore.allocate] 杀掉，这里只负责拉起新的。
   Future<PoolSlot?> _ensureSlot(String sid, String tool) async {
     final mine = pool.mine(sid);
-    if (mine != null && mine.bindingId.isNotEmpty && pool.isBound(mine)) {
-      if (mine.port > 0 && pidAlive(mine.pid)) {
+    if (mine != null && mine.bindingId.isNotEmpty) {
+      final usable = mine.running || pool.isBound(mine);
+      if (usable && mine.port > 0 && pidAlive(mine.pid)) {
         unawaited(pool.renewFor(sid, note: tool));
         return mine;
       }
-      // 绑定还在但进程没了：清掉重新分配。
+      // 有场景在跑就别动它（端口/pid 异常也等它跑完，回收扫描会滚动续期）。
+      if (usable && mine.running) return mine;
+      // 过期或进程没了：释放（连带停实例），下面重新分配。
       await pool.releaseFor(sid);
     }
     final got = await pool.allocate(

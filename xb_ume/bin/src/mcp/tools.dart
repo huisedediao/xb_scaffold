@@ -735,9 +735,12 @@ McpTool _poolTool() => McpTool(
       name: 'xbume_pool',
       title: '服务池：我绑在哪个实例 / 释放 / 接管',
       description: '服务池最多 $kPoolMax 个 MCP 实例，每个实例带一个绑定标识（b-xxxxxx）。'
-          '一条连接（一个窗口）绑一个实例，${kPoolBindingTtl.inMinutes} 分钟不调用就回池；'
+          '一条连接（一个窗口）绑一个实例，${kPoolBindingTtl.inMinutes} 分钟不调用就回收；'
+          '回收后重绑会拉起**全新实例**（进程内的会话选择/场景状态不继承，'
+          '多会话时要重新 xbume_use_session）。'
           'op=status 看 5 个槽各绑给谁、在干什么、还剩多久；'
-          'release 立刻让出自己的槽；steal 接管最久没动的那个（确认对面已停手）。'
+          'release 立刻释放并停掉自己的实例；steal 接管最久没动的那个'
+          '（确认对面已停手，原实例会被停掉重建）。'
           '池都绑满时调用别的工具会直接返回排队信息，先 status 再决定等还是让。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{

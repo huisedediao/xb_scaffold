@@ -123,7 +123,7 @@ dart run xb_ume:mcp --http 46140
 | `--tool-groups <list>` | `all` 或逗号分隔；可用组：`act`、`device-write`、`debug`、`inspect`、`data`、`env`、`ai`（`core` / `diagnose` / `run-safe` 默认开） |
 | `--no-tool-groups` | 只暴露 core 组 |
 | `--device-backend <list>` | `auto`（默认）/ `adb,hdc,simctl,idevice` / `mobile-mcp` |
-| `--pool-entry` | 池入口：客户端只连这个端口，按连接（`Mcp-Session-Id`）自动分配后端实例——已绑续期 / 有空闲复用 / 没满就拉起 / 满 5 个直接回「需要排队」。`initialize`、`tools/list`、`ping`、`xbume_pool` 由入口本地回答，不占槽 |
+| `--pool-entry` | 池入口：客户端只连这个端口，按连接（`Mcp-Session-Id`）自动分配后端实例——已绑续期 / 空闲槽杀掉残留进程后拉起全新实例 / 没满就拉起 / 满 5 个直接回「需要排队」。`initialize`、`tools/list`、`ping`、`xbume_pool` 由入口本地回答，不占槽 |
 | `--pool-max <n>` | 池上限，默认 5（范围 1..9） |
 | `--slot <n>` | 池槽号：池入口拉起 worker 时自动传入，人工不用填 |
 | `--log-file <path>` | 日志同时追加到文件（GUI 启动时为 `~/.xb_ume_ide/logs/mcp.log`） |
@@ -241,19 +241,29 @@ dart run xb_ume:mcp --http 46140 --pool-entry --tool-groups all --allow-eval
 入口按连接（`Mcp-Session-Id`，没有则回落 `legacy`）分配后端实例并原样转发 JSON-RPC：
 
 - **已绑** → 续期后转发给它绑定的那个实例（每次 `tools/call` 续一次，TTL 10 分钟）；
-- **没绑、有空闲槽** → 复用（优先还活着的进程，其次最近用过的），并生成新的绑定标识；
+- **没绑、有空闲槽** → 杀掉槽里的残留进程，**拉起一个全新实例**再绑（一个绑定 = 一个干净进程）；
 - **没绑、没空闲但没满** → 自动拉起 `pool-N`（端口优先 46141+槽号，否则 46141-46149 扫描）；
 - **5 个都绑着** → 直接回「服务池已满（5/5 …）」+ 谁占着 / 在干什么 / 还剩多久 + 三条出路
   （等过期 / 让对方 `release` / 确认已停手后 `steal`），**不会**悄悄顶掉别人的实例。
 
+**严格模式：解绑就停实例，重绑一定是新进程。** 会话选择、场景运行状态、租约归属都只在
+原进程里（`ScenarioService` 的运行表还是进程级全局），复用等于把上一个人的状态交给下一个人，
+所以 `release` / 过期回收 / `steal` 都按池文件里的精确 pid 发 `SIGTERM` 并把槽归零。代价是
+重绑时多一次拉起（实测冷启动 1.30s，复用只要 0.07s），多会话时还要重新 `xbume_use_session`。
+
+入口每 30 秒扫一遍池（`sweep`）：过期绑定、残留进程、已死进程一律清掉；启动时先扫一次，
+把上一个入口留下的进程也收拾干净。**有自动化场景在跑就不回收**：worker 每 5 秒把「有没有
+未结束的场景」写进槽的 `running`，扫描看到只滚动续期，等场景跑完再收。
+
 `initialize` / `tools/list` / `ping` / `xbume_pool` 由入口本地回答，**不占槽**——GUI 的健康检查、
 AI 开窗先看工具清单都不会吃掉一个实例。池状态落盘在 `$XB_UME_HOME/pool/slot-<n>.json`
-（`slot / name / port / pid / bindingId / owner / client / boundAt / renewedAt / ttlMs / note`），
-可直接 `cat`；GUI「守护进程」页的「MCP 服务」卡片下方列出 5 个槽，可手动释放或停掉某个 worker。
+（`slot / name / port / pid / bindingId / owner / client / boundAt / renewedAt / ttlMs / note / running`），
+可直接 `cat`；GUI「守护进程」页的「MCP 服务」卡片下方列出 5 个槽，「释放」就是释放并停掉实例。
 
 - `xbume_pool {"op": "status"}`：5 个槽各绑给谁、在干什么、还剩多久、自己绑的是哪个；
-- `xbume_pool {"op": "release"}`：用完立刻把槽让回去；
-- `xbume_pool {"op": "steal", "slot": N}`：确认对面已停手后接管（省略 `slot` 取最久没续期的）。
+- `xbume_pool {"op": "release"}`：用完立刻释放并停掉自己的实例；
+- `xbume_pool {"op": "steal", "slot": N}`：确认对面已停手后接管（省略 `slot` 取最久没续期的），
+  原实例会被停掉、给你拉起新的。
 
 stdio 没法复用进程（客户端每个窗口各拉起一个），所以池只对 HTTP 入口生效；带 `--name` 的
 实例仍是普通 worker，不参与分配。
@@ -357,7 +367,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中；有 `launcher` 标记的会话由本服务或 GUI 拉起（`mcp拉起·可热重载(signal)` / `gui认领·可热重载(signal)` / `…·只读`），可直接复用。标记与 `xbume_hot_reload` 同源判定：`signal` = 发 `SIGUSR1`/`SIGUSR2`，`stdin` = 写自己进程 stdin，`none` = 没有通道（IDE 拉起） |
 | `xbume_use_session` | `sessionId`, `mode?`(drive/observe), `note?` | 选定后续工具默认会话，并读一次路由栈做连通性验证；顺手附一行自检结论（不发重载）。`mode: "drive"`（默认）会顺手申请会话租约（被别人占着则降级为 `observe` 并在文本里说明）；`observe` 只选不改，不碰租约 |
 | `xbume_clients` | — | 本机 MCP 实例与会话占用总览：每个实例的名字 / 端口 / pid / 是否带 `eval` / 工具数，每份租约「谁占着哪个会话、在干什么、还剩多久」，以及本实例当前会话，末尾附服务池 5 个槽的绑定情况。多 AI 并行干活前先看它 |
-| `xbume_pool` | `op`(status/release/steal), `slot?` | 服务池：一条连接（一个窗口）绑一个 MCP 实例，绑定标识 `b-xxxxxx`，10 分钟不调用自动回池。`status` 看 5 个槽各绑给谁 / 在干什么 / 还剩多久；`release` 用完立即让出；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。池满时调别的工具会直接回「需要排队」 |
+| `xbume_pool` | `op`(status/release/steal), `slot?` | 服务池：一条连接（一个窗口）绑一个 MCP 实例，绑定标识 `b-xxxxxx`，10 分钟不调用自动回收（连同实例一起停掉，重绑会拉起全新实例）。`status` 看 5 个槽各绑给谁 / 在干什么 / 还剩多久；`release` 用完立即释放并停实例；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。池满时调别的工具会直接回「需要排队」 |
 | `xbume_lease` | `op`(status/acquire/release/steal), `sessionId?`, `ttlMs?`, `waitMs?`, `note?` | 写操作的**会话租约**：`status` 看谁在驱动、`acquire` 申请（`waitMs` 可等对方释放，上限 30s）、`release` 用完立即让出来、`steal` 确认对方已停手后强制接管。默认 10 分钟 TTL，每次写操作续期；持有者进程退出即失效 |
 | `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs` |
 | `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |

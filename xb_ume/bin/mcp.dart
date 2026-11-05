@@ -252,6 +252,7 @@ Future<void> _runPoolEntry(
     allowEval: args.allowEval,
     guiPort: args.guiPort,
     deviceBackend: args.deviceBackend,
+    log: _log,
     max: args.poolMax,
   );
   HttpServer hs;
@@ -408,6 +409,25 @@ Future<void> main(List<String> argv) async {
     }
     final token = server.token;
     registerInstance();
+    // 池成员：告诉入口「我这里有没有场景在跑」。入口的回收扫描看到 running
+    // 就只续期不收，避免把跑到一半的自动化腰斩；场景结束后自动回到可回收。
+    Timer? poolReporter;
+    if (args.slot != null) {
+      // max 取池的上限（9）：入口可能用 --pool-max 开到 9，而这里只做
+      // “这个槽号存不存在”的范围校验。
+      final store = PoolStore(max: 9);
+      Future<void> report() async {
+        try {
+          await store.markRunning(args.slot!, scenarios.active?.done == false);
+        } catch (_) {
+          // 池目录写不了不该影响 MCP 服务。
+        }
+      }
+
+      unawaited(report());
+      poolReporter =
+          Timer.periodic(const Duration(seconds: 5), (_) => unawaited(report()));
+    }
     _log('xb_ume MCP $version · HTTP http://127.0.0.1:${args.httpPort}/mcp'
         ' · 实例 $instanceName');
     _log('token：$token（文件 ${tokenFile().path}）');
@@ -417,6 +437,7 @@ Future<void> main(List<String> argv) async {
     final done = Completer<void>();
     Future<void> shutdown() async {
       if (done.isCompleted) return;
+      poolReporter?.cancel();
       unregisterInstance();
       await hs.close(force: true);
       await server.close();

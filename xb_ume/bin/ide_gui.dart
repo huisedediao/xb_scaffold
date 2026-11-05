@@ -581,11 +581,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/pool') {
-      // 服务池卡片：5 个槽各绑给谁 / 还剩多久；POST 手动释放或停掉某个实例。
+      // 服务池卡片：5 个槽各绑给谁 / 还剩多久；POST 释放（连带停实例）。
       final op = (req.uri.queryParameters['op'] ?? 'status').trim();
       final slot = int.tryParse(req.uri.queryParameters['slot'] ?? '') ?? 0;
       final out = req.method == 'POST' && op != 'status'
-          ? releasePoolSlot(slot, stopWorker: op == 'stop')
+          ? releasePoolSlot(slot)
           : readPoolStatus();
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(out));
@@ -10011,11 +10011,12 @@ Map<String, Object?> readPoolStatus() {
   };
 }
 
-/// 手动释放一个槽（[stopWorker] 时连带停掉这个槽的实例进程）。
+/// 手动释放一个槽：**连实例一起停掉**（严格模式：重绑一定是新进程）。
 ///
-/// 正常情况用不着：绑定 10 分钟不续期就自己回池。这里是「对面已经没了 / 卡住」
-/// 的兜底——只按池文件里记的精确 pid kill，不做任何名字匹配。
-Map<String, Object?> releasePoolSlot(int slot, {bool stopWorker = false}) {
+/// 正常情况用不着：绑定 10 分钟不续期就自己回收（入口的扫描器负责）。
+/// 这里是「对面已经没了 / 卡住」的兜底——只按池文件里记的精确 pid kill，
+/// 不做任何名字匹配。
+Map<String, Object?> releasePoolSlot(int slot, {bool stopWorker = true}) {
   if (slot < 1 || slot > _kGuiPoolMax) {
     return <String, Object?>{'ok': false, 'message': '槽 $slot 不存在（1..$_kGuiPoolMax）'};
   }
@@ -10041,6 +10042,7 @@ Map<String, Object?> releasePoolSlot(int slot, {bool stopWorker = false}) {
       'boundAt': null,
       'renewedAt': null,
       'note': '',
+      'running': false,
       if (stopWorker) ...<String, Object?>{'pid': 0, 'port': 0},
     };
     final tmp = File('${f.path}.tmp');
@@ -10061,8 +10063,9 @@ Map<String, Object?> releasePoolSlot(int slot, {bool stopWorker = false}) {
     'slot': slot,
     'killed': killed,
     'message': stopWorker
-        ? '已释放槽 $slot${killed ? '，并停掉实例 pid $pid' : '（实例进程已不在）'}'
-        : '已释放槽 $slot 的绑定',
+        ? '已释放槽 $slot${killed ? '，并停掉实例 pid $pid' : '（实例进程已不在）'}，'
+            '下次调用会拉起全新实例'
+        : '已释放槽 $slot 的绑定（实例保留）',
   };
 }
 
@@ -15069,19 +15072,20 @@ function renderPool(d){
     var head = '槽 ' + s.slot + ' · ' + (s.name ? s.name + (s.port ? ':' + s.port : '') : '未启动');
     var body = s.bound
       ? '<b>' + esc(s.bindingId || '') + '</b> 给 ' + esc(s.owner || '未知') +
-        (s.note ? ' · ' + esc(s.note) : '') + ' · 还剩 ' + fmtPoolLeft(s.leftMs)
-      : (s.alive ? '空闲（进程还在，可直接复用）' : '空闲');
+        (s.note ? ' · ' + esc(s.note) : '') +
+        (s.running ? ' · 跑着场景' : '') + ' · 还剩 ' + fmtPoolLeft(s.leftMs)
+      : (s.running ? '空闲（有场景在跑，暂不回收）' : '空闲');
     var acts = s.bound
-      ? '<button onclick="poolOp(\'release\',' + s.slot + ')" title="把绑定退回池（实例进程保留）">释放</button>'
+      ? '<button onclick="poolOp(\'release\',' + s.slot + ')" title="释放绑定并停掉这个实例（下次调用会拉起全新实例）">释放并停实例</button>'
       : '';
-    if (s.alive) {
-      acts += '<button onclick="poolOp(\'stop\',' + s.slot + ')" title="释放绑定并停掉这个实例进程（按池文件里的 pid）">停此实例</button>';
+    if (s.alive && !s.bound) {
+      acts += '<button onclick="poolOp(\'stop\',' + s.slot + ')" title="停掉这个残留的实例进程（按池文件里的 pid）">停此实例</button>';
     }
     return '<div class="row" style="margin-top:2px"><span style="min-width:132px">' + head +
       '</span><span>' + body + '</span>' + acts + '</div>';
   });
   el.innerHTML = '<div><b>服务池</b> · 已绑 ' + d.bound + '/' + d.max +
-    ' · 一条连接一个实例，10 分钟不续期就回池</div>' + rows.join('');
+    ' · 一条连接一个实例，10 分钟不续期就回收（重绑会拉起全新实例）</div>' + rows.join('');
 }
 function poolOp(op, slot){
   fetch('/api/pool?op=' + op + '&slot=' + slot, { method: 'POST' })

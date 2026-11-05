@@ -1,8 +1,8 @@
-// 服务池：槽位分配 / 绑定 TTL / 续期 / 释放 / 接管 / 池满排队。
+// 服务池：槽位分配 / 绑定 TTL / 续期 / 释放 / 接管 / 池满排队 / 回收即杀。
 //
-// 场景：同一个助手开多个窗口。每个窗口一条连接，各绑一个实例；空闲的复用，
-// 没满就新建，5 个都绑满就回「需要排队」。这里用假的 now / pidAlive 把时间与
-// 进程存活都拿在手里，不碰真进程。
+// 场景：同一个助手开多个窗口。每个窗口一条连接，各绑一个实例；空闲槽一律
+// 杀掉残留进程、重绑拉起全新实例（严格模式）；没满就新建，5 个都绑满就回
+// 「需要排队」。这里用假的 now / pidAlive / kill 把时间与进程拿在手里。
 library;
 
 import 'dart:io';
@@ -15,18 +15,21 @@ void main() {
   late Directory tmp;
   late DateTime now;
   late Set<int> alive;
+  late List<int> kills;
 
   PoolStore store({int max = 5}) => PoolStore(
         home: tmp.path,
         max: max,
         now: () => now,
         pidAliveFn: (p) => alive.contains(p),
+        killFn: kills.add,
       );
 
   setUp(() {
     tmp = Directory.systemTemp.createTempSync('xbume_pool_test');
     now = DateTime(2026, 11, 5, 10);
     alive = <int>{};
+    kills = <int>[];
   });
 
   tearDown(() {
@@ -130,6 +133,87 @@ void main() {
     expect(c!.slot, 1);
   });
 
+  test('释放就停实例：严格模式下不把进程留给下一个人', () async {
+    final p = store();
+    final a = await p.allocate(owner: 'A', client: 'sid-a');
+    await p.attachWorker(a!.slot, name: 'pool-1', port: 46141, pid: 999);
+    alive.add(999);
+
+    expect(await p.releaseFor('sid-a'), isTrue);
+    expect(kills, contains(999));
+    final slot = p.list()[a.slot - 1];
+    expect(slot.pid, 0);
+    expect(slot.bindingId, isEmpty);
+  });
+
+  test('空闲槽不继承旧进程：重绑一定拉起新实例', () async {
+    final p = store();
+    final a = await p.allocate(owner: 'A', client: 'sid-a');
+    await p.attachWorker(a!.slot, name: 'pool-1', port: 46141, pid: 999);
+    alive.add(999);
+
+    // A 闲置过期、扫描器还没跑到：B 来分配也不会接管这个进程（拿空槽，pid=0
+    // 由调用方拉起新的），槽 1 的残留进程留给扫描器收。
+    now = now.add(const Duration(minutes: 11));
+    final b = await p.allocate(owner: 'B', client: 'sid-b');
+    expect(b!.pid, 0);
+    expect(b.slot, isNot(a.slot));
+    expect(p.list()[a.slot - 1].pid, 999); // 还没被动过
+
+    expect(await p.sweep(), 1);
+    expect(kills, contains(999));
+    expect(p.list()[a.slot - 1].pid, 0);
+  });
+
+  test('回收扫描：过期绑定与残留进程都清掉', () async {
+    final p = store();
+    final a = await p.allocate(owner: 'A', client: 'sid-a');
+    await p.attachWorker(a!.slot, name: 'pool-1', port: 46141, pid: 999);
+    alive.add(999);
+
+    expect(await p.sweep(), 0); // 还在有效期内，不动
+    now = now.add(const Duration(minutes: 11));
+    expect(await p.sweep(), 1);
+    expect(kills, contains(999));
+    final slot = p.list()[a.slot - 1];
+    expect(slot.pid, 0);
+    expect(slot.port, 0);
+    expect(slot.bindingId, isEmpty);
+  });
+
+  test('有场景在跑就不回收：只续期，等它跑完', () async {
+    final p = store();
+    final a = await p.allocate(owner: 'A', client: 'sid-a');
+    await p.attachWorker(a!.slot, name: 'pool-1', port: 46141, pid: 999);
+    alive.add(999);
+
+    now = now.add(const Duration(minutes: 11));
+    await p.markRunning(a.slot, true);
+    expect(await p.sweep(), 0);
+    expect(kills, isEmpty);
+    // 滚动续期：从这一刻重新算 TTL，别的连接抢不走。
+    expect(p.isBound(p.list()[a.slot - 1]), isTrue);
+
+    await p.markRunning(a.slot, false);
+    now = now.add(const Duration(minutes: 11));
+    expect(await p.sweep(), 1);
+    expect(kills, contains(999));
+  });
+
+  test('steal 会停掉原实例，接管方拿到干净槽', () async {
+    final p = store();
+    final a = await p.allocate(owner: 'A', client: 'sid-a');
+    await p.attachWorker(a!.slot, name: 'pool-1', port: 46141, pid: 999);
+    alive.add(999);
+
+    final text = await poolOpText(pool: p, client: 'sid-c', owner: 'C', op: 'steal');
+    expect(text, contains('原实例已停掉'));
+    expect(kills, contains(999));
+    final got = p.mine('sid-c')!;
+    expect(got.slot, a.slot);
+    expect(got.pid, 0);
+  });
+
   test('steal 接管最久没动的那个', () async {
     final p = store();
     await p.allocate(owner: 'A', client: 'sid-a');
@@ -209,9 +293,18 @@ void main() {
     expect(router, contains("req.headers.set('Mcp-Session-Id', sid)"));
     expect(router, contains("name == 'xbume_pool'"));
     expect(router, contains('_ensureSlot'));
+    // 严格模式靠入口的后台回收扫描兑现：过期/残留进程必须有人收。
+    expect(router, contains('kPoolSweepEvery'));
+    expect(router, contains('pool.sweep()'));
 
     final tools = File('bin/src/mcp/tools.dart').readAsStringSync();
     expect(tools, contains("name: 'xbume_pool'"));
+
+    // worker 上报自己槽里有没有场景在跑（否则回收扫描会把自动化腰斩）。
+    final poolSrc = File('bin/src/mcp/pool.dart').readAsStringSync();
+    expect(poolSrc, contains('markRunning'));
+    final mcpSrc2 = File('bin/mcp.dart').readAsStringSync();
+    expect(mcpSrc2, contains('markRunning'));
 
     // GUI 单文件部署不 import bin/src，只能守着四个接点都在：端点、无名启动带入口、
     // 读池状态、卡片容器（漏一个就会出现「服务在跑但卡片是空的」）。

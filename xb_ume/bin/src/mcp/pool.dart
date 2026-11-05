@@ -2,9 +2,14 @@
 //
 // 客户端永远只连**池入口**（默认 46140，见 router.dart）。入口按「连接」分配后端：
 //   1. 这条连接已经绑着某个槽 → 续期，继续用它（当前会话不丢）；
-//   2. 有槽空闲（没人绑 / 绑定过期 / 进程已死）→ 绑给它（优先还活着的，省一次拉起）；
+//   2. 有槽空闲（没人绑 / 绑定过期 / 进程已死）→ 绑给它，**杀掉残留进程、
+//      拉起一个全新实例**（严格模式：一个绑定 = 一个干净进程）；
 //   3. 没有空闲但池没满 → 拉起新实例再绑；
 //   4. 5 个都被别人绑着 → 不创建，直接回「需要排队」（谁占着 / 在干什么 / 还剩多久）。
+//
+// 严格模式：解绑就停掉实例，重绑一定是新进程。理由：会话选择、场景运行状态、
+// 租约归属都只在原进程里，复用会让下一个人看到上一个人留下的状态（场景状态
+// 还是进程级全局）。代价是每次重绑多一次拉起（实测约 1.3 秒）。
 //
 // 绑定 = 一条带 TTL 的记录：默认 10 分钟，每次工具调用续期，进程退出即失效。
 // 落盘 $XB_UME_HOME/pool/slot-<n>.json；GUI 是单文件部署、不 import bin/src，
@@ -60,6 +65,7 @@ class PoolSlot {
     this.ttlMs = 600000,
     this.note = '',
     this.error = '',
+    this.running = false,
   });
 
   final int slot;
@@ -90,6 +96,11 @@ class PoolSlot {
 
   /// 拉起失败原因（有值时这个槽不可用）。
   final String error;
+
+  /// 这个实例里有没有未结束的自动化场景（worker 定时上报）。
+  ///
+  /// 回收扫描看到它就只续期、不回收，避免把跑到一半的场景腰斩。
+  final bool running;
 
   DateTime? get expiresAt =>
       renewedAt?.add(Duration(milliseconds: ttlMs));
@@ -125,6 +136,7 @@ class PoolSlot {
       'expiresAt': expiresAt?.toIso8601String(),
       if (bindingId.isNotEmpty) 'leftMs': leftMs(n),
       'note': note,
+      if (running) 'running': true,
       if (error.isNotEmpty) 'error': error,
       if (mine != null) 'mine': mine,
     };
@@ -142,6 +154,7 @@ class PoolSlot {
     int? ttlMs,
     String? note,
     String? error,
+    bool? running,
     bool clearBinding = false,
   }) =>
       PoolSlot(
@@ -157,6 +170,7 @@ class PoolSlot {
         ttlMs: ttlMs ?? this.ttlMs,
         note: note ?? this.note,
         error: error ?? this.error,
+        running: running ?? this.running,
       );
 
   static PoolSlot? parse(int slot, Object? raw) {
@@ -175,6 +189,7 @@ class PoolSlot {
           kPoolBindingTtl.inMilliseconds,
       note: '${raw['note'] ?? ''}',
       error: '${raw['error'] ?? ''}',
+      running: raw['running'] == true,
     );
   }
 }
@@ -186,15 +201,27 @@ class PoolStore {
     int? max,
     DateTime Function()? now,
     bool Function(int pid)? pidAliveFn,
+    void Function(int pid)? killFn,
   })  : home = home ?? xbUmeHome(),
         max = max ?? poolMax(),
         _now = now ?? DateTime.now,
-        _alive = pidAliveFn ?? pidAlive;
+        _alive = pidAliveFn ?? pidAlive,
+        _kill = killFn ?? _sigterm;
 
   final String home;
   final int max;
   final DateTime Function() _now;
   final bool Function(int pid) _alive;
+
+  /// 回收实例用：只发 SIGTERM 到精确 pid，绝不按名字/命令行杀（本机常驻
+  /// 用户自己的 flutter 工具进程，模式匹配容易误伤）。
+  final void Function(int pid) _kill;
+
+  static void _sigterm(int pid) {
+    try {
+      Process.killPid(pid, ProcessSignal.sigterm);
+    } catch (_) {}
+  }
 
   Directory get _dir {
     final d = Directory('$home/pool');
@@ -273,9 +300,9 @@ class PoolStore {
 
   /// 分配：自己已绑 → 续期；否则挑一个空闲槽并绑上；没有空闲返回 null（池满）。
   ///
-  /// 返回的槽可能还没有可用的 worker 进程（`pid` 为 0 或已死），由调用方拉起
-  /// 之后用 [attachWorker] 补上端口与 pid。先绑后拉起是有意的：这样别的连接
-  /// 立刻看到这个槽被占，不会同时抢同一个槽。
+  /// 严格模式：空闲槽不继承上一个连接留下的进程。残留进程先杀掉，返回的槽
+  /// `pid` 一定是 0，由调用方拉起全新的 worker（场景状态/订阅/租约都只在原
+  /// 进程里，复用等于把上一个人的状态交给下一个人）。
   Future<PoolSlot?> allocate({
     required String owner,
     required String client,
@@ -285,21 +312,26 @@ class PoolStore {
       final now = _now();
       final slots = list();
       for (final s in slots) {
-        if (client.isNotEmpty && s.bindingId.isNotEmpty && s.client == client) {
+        if (client.isEmpty || s.bindingId.isEmpty || s.client != client) continue;
+        // 有场景在跑的槽即使绑定过期也续上（等它跑完再收）。
+        if (s.running || s.isBoundAt(now, _alive)) {
           return _renewLocked(s, owner: owner, note: note, now: now);
         }
+        // 过期绑定不复活：落到下面按空闲槽处理（残留进程会被杀掉）。
       }
       final free = slots.where((s) => !s.isBoundAt(now, _alive)).toList();
       if (free.isEmpty) return null;
-      // 还活着的优先（复用同一个进程，省一次拉起），其次最近用过的（VM 连接还热）。
-      free.sort((a, b) {
-        final ra = a.live(_alive) ? 0 : 1;
-        final rb = b.live(_alive) ? 0 : 1;
-        if (ra != rb) return ra - rb;
-        return (b.renewedAt?.millisecondsSinceEpoch ?? 0)
-            .compareTo(a.renewedAt?.millisecondsSinceEpoch ?? 0);
-      });
-      return _bindLocked(free.first, owner: owner, client: client, note: note, now: now);
+      // 优先空着 / 进程已死的槽（不用杀活的），按槽号从小到大。
+      var target = free.firstWhere(
+        (s) => s.pid == 0 || !_alive(s.pid),
+        orElse: () => free.first,
+      );
+      if (target.pid > 0) {
+        _kill(target.pid);
+        target = PoolSlot(slot: target.slot, name: target.name, ttlMs: target.ttlMs);
+        _write(target);
+      }
+      return _bindLocked(target, owner: owner, client: client, note: note, now: now);
     });
   }
 
@@ -309,10 +341,15 @@ class PoolStore {
     required String owner,
     required String client,
     String note = '',
+    bool killWorker = false,
   }) async {
     if (slot < 1 || slot > max) return null;
     return _withLock(() {
-      final s = _read(slot) ?? PoolSlot(slot: slot);
+      var s = _read(slot) ?? PoolSlot(slot: slot);
+      if (killWorker && s.pid > 0) {
+        _kill(s.pid);
+        s = PoolSlot(slot: slot, name: s.name, ttlMs: s.ttlMs);
+      }
       return _bindLocked(s, owner: owner, client: client, note: note, now: _now());
     });
   }
@@ -350,25 +387,72 @@ class PoolStore {
     });
   }
 
-  /// 释放这条连接的绑定（槽留着给下一个复用）。
-  Future<bool> releaseFor(String client) async {
+  /// 释放这条连接的绑定，并停掉实例（严格模式：下次重绑一定是新进程）。
+  Future<bool> releaseFor(String client, {bool stopWorker = true}) async {
     if (client.isEmpty) return false;
     return _withLock(() {
       final s = mine(client);
       if (s == null) return false;
-      _write(s.copyWith(clearBinding: true, note: ''));
+      if (stopWorker && s.pid > 0) _kill(s.pid);
+      _write(PoolSlot(slot: s.slot, name: s.name, ttlMs: s.ttlMs));
       return true;
     });
   }
 
-  /// 释放指定槽（force 时不看是谁的，GUI 强制接管用）。
-  Future<bool> releaseSlot(int slot, {bool force = false, String client = ''}) async {
+  /// 释放指定槽（force 时不看是谁的，GUI / steal 用）；默认连着进程一起停。
+  Future<bool> releaseSlot(
+    int slot, {
+    bool force = false,
+    String client = '',
+    bool stopWorker = true,
+  }) async {
+    if (slot < 1 || slot > max) return false;
     return _withLock(() {
       final s = _read(slot);
-      if (s == null || s.bindingId.isEmpty) return false;
-      if (!force && (client.isEmpty || s.client != client)) return false;
-      _write(s.copyWith(clearBinding: true, note: ''));
+      if (s == null) return false;
+      if (!force &&
+          s.bindingId.isNotEmpty &&
+          (client.isEmpty || s.client != client)) {
+        return false;
+      }
+      if (stopWorker && s.pid > 0) _kill(s.pid);
+      _write(PoolSlot(slot: s.slot, name: s.name, ttlMs: s.ttlMs));
       return true;
+    });
+  }
+
+  /// worker 上报自己槽里有没有未结束的自动化场景。
+  Future<void> markRunning(int slot, bool running) async {
+    if (slot < 1 || slot > max) return;
+    await _withLock(() {
+      final s = _read(slot);
+      if (s == null || s.running == running) return;
+      _write(s.copyWith(running: running));
+    });
+  }
+
+  /// 回收扫描：过期绑定 / 残留进程 / 已死进程一律清掉，槽归零。
+  ///
+  /// 有场景在跑的槽只滚动续期、不回收（否则跑到一半的自动化会被腰斩）。
+  /// 入口每 30 秒调一次；返回这一轮收了几个槽。
+  Future<int> sweep() async {
+    return _withLock(() {
+      final now = _now();
+      var n = 0;
+      for (final s in list()) {
+        if (s.running) {
+          if (s.bindingId.isNotEmpty && s.renewedAt != null) {
+            _write(s.copyWith(renewedAt: now));
+          }
+          continue;
+        }
+        if (s.isBoundAt(now, _alive)) continue;
+        if (s.bindingId.isEmpty && s.pid == 0 && s.error.isEmpty) continue;
+        if (s.pid > 0) _kill(s.pid);
+        _write(PoolSlot(slot: s.slot, name: s.name, ttlMs: s.ttlMs));
+        n++;
+      }
+      return n;
     });
   }
 
@@ -479,15 +563,15 @@ String poolSlotLine(Map<String, Object?> slot, {DateTime? now}) {
       : (port > 0 ? '$name:$port' : name);
   final mine = slot['mine'] == true;
   final b = '${slot['bindingId'] ?? ''}';
+  final running = slot['running'] == true;
   if (b.isEmpty) {
-    final idle = slot['state'] == 'idle';
-    return '槽 $no  $where  ·  空闲${idle ? '（进程还在，可直接复用）' : ''}';
+    return '槽 $no  $where  ·  空闲${running ? '（有场景在跑，暂不回收）' : ''}';
   }
   final left = poolLeft(DateTime.tryParse('${slot['expiresAt'] ?? ''}'), now: n);
   final note = '${slot['note'] ?? ''}';
   final err = '${slot['error'] ?? ''}';
   return '槽 $no  $where  ·  $b  ${slot['owner']}${mine ? '（你）' : ''}'
-      '${note.isEmpty ? '' : ' · 在 $note'} · 还剩 $left'
+      '${note.isEmpty ? '' : ' · 在 $note'}${running ? ' · 跑着场景' : ''} · 还剩 $left'
       '${err.isEmpty ? '' : ' · 拉起失败：$err'}';
 }
 
@@ -537,7 +621,8 @@ Future<String> poolOpText({
     case 'release':
       final ok = await pool.releaseFor(client);
       return ok
-          ? '已释放你的绑定，这个实例回到空闲池。'
+          ? '已释放你的绑定，并停掉了那个实例。下次调用会重新拉起一个全新实例'
+              '（约 1~2 秒），当前会话需要重新 xbume_use_session。'
           : '你当前没有绑定任何实例（xbume_pool{"op":"status"} 查看池状态）。';
     case 'steal':
       var target = slot;
@@ -555,12 +640,13 @@ Future<String> poolOpText({
         owner: owner,
         client: client,
         note: 'steal',
+        killWorker: true,
       );
       if (got == null) return '槽 $target 接管失败。';
       final was = prev.bindingId.isEmpty
           ? '空槽'
           : '${prev.bindingId} ${prev.owner}';
-      return '已接管槽 $target（原属 $was），新绑定 ${got.bindingId}。\n'
+      return '已接管槽 $target（原属 $was），原实例已停掉，下一次调用会给你拉起全新实例。\n'
           '对面下一次调用会看到「已被接管」，需要重新分配或另开一个。';
     case 'status':
     default:
