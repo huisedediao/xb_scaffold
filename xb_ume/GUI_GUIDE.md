@@ -152,8 +152,9 @@ GUI 在跑时，`--svc stop gui` / `restart` / `redeploy` 会把请求转给页�
 - `运行中 · HTTP <端口> · <N> 个工具`：探测经 `initialize` + `tools/list` 握手得到，同时列出访问地址、协议版本（仅本机回环，需 token）；
 - `运行中 · stdio · pid <pid>`：stdio 模式没有监听端口，只能按进程命令行识别，工具数在客户端会话里可见；
 - **复制 MCP 配置**：按当前运行状态生成可直接粘贴的客户端配置（stdio → `command/args`；HTTP → `url` + `X-XBUME-Token`），剪贴板被浏览器拦下时配置会同时展开在下方可手动选中；
-- **启动 / 停止**：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `~/.xb_ume_ide/logs/mcp.log`），点「停止」结束这个进程；重复启动是幂等的，不会起第二个实例。只停工具箱自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`），客户端以 stdio 拉起的要去客户端里关；
-- **能力范围**：`--tool-groups all` 一次开 57 个工具——默认 28 个（core / diagnose / run-safe）+ `act` / `device-write`（设备操作，高危需 `confirm`）+ `debug`6（断点、单步、调用栈、变量、运行输出，直连 VM，不依赖 GUI）+ `inspect`4（Widget 树、实例、性能/泄漏、双会话对比）+ `data`4（shared_prefs、SQLite、沙盒文件、表达式监听）+ `env`8（IDE 跳转、守护进程、路由定位、时间轴、GUI 日志历史、网络重放、异常 AI 归因、自动化）+ `ai`1（自然语言驱动）；后四组走 GUI 的 HTTP 接口，需要工具箱在跑。工具数由卡片的 `tools/list` 握手实时统计，重启服务后自动更新；
+- **启动 / 停止**：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --pool-entry --tool-groups all`（日志写 `~/.xb_ume_ide/logs/mcp.log`），点「停止」结束这个进程；重复启动是幂等的，不会起第二个实例。只停工具箱自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`），客户端以 stdio 拉起的要去客户端里关；
+- **服务池**：无名启动的默认服务是一个池入口（`--pool-entry`），客户端只连它一个地址，入口按连接给每个窗口分配后端实例——有闲的复用、没满就拉起、5 个都绑着就回「需要排队」。卡片下方列出 5 个槽：谁绑着（实例名 / 客户端名 / 绑定标识 `b-xxxxxx`）、在干什么、还剩多久，每行可「释放」（绑定退回池）或「停止」（按精确 pid 结束该 worker）。绑定 10 分钟不续期自动回池，AI 侧用 `xbume_pool` 查看 / 释放 / 接管；具名实例（「新建实例」起的）仍是普通 worker，不参与分配；
+- **能力范围**：`--tool-groups all` 一次开 58 个工具——默认 29 个（core 22 / diagnose / run-safe）+ `act` / `device-write`（设备操作，高危需 `confirm`）+ `debug`6（断点、单步、调用栈、变量、运行输出，直连 VM，不依赖 GUI）+ `inspect`4（Widget 树、实例、性能/泄漏、双会话对比）+ `data`4（shared_prefs、SQLite、沙盒文件、表达式监听）+ `env`8（IDE 跳转、守护进程、路由定位、时间轴、GUI 日志历史、网络重放、异常 AI 归因、自动化）+ `ai`1（自然语言驱动）；后四组走 GUI 的 HTTP 接口，需要工具箱在跑。工具数由卡片的 `tools/list` 握手实时统计，重启服务后自动更新；
 - **随工具箱启动**：勾上后每次打开工具箱自动拉起 MCP（写在 `config.json` 的 `mcpAutoStart`，默认关）；勾上时若服务未运行会立即拉起，取消勾选不会停掉正在跑的服务。
 
 注意：MCP 服务默认不开（没人调就不跑），也不随系统开机自启；需要时点「启动」、勾上「随工具箱启动」，或让客户端以 stdio 方式拉起（推荐）。工具清单与完整配置见 [MCP_GUIDE.md](MCP_GUIDE.md)。

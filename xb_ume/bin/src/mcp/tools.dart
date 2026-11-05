@@ -19,10 +19,12 @@ import '../scenario/expressions.dart';
 import '../scenario/gestures.dart';
 import '../scenario/inject.dart';
 import '../scenario/vm_client.dart';
+import 'client_scope.dart' show currentMcpClient;
 import 'debug_pool.dart';
 import 'gui_bridge.dart';
 import 'instances.dart';
 import 'lease.dart';
+import 'pool.dart';
 import 'protocol.dart';
 import 'scenario_service.dart';
 import 'session_check.dart';
@@ -418,6 +420,7 @@ List<McpTool> coreTools({bool allowEval = false}) => <McpTool>[
       _useSessionTool(),
       _sessionCheckTool(),
       _clientsTool(),
+      _poolTool(),
       _leaseTool(),
       _screenshotTool(),
       _findWidgetTool(),
@@ -702,6 +705,17 @@ McpTool _clientsTool() => McpTool(
               ' · ${leaseAgo(l.renewedAt, now: now)}续期'
               ' · 还有 ${leaseLeft(l, now: now)}');
         }
+        // 服务池：一连接一实例，绑定 10 分钟不续期就回池。
+        final pool = PoolStore(home: ctx.leases.home);
+        final client = currentMcpClient;
+        final poolSt = pool.status(mine: client);
+        final poolSlots =
+            (poolSt['slots'] as List<Object?>).cast<Map<String, Object?>>();
+        sb.writeln('服务池 ${poolSt['max']} 个槽（已绑 ${poolSt['bound']}，'
+            '空闲 ${poolSt['free']}）：');
+        for (final s in poolSlots) {
+          sb.writeln('  · ${poolSlotLine(s, now: now)}');
+        }
         return McpToolResult.text(sb.toString().trimRight(),
             structured: <String, Object?>{
               'instance': me,
@@ -709,10 +723,46 @@ McpTool _clientsTool() => McpTool(
               'port': ctx.instancePort,
               'currentSession': ctx.sessions.currentId,
               'instances': inst,
+              'pool': poolSt,
               'leases': leases
                   .map((l) => l.toJson(now: now, mine: me))
                   .toList(growable: false),
             });
+      },
+    );
+
+McpTool _poolTool() => McpTool(
+      name: 'xbume_pool',
+      title: '服务池：我绑在哪个实例 / 释放 / 接管',
+      description: '服务池最多 $kPoolMax 个 MCP 实例，每个实例带一个绑定标识（b-xxxxxx）。'
+          '一条连接（一个窗口）绑一个实例，${kPoolBindingTtl.inMinutes} 分钟不调用就回池；'
+          'op=status 看 5 个槽各绑给谁、在干什么、还剩多久；'
+          'release 立刻让出自己的槽；steal 接管最久没动的那个（确认对面已停手）。'
+          '池都绑满时调用别的工具会直接返回排队信息，先 status 再决定等还是让。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'op': prop('string', '操作',
+            enumValues: <String>['status', 'release', 'steal']),
+        'slot': prop('integer', 'steal 时指定槽号（1..$kPoolMax）；省略则接管最久没续期的'),
+      }),
+      handler: (ctx, args) async {
+        final store = PoolStore(home: ctx.leases.home);
+        final client = currentMcpClient;
+        final rawSlot = args['slot'];
+        final text = await poolOpText(
+          pool: store,
+          client: client,
+          owner: ownerLabel(ctx.leases.me),
+          op: (optionalString(args, 'op') ?? 'status').toLowerCase(),
+          slot: rawSlot is num
+              ? rawSlot.toInt()
+              : int.tryParse('${rawSlot ?? ''}'),
+        );
+        final now = DateTime.now();
+        return McpToolResult.text(text, structured: <String, Object?>{
+          'pool': store.status(mine: client),
+          'mine': store.mine(client)?.toJson(now: now, mine: true),
+        });
       },
     );
 

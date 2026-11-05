@@ -580,6 +580,18 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/api/pool') {
+      // 服务池卡片：5 个槽各绑给谁 / 还剩多久；POST 手动释放或停掉某个实例。
+      final op = (req.uri.queryParameters['op'] ?? 'status').trim();
+      final slot = int.tryParse(req.uri.queryParameters['slot'] ?? '') ?? 0;
+      final out = req.method == 'POST' && op != 'status'
+          ? releasePoolSlot(slot, stopWorker: op == 'stop')
+          : readPoolStatus();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(out));
+      await req.response.close();
+      return;
+    }
     if (path == '/api/mcp/start' && req.method == 'POST') {
       final r = await startMcp(name: req.uri.queryParameters['name']);
       req.response.headers.contentType = ContentType.json;
@@ -9786,9 +9798,12 @@ Future<Map<String, Object?>> startMcp({
         script.path,
         '--http',
         '$port',
-        // 实例名进租约：「谁在驱动这个会话」在 xbume_clients / 工具报错里直接可读。
         '--name',
         instanceName,
+        // 默认服务（没指定名字）当「池入口」：客户端只连这一个端口，入口按连接
+        // 把请求分给池里的实例（空闲复用 / 没满新建 / 5 个都满就排队）。
+        // 具名实例仍然是普通 worker（手动指定谁用哪个实例时用）。
+        if (want.isEmpty) '--pool-entry',
         '--tool-groups',
         'all',
         // 桥接类工具（data / env）要回过头调本进程的 /api/*，直接告诉它端口，
@@ -9888,6 +9903,131 @@ Future<Map<String, Object?>> stopMcp({String? name}) async {
     'ok': true,
     'name': want.isEmpty ? null : want,
     'message': killed ? 'MCP 服务已停止（pid $pid）' : '进程 $pid 已不存在，已清理记录',
+  };
+}
+
+// ── 服务池（与 bin/src/mcp/pool.dart 同名的目录与字段）──
+//
+// GUI 是单文件部署、不 import bin/src，所以这里直接读写 $XB_UME_HOME/pool 下的
+// slot-<n>.json；字段名与 PoolSlot.toJson 一字不差，两边互相看得懂。
+// 池的真正分配由 MCP 池入口做，GUI 只负责「看」和「手动释放 / 停掉实例」。
+const int _kGuiPoolMax = 5;
+
+String get _xbUmeDir {
+  final env = Platform.environment['XB_UME_HOME']?.trim() ?? '';
+  return env.isEmpty ? '$_home/.xb_ume_ide' : env;
+}
+
+Directory get _poolDir => Directory('$_xbUmeDir/pool');
+
+File _poolSlotFile(int slot) => File('${_poolDir.path}/slot-$slot.json');
+
+/// 读 5 个槽（含「谁绑着 / 还剩多久 / 进程还在吗」）。
+Map<String, Object?> readPoolStatus() {
+  final now = DateTime.now();
+  final slots = <Map<String, Object?>>[];
+  var bound = 0;
+  for (var i = 1; i <= _kGuiPoolMax; i++) {
+    Map<String, Object?> rec = const <String, Object?>{};
+    try {
+      final f = _poolSlotFile(i);
+      if (f.existsSync()) {
+        final j = jsonDecode(f.readAsStringSync());
+        if (j is Map) {
+          rec = j.map((k, v) => MapEntry(k.toString(), v));
+        }
+      }
+    } catch (_) {
+      // 半截文件当空槽。
+    }
+    final pid = int.tryParse('${rec['pid'] ?? 0}') ?? 0;
+    final alive = pid > 0 && _pidAlive(pid);
+    final bindingId = '${rec['bindingId'] ?? ''}';
+    final renewed = DateTime.tryParse('${rec['renewedAt'] ?? ''}');
+    final ttl = int.tryParse('${rec['ttlMs'] ?? ''}') ?? 600000;
+    final expires = renewed?.add(Duration(milliseconds: ttl));
+    // pid == 0 = 入口刚分配、正在拉起：算绑定有效（与 pool.dart 一致）。
+    final isBound = bindingId.isNotEmpty &&
+        expires != null &&
+        now.isBefore(expires) &&
+        (pid == 0 || alive);
+    if (isBound) bound++;
+    slots.add(<String, Object?>{
+      ...rec,
+      'slot': i,
+      'name': '${rec['name'] ?? ''}',
+      'port': int.tryParse('${rec['port'] ?? 0}') ?? 0,
+      'pid': pid,
+      'bindingId': bindingId,
+      'owner': '${rec['owner'] ?? ''}',
+      'note': '${rec['note'] ?? ''}',
+      'bound': isBound,
+      'alive': alive,
+      'leftMs': expires == null
+          ? 0
+          : expires.difference(now).inMilliseconds,
+    });
+  }
+  return <String, Object?>{
+    'max': _kGuiPoolMax,
+    'bound': bound,
+    'free': _kGuiPoolMax - bound,
+    'slots': slots,
+  };
+}
+
+/// 手动释放一个槽（[stopWorker] 时连带停掉这个槽的实例进程）。
+///
+/// 正常情况用不着：绑定 10 分钟不续期就自己回池。这里是「对面已经没了 / 卡住」
+/// 的兜底——只按池文件里记的精确 pid kill，不做任何名字匹配。
+Map<String, Object?> releasePoolSlot(int slot, {bool stopWorker = false}) {
+  if (slot < 1 || slot > _kGuiPoolMax) {
+    return <String, Object?>{'ok': false, 'message': '槽 $slot 不存在（1..$_kGuiPoolMax）'};
+  }
+  final f = _poolSlotFile(slot);
+  Map<String, Object?> rec = const <String, Object?>{};
+  try {
+    if (f.existsSync()) {
+      final j = jsonDecode(f.readAsStringSync());
+      if (j is Map) rec = j.map((k, v) => MapEntry(k.toString(), v));
+    }
+  } catch (_) {}
+  final pid = int.tryParse('${rec['pid'] ?? 0}') ?? 0;
+  if (rec.isEmpty && !stopWorker) {
+    return <String, Object?>{'ok': true, 'message': '槽 $slot 是空的'};
+  }
+  try {
+    final next = <String, Object?>{
+      ...rec,
+      'slot': slot,
+      'bindingId': '',
+      'owner': '',
+      'client': '',
+      'boundAt': null,
+      'renewedAt': null,
+      'note': '',
+      if (stopWorker) ...<String, Object?>{'pid': 0, 'port': 0},
+    };
+    final tmp = File('${f.path}.tmp');
+    tmp.parent.createSync(recursive: true);
+    tmp.writeAsStringSync(jsonEncode(next));
+    tmp.renameSync(f.path);
+  } catch (e) {
+    return <String, Object?>{'ok': false, 'message': '写池文件失败：$e'};
+  }
+  var killed = false;
+  if (stopWorker && pid > 0) {
+    try {
+      killed = Process.killPid(pid, ProcessSignal.sigterm);
+    } catch (_) {}
+  }
+  return <String, Object?>{
+    'ok': true,
+    'slot': slot,
+    'killed': killed,
+    'message': stopWorker
+        ? '已释放槽 $slot${killed ? '，并停掉实例 pid $pid' : '（实例进程已不在）'}'
+        : '已释放槽 $slot 的绑定',
   };
 }
 
@@ -11888,6 +12028,7 @@ const String guiHtml = r'''
     <div class="card">
       <div class="row"><b>MCP 服务</b><span id="mcp-status" class="muted">查询中…</span><button id="mcp-toggle" onclick="toggleMcp(this)">启动</button><button onclick="copyMcpConfig(this)">复制 MCP 配置</button><button onclick="refreshMcp(true)">刷新</button><label class="chk" style="margin-left:6px" title="勾选后再打开工具箱会自动拉起 MCP HTTP 服务（默认 46140）；取消勾选不会停掉正在运行的服务"><input type="checkbox" id="mcp-auto" onchange="setMcpAuto(this)">随工具箱启动</label><label class="chk" style="margin-left:6px" title="勾选后启动的 MCP 多开放 xbume_eval：可在 app 进程内求值任意表达式（能读写运行时状态），改了需重启服务才生效"><input type="checkbox" id="mcp-eval" onchange="setMcpEval(this)">允许 eval</label></div>
       <div id="mcp-detail" class="muted" style="margin-top:4px">让 Qoder / Cursor / Claude Code 直接驱动本机调试会话（会话发现、找组件、点击、场景、设备）；工具清单与配置示例见 MCP_GUIDE.md</div>
+      <div id="mcp-pool" class="muted" style="margin-top:6px;font-size:12px"></div>
     </div>
     <div class="card">
       <div class="row"><b>IDE 优先级</b><button onclick="resetIdeOrder()">恢复默认</button><button onclick="openConfig()">打开配置文件</button></div>
@@ -14867,12 +15008,57 @@ var mcpStatus = null;
 var mcpConfigShown = false;
 // 返回 Promise：供 copyMcpConfig 在首屏状态未到时等一次结果。
 function refreshMcp(force){
+  refreshPool();
   return fetch('/api/mcp').then(function(r){ return r.json(); }).then(function(d){
     mcpStatus = d;
     mcpApplyStatus(d, force);
   }).catch(function(){
     document.getElementById('mcp-status').textContent = '查询失败';
   });
+}
+// 服务池：5 个槽各绑给谁 / 还剩多久；可手动释放或停掉某个实例。
+// 分配由 MCP 池入口做，这里只负责「看」与兜底。
+function refreshPool(){
+  return fetch('/api/pool').then(function(r){ return r.json(); }).then(renderPool)
+    .catch(function(){});
+}
+function fmtPoolLeft(ms){
+  if (!ms || ms <= 0) return '已过期';
+  var min = Math.ceil(ms / 60000);
+  return min < 1 ? Math.ceil(ms / 1000) + ' 秒' : min + ' 分钟';
+}
+function renderPool(d){
+  var el = document.getElementById('mcp-pool');
+  if (!el || !d || !d.slots) return;
+  var rows = d.slots.map(function(s){
+    var head = '槽 ' + s.slot + ' · ' + (s.name ? s.name + (s.port ? ':' + s.port : '') : '未启动');
+    var body = s.bound
+      ? '<b>' + esc(s.bindingId || '') + '</b> 给 ' + esc(s.owner || '未知') +
+        (s.note ? ' · ' + esc(s.note) : '') + ' · 还剩 ' + fmtPoolLeft(s.leftMs)
+      : (s.alive ? '空闲（进程还在，可直接复用）' : '空闲');
+    var acts = s.bound
+      ? '<button onclick="poolOp(\'release\',' + s.slot + ')" title="把绑定退回池（实例进程保留）">释放</button>'
+      : '';
+    if (s.alive) {
+      acts += '<button onclick="poolOp(\'stop\',' + s.slot + ')" title="释放绑定并停掉这个实例进程（按池文件里的 pid）">停此实例</button>';
+    }
+    return '<div class="row" style="margin-top:2px"><span style="min-width:132px">' + head +
+      '</span><span>' + body + '</span>' + acts + '</div>';
+  });
+  el.innerHTML = '<div><b>服务池</b> · 已绑 ' + d.bound + '/' + d.max +
+    ' · 一条连接一个实例，10 分钟不续期就回池</div>' + rows.join('');
+}
+function poolOp(op, slot){
+  fetch('/api/pool?op=' + op + '&slot=' + slot, { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      refreshPool();
+      if (d.ok !== true) {
+        var det = document.getElementById('mcp-detail');
+        if (det) det.innerHTML = '<span class="bad">' + esc(d.message || '操作失败') + '</span>';
+      }
+    })
+    .catch(function(){});
 }
 // 状态行/按钮/开关总是跟着刷新；详情区在用户点过「复制」后不被覆盖
 // （否则 15 秒轮询把配置文本冲掉，剪贴板被拦时没兑底）。

@@ -42,7 +42,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 | 电脑端 | GUI 工具箱 | 15 个 Tab，覆盖设备/日志/沙盒/数据库/路由/网络/性能/自动化/调试等 |
 | App 内 / 电脑端 | IDE 跳转 | 点源码行尾 ↗ 或 GUI 栈帧「跳转」→ 在 VS Code / Android Studio 等打开对应行列 |
 | 命令行 | `xb_ume run` | 同一份场景 JSON 在 CI 中回放并产出 HTML 报告 |
-| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：断点单步、控件树、实例/性能/泄漏、共享存储/数据库/沙盒、路由/网络/时间轴、日志（全量落盘分页读 + app 内日志文件 + GUI 日志历史 + 设备系统日志）、IDE 跳转与守护进程，共 57 个工具（多 AI 并行时一台机器可跑多个实例，靠实例名 + 会话租约排队） |
+| 电脑端 | MCP 服务 | Qoder / Cursor / Claude Code 直连：断点单步、控件树、实例/性能/泄漏、共享存储/数据库/沙盒、路由/网络/时间轴、日志（全量落盘分页读 + app 内日志文件 + GUI 日志历史 + 设备系统日志）、IDE 跳转与守护进程，共 58 个工具（多 AI 并行时一台机器可跑多个实例，靠实例名 + 会话租约排队；也可只连一个池入口，按连接自动分配最多 5 个实例） |
 
 ## 环境与平台支持
 
@@ -685,9 +685,9 @@ AI 自己不用管——**stdio 配置里写死 `--name` 最省事**（每个客
 }
 ```
 
-默认暴露 28 个工具（core 21 + diagnose 4 + run-safe 3）：会话发现/选定、**会话自检（`xbume_session_check`：一次告诉你 VM 通不通、是不是这台设备/这个项目、截图 / 点按 / 读状态能不能用、热重载走哪条通道）**、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志（app 内缓冲 + `flutter run` 全量落盘文件的分页读）、设备系统日志（logcat / hilog / iOS log）、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 / GUI 拉起的 `flutter run` 发热重载/热重启（POSIX 发 `SIGUSR1`/`SIGUSR2`，不再往管道写 `r`）。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
+默认暴露 29 个工具（core 22 + diagnose 4 + run-safe 3）：会话发现/选定、**会话自检（`xbume_session_check`：一次告诉你 VM 通不通、是不是这台设备/这个项目、截图 / 点按 / 读状态能不能用、热重载走哪条通道）**、截图、找组件、点击/输入/滑动、路由、网络（含请求/响应详情）、日志（app 内缓冲 + `flutter run` 全量落盘文件的分页读）、设备系统日志（logcat / hilog / iOS log）、结构化异常与时间轴、场景运行与报告、设备发现与启动、向自建 / GUI 拉起的 `flutter run` 发热重载/热重启（POSIX 发 `SIGUSR1`/`SIGUSR2`，不再往管道写 `r`）。按键 / 原生点击 / 保持屏幕常亮需 `--tool-groups act`；装包/卸包/停进程（高危，需 `confirm`）需 `--tool-groups act,device-write`；`--device-backend` 选择 adb/hdc/simctl/idevice 或可选的 mobile-mcp（默认不启用）。加 `--allow-eval` 再多出 `xbume_eval`（在 app 进程内求值单行表达式，可读可改运行时状态），默认关。
 
-另五组按需开启，`--tool-groups all` 共 57 个工具：
+另五组按需开启，`--tool-groups all` 共 58 个工具（加 `--allow-eval` 是 59 个）：
 
 - `debug`（6）：断点（含条件与日志断点、落盘与恢复）、暂停/继续/单步、调用栈、变量树、暂停帧求值、运行输出与源码窗口——直连 VM service，不依赖 GUI；
 - `inspect`（4）：Widget 树与点选、实例查找/字段树/改值、CPU/内存/帧快照与泄漏检测、双会话场景对比；

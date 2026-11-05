@@ -8,6 +8,9 @@
 //   --stdio                  stdio 传输（默认）
 //   --http <port>            Streamable HTTP 传输（默认 46140；仅绑 127.0.0.1）
 //   --name <name>            实例名（多个 AI 各跑一个进程时用来区分谁在驱动）
+//   --pool-entry             池入口：听一个端口，按连接把请求分给池里的实例
+//   --pool-max <n>           池上限（默认 5，1..9）
+//   --slot <n>               池槽号（由池入口拉起时传入，只用于登记）
 //   --uri <port|ws-url>      手工指定会话（跳过自动发现，可重复）
 //   --tool-groups <list>     all 或逗号分隔的组名：inspect,act,device-write,
 //                            debug,data,env（ai/ide 预留）
@@ -29,6 +32,8 @@ import 'src/mcp/bridge_tools.dart';
 import 'src/mcp/debug_tools.dart';
 import 'src/mcp/device_tools.dart';
 import 'src/mcp/instances.dart';
+import 'src/mcp/pool.dart';
+import 'src/mcp/router.dart';
 import 'src/mcp/scenario_service.dart';
 import 'src/mcp/server.dart';
 import 'src/mcp/session_registry.dart';
@@ -48,6 +53,10 @@ xb_ume MCP 服务
                            多个 AI 并行时各跑一个进程、各取一个名字，租约里就能看出
                            是谁在驱动会话
   --uri <port|ws-url>      手工指定 VM service 会话（跳过自动发现，可重复）
+  --pool-entry             池入口：客户端只连这一个端口，按连接自动分配实例
+                           （空闲复用 / 没满新建 / 5 个都满则回「需要排队」）
+  --pool-max <n>           池上限（默认 5，1..9）
+  --slot <n>               池槽号（池入口拉起时自动传入，人工不用填）
   --tool-groups <list>     all 或逗号分隔：inspect,act,device-write,debug,data,env
   --no-tool-groups         只暴露核心工具
   --allow-eval             启用 xbume_eval（默认关；可读/改 app 内运行时状态）
@@ -57,9 +66,11 @@ xb_ume MCP 服务
   -h, --help               显示帮助
   --version                显示版本
 
-默认工具 28 个（core 21 + diagnose 4 + run-safe 3）；有副作用的组需显式开启。
+默认工具 29 个（core 22 + diagnose 4 + run-safe 3）；有副作用的组需显式开启。
 加 --allow-eval 多出 xbume_eval，加 --tool-groups all 多出调试 / 数据 / 观测类工具。
 多个 AI 共用一个 app 时，写操作要拿会话租约：被占会报 busy，只读旁路随时可用。
+多窗口 / 多 AI 想各自独占一个实例：用 --pool-entry 起一个入口，客户端只连它，
+入口按连接分配池里的实例（最多 5 个），绑满就回「需要排队」。
 HTTP 模式 token 首次运行生成在 \$XB_UME_HOME/mcp.token。
 ''';
 
@@ -67,6 +78,9 @@ class _Args {
   bool http = false;
   int httpPort = 46140;
   String name = '';
+  bool poolEntry = false;
+  int? poolMax;
+  int? slot;
   bool noToolGroups = false;
   String toolGroups = '';
   bool allowEval = false;
@@ -106,6 +120,15 @@ _Args _parseArgs(List<String> argv) {
         break;
       case '--name':
         a.name = next('--name');
+        break;
+      case '--pool-entry':
+        a.poolEntry = true;
+        break;
+      case '--pool-max':
+        a.poolMax = int.tryParse(next('--pool-max'));
+        break;
+      case '--slot':
+        a.slot = int.tryParse(next('--slot'));
         break;
       case '--uri':
         a.uris.add(next('--uri'));
@@ -210,6 +233,60 @@ void _log(String s) {
   }
 }
 
+/// 池入口：不干活（不碰 VM / 设备），只按连接把请求分给池里的实例。
+///
+/// 入口自己也要答 initialize / tools/list（GUI 健康检查、AI 开窗看工具），所以
+/// 工具清单在入口进程里也建一份；真正的 tools/call 全部转发给后端。
+Future<void> _runPoolEntry(
+  _Args args,
+  String version,
+  List<McpTool> enabled,
+  Set<String> groups,
+) async {
+  final entry = PoolEntry(
+    port: args.httpPort,
+    version: version,
+    token: ensureToken(),
+    tools: enabled,
+    toolGroups: groups.join(','),
+    allowEval: args.allowEval,
+    guiPort: args.guiPort,
+    deviceBackend: args.deviceBackend,
+    max: args.poolMax,
+  );
+  HttpServer hs;
+  try {
+    hs = await entry.serve();
+  } on SocketException catch (e) {
+    _log('端口 ${args.httpPort} 无法监听：${e.message}');
+    _log('换一个端口：dart run xb_ume:mcp --http 46141 --pool-entry');
+    exit(2);
+  }
+  final rec = entry.register();
+  _log('xb_ume MCP 池入口 $version · http://127.0.0.1:${args.httpPort}/mcp'
+      ' · 池 ${rec['poolMax']} 个槽'
+      ' · 绑定 ${kPoolBindingTtl.inMinutes} 分钟不续期就回池');
+  _log('token：${entry.token}（文件 ${tokenFile().path}）');
+  _log('工具 ${enabled.length} 个（入口只答清单，实际调用分给后端实例）');
+  _log('配置片段：');
+  _log(mcpConfigSnippet(httpUrl: 'http://127.0.0.1:${args.httpPort}/mcp'));
+  final done = Completer<void>();
+  Future<void> shutdown() async {
+    if (done.isCompleted) return;
+    entry.unregister();
+    await hs.close(force: true);
+    entry.dispose();
+    done.complete();
+  }
+
+  ProcessSignal.sigint.watch().listen((_) => shutdown());
+  if (!Platform.isWindows) {
+    ProcessSignal.sigterm.watch().listen((_) => shutdown());
+  }
+  await done.future;
+  exit(0);
+}
+
 Future<void> main(List<String> argv) async {
   _Args args;
   try {
@@ -244,6 +321,21 @@ Future<void> main(List<String> argv) async {
   } on FormatException catch (e) {
     _log(e.message);
     exit(2);
+  }
+
+  // 工具清单先建：池入口本地也要答 tools/list（和 worker 用同一份，避免两边不一致）。
+  final all = <McpTool>[
+    ...coreTools(allowEval: args.allowEval),
+    ...deviceTools(),
+    ...debugTools(),
+    ...bridgeTools(),
+    ...toolboxTools(),
+  ];
+  final enabled = all.where((t) => groups.contains(t.group)).toList();
+
+  if (args.poolEntry) {
+    await _runPoolEntry(args, version, enabled, groups);
+    return;
   }
 
   final registry = SessionRegistry(
@@ -283,14 +375,6 @@ Future<void> main(List<String> argv) async {
     instanceName: instanceName,
     instancePort: args.http ? args.httpPort : 0,
   );
-  final all = <McpTool>[
-    ...coreTools(allowEval: args.allowEval),
-    ...deviceTools(),
-    ...debugTools(),
-    ...bridgeTools(),
-    ...toolboxTools(),
-  ];
-  final enabled = all.where((t) => groups.contains(t.group)).toList();
   final server = McpServer(
     ctx: ctx,
     version: version,
@@ -308,6 +392,7 @@ Future<void> main(List<String> argv) async {
         'hasEval': args.allowEval,
         'toolCount': enabled.length,
         'groups': groups.toList()..sort(),
+        if (args.slot != null) 'poolSlot': args.slot,
         'startedAt': DateTime.now().toIso8601String(),
       });
   void unregisterInstance() => removeInstance(instanceName, onlyPid: pid);

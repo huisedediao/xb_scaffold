@@ -1,3 +1,19 @@
+## 0.9.0
+
+- **MCP 服务池 + 实例绑定**（用户：「每个 mcp 服务，都给一个绑定标识，也是自动续期和过期制，如果已经被绑了，ai 自己可以创建服务……另外有一个服务池，最多 5 个，如果有空闲的就用空闲的，如果没有则创建，如果已经到 5 个了，则直接返回需要排队给 ai」）：新增 `bin/src/mcp/pool.dart`（槽位与绑定）、`bin/src/mcp/router.dart`（池入口）与 `xbume mcp --pool-entry`。客户端只连稳定端口 **46140**，入口按连接（`Mcp-Session-Id`，缺失回落 `legacy`）分配后端实例并原样转发 JSON-RPC：已绑 → 续期后转发给绑定的那个；没绑且有空闲槽 → 复用（优先还活着的进程，其次最近用过的）；没绑且没满 → 自动拉起 `pool-N`（端口优先 46141+槽号，否则 46141–46149 扫描）；5 个都绑着 → 直接回「服务池已满（5/5 …）」+ 谁占着 / 在干什么 / 还剩多久 + 三条出路（等过期 / 让对方 `release` / 确认停手后 `steal`），**不会**悄悄顶掉别人的实例。
+
+- **绑定标识与 TTL**：每个槽带 `bindingId`（`b-xxxxxx`），默认 **10 分钟** TTL，每次 `tools/call` 续期（落盘限频 20 秒）；持有进程 pid 死掉即失效；`pid == 0` 是「刚分配、入口正在拉起」的中间态，算有效——否则另一条连接会在拉起完成前把槽抢走（首轮单测就踩了这个坑）。池状态落盘 `$XB_UME_HOME/pool/slot-<n>.json`（slot / name / port / pid / bindingId / owner / client / boundAt / renewedAt / ttlMs / note / error），全局 `.lock` 独占 + tmp/rename 原子写，可直接 `cat` 排障。
+
+- **入口本地回答、不吃槽**：`initialize` / `tools/list` / `resources/list` / `prompts/list` / `ping` / `xbume_pool` 由入口直接答（工具清单与 worker 用同一份构建逻辑），所以 GUI 健康检查、AI 开窗先看工具清单都不会占掉一个实例。`initialize` 时同时记住 `clientInfo.name`，`owner` 才能显示成「qoder（…abc123）」而不是只有短连接号。
+
+- 新增 core 工具 **`xbume_pool`**（`op`: `status` / `release` / `steal`，`slot?`）：看 5 个槽各绑给谁、在干什么、还剩多久、自己绑的是哪个；`release` 立刻让出；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。`xbume_clients` 末尾新增服务池段并带 `structured.pool`。`xbume mcp` 增 `--pool-entry` / `--pool-max <n>`（默认 5，1..9）/ `--slot <n>`（入口拉起时自动传入），worker 实例登记多一个 `poolSlot`。
+
+- **GUI**：`/api/pool`（GET 状态、POST `op=release|stop` 手动释放或按精确 pid 停掉某个 worker），「守护进程」页「MCP 服务」卡片下方新增 5 个槽的实时列表（谁绑着 / 在干什么 / 剩余时间）+ 每行「释放」「停止」；无名启动默认带 `--pool-entry`（具名实例仍是普通 worker）。GUI 单文件部署不引 `bin/src`，直接读同一份 `pool/slot-*.json`，字段名保持一致。
+
+- 贴给 AI 的指令（`buildAiPrompt` 第零步）补两条：一个窗口（一条连接）绑一个实例、`xbume_pool` 看池 / `release` 让位、池满时先告诉人不要硬抢；「同一个助手开多个窗口」条目改成「走池入口时各自绑一个实例」。
+
+- 工具数：core 21 → **22**，默认暴露 28 → **29**（core 22 + diagnose 4 + run-safe 3），`--tool-groups all` 57 → **58**（加 `--allow-eval` 为 59）。新增 `test/pool_test.dart` 11 项（空池从槽 1 分配 / 同连接复用 / 5 满后为空 + 排队文案 / `max` 可配 / TTL 过期回池 / pid 死失效 / 只能释放自己的 / steal 取最久没动的 / 续期限频 / `leftMs` 与文案 / 源码守卫）与真进程端到端 `tmp_test/e2e_pool.py`（A→槽 1、B→槽 2、C 池满并带三条出路、A `release` 后 C 拿到槽）。文档：MCP_GUIDE 新增「第四层：服务池」与三个参数、core 表加 `xbume_pool`，README / 工具数同步。
+
 ## 0.8.0
 
 - **多 AI / 多会话并行时的抢资源问题**（用户：「我可能会用多个 ai 或者多个会话，让 ai 通过 xb_ume mcp 干活……可能会有抢资源的问题」）分三层解决：

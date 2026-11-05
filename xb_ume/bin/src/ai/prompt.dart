@@ -99,9 +99,14 @@ String buildAiPrompt({
         'xbume_lease {"op": "steal", "sessionId": "<会话>"}；')
     ..writeln('- 想看全局：xbume_clients 列出本机所有 MCP 实例与各自占着的会话，'
         'xbume_lease {"op": "status", "sessionId": "<会话>"} 看单条；')
-    ..writeln('- 同一个助手可能开了多个窗口连同一个实例（xbume_clients 里「客户端连接 N 个」）：'
-        '各自的当前会话互不覆盖，但写同一个 app 仍然排队——busy 里写着 '
+    ..writeln('- 同一个助手开了多个窗口：走池入口时每个窗口各自绑一个实例（当前会话互不覆盖）；'
+        '直连某个具名实例时则共用它，写同一个 app 仍然排队——busy 里写着 '
         '「（连接 …xxxxxx）」的那份就是另一个窗口的，别当成自己的续期。')
+    ..writeln('- 服务池：一个窗口（一条连接）绑一个实例，绑定 10 分钟不续期就回池。'
+        'xbume_pool {"op": "status"} 看 5 个槽各绑给谁、在干什么、还剩多久；'
+        '要立刻把位置让给别人用 xbume_pool {"op": "release"}；')
+    ..writeln('- 池里都绑满时，调用工具会直接回「服务池已满」+ 谁占着 + 三条出路'
+        '（等它过期 / 让对面 release / 我确认后才能 steal）：先告诉我，不要自己硬抢。')
     ..writeln('- 你验证完就把会话让出来：xbume_lease {"op": "release"}'
         '（不释放也会 10 分钟后自动过期）；')
     ..writeln('- 发现别的实例正在驱动同一个 app 时先告诉我，'
