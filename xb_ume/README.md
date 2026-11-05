@@ -662,7 +662,11 @@ dart run xb_ume:mcp --http 46140
 ```
 
 **多个 AI / 多个会话同时干活**：每个 AI 跑自己的进程与端口（`--name claude-a`，或
-`dart run xb_ume:ai --new-instance` 自动挑未占用的名字），同一会话上的只读操作随时可看，
+`dart run xb_ume:ai --new-instance` 自动挑未占用的名字）。进程由 MCP 客户端按配置拉起，
+AI 自己不用管——**stdio 配置里写死 `--name` 最省事**（每个客户端一个子进程，天然隔离）；
+用 HTTP 时每个 AI 填一个不同端口。**同一个 AI 开多个窗口**也算多条连接：各自记自己的
+当前会话（不会互相改掉选中的会话），写同一个 app 时仍按租约排队，`xbume_clients` 能看到
+哪条连接选了哪个会话。同一会话上的只读操作随时可看，
 写操作（tap / input / hot_reload / 改断点 …）要拿会话租约：被占会用 `busy` 说清谁在驱动、
 还剩多久，可用 `xbume_clients` 看全机实例与租约、`xbume_lease` 申请 / 让出 / 接管；
 租约 10 分钟自动过期，用完主动 `release` 让别的 AI 接着用。详见

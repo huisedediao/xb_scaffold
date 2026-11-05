@@ -99,6 +99,9 @@ String buildAiPrompt({
         'xbume_lease {"op": "steal", "sessionId": "<会话>"}；')
     ..writeln('- 想看全局：xbume_clients 列出本机所有 MCP 实例与各自占着的会话，'
         'xbume_lease {"op": "status", "sessionId": "<会话>"} 看单条；')
+    ..writeln('- 同一个助手可能开了多个窗口连同一个实例（xbume_clients 里「客户端连接 N 个」）：'
+        '各自的当前会话互不覆盖，但写同一个 app 仍然排队——busy 里写着 '
+        '「（连接 …xxxxxx）」的那份就是另一个窗口的，别当成自己的续期。')
     ..writeln('- 你验证完就把会话让出来：xbume_lease {"op": "release"}'
         '（不释放也会 10 分钟后自动过期）；')
     ..writeln('- 发现别的实例正在驱动同一个 app 时先告诉我，'

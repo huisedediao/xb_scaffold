@@ -13,6 +13,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import '../paths.dart';
+import 'client_scope.dart';
 import 'protocol.dart';
 import 'tools.dart';
 
@@ -60,7 +61,7 @@ class McpServer {
         _write(mcpError(null, kMcpParseError, 'JSON 解析失败：$e'));
         continue;
       }
-      final response = await handleMessage(raw);
+      final response = await handleMessage(raw, client: 'stdio');
       if (response != null) _write(response);
     }
   }
@@ -124,7 +125,10 @@ class McpServer {
             return;
           }
           final sessionId = _ensureSessionId(req);
-          final response = await handleMessage(raw);
+          // 「当前会话」按连接隔离：HTTP 用客户端回传的 Mcp-Session-Id。
+          // 不回的客户端拿空串（退回共享当前会话，与旧版一致）。
+          final client = req.headers.value('Mcp-Session-Id') ?? '';
+          final response = await handleMessage(raw, client: client);
           req.response.headers.set('Mcp-Session-Id', sessionId);
           if (response == null) {
             req.response.statusCode = HttpStatus.accepted;
@@ -188,7 +192,13 @@ class McpServer {
   // ── 消息分发 ──
 
   /// 处理一条消息；返回 null 表示 notification（无需响应）。
-  Future<Map<String, Object?>?> handleMessage(Object? raw) async {
+  ///
+  /// [client] 是传输层的客户端连接标识：同一个 MCP 进程里多个 AI 会话靠它各记各的
+  /// 「当前会话」（见 client_scope.dart），工具 handler 签名不变。
+  Future<Map<String, Object?>?> handleMessage(Object? raw, {String client = ''}) =>
+      runAsMcpClient(client, () => _handleMessage(raw));
+
+  Future<Map<String, Object?>?> _handleMessage(Object? raw) async {
     if (raw is List) {
       // 2025-06-18 移除了 JSON-RPC batch；显式拒绝比静默丢弃更易排查。
       return mcpError(null, kMcpInvalidRequest, '不支持批量请求（MCP 2025-06-18 已移除）');

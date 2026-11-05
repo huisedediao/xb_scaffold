@@ -21,6 +21,7 @@ import 'dart:io';
 
 import '../device/live_store.dart' show pidAlive;
 import '../paths.dart';
+import 'client_scope.dart' show currentMcpClient, shortMcpClient;
 
 /// 租约默认有效期；每次写操作续期。
 const Duration kDefaultLeaseTtl = Duration(minutes: 10);
@@ -39,9 +40,14 @@ String leaseKeyHash(String raw) {
   return h.toRadixString(16).padLeft(7, '0');
 }
 
-/// 谁在持有租约：一个 MCP 实例（进程）。
+/// 谁在持有租约：一个 MCP 实例（进程）里的**一条客户端连接**。
 class LeaseOwner {
-  const LeaseOwner({required this.instance, required this.pid, this.port = 0});
+  const LeaseOwner({
+    required this.instance,
+    required this.pid,
+    this.port = 0,
+    this.client = '',
+  });
 
   final String instance;
   final int pid;
@@ -49,10 +55,17 @@ class LeaseOwner {
   /// HTTP 实例的端口；stdio 实例为 0。
   final int port;
 
+  /// 同一实例内的连接标识（HTTP = 短 Mcp-Session-Id，stdio = `stdio`）。
+  ///
+  /// 同一个 AI 开两个窗口连到**同一个**进程时，实例名 / pid / 端口全一样：
+  /// 不带这一维，第二次写会被当成「自己续期」而静默放行，两边互相打乱现场。
+  final String client;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'instance': instance,
         'pid': pid,
         'port': port,
+        'client': client,
       };
 
   static LeaseOwner? parse(Object? raw) {
@@ -64,15 +77,30 @@ class LeaseOwner {
       instance: name,
       pid: pid,
       port: int.tryParse('${raw['port'] ?? ''}') ?? 0,
+      client: '${raw['client'] ?? ''}',
     );
   }
 
   @override
   bool operator ==(Object other) =>
-      other is LeaseOwner && other.instance == instance && other.pid == pid;
+      other is LeaseOwner &&
+      other.instance == instance &&
+      other.pid == pid &&
+      other.client == client;
 
   @override
-  int get hashCode => instance.hashCode * 31 + pid;
+  int get hashCode => instance.hashCode * 31 + pid * 7 + client.hashCode;
+}
+
+/// 租约持有者的可读标识：`claude-a:46140`；同实例内不同连接再加短标记。
+///
+/// 同一个进程里可能有好几个会话（Qoder 两个窗口都连 46140），光看实例名
+/// 分不出是哪条连接在驱动，所以把连接短标识一并显示出来。
+String ownerLabel(LeaseOwner o) {
+  final head = o.port > 0 ? '${o.instance}:${o.port}' : o.instance;
+  final c = o.client;
+  if (c.isEmpty || c == 'stdio') return head;
+  return '$head（连接 …$c）';
 }
 
 /// 一份租约。
@@ -172,8 +200,13 @@ class LeaseStore {
   final DateTime Function() _now;
   final bool Function(int pid) _alive;
 
-  LeaseOwner get me =>
-      LeaseOwner(instance: instance, pid: instancePid, port: instancePort);
+  /// 自己 = 本实例 + 本条客户端连接（同一实例的两个窗口互不冒充）。
+  LeaseOwner get me => LeaseOwner(
+        instance: instance,
+        pid: instancePid,
+        port: instancePort,
+        client: shortMcpClient(currentMcpClient),
+      );
 
   Directory get _dir {
     final d = Directory('$home/leases');

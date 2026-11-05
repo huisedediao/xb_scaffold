@@ -214,8 +214,7 @@ Future<Lease> requireLaunchLease(
   if (got != null) return got;
   final h = a.holder!;
   throw McpToolException(
-    '设备 $deviceId 上同一项目正由 ${h.owner.instance}'
-    '${h.owner.port > 0 ? ':${h.owner.port}' : ''} 拉起/调试'
+    '设备 $deviceId 上同一项目正由 ${ownerLabel(h.owner)} 拉起/调试'
     '（${h.note.isEmpty ? 'app_launch' : h.note}，${leaseAgo(h.renewedAt)}续期，'
     '约 ${leaseLeft(h)}后自动释放）',
     hint: '要复用它的会话：xbume_sessions → xbume_use_session，不用重启；'
@@ -234,7 +233,7 @@ void requireDeviceFree(McpToolContext ctx, String deviceId, String op) {
     final s = ctx.sessions.byId(sid);
     if (s == null || s.deviceId != deviceId) continue;
     throw McpToolException(
-      '设备 $deviceId 上的会话 $sid 正由 ${l.owner.instance} 驱动，'
+      '设备 $deviceId 上的会话 $sid 正由 ${ownerLabel(l.owner)} 驱动，'
       '不能从外面注入 $op（会打乱对方的操作现场）',
       hint: '等对方释放（xbume_lease{"op":"status","sessionId":"$sid"} 看还剩多久），'
           '或确认后让对方自己执行；确实要接管用 xbume_lease{"op":"steal"}。',
@@ -260,7 +259,7 @@ Future<Lease> requireDriveLease(
   );
   final got = a.lease;
   if (got != null) return got;
-  throw busyLeaseError(s.id, a.holder!);
+  throw busyLeaseError(ctx, s.id, a.holder!);
 }
 
 /// 解析会话 + 拿写租约（写工具统一入口）。
@@ -276,16 +275,32 @@ Future<McpSession> resolveDriveSession(
 }
 
 /// 被别人驱动时的统一报错（写工具与 xbume_lease 共用）。
-McpToolException busyLeaseError(String sessionId, Lease h) => McpToolException(
-      '会话 $sessionId 正由 ${h.owner.instance}'
-      '${h.owner.port > 0 ? ':${h.owner.port}' : ''} 驱动'
-      '（${h.note.isEmpty ? '写操作' : h.note}，${leaseAgo(h.renewedAt)}续期，'
-      '约 ${leaseLeft(h)}后自动释放）',
-      hint: '只读排查可以继续：screenshot / find_widget / widget_tree / timeline / '
-          'debug_state 都不需要租约；要接管先确认对方已停手，'
-          '再 xbume_lease{"op":"steal","sessionId":"$sessionId"}；'
-          '两个 AI 长期并行建议各自用独立 MCP 实例（xbume_clients 可看实例与占用）。',
-    );
+///
+/// 同一个 MCP 实例里的另一条连接（同一助手开两个窗口都连一个进程）也会报 busy，
+/// 且不会当成「自己续期」静默放行；这里多给一句提示。
+McpToolException busyLeaseError(
+  McpToolContext ctx,
+  String sessionId,
+  Lease h,
+) {
+  final sameInstance = h.owner.instance == ctx.leases.instance &&
+      h.owner.pid == ctx.leases.instancePid;
+  return McpToolException(
+    '会话 $sessionId 正由 ${ownerLabel(h.owner)} 驱动'
+    '（${h.note.isEmpty ? '写操作' : h.note}，${leaseAgo(h.renewedAt)}续期，'
+    '约 ${leaseLeft(h)}后自动释放）',
+    hint: sameInstance
+        ? '这是同一个 MCP 实例的另一条连接（通常是同一助手的另一个窗口）：'
+            '等它把这一步做完；确认它已停手后可 '
+            'xbume_lease{"op":"steal","sessionId":"$sessionId"} 接管。'
+            '只读排查（screenshot / find_widget / timeline / debug_state）随时可继续；'
+            '同一个 AI 长期开多个会话时，让每个会话连各自的实例（--name）更省心。'
+        : '只读排查可以继续：screenshot / find_widget / widget_tree / timeline / '
+            'debug_state 都不需要租约；要接管先确认对方已停手，'
+            '再 xbume_lease{"op":"steal","sessionId":"$sessionId"}；'
+            '两个 AI 长期并行建议各自用独立 MCP 实例（xbume_clients 可看实例与占用）。',
+  );
+}
 
 /// 路由栈顶名（失败返回 null，不阻断主流程）。
 Future<String?> _topRoute(VmClient vm) async {
@@ -623,7 +638,7 @@ McpTool _sessionCheckTool() => McpTool(
         final held = ctx.leases.peek(sessionLeaseKey(s));
         final note = held == null
             ? ''
-            : '\n占用：${held.owner == ctx.leases.me ? '你（可写）' : '${held.owner.instance}（只读旁观；写操作会被拒）'}'
+            : '\n占用：${held.owner == ctx.leases.me ? '你（可写）' : '${ownerLabel(held.owner)}（只读旁观；写操作会被拒）'}'
                 '，${held.note.isEmpty ? '写操作' : held.note}，还有 ${leaseLeft(held)}';
         return McpToolResult.text(c.describe() + note, structured: {
           ...c.toJson(),
@@ -650,8 +665,20 @@ McpTool _clientsTool() => McpTool(
         final sb = StringBuffer()
           ..writeln('本实例 $me（pid $pid'
               '${ctx.instancePort > 0 ? '，端口 ${ctx.instancePort}' : '，stdio'}）')
-          ..writeln('会话：${ctx.sessions.currentId ?? '未选'}')
-          ..writeln('MCP 实例 ${inst.length} 个：');
+          ..writeln('会话：${ctx.sessions.currentId ?? '未选'}');
+        // 同一个进程里可能有好几个 AI 会话（各自一个客户端连接），当前会话各记各的。
+        final byClient = ctx.sessions.currentByClient;
+        if (byClient.length > 1) {
+          sb.writeln('客户端连接 ${byClient.length} 个（各记各的当前会话）：');
+          for (final e in byClient.entries) {
+            final k = e.key;
+            final short = k.isEmpty
+                ? '（未标识）'
+                : (k.length <= 6 ? k : '…${k.substring(k.length - 6)}');
+            sb.writeln('  · $short → ${e.value}');
+          }
+        }
+        sb.writeln('MCP 实例 ${inst.length} 个：');
         if (inst.isEmpty) {
           sb.writeln('  （无登记；旧版本实例不写登记，用 xbume_sessions 看会话）');
         }
@@ -670,8 +697,7 @@ McpTool _clientsTool() => McpTool(
         }
         for (final l in leases) {
           final mine = l.owner == ctx.leases.me;
-          sb.writeln('  · ${l.key} ← ${mine ? '你' : l.owner.instance}'
-              '${mine ? '' : l.owner.port > 0 ? ':${l.owner.port}' : ''}'
+          sb.writeln('  · ${l.key} ← ${mine ? '你' : ownerLabel(l.owner)}'
               ' · ${l.note.isEmpty ? '写操作' : l.note}'
               ' · ${leaseAgo(l.renewedAt, now: now)}续期'
               ' · 还有 ${leaseLeft(l, now: now)}');
@@ -769,7 +795,7 @@ McpTool _leaseTool() => McpTool(
               wait: wait,
             );
             final l = a.lease;
-            if (l == null) throw busyLeaseError(sid, a.holder!);
+            if (l == null) throw busyLeaseError(ctx, sid, a.holder!);
             final tookOver = op == 'steal' && prev != null && prev.owner != ctx.leases.me;
             return McpToolResult.text(
               '已持有会话 $sid 的租约（${leaseLeft(l)}后自动释放）'
@@ -789,7 +815,7 @@ McpTool _leaseTool() => McpTool(
                   structured: <String, Object?>{'sessionId': sid, 'released': false});
             }
             final ok = await ctx.leases.release(key);
-            if (!ok) throw busyLeaseError(sid, l);
+            if (!ok) throw busyLeaseError(ctx, sid, l);
             return McpToolResult.text('已释放会话 $sid 的租约',
                 structured: <String, Object?>{'sessionId': sid, 'released': true});
           default:

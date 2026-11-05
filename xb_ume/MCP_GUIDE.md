@@ -151,13 +151,51 @@ dart run xb_ume:mcp --http 46140 --name claude-a --tool-groups all --allow-eval
 # AI B
 dart run xb_ume:mcp --http 46141 --name claude-b --tool-groups all --allow-eval
 # 让 xbume ai 自己挑一个没被占用的名字并单独拉起（多 AI 并行最省事）
-CURSOR_AGENT=1 dart run xb_ume:ai --new-instance
+dart run xb_ume:ai --new-instance
 ```
 
 不带 `--name` 时按传输方式取名（HTTP = `mcp-<port>`，stdio = `mcp-<pid>`），同名且对方
 还活着会直接退出并提示换名，不会两个进程抢一个名字。GUI 的「AI 调试」页有
 「MCP 实例」下拉 + 「新建实例 / 停此实例」，等价于上面两行命令；`/api/mcp/instances`
 能看到本机所有实例与租约。
+
+**谁来起这些进程？每个 AI 连哪个实例？**
+
+MCP 进程**不是 AI 自己起的**，它的生命周期归客户端或人：
+
+- **stdio（推荐，天然一 AI 一进程）**：客户端的 MCP 配置里写死 `--name`，客户端启动时
+  自己拉一个子进程，退出时自己收掉——两个 AI 就是两个进程，串台从根上没了：
+
+  ```json
+  {
+    "mcpServers": {
+      "xb_ume": {
+        "command": "dart",
+        "args": ["run", "xb_ume:mcp", "--name", "qoder",
+                 "--tool-groups", "all", "--allow-eval"]
+      }
+    }
+  }
+  ```
+
+  另一个 AI 的配置把 `--name` 换成 `cursor` / `claude` 即可，互不干扰。
+- **HTTP**：先起实例（GUI「新建实例」，或 `dart run xb_ume:ai --new-instance`），再把
+  **那个实例的端口**填进对应客户端的配置（`url` + `X-XBUME-Token`）；每个 AI 一个端口。
+  GUI 的「守护进程」页「复制 MCP 配置」会按当前状态生成可直接粘贴的片段。
+- **同一个助手开多个会话（比如 Qoder 两个窗口）**：两条连接各自记「当前会话」
+  （HTTP 按 `Mcp-Session-Id` 区分，stdio 天然一个进程一条连接），**不会互相改掉选中
+  的会话**；`xbume_clients` 会列出「客户端连接 N 个（各记各的当前会话）」。写操作
+  仍按下面第二层排队：同一个实例里的两条连接也算**两个**持有者，不会因为「同进程」
+  就静默放行。窗口关掉后没释放的租约最多占 10 分钟（TTL），
+  确认对面已停手可 `xbume_lease{"op":"steal"}`。更省心的做法仍是**每个会话连各自
+  的实例**（stdio 配置里写死不同 `--name`，或 HTTP 各用一个端口）。
+- **唯一要避免的配置**：让**两个不同的 AI** 共用同一个 HTTP 实例。现在虽然不会再
+  串台（会话按连接隔离），但两边写同一个 app 时会互相排队、互相 steal，难排查；
+  一个客户端配置 = 一个实例 = 一个 AI 仍然是最省心的。
+- AI 自己**不需要知道**这些：指令第一步（第零步）就会调 `xbume_clients`，看到
+  本实例名字 / 本机还有哪些实例 / 谁占着哪个会话；被 busy 挡住时它会让你新建实例。
+  除非你让 AI 顶着 shell 自己起：`dart run xb_ume:ai --new-instance` 会挑名字、拉起
+  实例并把指令复制到剪贴板（但进程会留在后台，不如交给客户端管）。
 
 **第二层：同一会话，只读旁路 + 写要租约**
 

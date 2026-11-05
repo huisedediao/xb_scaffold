@@ -13,6 +13,7 @@ import 'dart:io';
 
 import '../scenario/vm_client.dart';
 import '../session/discovery.dart';
+import 'client_scope.dart';
 
 /// 一个可操作的调试会话。
 class McpSession {
@@ -95,7 +96,14 @@ class SessionRegistry {
   final Set<int> skipPorts;
 
   final Map<String, McpSession> _sessions = <String, McpSession>{};
-  String? _currentId;
+
+  /// 按 MCP 客户端连接各记一份「当前会话」。
+  ///
+  /// 同一个 AI 开两个会话连到**同一个**进程时（Qoder 两个窗口都连 HTTP 46140），
+  /// 各选各的会话，不会互相覆盖（见 client_scope.dart）。
+  /// 空串 key = 默认值：`--uri` 注入的会话，以及客户端没回传 Mcp-Session-Id 时的兼底。
+  final Map<String, String> _currentByClient = <String, String>{};
+
   DateTime? _lastRefresh;
   String? _lastError;
   int _lastScannedPorts = 0;
@@ -111,6 +119,36 @@ class SessionRegistry {
 
   McpSession? get current =>
       _currentId == null ? null : _sessions[_currentId!];
+
+  /// 本连接选中的会话；自己没选过时退回默认（`--uri` / 单会话自动选中）。
+  ///
+  /// 只有一个会话时**直接算选中**（不落表）：否则第二个窗口在第一个窗口 3 秒
+  /// 内打开时，会命中扫描缓存、跳过自动选中，一直卡在「未选择会话」。
+  String? get _currentId {
+    final own = _currentByClient[clientKey];
+    if (own != null) return own;
+    if (clientKey.isNotEmpty) {
+      final dflt = _currentByClient[''];
+      if (dflt != null) return dflt;
+    }
+    if (_sessions.length == 1) return _sessions.keys.first;
+    return null;
+  }
+
+  set _currentId(String? id) {
+    if (id == null) {
+      _currentByClient.remove(clientKey);
+    } else {
+      _currentByClient[clientKey] = id;
+    }
+  }
+
+  /// 当前客户端连接标识（HTTP = Mcp-Session-Id，stdio = `stdio`）。
+  String get clientKey => currentMcpClient;
+
+  /// 各客户端连接当前选中的会话（排障用：谁选了哪个）。
+  Map<String, String> get currentByClient =>
+      Map<String, String>.unmodifiable(_currentByClient);
 
   String? get currentId => _currentId;
   DateTime? get lastRefresh => _lastRefresh;
@@ -128,7 +166,7 @@ class SessionRegistry {
     if (!force &&
         last != null &&
         DateTime.now().difference(last) < maxAge) {
-      return all;
+      return _settleSelection();
     }
     _lastRefresh = DateTime.now();
     try {
@@ -159,19 +197,29 @@ class SessionRegistry {
       for (final id in _sessions.keys.toList()) {
         if (!seen.contains(id) && !(_sessions[id]?.manual ?? false)) {
           await _sessions.remove(id)?.close();
-          if (_currentId == id) _currentId = null;
+          // 会话没了，所有指着它的连接都清掉。
+          _currentByClient.removeWhere((_, v) => v == id);
         }
       }
       _lastError = null;
     } catch (e) {
       _lastError = e.toString();
     }
-    // 只有一个会话时自动选中，省掉一次 use_session 往返。
-    if (_currentId == null && _sessions.length == 1) {
-      _currentId = _sessions.keys.first;
+    // 只有一个会话时自动选中，省掉一次 use_session 往返（每个连接各选各的）。
+    return _settleSelection();
+  }
+
+  /// 唯一会话时给本连接记上选中项（台账用），并清掉指向已消失会话的记录。
+  ///
+  /// 命中 3 秒扫描缓存时也要走一遍：不然同一助手刚开的第二个窗口不会出现在
+  /// `xbume_clients` 的「各记各的当前会话」里（读取本身有懒回退，不会播错会话）。
+  List<McpSession> _settleSelection() {
+    if (_currentByClient[clientKey] == null && _sessions.length == 1) {
+      _currentByClient[clientKey] = _sessions.keys.first;
     }
-    if (_currentId != null && !_sessions.containsKey(_currentId)) {
-      _currentId = null;
+    final cur = _currentId;
+    if (cur != null && !_sessions.containsKey(cur)) {
+      _currentByClient.removeWhere((_, v) => v == cur);
     }
     return all;
   }
@@ -208,6 +256,8 @@ class SessionRegistry {
       manual: true,
     );
     _sessions[id] = s;
+    // `--uri`（无连接上下文）注入的会话兼作默认值；工具调用里拉起的只给当前连接。
+    if (clientKey.isEmpty) _currentByClient[''] = id;
     _currentId = id;
     return s;
   }
@@ -251,6 +301,6 @@ class SessionRegistry {
       await s.close();
     }
     _sessions.clear();
-    _currentId = null;
+    _currentByClient.clear();
   }
 }
