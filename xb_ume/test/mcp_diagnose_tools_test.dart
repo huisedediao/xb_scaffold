@@ -33,9 +33,9 @@ void main() {
     }
     // 工具名唯一（server 按 name 分发）。
     expect(byName.length, all.length);
-    // 文档口径：core 19（含会话自检 xbume_session_check）+ diagnose 4 +
-    // run-safe 3 + act 3 + device-write 3。
-    expect(all.length, 32, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
+    // 文档口径：core 21（含会话自检 xbume_session_check + 多 AI 的
+    // xbume_clients / xbume_lease）+ diagnose 4 + run-safe 3 + act 3 + device-write 3。
+    expect(all.length, 34, reason: '新增/删除工具后同步 README / MCP_GUIDE / CHANGELOG');
     // 热重载默认可用；eval 必须显式 --allow-eval。
     expect(byName['xbume_hot_reload']?.group, ToolGroup.core);
     expect(byName.containsKey('xbume_eval'), isFalse);

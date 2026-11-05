@@ -1,3 +1,18 @@
+## 0.8.0
+
+- **多 AI / 多会话并行时的抢资源问题**（用户：「我可能会用多个 ai 或者多个会话，让 ai 通过 xb_ume mcp 干活……可能会有抢资源的问题」）分三层解决：
+  1. **一 AI 一进程**：`xbume mcp` 增 `--name <name>`，实例名写进 `$XB_UME_HOME/mcp/instances/<name>.json`（name / transport / port / pid / version / hasEval / toolCount / groups / startedAt）；不带时按传输取名（HTTP = `mcp-<port>`、stdio = `mcp-<pid>`），同名且对方 pid 还活着直接退出并提示换名。一个进程一个「当前会话」，从根上消掉全局 `SessionRegistry._currentId` 被别的 AI 改掉的串台。
+  2. **同一会话：只读旁路 + 写要租约**：新增 `bin/src/mcp/lease.dart`，租约落 `$XB_UME_HOME/leases/<key>.json`（`session-<sid>` / `launch-<deviceId>-<cwd哈希>`），owner 带实例名 / pid / port，默认 10 分钟 TTL、每次写操作续期、持有者 pid 死掉即失效；读改写用同名 `.lock` 独占 + tmp/rename 原子落盘，多进程并抢时只有一个能拿到。写工具（tap / input / swipe / navigate / eval / hot_reload / scenario_run / use_session{mode:"drive"} / debug 的改断点与单步与帧求值）统一走 `resolveDriveSession` 自动申请：空闲静默拿到；被占直接报 `busy`，写清「谁在驱动、在干什么、多久前续期、还剩多久」与三条出路（等 `waitMs` 上限 30s / 改只读旁路 / 确认对方停手后 `steal`）。只读工具（截图 / 找组件 / 组件树 / 时间轴 / 网络 / 日志 / 异常 / debug 栈与变量 / 会话自检）不碰租约。
+  3. **设备级与启动级**：`xbume_app_launch` 走启动租约，同设备同目录只能一个人拉起，`force: true` 才顶掉且会写明顶掉了谁；装包 / 卸包 / 停进程 / 按键 / 原生点击用 `requireDeviceFree` 拒掉「同设备上有别人正在驱动」的注入。
+
+- 新增两个 core 工具：**`xbume_clients`**（本机实例 + 租约总览：每个实例的名字 / 端口 / pid / 是否带 eval / 工具数，每份租约谁占着哪个会话、note、还剩多久，以及本实例当前会话）；**`xbume_lease`**（`op`: `status` / `acquire` / `release` / `steal`，`sessionId?` / `ttlMs?` / `waitMs?` / `note?`）。`xbume_use_session` 增 `mode`（`drive` 默认顺手拿租约，被占降级为 `observe` 并在文本里说明）与 `note`（写进租约，告诉别人你在干什么）。
+
+- CLI / GUI：`xbume ai` 增 `--name`（接入指定实例）与 `--new-instance`（按项目目录名自动挑 `stem-1..20` 第一个未占用的名字并单独拉起），指令头会写明「MCP 实例：…」并新增「第零步：先确认谁在驱动」段（写操作拿租约、busy 不硬抢、只读旁路、用完 `release`、不用 `force` 顶掉别人）。GUI「AI 调试」页增「MCP 实例」下拉 +「新建实例」/「停此实例」，`/api/mcp/instances` 返回实例与租约，`/api/mcp/start|stop` 支持 `?name=`；`McpHost.ensure/stop` 均支持按名字操作（带名字不复用默认服务、不覆写 `mcp.pid`）。GUI 单文件部署不引 `bin/src`，两边各读同一份目录、字段名保持一致。
+
+- **修两个端到端验证才暴露的问题**：① 全新 `XB_UME_HOME`（没有 `logs/`）下第一次工具调用会把进程直接带走——`openWrite` 的失败是异步抛的，外层 try/catch 接不到，现在先 `createSync` 父目录并接住 `sink.done`；② 刚拿到的 10 分钟租约被显示成「11 分钟」（`now` 取得比落盘早），改成就地取时间。`xbume ai --print-only --name` 现在只看该实例登记的端口，不再把别的 AI 的实例当成自己的。
+
+- 工具数：core 19 → **21**，默认暴露 26 → **28**（core 21 + diagnose 4 + run-safe 3），`--tool-groups all` 56 → **57**（加 `--allow-eval` 为 58）。新增 `test/lease_test.dart` 14 项（空闲拿到 / busy 不覆盖 / 自己只续期 / TTL 失效 / pid 死失效 / steal / release 只删自己的 / 并发只一个成功 / waitMs / key 形状 / 相对时间文案）与 `test/mcp_instance_test.dart` 11 项（实例名与登记 / prune 死 pid / 同名冲突 / `removeInstance` 按 pid / 新工具在 core 且 op 闭集 / 写工具接线与审计日志源码守卫），`ai_prompt_test` 补多条。文档：MCP_GUIDE 新增「多 AI 并行：一 AI 一个实例 + 会话租约」一节与四条排障行、安全模型加「跨进程租约」，README / GUI_GUIDE 工具数与用法同步。
+
 ## 0.7.0
 
 - 新增 MCP 工具 **`xbume_session_check`（会话自检）**：AI 接上会话后一次调用就能知道「这个会话能干什么」，不再靠试错——之前最贵的一段是先盲发一次 `xbume_hot_reload`，通道不通就干等 60–120 秒才回头排查（实测：GUI 拉起的 `flutter run` 的 stdin 是命名管道，`r` 被静默丢弃，AI 白白等了两分多钟）。现在一次 `getIsolate` 顺带拿 `extensionRPCs`，再比对 live 记录里的 pid / cwd / device，几百毫秒给出结论：`ready`（能看 / 能点 / 能改并生效）、`ready_no_reload`（能看能点，进程是 IDE 拉起的，拿不到句柄）、`degraded`（release 包没 inspector，或通道实测失败）、`wrong_device` / `wrong_project`（不是你要的会话，立即停手）、`stale`（端口在但 VM 连不上）；`caps` 给出 `eval` / `inspector` / `screenshot` / `widgetTree` / `perf` / `reloadChannel`，`warnings` 与 `next` 直接写下一步该干什么。`deviceId` / `cwd` 传了就校验归属（防止热重载打到另一台手机上）；`verifyReload` 默认 true，真发一次重载实测——没有文件改动时 `flutter run` 只回 `No changes detected`，不改 app 状态，已经改了代码则会真的热重载进去（只读探测传 `false`）。

@@ -118,6 +118,36 @@ void main() {
       expect(p, isNot(contains('xbume_eval')));
       expect(p, contains('xbume_hot_reload'));
     });
+
+    test('多 AI 并行：写操作要租约、只读可旁路、用完释放', () {
+      final p = buildAiPrompt(
+        projectDir: project,
+        deviceId: device,
+        hasEval: true,
+      );
+      // 第零步必须先讲清「谁在驱动」，否则两个 AI 会互相顶掉会话。
+      expect(p, contains('第零步'));
+      expect(p, contains('会话租约'));
+      expect(p, contains('xbume_clients'));
+      expect(p, contains('xbume_lease'));
+      expect(p, contains('"op": "steal"'));
+      expect(p, contains('"op": "release"'));
+      // 被占不是死路：读工具不需要租约。
+      expect(p, contains('无需租约'));
+      expect(p, contains('不要重试硬抢'));
+      // 没授权不要 force 顶掉别人的会话。
+      expect(p, contains('不要用 force 重启顶掉对方的会话'));
+    });
+
+    test('给了实例名就写进指令头（多实例时便于对照租约）', () {
+      final p = buildAiPrompt(
+        projectDir: project,
+        deviceId: device,
+        hasEval: true,
+        instanceName: 'claude-a',
+      );
+      expect(p, contains('MCP 实例：claude-a'));
+    });
   });
 
   group('aiClientConfig', () {
@@ -167,6 +197,12 @@ void main() {
       // 页面说明要跟上自检与信号通道，否则用户看到的还是旧描述。
       expect(src, contains('xbume_session_check'));
       expect(src, contains('SIGUSR1'));
+      // 多 AI 并行：实例下拉 / 新建 / 停此实例 + 实例与租约接口。
+      expect(src, contains('id="ai-instance"'));
+      expect(src, contains('function aiNewInstance('));
+      expect(src, contains('function aiStopInstance('));
+      expect(src, contains("path == '/api/mcp/instances'"));
+      expect(src, contains("'--name'"));
     });
   });
 }

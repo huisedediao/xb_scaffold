@@ -30,6 +30,9 @@ const Map<String, String> _bpOps = <String, String>{
   'enableSaved': 'enableSavedBreakpoint',
 };
 
+/// 只读的断点动作：其余动作都会改 app 断点表，需要驱动租约。
+const Set<String> _bpReadOps = <String>{'list', 'saved', 'savedAll'};
+
 List<McpTool> debugTools() => <McpTool>[
       _attachTool(),
       _stateTool(),
@@ -158,7 +161,9 @@ McpTool _breakpointsTool() => McpTool(
             hint: '可用：${_bpOps.keys.join(' / ')}',
           );
         }
-        final s = await resolveSession(ctx, args);
+        final s = _bpReadOps.contains(action)
+            ? await resolveSession(ctx, args)
+            : await resolveDriveSession(ctx, args, 'debug_breakpoints:$action');
         final hub = await ctx.debugPool.attach(s);
         final st = await _op(hub, 'status');
         var root = optionalString(args, 'dir') ??
@@ -300,7 +305,7 @@ McpTool _controlTool() => McpTool(
         final action = (optionalString(args, 'action') ?? 'continue').trim();
         // resume 是 VM 里的叫法（也是 IDE 快捷键的叫法），归一成 continue。
         final step = action == 'resume' ? 'continue' : action;
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'debug_control:$step');
         if (step == 'detach') {
           await ctx.debugPool.detach(s.id);
           return McpToolResult.text('已断开调试连接（app 继续跑）',
@@ -393,7 +398,10 @@ McpTool _inspectTool() => McpTool(
       }),
       handler: (ctx, args) async {
         final action = (optionalString(args, 'action') ?? 'stack').trim();
-        final s = await resolveSession(ctx, args);
+        // 帧内求值能改 app 状态，按写操作要租约；stack / vars 只是读。
+        final s = action == 'eval'
+            ? await resolveDriveSession(ctx, args, 'debug_inspect:eval')
+            : await resolveSession(ctx, args);
         if (action == 'eval' && !ctx.allowEval) {
           throw McpToolException('帧内求值未启用',
               hint: '启动 MCP 时加 --allow-eval（GUI 托管的服务在卡片上勾「允许 eval」）');

@@ -19,6 +19,7 @@ import 'dart:io';
 
 import 'src/ai/prompt.dart';
 import 'src/mcp/host.dart';
+import 'src/mcp/instances.dart';
 
 const String _usage = '''
 xb_ume AI 调试模式
@@ -29,17 +30,23 @@ xb_ume AI 调试模式
 选项：
   --dir, -C <path>     项目目录（默认当前目录，必须含 pubspec.yaml）
   --device, -d <id>    设备 id（默认自动：唯一手机 > 本机桌面）
+  --name <name>         MCP 实例名（默认用共享那个服务；两个 AI 并行时各取一个名字）
+  --new-instance        自动挑一个未占用的实例名并单独拉起一个服务（多 AI 并行）
   --print-only         只生成指令，不启动/不检查 MCP 服务
   --json               输出 JSON（给脚本用）
   -h, --help           显示帮助
 
 它会启动（或复用）带 xbume_eval 的 MCP 服务，并生成一段指令；
 把指令粘给 AI，AI 会自己 xbume_app_launch 拉起 app 并完成调试闭环。
+多个 AI / 多个会话并行时，用 --new-instance 让每个 AI 各拿一个独立服务，
+同一个 app 上的写操作靠会话租约互斥（被占时只读旁路仍然可用）。
 ''';
 
 class _Args {
   String dir = '';
   String device = '';
+  String name = '';
+  bool newInstance = false;
   bool printOnly = false;
   bool json = false;
   bool help = false;
@@ -62,6 +69,11 @@ _Args _parse(List<String> argv) {
       case '--device' || '-d':
         if (i + 1 >= argv.length) throw const FormatException('--device 缺少参数');
         a.device = argv[++i];
+      case '--name':
+        if (i + 1 >= argv.length) throw const FormatException('--name 缺少参数');
+        a.name = argv[++i];
+      case '--new-instance':
+        a.newInstance = true;
       default:
         if (s.startsWith('-')) {
           throw FormatException('未知参数：$s（用 --help 看用法）');
@@ -110,11 +122,32 @@ Future<void> main(List<String> argv) async {
       exit(2);
     }
 
+    // 实例名：--name 显式指定；--new-instance 按项目名找第一个没被占的。
+    var instanceName = sanitizeInstanceName(args.name);
+    if (instanceName.isEmpty && args.newInstance) {
+      final segs =
+          projectDir.replaceAll(RegExp(r'[/\\]+$'), '').split(RegExp(r'[/\\]'));
+      final base = sanitizeInstanceName(segs.isEmpty ? 'ai' : segs.last);
+      final stem = base.isEmpty ? 'ai' : base;
+      for (var n = 1; n <= 20; n++) {
+        final candidate = '$stem-$n';
+        if (instanceNameConflict(candidate) == null) {
+          instanceName = candidate;
+          break;
+        }
+      }
+      if (instanceName.isEmpty) {
+        throw StateError('项目 $stem 已经有 20 个实例名了，用 --name 指定一个');
+      }
+    }
+
     Map<String, Object?> mcp;
     if (args.printOnly) {
-      mcp = await McpHost().probe();
+      mcp = await McpHost().probe(
+          name: instanceName.isEmpty ? null : instanceName);
     } else {
-      mcp = await McpHost().ensure(allowEval: true);
+      mcp = await McpHost()
+          .ensure(allowEval: true, name: instanceName.isEmpty ? null : instanceName);
     }
     final hasEval = mcp['hasEval'] == true;
     final url = '${mcp['url'] ?? 'http://127.0.0.1:$kDefaultMcpPort/mcp'}';
@@ -124,6 +157,7 @@ Future<void> main(List<String> argv) async {
       projectDir: projectDir,
       deviceId: device,
       hasEval: hasEval,
+      instanceName: instanceName,
     );
     final config = aiClientConfig(url: url, token: token);
 
@@ -154,10 +188,18 @@ Future<void> main(List<String> argv) async {
     if (mcp['running'] == true) {
       b
         ..writeln('  服务：$url')
+        ..writeln('  实例：${mcp['name'] ?? instanceName}'
+            '${mcp['pid'] == null ? '' : '（pid ${mcp['pid']}）'}')
         ..writeln('  日志：${McpHost().home}/logs/mcp.log');
       if (!args.printOnly && !hasEval) {
         b.writeln('  注意：服务已启动但 eval 没开，请把启动命令里加上 --allow-eval');
       }
+    } else if (instanceName.isNotEmpty) {
+      b
+        ..writeln('  实例：$instanceName（还没在跑；去掉 --print-only 会自动拉起）')
+        ..writeln('  手工起：dart run xb_ume:mcp --http $kDefaultMcpPort '
+            '--name $instanceName --tool-groups all --allow-eval')
+        ..writeln('  多 AI 并行时每个实例用不同端口，租约里能看出谁在驱动');
     }
     b
       ..writeln()

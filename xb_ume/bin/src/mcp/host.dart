@@ -15,6 +15,8 @@ import 'dart:isolate';
 import 'dart:math';
 
 import '../paths.dart';
+import 'instances.dart';
+import 'lease.dart';
 
 /// MCP HTTP 默认端口与扫描范围（与 README / MCP_GUIDE 一致）。
 const int kDefaultMcpPort = 46140;
@@ -55,8 +57,22 @@ class McpHost {
   }
 
   /// 扫 [from, from+span) 找 MCP：握手成功即返回该端口的状态。
-  Future<Map<String, Object?>> probe({int from = kDefaultMcpPort}) async {
+  ///
+  /// 传 [name] 时只看这个实例登记的端口（不扫默认区间，免得把别的 AI 的实例
+  /// 当成自己的）。
+  Future<Map<String, Object?>> probe(
+      {int from = kDefaultMcpPort, String? name}) async {
+    final want = (name ?? '').trim();
     final tk = token;
+    if (want.isNotEmpty) {
+      final rec = readInstance(want, home: home);
+      final port = int.tryParse('${rec?['port'] ?? 0}') ?? 0;
+      if (rec != null && port > 0) {
+        final hit = await _handshake(port, tk);
+        if (hit != null) return <String, Object?>{...hit, 'name': want};
+      }
+      return <String, Object?>{'running': false, 'name': want};
+    }
     for (var p = from; p < from + kMcpPortSpan; p++) {
       final hit = await _handshake(p, tk);
       if (hit != null) return hit;
@@ -66,10 +82,30 @@ class McpHost {
 
   /// 保证有一个 eval 状态符合 [allowEval] 的服务在跑。
   ///
+  /// [name] 给定时只动这个名字的实例（多个 AI 各管自己那个），不碰默认 pid 记录。
+  ///
   /// - 已在跑且状态一致：直接复用；
   /// - 已在跑但状态不一致：只有 pid 记录在案才重启（否则报错，不猜进程）；
   /// - 没在跑：挑空闲端口启动。
-  Future<Map<String, Object?>> ensure({required bool allowEval}) async {
+  Future<Map<String, Object?>> ensure({
+    required bool allowEval,
+    String? name,
+  }) async {
+    final want = (name ?? '').trim();
+    if (want.isNotEmpty) {
+      final rec = readInstance(want, home: home);
+      final port = int.tryParse('${rec?['port'] ?? 0}') ?? 0;
+      if (rec != null && port > 0) {
+        final hit = await _handshake(port, token);
+        if (hit != null) {
+          if (hit['hasEval'] == allowEval) {
+            return <String, Object?>{...hit, 'reused': true, 'name': want};
+          }
+          await stop(name: want);
+        }
+      }
+      return _start(allowEval: allowEval, name: want);
+    }
     final st = await probe();
     if (st['running'] == true) {
       if (st['hasEval'] == allowEval) {
@@ -87,11 +123,38 @@ class McpHost {
     return _start(allowEval: allowEval);
   }
 
-  /// 按 pid 记录停止服务（SIGTERM，等端口释放）。
-  Future<Map<String, Object?>> stop() async {
-    final rec = _readPidRecord();
+  /// 列出登记过的 MCP 实例（含各自持有的租约）。
+  List<Map<String, Object?>> list() {
+    final holders = <String, Lease>{};
+    for (final l in LeaseStore(
+      instance: '',
+      instancePid: pid,
+      home: home,
+    ).list()) {
+      holders[l.key] = l;
+    }
+    return <Map<String, Object?>>[
+      for (final rec in listInstances(home: home))
+        <String, Object?>{
+          ...rec,
+          'leases': <Map<String, Object?>>[
+            for (final l in holders.values)
+              if (l.owner.instance == rec['name'])
+                l.toJson(now: DateTime.now()),
+          ],
+        },
+    ];
+  }
+
+  /// 按 pid 记录（或 [name] 指向的实例）停止服务，等端口释放。
+  Future<Map<String, Object?>> stop({String? name}) async {
+    final want = (name ?? '').trim();
+    final rec = want.isEmpty
+        ? _readPidRecord()
+        : (readInstance(want, home: home) ?? const <String, Object?>{});
     final pid = int.tryParse('${rec['pid'] ?? ''}');
-    final port = int.tryParse('${rec['port'] ?? ''}') ?? kDefaultMcpPort;
+    final port = int.tryParse('${rec['port'] ?? ''}') ??
+        (want.isEmpty ? kDefaultMcpPort : 0);
     if (pid == null) return <String, Object?>{'ok': true, 'message': '没有运行中的服务'};
     var killed = false;
     try {
@@ -101,14 +164,19 @@ class McpHost {
     }
     for (var i = 0; i < 24; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (await _portFree(port)) break;
+      if (port <= 0 || await _portFree(port)) break;
     }
     try {
-      if (_pidFile.existsSync()) _pidFile.deleteSync();
+      if (want.isEmpty) {
+        if (_pidFile.existsSync()) _pidFile.deleteSync();
+      } else {
+        removeInstance(want, home: home, onlyPid: pid);
+      }
     } catch (_) {}
     return <String, Object?>{
       'ok': true,
       'pid': pid,
+      'name': want.isEmpty ? null : want,
       'killed': killed,
       'message': '已停止 MCP 服务（pid $pid）',
     };
@@ -127,7 +195,10 @@ class McpHost {
     return const <String, Object?>{};
   }
 
-  Future<Map<String, Object?>> _start({required bool allowEval}) async {
+  Future<Map<String, Object?>> _start({
+    required bool allowEval,
+    String name = '',
+  }) async {
     final script = await _findScript();
     if (script == null) {
       throw StateError('找不到 mcp.dart：请先执行 dart run xb_ume:ide --install，'
@@ -144,12 +215,16 @@ class McpHost {
       throw StateError('端口 $kDefaultMcpPort-${kDefaultMcpPort + kMcpPortSpan - 1} 都被占用');
     }
     _logFile.parent.createSync(recursive: true);
+    // 实例名不传时由 mcp.dart 按端口生成（mcp-<port>），与本记录里端口一致。
+    final instanceName = name.isEmpty ? 'mcp-$port' : sanitizeInstanceName(name);
     final proc = await Process.start(
       Platform.resolvedExecutable,
       <String>[
         script,
         '--http',
         '$port',
+        '--name',
+        instanceName,
         '--tool-groups',
         'all',
         '--log-file',
@@ -160,11 +235,14 @@ class McpHost {
       mode: ProcessStartMode.detached,
     );
     try {
-      _pidFile.writeAsStringSync(jsonEncode(<String, Object?>{
-        'pid': proc.pid,
-        'port': port,
-        'at': DateTime.now().toIso8601String(),
-      }));
+      // 带名字的实例靠实例登记追踪，不覆写默认 pid 记录（否则会丢掉默认服务）。
+      if (name.isEmpty) {
+        _pidFile.writeAsStringSync(jsonEncode(<String, Object?>{
+          'pid': proc.pid,
+          'port': port,
+          'at': DateTime.now().toIso8601String(),
+        }));
+      }
     } catch (_) {
       // pid 写不了只影响后续 stop。
     }
@@ -173,7 +251,12 @@ class McpHost {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       final hit = await _handshake(port, tk);
       if (hit != null) {
-        return <String, Object?>{...hit, 'started': true, 'pid': proc.pid};
+        return <String, Object?>{
+          ...hit,
+          'started': true,
+          'pid': proc.pid,
+          'name': instanceName,
+        };
       }
     }
     throw StateError('已拉起进程 ${proc.pid}，但 20 秒内没握手成功；'

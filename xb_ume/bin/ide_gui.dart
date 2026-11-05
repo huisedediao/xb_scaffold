@@ -570,15 +570,25 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       await req.response.close();
       return;
     }
+    if (path == '/api/mcp/instances') {
+      // 多 AI 协作：有哪些 MCP 实例、各自在驱动哪个会话（租约）。
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{
+        'instances': listMcpInstances(),
+        'leases': listMcpLeases(),
+      }));
+      await req.response.close();
+      return;
+    }
     if (path == '/api/mcp/start' && req.method == 'POST') {
-      final r = await startMcp();
+      final r = await startMcp(name: req.uri.queryParameters['name']);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(r));
       await req.response.close();
       return;
     }
     if (path == '/api/mcp/stop' && req.method == 'POST') {
-      final r = await stopMcp();
+      final r = await stopMcp(name: req.uri.queryParameters['name']);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(r));
       await req.response.close();
@@ -832,6 +842,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       req.response.write(jsonEncode(<String, Object?>{
         'projectDir': cfg['aiProjectDir'] ?? '',
         'device': cfg['aiDevice'] ?? '',
+        'instance': cfg['aiInstance'] ?? '',
+        // 已有实例（多 AI 并行时各选一个；空值 = 共享默认服务）。
+        'instances': listMcpInstances(),
         // 候选项：当前调试会话反推的项目根 + 最近用过的目录。
         'sessionDirs': state.sessionProjectRoots,
         'recentDirs': recent,
@@ -9529,6 +9542,111 @@ Map<String, Object?> readMcpPidRecord() {
   return const <String, Object?>{};
 }
 
+// ── MCP 多实例（一 AI 一进程）─────────────────────────────────────
+//
+// 实例登记与租约分别由 bin/src/mcp/instances.dart、lease.dart 落盘；GUI 是单文件
+// 部署、不 import 那边，所以这里按同一份目录与字段名各读一遍（字段名改动要两边同步）。
+
+Directory get _mcpInstancesDir => Directory('$_home/.xb_ume_ide/mcp/instances');
+Directory get _mcpLeasesDir => Directory('$_home/.xb_ume_ide/leases');
+
+/// 实例名允许的字符（与 instances.dart 的 sanitizeInstanceName 一致）。
+String sanitizeMcpInstanceName(String raw) {
+  final s = raw.trim().replaceAll(RegExp(r'[^A-Za-z0-9_.\-\u4e00-\u9fa5]'), '-');
+  return s.length > 40 ? s.substring(0, 40) : s;
+}
+
+Map<String, Object?> _readJsonMap(File f) {
+  try {
+    if (!f.existsSync()) return const <String, Object?>{};
+    final j = jsonDecode(f.readAsStringSync());
+    if (j is Map) return j.map((k, v) => MapEntry(k.toString(), v));
+  } catch (_) {
+    // 半截文件 / 手改坏了：当成没有。
+  }
+  return const <String, Object?>{};
+}
+
+/// 读一个实例的登记（不管死活）。
+Map<String, Object?>? readMcpInstance(String name) {
+  final safe = sanitizeMcpInstanceName(name);
+  if (safe.isEmpty) return null;
+  final f = File('${_mcpInstancesDir.path}/$safe.json');
+  if (!f.existsSync()) return null;
+  final rec = _readJsonMap(f);
+  return rec.isEmpty ? null : rec;
+}
+
+/// 实例名是否已被另一个活着的进程占着。
+Map<String, Object?>? mcpInstanceConflict(String name) {
+  final rec = readMcpInstance(name);
+  if (rec == null) return null;
+  final owner = int.tryParse('${rec['pid'] ?? ''}') ?? 0;
+  if (owner <= 0 || owner == pid || !_pidAlive(owner)) return null;
+  return rec;
+}
+
+/// 列实例；pid 已不在的登记顺手删掉。
+List<Map<String, Object?>> listMcpInstances() {
+  final out = <Map<String, Object?>>[];
+  try {
+    for (final e in _mcpInstancesDir.listSync()) {
+      if (e is! File || !e.path.endsWith('.json')) continue;
+      final rec = _readJsonMap(e);
+      final name =
+          '${rec['name'] ?? e.uri.pathSegments.last.replaceAll('.json', '')}';
+      final owner = int.tryParse('${rec['pid'] ?? ''}') ?? 0;
+      final alive = owner > 0 && _pidAlive(owner);
+      if (!alive) {
+        try {
+          e.deleteSync();
+        } catch (_) {}
+        continue;
+      }
+      out.add(<String, Object?>{...rec, 'name': name, 'pid': owner, 'alive': true});
+    }
+  } catch (_) {
+    // 目录读不了就当没有实例。
+  }
+  out.sort((a, b) => '${a['name']}'.compareTo('${b['name']}'));
+  return out;
+}
+
+/// 本机有效租约（TTL 到 / 持有者 pid 不在的顺手删掉）。
+List<Map<String, Object?>> listMcpLeases() {
+  final out = <Map<String, Object?>>[];
+  final now = DateTime.now();
+  try {
+    for (final e in _mcpLeasesDir.listSync()) {
+      if (e is! File || !e.path.endsWith('.json')) continue;
+      final j = _readJsonMap(e);
+      final ownerRaw = j['owner'];
+      final owner = ownerRaw is Map ? ownerRaw : const <String, Object?>{};
+      final ownerPid = int.tryParse('${owner['pid'] ?? ''}') ?? 0;
+      final renewed = DateTime.tryParse('${j['renewedAt'] ?? ''}');
+      final ttl = int.tryParse('${j['ttlMs'] ?? ''}') ?? 600000;
+      final expired =
+          renewed == null || !now.isBefore(renewed.add(Duration(milliseconds: ttl)));
+      if (expired || ownerPid <= 0 || !_pidAlive(ownerPid)) {
+        try {
+          e.deleteSync();
+        } catch (_) {}
+        continue;
+      }
+      out.add(<String, Object?>{
+        ...j,
+        'key': '${j['key'] ?? e.uri.pathSegments.last.replaceAll('.json', '')}',
+        'ownerPid': ownerPid,
+        'leftMs': renewed.add(Duration(milliseconds: ttl)).difference(now).inMilliseconds,
+      });
+    }
+  } catch (_) {
+    // 目录读不了就当没有租约。
+  }
+  out.sort((a, b) => '${b['renewedAt']}'.compareTo('${a['renewedAt']}'));
+  return out;
+}
+
 /// 写回 config.json（读-改-写，保留其他配置键）。
 void _guiWriteConfigRaw(Map<String, Object?> cfg) {
   final file = File('$_home/.xb_ume_ide/config.json');
@@ -9595,16 +9713,47 @@ Future<bool> _mcpPortFree(int port) async {
 /// 装包/卸包/停进程这些高危工具自身仍强制 confirm: true。
 ///
 /// [forceEval] 为 true 时无论配置如何都带 --allow-eval（「AI 调试」一键开启用）。
-Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
-  final current = await probeMcpStatus();
-  if (current['running'] == true) {
-    return <String, Object?>{
-      ...current,
-      'ok': true,
-      'message': current['mode'] == 'http'
-          ? 'MCP 服务已在运行（端口 ${current['port']}）'
-          : '已有 stdio 模式的 MCP 进程在跑（无监听端口）',
-    };
+///
+/// [name] 给定时只拉起 / 复用这个名字的实例（多个 AI 各跑一个进程各管自己），
+/// 不碰默认 pid 记录，也不复用默认那个服务。
+Future<Map<String, Object?>> startMcp({
+  bool forceEval = false,
+  String? name,
+}) async {
+  final want = sanitizeMcpInstanceName(name ?? '');
+  if (want.isNotEmpty) {
+    final rec = readMcpInstance(want);
+    final oldPort = int.tryParse('${rec?['port'] ?? 0}') ?? 0;
+    if (rec != null && oldPort > 0) {
+      final hit = await _probeMcpHttp(oldPort, readMcpToken());
+      if (hit != null) {
+        return <String, Object?>{
+          ...hit,
+          'ok': true,
+          'name': want,
+          'message': '实例 $want 已在运行（端口 $oldPort）',
+        };
+      }
+    }
+    final busy = mcpInstanceConflict(want);
+    if (busy != null) {
+      return <String, Object?>{
+        'ok': false,
+        'name': want,
+        'message': '实例名 $want 已被 pid ${busy['pid']} 占用，换一个名字',
+      };
+    }
+  } else {
+    final current = await probeMcpStatus();
+    if (current['running'] == true) {
+      return <String, Object?>{
+        ...current,
+        'ok': true,
+        'message': current['mode'] == 'http'
+            ? 'MCP 服务已在运行（端口 ${current['port']}）'
+            : '已有 stdio 模式的 MCP 进程在跑（无监听端口）',
+      };
+    }
   }
   final script = File('$_home/.xb_ume_ide/mcp.dart');
   if (!script.existsSync()) {
@@ -9628,6 +9777,7 @@ Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
   }
   final log = File('$_home/.xb_ume_ide/logs/mcp.log');
   log.parent.createSync(recursive: true);
+  final instanceName = want.isEmpty ? 'mcp-$port' : want;
   final Process proc;
   try {
     proc = await Process.start(
@@ -9636,6 +9786,9 @@ Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
         script.path,
         '--http',
         '$port',
+        // 实例名进租约：「谁在驱动这个会话」在 xbume_clients / 工具报错里直接可读。
+        '--name',
+        instanceName,
         '--tool-groups',
         'all',
         // 桥接类工具（data / env）要回过头调本进程的 /api/*，直接告诉它端口，
@@ -9655,11 +9808,14 @@ Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
     return <String, Object?>{'ok': false, 'message': '拉起进程失败：$e'};
   }
   try {
-    _mcpPidFile.writeAsStringSync(jsonEncode(<String, Object?>{
-      'pid': proc.pid,
-      'port': port,
-      'at': DateTime.now().toIso8601String(),
-    }));
+    // 带名字的实例靠自身写的实例登记追踪，不覆写默认 pid 记录。
+    if (want.isEmpty) {
+      _mcpPidFile.writeAsStringSync(jsonEncode(<String, Object?>{
+        'pid': proc.pid,
+        'port': port,
+        'at': DateTime.now().toIso8601String(),
+      }));
+    }
   } catch (_) {}
   // 等握手成功：dart 冷启动要 JIT 编译，最多等 10 秒。
   final token = ensureMcpToken();
@@ -9670,7 +9826,9 @@ Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
       return <String, Object?>{
         ...hit,
         'ok': true,
-        'message': 'MCP 服务已启动（端口 $port）',
+        'name': instanceName,
+        'message': 'MCP 服务已启动（端口 $port'
+            '${want.isEmpty ? '' : '，实例 $want'}）',
       };
     }
   }
@@ -9678,15 +9836,26 @@ Future<Map<String, Object?>> startMcp({bool forceEval = false}) async {
     'ok': false,
     'pid': proc.pid,
     'port': port,
+    'name': instanceName,
     'message': '已拉起进程 ${proc.pid}，但 10 秒内没握手成功，详见 ${log.path}',
   };
 }
 
-/// 停止 GUI 拉起的 MCP 服务（按 PID 记录）。
-Future<Map<String, Object?>> stopMcp() async {
-  final rec = readMcpPidRecord();
+/// 停止 GUI 拉起的 MCP 服务（按 PID 记录；[name] 给定时按实例登记）。
+Future<Map<String, Object?>> stopMcp({String? name}) async {
+  final want = sanitizeMcpInstanceName(name ?? '');
+  final rec = want.isEmpty
+      ? readMcpPidRecord()
+      : (readMcpInstance(want) ?? const <String, Object?>{});
   final pid = int.tryParse('${rec['pid'] ?? ''}');
   if (pid == null) {
+    if (want.isNotEmpty) {
+      return <String, Object?>{
+        'ok': true,
+        'name': want,
+        'message': '没有名为 $want 的运行中实例',
+      };
+    }
     final st = await probeMcpStatus();
     if (st['running'] == true) {
       return <String, Object?>{
@@ -9700,17 +9869,24 @@ Future<Map<String, Object?>> stopMcp() async {
   try {
     killed = Process.killPid(pid, ProcessSignal.sigterm);
   } catch (_) {}
-  final port = int.tryParse('${rec['port'] ?? ''}') ?? kMcpDefaultPort;
+  final port = int.tryParse('${rec['port'] ?? ''}') ??
+      (want.isEmpty ? kMcpDefaultPort : 0);
   // MCP 收到 SIGTERM 会优雅关闭，这里等端口释放后再返回。
   for (var i = 0; i < 20; i++) {
     await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (await _mcpPortFree(port)) break;
+    if (port <= 0 || await _mcpPortFree(port)) break;
   }
   try {
-    _mcpPidFile.deleteSync();
+    if (want.isEmpty) {
+      _mcpPidFile.deleteSync();
+    } else {
+      final f = File('${_mcpInstancesDir.path}/$want.json');
+      if (f.existsSync()) f.deleteSync();
+    }
   } catch (_) {}
   return <String, Object?>{
     'ok': true,
+    'name': want.isEmpty ? null : want,
     'message': killed ? 'MCP 服务已停止（pid $pid）' : '进程 $pid 已不存在，已清理记录',
   };
 }
@@ -9753,8 +9929,13 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
     };
   }
 
-  final st = await probeMcpStatus();
-  if (st['running'] == true && st['mode'] == 'stdio') {
+  // 实例：留空 = 用共享的那个服务；填了名字 = 这个 AI 单独一个 MCP 进程
+  // （多个 AI / 多个会话并行时靠它隔离，同一个 app 上的写操作再用会话租约互斥）。
+  final wantInstance = sanitizeMcpInstanceName('${j['instance'] ?? ''}');
+  final st = wantInstance.isEmpty
+      ? await probeMcpStatus()
+      : const <String, Object?>{};
+  if (wantInstance.isEmpty && st['running'] == true && st['mode'] == 'stdio') {
     return <String, Object?>{
       'ok': false,
       'message': '检测到 stdio 模式的 MCP 进程（由 AI 客户端拉起），参数不归工具箱管；'
@@ -9762,7 +9943,10 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
     };
   }
   Map<String, Object?> mcp;
-  if (st['running'] == true && st['hasEval'] == true) {
+  if (wantInstance.isNotEmpty) {
+    // 多个 AI 并行：各自一个实例，已存在就复用、参数不对就只重启这一个。
+    mcp = await startMcp(forceEval: true, name: wantInstance);
+  } else if (st['running'] == true && st['hasEval'] == true) {
     mcp = st;
   } else if (st['running'] == true) {
     // 在跑但没开 eval：只重启有 pid 记录的进程。
@@ -9784,6 +9968,7 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
     projectDir: projectDir,
     deviceId: device,
     hasEval: mcp['hasEval'] == true,
+    instanceName: wantInstance,
   );
   final config = aiClientConfig(
     url: '${mcp['url'] ?? ''}',
@@ -9792,6 +9977,7 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
   final cfg = _guiReadConfigRaw();
   cfg['aiProjectDir'] = projectDir;
   cfg['aiDevice'] = device;
+  cfg['aiInstance'] = wantInstance;
   // 最近用过的项目目录（最多 8 条，去重后置顶）。
   final recentDirs = <String>[
     projectDir,
@@ -9805,6 +9991,7 @@ Future<Map<String, Object?>> _aiSetup(String body) async {
     'ok': true,
     'projectDir': projectDir,
     'deviceId': device,
+    'instance': wantInstance,
     'recentDirs': recentDirs,
     'mcp': mcp,
     'prompt': prompt,
@@ -11727,12 +11914,25 @@ const String guiHtml = r'''
           <select id="ai-device" style="width:210px;margin-left:6px"></select>
         </label>
       </div>
+      <div class="row" style="margin-top:8px;gap:10px;flex-wrap:nowrap">
+        <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="MCP 实例：留空用共享那个服务；多个 AI / 多个会话并行时，各选一个独立实例（各自进程与端口，「谁在驱动」写进租约）">MCP 实例
+          <select id="ai-instance" style="flex:0 0 auto;width:230px;margin-left:6px" onchange="aiInstancePicked(this)"></select>
+        </label>
+        <button onclick="aiNewInstance(this)" style="flex:0 0 auto" title="新建一个独立 MCP 实例（自动挑未占用的名字）：多个 AI 同时干活时各用一个，互不干扰">新建实例</button>
+        <button onclick="aiStopInstance(this)" style="flex:0 0 auto" title="停掉当前选中的这个实例（只按它登记里的精确 pid 停）">停此实例</button>
+      </div>
       <div class="muted" style="margin-top:8px;line-height:1.6">
         点「一键开启」会：启动带 <code>xbume_eval</code> 的 MCP（已在跑就复用，参数不一致只重启自己记录的那个）
         → 生成一段指令并自动复制。把指令粘给 AI，它会先看有没有可复用的会话（没有就自己
         <code>flutter run</code> 拉起 app），接上后先调 <code>xbume_session_check</code> 自检一次
         （结论 ready / ready_no_reload / degraded / wrong_device / wrong_project / stale：是不是这台设备的这个项目、
         截图 / 点按 / 读运行时数据能不能用、热重载走哪条通道），再复现现场、定位到源码行、改代码、热重载、复跑验证。
+      </div>
+      <div class="muted" style="margin-top:6px;line-height:1.6;font-size:12px">
+        <b>多个 AI 并行</b>：点「新建实例」给每个 AI 各建一个独立 MCP 实例（各自进程与端口），每边配置里只填自己那一个；
+        同一个 app 上的<b>写</b>操作（点按 / 热重载 / 拉包 / 场景回放）靠<b>会话租约</b>互斥：被占时报 busy（谁在驱动、还剩多久），
+        <b>读</b>操作（截图 / 找组件 / 时间线 / 调试状态）不需要租约，可以直接旁路观察；
+        验证完让 AI 调 <code>xbume_lease{"op":"release"}</code> 主动让出来，忘了也会 10 分钟后自动过期。
       </div>
       <div class="muted" style="margin-top:6px;line-height:1.6;font-size:12px">
         「项目目录」候选项来自：当前已连接的调试会话（按 app 库路径反推项目根）+ 最近用过的目录，也可直接粘路径；
@@ -14819,12 +15019,87 @@ function aiFillDevices(list, cur, fallback){
   sel.value = want;
   if (sel.value !== want) sel.value = '';
 }
+// MCP 实例下拉：空值 = 共享默认服务；其余是各自独立的进程（多 AI 并行）。
+// list 来自 /api/ai/config 或 /api/mcp/instances（字段：name / port / pid / hasEval）。
+var aiInstances = [];
+function aiFillInstances(list, cur){
+  var sel = document.getElementById('ai-instance');
+  if (!sel) return;
+  var prev = sel.value;
+  aiInstances = list || [];
+  var html = '<option value="">共享默认服务</option>';
+  aiInstances.forEach(function(x){
+    var n = x.name || '';
+    if (!n) return;
+    var lbl = n + (x.port ? '（:' + x.port + '）' : '') + (x.hasEval === false ? ' · 无 eval' : '');
+    html += '<option value="' + esc(n) + '">' + esc(lbl) + '</option>';
+  });
+  sel.innerHTML = html;
+  var want = prev || cur || '';
+  sel.value = want;
+  if (sel.value !== want) sel.value = '';
+}
+function aiRefreshInstances(cur){
+  return fetch('/api/mcp/instances').then(function(r){ return r.json(); }).then(function(d){
+    aiFillInstances(d.instances || [], cur);
+    return d;
+  }).catch(function(){});
+}
+function aiInstancePicked(sel){
+  var st = document.getElementById('ai-status');
+  if (!st) return;
+  var name = (sel && sel.value) || '';
+  st.textContent = name ? ('已选实例 ' + name + '，点「一键开启」拉起来 / 复用') : '未就绪';
+}
+// 新建实例：自动挑一个未占用的名字（ai-1 / ai-2 …）并拉起。
+function aiNewInstance(btn){
+  var used = {};
+  aiInstances.forEach(function(x){ if (x.name) used[x.name] = 1; });
+  var name = '';
+  for (var i = 1; i <= 20; i++) { if (!used['ai-' + i]) { name = 'ai-' + i; break; } }
+  if (!name) name = 'ai-' + Date.now().toString().slice(-4);
+  if (btn) { btn.disabled = true; btn.textContent = '创建中…'; }
+  fetch('/api/mcp/start?name=' + encodeURIComponent(name), { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (btn) { btn.disabled = false; btn.textContent = '新建实例'; }
+      if (d.ok === false) { alert(d.message || '创建实例失败'); return; }
+      aiRefreshInstances(name).then(function(){
+        var sel = document.getElementById('ai-instance');
+        if (sel) sel.value = name;
+        aiInstancePicked(sel);
+      });
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = '新建实例'; }
+      alert('创建实例失败：' + e);
+    });
+}
+function aiStopInstance(btn){
+  var sel = document.getElementById('ai-instance');
+  var name = (sel && sel.value) || '';
+  if (!name) { alert('先在上面的「MCP 实例」里选一个（共享默认服务请去守护进程页停）'); return; }
+  if (!confirm('停掉实例 ' + name + '？（只按它登记里的精确 pid 停，不影响其他实例）')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '停止中…'; }
+  fetch('/api/mcp/stop?name=' + encodeURIComponent(name), { method: 'POST' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (btn) { btn.disabled = false; btn.textContent = '停此实例'; }
+      aiRefreshInstances('').then(function(){ aiInstancePicked(null); });
+      refreshMcp();
+    })
+    .catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = '停此实例'; }
+      alert('停止失败：' + e);
+    });
+}
 function aiShow(){
   fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
     aiSessionDirs = d.sessionDirs || [];
     aiRecentDirs = d.recentDirs || [];
     aiFillDirs(aiSessionDirs, aiRecentDirs, d.projectDir);
     aiFillDevices(d.devices, d.device, d.selectedDevice);
+    aiFillInstances(d.instances || [], d.instance);
   }).catch(function(){});
   refreshMcp();
 }
@@ -14923,6 +15198,8 @@ document.addEventListener('keydown', function(e){
 function aiSetup(btn){
   var dir = (document.getElementById('ai-dir').value || '').trim();
   var dev = (document.getElementById('ai-device').value || '').trim();
+  var instSel = document.getElementById('ai-instance');
+  var inst = (instSel && instSel.value) || '';
   var st = document.getElementById('ai-status');
   var pre = document.getElementById('ai-prompt');
   if (btn) { btn.disabled = true; btn.textContent = '准备中…'; }
@@ -14930,7 +15207,7 @@ function aiSetup(btn){
   fetch('/api/ai/setup', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({dir: dir, device: dev})
+    body: JSON.stringify({dir: dir, device: dev, instance: inst})
   }).then(function(r){ return r.json(); }).then(function(d){
     if (btn) { btn.disabled = false; btn.textContent = '一键开启'; }
     if (d.ok !== true) {
@@ -14948,7 +15225,10 @@ function aiSetup(btn){
     if (devSel) devSel.value = d.deviceId || '';
     var m = d.mcp || {};
     if (st) st.innerHTML = '<span class="ok">已就绪</span> · ' + (m.toolCount || 0)
-      + ' 个工具 · eval ' + (m.hasEval ? '已开' : '未开');
+      + ' 个工具 · eval ' + (m.hasEval ? '已开' : '未开')
+      + (m.name ? ' · 实例 ' + esc(m.name) : '');
+    // 成功后刷新实例下拉（新建的实例立刻可选）。
+    aiRefreshInstances(d.instance || '');
     // 下一步就是粘给 AI，所以直接写剪贴板。
     var done = function(ok){
       if (st) st.innerHTML += ok ? ' · 指令已复制'

@@ -153,7 +153,7 @@ GUI 在跑时，`--svc stop gui` / `restart` / `redeploy` 会把请求转给页�
 - `运行中 · stdio · pid <pid>`：stdio 模式没有监听端口，只能按进程命令行识别，工具数在客户端会话里可见；
 - **复制 MCP 配置**：按当前运行状态生成可直接粘贴的客户端配置（stdio → `command/args`；HTTP → `url` + `X-XBUME-Token`），剪贴板被浏览器拦下时配置会同时展开在下方可手动选中；
 - **启动 / 停止**：点「启动」后台拉起 `~/.xb_ume_ide/mcp.dart --http <46140-46149 首个空闲> --tool-groups all`（日志写 `~/.xb_ume_ide/logs/mcp.log`），点「停止」结束这个进程；重复启动是幂等的，不会起第二个实例。只停工具箱自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`），客户端以 stdio 拉起的要去客户端里关；
-- **能力范围**：`--tool-groups all` 一次开 55 个工具——默认 25 个（core / diagnose / run-safe）+ `act` / `device-write`（设备操作，高危需 `confirm`）+ `debug`6（断点、单步、调用栈、变量、运行输出，直连 VM，不依赖 GUI）+ `inspect`4（Widget 树、实例、性能/泄漏、双会话对比）+ `data`4（shared_prefs、SQLite、沙盒文件、表达式监听）+ `env`8（IDE 跳转、守护进程、路由定位、时间轴、GUI 日志历史、网络重放、异常 AI 归因、自动化）+ `ai`1（自然语言驱动）；后四组走 GUI 的 HTTP 接口，需要工具箱在跑。工具数由卡片的 `tools/list` 握手实时统计，重启服务后自动更新；
+- **能力范围**：`--tool-groups all` 一次开 57 个工具——默认 28 个（core / diagnose / run-safe）+ `act` / `device-write`（设备操作，高危需 `confirm`）+ `debug`6（断点、单步、调用栈、变量、运行输出，直连 VM，不依赖 GUI）+ `inspect`4（Widget 树、实例、性能/泄漏、双会话对比）+ `data`4（shared_prefs、SQLite、沙盒文件、表达式监听）+ `env`8（IDE 跳转、守护进程、路由定位、时间轴、GUI 日志历史、网络重放、异常 AI 归因、自动化）+ `ai`1（自然语言驱动）；后四组走 GUI 的 HTTP 接口，需要工具箱在跑。工具数由卡片的 `tools/list` 握手实时统计，重启服务后自动更新；
 - **随工具箱启动**：勾上后每次打开工具箱自动拉起 MCP（写在 `config.json` 的 `mcpAutoStart`，默认关）；勾上时若服务未运行会立即拉起，取消勾选不会停掉正在跑的服务。
 
 注意：MCP 服务默认不开（没人调就不跑），也不随系统开机自启；需要时点「启动」、勾上「随工具箱启动」，或让客户端以 stdio 方式拉起（推荐）。工具清单与完整配置见 [MCP_GUIDE.md](MCP_GUIDE.md)。

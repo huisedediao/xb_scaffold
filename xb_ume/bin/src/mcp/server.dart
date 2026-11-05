@@ -270,7 +270,7 @@ class McpServer {
   /// 每次 tools/call 记一行：时间 / 工具 / 会话 / 耗时 / 结果。不记参数与 token。
   void _audit(String tool, String session, int ms, bool ok, String code) {
     try {
-      _auditSink ??= File(auditLogFile().path).openWrite(mode: FileMode.append);
+      _auditSink ??= _openAuditSink();
       _auditSink!.writeln([
         DateTime.now().toIso8601String(),
         tool,
@@ -299,6 +299,18 @@ File tokenFile() => File('${xbUmeHome()}/mcp.token');
 
 /// 审计日志文件。
 File auditLogFile() => File('${xbUmeHome()}/logs/mcp.log');
+
+/// 打开审计日志：先建父目录，并把写盘错误接住。
+///
+/// `openWrite` 的失败是**异步**抛的（sink 的 stream 里），外层 try/catch 接不到——
+/// 全新 `XB_UME_HOME`（没有 `logs/`）时第一次写就把整个 MCP 进程带走。
+IOSink _openAuditSink() {
+  final f = auditLogFile();
+  f.parent.createSync(recursive: true);
+  final sink = f.openWrite(mode: FileMode.append);
+  unawaited(sink.done.catchError((Object _) {}));
+  return sink;
+}
 
 /// 读取或生成 token（32 字符随机 hex）。
 String ensureToken() {

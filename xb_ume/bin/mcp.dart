@@ -7,6 +7,7 @@
 // 选项：
 //   --stdio                  stdio 传输（默认）
 //   --http <port>            Streamable HTTP 传输（默认 46140；仅绑 127.0.0.1）
+//   --name <name>            实例名（多个 AI 各跑一个进程时用来区分谁在驱动）
 //   --uri <port|ws-url>      手工指定会话（跳过自动发现，可重复）
 //   --tool-groups <list>     all 或逗号分隔的组名：inspect,act,device-write,
 //                            debug,data,env（ai/ide 预留）
@@ -27,6 +28,7 @@ import 'src/device/registry.dart';
 import 'src/mcp/bridge_tools.dart';
 import 'src/mcp/debug_tools.dart';
 import 'src/mcp/device_tools.dart';
+import 'src/mcp/instances.dart';
 import 'src/mcp/scenario_service.dart';
 import 'src/mcp/server.dart';
 import 'src/mcp/session_registry.dart';
@@ -42,6 +44,9 @@ xb_ume MCP 服务
 选项：
   --stdio                  stdio 传输（默认），供 Qoder / Cursor / Claude Code 接入
   --http <port>            Streamable HTTP（默认 46140，仅绑 127.0.0.1，需 token）
+  --name <name>            实例名（默认 http 按端口 mcp-<port>，stdio 按 pid）。
+                           多个 AI 并行时各跑一个进程、各取一个名字，租约里就能看出
+                           是谁在驱动会话
   --uri <port|ws-url>      手工指定 VM service 会话（跳过自动发现，可重复）
   --tool-groups <list>     all 或逗号分隔：inspect,act,device-write,debug,data,env
   --no-tool-groups         只暴露核心工具
@@ -52,14 +57,16 @@ xb_ume MCP 服务
   -h, --help               显示帮助
   --version                显示版本
 
-默认工具 24 个（core 18 + diagnose 3 + run-safe 3）；有副作用的组需显式开启。
+默认工具 28 个（core 21 + diagnose 4 + run-safe 3）；有副作用的组需显式开启。
 加 --allow-eval 多出 xbume_eval，加 --tool-groups all 多出调试 / 数据 / 观测类工具。
+多个 AI 共用一个 app 时，写操作要拿会话租约：被占会报 busy，只读旁路随时可用。
 HTTP 模式 token 首次运行生成在 \$XB_UME_HOME/mcp.token。
 ''';
 
 class _Args {
   bool http = false;
   int httpPort = 46140;
+  String name = '';
   bool noToolGroups = false;
   String toolGroups = '';
   bool allowEval = false;
@@ -96,6 +103,9 @@ _Args _parseArgs(List<String> argv) {
         final v = _httpPort(next('--http'));
         if (v == null) throw const FormatException('--http 需要 1-65535 的端口');
         a.httpPort = v;
+        break;
+      case '--name':
+        a.name = next('--name');
         break;
       case '--uri':
         a.uris.add(next('--uri'));
@@ -242,6 +252,24 @@ Future<void> main(List<String> argv) async {
   for (final u in args.uris) {
     registry.addManual(u);
   }
+  // 实例名：显式 --name 优先，否则 http 按端口 / stdio 按 pid。
+  // 一 AI 一进程时，租约里写的就是这个名字，谁在驱动一眼能看出来。
+  final instanceName = args.name.trim().isEmpty
+      ? defaultInstanceName(http: args.http, port: args.httpPort)
+      : sanitizeInstanceName(args.name);
+  if (instanceName.isEmpty) {
+    _log('--name 不能为空（只允许字母、数字、下划线、点、横线与中文）');
+    exit(2);
+  }
+  final conflict = instanceNameConflict(instanceName);
+  if (conflict != null) {
+    final cport = int.tryParse('${conflict['port'] ?? 0}') ?? 0;
+    _log('实例名 $instanceName 已被 pid ${conflict['pid']} 占用'
+        '${cport > 0 ? '（端口 $cport）' : ''}');
+    _log('换一个名字：dart run xb_ume:mcp --http ${args.httpPort} '
+        '--name $instanceName-2');
+    exit(2);
+  }
   // 设备后端只建一份：工具层与场景层共用，避免各自 fromSpec 出现两份进程。
   final devices = DeviceRegistry.fromSpec(args.deviceBackend);
   final scenarios = ScenarioService(registry, devices: devices);
@@ -252,6 +280,8 @@ Future<void> main(List<String> argv) async {
     devices: devices,
     deviceBackend: args.deviceBackend,
     guiPort: args.guiPort,
+    instanceName: instanceName,
+    instancePort: args.http ? args.httpPort : 0,
   );
   final all = <McpTool>[
     ...coreTools(allowEval: args.allowEval),
@@ -269,6 +299,18 @@ Future<void> main(List<String> argv) async {
   )..init();
 
   final names = enabled.map((t) => t.name).join(', ');
+  void registerInstance() => writeInstance(<String, Object?>{
+        'name': instanceName,
+        'transport': args.http ? 'http' : 'stdio',
+        'port': args.http ? args.httpPort : 0,
+        'pid': pid,
+        'version': version,
+        'hasEval': args.allowEval,
+        'toolCount': enabled.length,
+        'groups': groups.toList()..sort(),
+        'startedAt': DateTime.now().toIso8601String(),
+      });
+  void unregisterInstance() => removeInstance(instanceName, onlyPid: pid);
   if (args.http) {
     HttpServer hs;
     try {
@@ -280,7 +322,9 @@ Future<void> main(List<String> argv) async {
       exit(2);
     }
     final token = server.token;
-    _log('xb_ume MCP $version · HTTP http://127.0.0.1:${args.httpPort}/mcp');
+    registerInstance();
+    _log('xb_ume MCP $version · HTTP http://127.0.0.1:${args.httpPort}/mcp'
+        ' · 实例 $instanceName');
     _log('token：$token（文件 ${tokenFile().path}）');
     _log('工具 ${enabled.length} 个：$names');
     _log('配置片段：');
@@ -288,6 +332,7 @@ Future<void> main(List<String> argv) async {
     final done = Completer<void>();
     Future<void> shutdown() async {
       if (done.isCompleted) return;
+      unregisterInstance();
       await hs.close(force: true);
       await server.close();
       await ctx.debugPool.disposeAll();
@@ -302,10 +347,12 @@ Future<void> main(List<String> argv) async {
     exit(0);
   }
 
-  _log('xb_ume MCP $version · stdio · 工具 ${enabled.length} 个');
+  registerInstance();
+  _log('xb_ume MCP $version · stdio · 实例 $instanceName · 工具 ${enabled.length} 个');
   try {
     await server.serveStdio();
   } finally {
+    unregisterInstance();
     await server.close();
     await ctx.debugPool.disposeAll();
   }

@@ -9,6 +9,7 @@ library;
 import 'dart:io';
 
 import '../device/bridge.dart';
+import '../device/flutter_run.dart' show resolvePathForCompare;
 import '../device/log_lines.dart';
 import '../device/run_profile.dart';
 import 'protocol.dart';
@@ -173,6 +174,18 @@ McpTool _appLaunchTool() => McpTool(
                 (optionalInt(args, 'timeoutMs') ?? 180000).clamp(5000, 600000));
 
         if (via == 'flutter-run') {
+          // 启动租约：同设备 + 同项目只能有一个实例在拉/调试，
+          // 否则两边各自 flutter run 会重装包互相顶掉（force 就是显式接管）。
+          final force = optionalBool(args, 'force');
+          final cwdKey = resolvePathForCompare(
+              optionalString(args, 'cwd') ?? Directory.current.path);
+          final lease = await requireLaunchLease(
+            ctx,
+            deviceId,
+            cwdKey,
+            force ? 'app_launch(force)' : 'app_launch',
+            steal: force,
+          );
           try {
             final r = await ctx.launcher.launch(
               device: deviceId,
@@ -180,7 +193,7 @@ McpTool _appLaunchTool() => McpTool(
               cwd: optionalString(args, 'cwd'),
               platform: optionalString(args, 'platform'),
               waitVm: optionalBool(args, 'waitVm', fallback: true),
-              force: optionalBool(args, 'force'),
+              force: force,
               owner: 'mcp',
               timeout: timeout,
               config: optionalString(args, 'config'),
@@ -219,9 +232,13 @@ McpTool _appLaunchTool() => McpTool(
                 'args': r.effectiveArgs,
                 'preRun': r.preRunCommands,
                 if (r.note != null) 'note': r.note,
+                'launchLease':
+                    lease.toJson(now: DateTime.now(), mine: ctx.leases.instance),
               },
             );
           } on DeviceCommandError catch (e) {
+            // 拉起失败就把启动权还回去：否则别人 10 分钟内都起不来这个项目。
+            await ctx.leases.release(launchLeaseKey(deviceId, cwdKey));
             _fail(e);
           }
         }
@@ -311,6 +328,7 @@ McpTool _appInstallTool() => McpTool(
               hint: '支持 ${allowed.join(' / ')}');
         }
         final (bridge, device) = await _requireDevice(ctx, args);
+        requireDeviceFree(ctx, device.id, '装包');
         if (!bridge.supports(DeviceCapability.install)) {
           return _unsupported(DeviceUnsupported(
               DeviceCapability.install, bridge.backend, '该后端未声明 install 能力'));
@@ -355,6 +373,7 @@ McpTool _appUninstallTool() => McpTool(
             hint: '确认无误后重试并传 confirm=true',
           );
         }
+        requireDeviceFree(ctx, device.id, '卸载');
         if (!bridge.supports(DeviceCapability.uninstall)) {
           return _unsupported(DeviceUnsupported(DeviceCapability.uninstall,
               bridge.backend, '该后端未声明 uninstall 能力'));
@@ -403,6 +422,17 @@ McpTool _appTerminateTool() => McpTool(
           );
         }
         if (pid != null) {
+          // 停 flutter run 是跨会话冲突：同设备同目录的启动租约先看归属。
+          var h = ctx.launcher.byPid(pid);
+          if (h == null) {
+            for (final x in ctx.launcher.adoptRecords()) {
+              if (x.pid == pid) h = x;
+            }
+          }
+          final cwdKey = h == null ? '' : resolvePathForCompare(h.cwd);
+          if (h != null && cwdKey.isNotEmpty) {
+            await requireLaunchLease(ctx, h.device, cwdKey, 'app_terminate');
+          }
           final r = await ctx.launcher.stop(pid);
           if (!r.stopped) {
             throw McpToolException('进程 $pid 已不存在或无法结束',
@@ -410,6 +440,11 @@ McpTool _appTerminateTool() => McpTool(
           }
           final extra =
               r.children.isEmpty ? '' : '，并结束子进程 ${r.children.join(',')}';
+          if (h != null && cwdKey.isNotEmpty) {
+            // 停完就把启动权放掉，别人可以重新拉起。
+            await ctx.leases
+                .release(launchLeaseKey(h.device, cwdKey));
+          }
           return McpToolResult.text('已停止 pid $pid$extra',
               structured: <String, Object?>{
                 'ok': true,
@@ -460,6 +495,7 @@ McpTool _pressKeyTool() => McpTool(
               hint: '可用：${DeviceKey.values.map((e) => e.name).join(', ')}');
         }
         final (bridge, device) = await _requireDevice(ctx, args);
+        requireDeviceFree(ctx, device.id, '按键 ${key.name}');
         if (!bridge.supports(DeviceCapability.pressKey)) {
           return _unsupported(DeviceUnsupported(
               DeviceCapability.pressKey, bridge.backend, '该后端未声明 pressKey 能力'));
@@ -537,6 +573,7 @@ McpTool _nativeTapTool() => McpTool(
           throw McpToolException('需要数值 x / y');
         }
         final (bridge, device) = await _requireDevice(ctx, args);
+        requireDeviceFree(ctx, device.id, '原生点击');
         if (!bridge.supports(DeviceCapability.tapNative)) {
           return _unsupported(DeviceUnsupported(DeviceCapability.tapNative,
               bridge.backend, '该后端未声明 tapNative 能力'));

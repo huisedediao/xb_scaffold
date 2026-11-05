@@ -76,13 +76,33 @@ String buildAiPrompt({
   required String projectDir,
   required String deviceId,
   required bool hasEval,
+  String instanceName = '',
 }) {
   final sb = StringBuffer()
     ..writeln('用 xb_ume 自己调试这个 Flutter 项目：能复用就复用，需要启动时自己启动，'
         '不要让我手动跑 app。')
     ..writeln()
     ..writeln('项目：$projectDir')
-    ..writeln('设备：$deviceId')
+    ..writeln('设备：$deviceId');
+  if (instanceName.trim().isNotEmpty) {
+    sb.writeln('MCP 实例：${instanceName.trim()}');
+  }
+  sb
+    ..writeln()
+    ..writeln('## 第零步：先确认「谁在驱动」（同一台机器可能有别的 AI 也在用）')
+    ..writeln('会话级写操作（点按 / 输入 / 滑动 / 路由跳转 / eval / 热重载 / 场景回放 / '
+        '拉起或停止 app / 断点增删 / 单步）都要先拿「会话租约」：')
+    ..writeln('- 空闲时自动拿到，不需要额外调用；')
+    ..writeln('- 被占时工具直接报 busy（谁占着、在干什么、还剩多久）——不要重试硬抢：'
+        '只读排查照常做（screenshot / find_widget / widget_tree / timeline / '
+        'debug_state 都无需租约）；要接管先问我，确认后再 '
+        'xbume_lease {"op": "steal", "sessionId": "<会话>"}；')
+    ..writeln('- 想看全局：xbume_clients 列出本机所有 MCP 实例与各自占着的会话，'
+        'xbume_lease {"op": "status", "sessionId": "<会话>"} 看单条；')
+    ..writeln('- 你验证完就把会话让出来：xbume_lease {"op": "release"}'
+        '（不释放也会 10 分钟后自动过期）；')
+    ..writeln('- 发现别的实例正在驱动同一个 app 时先告诉我，'
+        '不要用 force 重启顶掉对方的会话。')
     ..writeln()
     ..writeln('## 第一步：接上 app（复用优先，只做一次）')
     ..writeln('先调 xbume_sessions，按每个会话的 launcher 标记分流（·可热重载 后面括号里就是通道：'
@@ -171,7 +191,9 @@ String buildAiPrompt({
         '确认是修好还是没修好。')
     ..writeln('2. 定位结论必须落到「文件:行」——xbume_find_widget 返回的 source 字段直接可用。')
     ..writeln('3. 不要改与问题无关的代码，不要顺手重构。')
-    ..writeln('4. 结束前给一句话结论：问题在哪、改了什么、验证结果（截图为证）。');
+    ..writeln('4. 验证完释放会话租约（xbume_lease {"op": "release"}），'
+        '让其他 AI / 会话能接着用。')
+    ..writeln('5. 结束前给一句话结论：问题在哪、改了什么、验证结果（截图为证）。');
   return sb.toString();
 }
 

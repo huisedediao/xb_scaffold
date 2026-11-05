@@ -21,6 +21,8 @@ import '../scenario/inject.dart';
 import '../scenario/vm_client.dart';
 import 'debug_pool.dart';
 import 'gui_bridge.dart';
+import 'instances.dart';
+import 'lease.dart';
 import 'protocol.dart';
 import 'scenario_service.dart';
 import 'session_check.dart';
@@ -102,11 +104,20 @@ class McpToolContext {
     FlutterRunLauncher? launcher,
     this.allowEval = false,
     this.deviceBackend = 'auto',
+    this.instanceName = '',
+    this.instancePort = 0,
+    LeaseStore? leases,
     DebugSessionPool? debugPool,
     GuiBridge? guiBridge,
     this.guiPort,
   })  : devices = devices ?? DeviceRegistry.fromSpec(deviceBackend),
-        launcher = launcher ?? FlutterRunLauncher() {
+        launcher = launcher ?? FlutterRunLauncher(),
+        leases = leases ??
+            LeaseStore(
+              instance: instanceName.isEmpty ? 'mcp-$pid' : instanceName,
+              instancePid: pid,
+              instancePort: instancePort,
+            ) {
     // 调试池必须复用同一个 launcher：live 记录的认领（pidForPort）靠它，
     // 否则 MCP 拉起的会话在调试池里会被当成外部会话，热重载句柄丢掉。
     this.debugPool = debugPool ?? DebugSessionPool(launcher: this.launcher);
@@ -127,6 +138,15 @@ class McpToolContext {
 
   /// 设备后端选择：auto / adb,hdc / mobile-mcp（P2 接入）。
   final String deviceBackend;
+
+  /// 本 MCP 实例名（`--name`；一 AI 一进程时用来区分「谁在驱动」）。
+  final String instanceName;
+
+  /// HTTP 实例的端口；stdio 实例为 0。
+  final int instancePort;
+
+  /// 会话 / 启动租约（跨实例互斥）。
+  final LeaseStore leases;
 
   /// 工具箱端口（--gui-port）；为空时桥接层自己探测 46129..46138。
   final int? guiPort;
@@ -164,6 +184,108 @@ Future<McpSession> resolveSession(
     throw McpToolException(e.message, hint: '先调用 xbume_sessions 查看可用会话');
   }
 }
+
+/// 会话租约 key（与 [LeaseStore.sessionKey] 同源）。
+String sessionLeaseKey(McpSession s) => LeaseStore.sessionKey(s.id);
+
+/// 启动租约 key：同设备 + 同项目目录会撞在一起（两个 AI 抢同一个 flutter run）。
+String launchLeaseKey(String deviceId, String cwd) =>
+    LeaseStore.launchKey(deviceId, cwd);
+
+/// 拉起 / 停止 / force 重启前拿启动租约（同设备同目录）。
+///
+/// [steal] 只在显式 force 重启时传：那本身就是「顶掉对方会话」的语义，
+/// 抢过来后把前持有者写进返回值，便于追。
+Future<Lease> requireLaunchLease(
+  McpToolContext ctx,
+  String deviceId,
+  String cwd,
+  String op, {
+  bool steal = false,
+}) async {
+  final key = launchLeaseKey(deviceId, cwd);
+  final a = await ctx.leases.acquire(
+    key,
+    kind: 'launch',
+    note: op,
+    steal: steal,
+  );
+  final got = a.lease;
+  if (got != null) return got;
+  final h = a.holder!;
+  throw McpToolException(
+    '设备 $deviceId 上同一项目正由 ${h.owner.instance}'
+    '${h.owner.port > 0 ? ':${h.owner.port}' : ''} 拉起/调试'
+    '（${h.note.isEmpty ? 'app_launch' : h.note}，${leaseAgo(h.renewedAt)}续期，'
+    '约 ${leaseLeft(h)}后自动释放）',
+    hint: '要复用它的会话：xbume_sessions → xbume_use_session，不用重启；'
+        '确实要重启（会顶掉对方正在用的 app）传 force:true，会接管启动权；'
+        '也可以先问对方释放（xbume_lease{"op":"release"}）。',
+  );
+}
+
+/// 设备级写操作（按键 / 原生点击 / 装包）前的粗粒度检查：
+/// 同设备上有别的实例正在驱动会话时拒掉（这些工具不绑会话，只能按设备比）。
+void requireDeviceFree(McpToolContext ctx, String deviceId, String op) {
+  for (final l in ctx.leases.list()) {
+    if (l.owner == ctx.leases.me) continue;
+    if (!l.key.startsWith('session-')) continue;
+    final sid = l.key.substring('session-'.length);
+    final s = ctx.sessions.byId(sid);
+    if (s == null || s.deviceId != deviceId) continue;
+    throw McpToolException(
+      '设备 $deviceId 上的会话 $sid 正由 ${l.owner.instance} 驱动，'
+      '不能从外面注入 $op（会打乱对方的操作现场）',
+      hint: '等对方释放（xbume_lease{"op":"status","sessionId":"$sid"} 看还剩多久），'
+          '或确认后让对方自己执行；确实要接管用 xbume_lease{"op":"steal"}。',
+    );
+  }
+}
+
+/// 写操作前拿（或续期）会话租约。
+///
+/// 空闲 / 自己持有时静默拿到，AI 无感；被别人驱动时报「谁在占、还剩多久、
+/// 三条出路」，并续上默认 10 分钟 TTL（每次写操作续期，崩了也不会锁死）。
+Future<Lease> requireDriveLease(
+  McpToolContext ctx,
+  McpSession s,
+  String op, {
+  bool steal = false,
+  String? note,
+}) async {
+  final a = await ctx.leases.acquire(
+    sessionLeaseKey(s),
+    note: note ?? op,
+    steal: steal,
+  );
+  final got = a.lease;
+  if (got != null) return got;
+  throw busyLeaseError(s.id, a.holder!);
+}
+
+/// 解析会话 + 拿写租约（写工具统一入口）。
+Future<McpSession> resolveDriveSession(
+  McpToolContext ctx,
+  Map<String, Object?> args,
+  String op, {
+  bool steal = false,
+}) async {
+  final s = await resolveSession(ctx, args);
+  await requireDriveLease(ctx, s, op, steal: steal);
+  return s;
+}
+
+/// 被别人驱动时的统一报错（写工具与 xbume_lease 共用）。
+McpToolException busyLeaseError(String sessionId, Lease h) => McpToolException(
+      '会话 $sessionId 正由 ${h.owner.instance}'
+      '${h.owner.port > 0 ? ':${h.owner.port}' : ''} 驱动'
+      '（${h.note.isEmpty ? '写操作' : h.note}，${leaseAgo(h.renewedAt)}续期，'
+      '约 ${leaseLeft(h)}后自动释放）',
+      hint: '只读排查可以继续：screenshot / find_widget / widget_tree / timeline / '
+          'debug_state 都不需要租约；要接管先确认对方已停手，'
+          '再 xbume_lease{"op":"steal","sessionId":"$sessionId"}；'
+          '两个 AI 长期并行建议各自用独立 MCP 实例（xbume_clients 可看实例与占用）。',
+    );
 
 /// 路由栈顶名（失败返回 null，不阻断主流程）。
 Future<String?> _topRoute(VmClient vm) async {
@@ -280,6 +402,8 @@ List<McpTool> coreTools({bool allowEval = false}) => <McpTool>[
       _sessionsTool(),
       _useSessionTool(),
       _sessionCheckTool(),
+      _clientsTool(),
+      _leaseTool(),
       _screenshotTool(),
       _findWidgetTool(),
       _tapTool(),
@@ -317,6 +441,11 @@ McpTool _sessionsTool() => McpTool(
         final force = optionalBool(args, 'refresh');
         final list = await ctx.sessions.refresh(force: force);
         final cur = ctx.sessions.currentId;
+        // 租约（跨 MCP 实例可见）：标出每个会话当前由谁驱动。
+        final leases = <String, Lease>{
+          for (final l in ctx.leases.list()) l.key: l,
+        };
+        final now = DateTime.now();
         // 标注哪些会话是本服务/GUI 拉起的（可跨进程热重载），便于 AI 直接复用。
         // 判定与 hot_reload 同源（[reloadChannelOf]），不再只看“有没有 FIFO”：
         // FIFO 存在但 stdin 不是终端时，按键会被 flutter run 静默丢弃。
@@ -338,6 +467,11 @@ McpTool _sessionsTool() => McpTool(
                 reloadChannelName(h.reloadChannel);
             json['flutterRunPid'] = h.pid;
           }
+          final ls = leases[LeaseStore.sessionKey(s.id)];
+          if (ls != null) {
+            json['lease'] =
+                ls.toJson(now: now, mine: ctx.leases.instance);
+          }
           return json;
         }).toList(growable: false);
         final sb = StringBuffer();
@@ -352,10 +486,16 @@ McpTool _sessionsTool() => McpTool(
           for (final s in items) {
             final app = (s['app'] ?? '').toString();
             final tag = (s['launcher'] ?? '').toString();
+            final ls = leases[LeaseStore.sessionKey('${s['id']}')];
+            final occupy = ls == null
+                ? ''
+                : ls.owner == ctx.leases.me
+                    ? ' · 你持有'
+                    : ' · 由 ${ls.owner.instance} 驱动（只读）';
             sb.write('${s['current'] == true ? '▶ ' : '  '}${s['id']}'
                 '${app.isEmpty ? '' : ' · $app'}'
                 ' · ${s['source']}${s['connected'] == true ? ' · 已连接' : ''}'
-                '${tag.isEmpty ? '' : ' · $tag'}\n');
+                '${tag.isEmpty ? '' : ' · $tag'}$occupy\n');
           }
         }
         return McpToolResult.text(sb.toString().trimRight(),
@@ -372,10 +512,15 @@ McpTool _sessionsTool() => McpTool(
 McpTool _useSessionTool() => McpTool(
       name: 'xbume_use_session',
       title: '选定后续工具使用的会话',
-      description: '设定当前会话，并做一次连通性验证（读取路由栈）。',
+      description: '设定当前会话，并做一次连通性验证（读取路由栈）。'
+          'mode=drive（默认）会尝试拿写租约：拿不到就降级只读旁观并说明谁在驱动；'
+          'mode=observe 只读旁观、不占租约。换会话时自动释放本实例在旧会话上的租约。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': prop('string', '会话 id（xbume_sessions 返回的 id，如 s65296）'),
+        'mode': prop('string', 'drive = 独占驱动（默认）；observe = 只读旁观（不占租约）',
+            enumValues: <String>['drive', 'observe'], defaultValue: 'drive'),
+        'note': prop('string', '租约备注（写进 xbume_clients，方便对方看懂你在干什么）'),
       }, <String>[
         'sessionId'
       ]),
@@ -387,6 +532,20 @@ McpTool _useSessionTool() => McpTool(
           s = await ctx.sessions.use(id);
         } on StateError catch (e) {
           throw McpToolException(e.message);
+        }
+        // 换会话：先把本实例在旧会话上的租约放掉（避免幽灵占用）。
+        await ctx.leases.releaseOthers(keep: sessionLeaseKey(s));
+        final mode = (optionalString(args, 'mode') ?? 'drive').toLowerCase();
+        final note = optionalString(args, 'note') ?? '';
+        Lease? held;
+        Lease? blocked;
+        if (mode != 'observe') {
+          final a = await ctx.leases.acquire(
+            sessionLeaseKey(s),
+            note: note.isEmpty ? 'use_session' : note,
+          );
+          held = a.lease;
+          blocked = a.holder;
         }
         final route = await _topRoute(s.client);
         final app =
@@ -402,15 +561,26 @@ McpTool _useSessionTool() => McpTool(
         } catch (e) {
           tail = '；自检未完成：$e';
         }
+        final leaseText = mode == 'observe'
+            ? '；只读旁观（未占租约，写操作会被拒）'
+            : held != null
+                ? '；已独占（${leaseLeft(held)}后自动释放，验证完请 '
+                    'xbume_lease{"op":"release"} 让出来）'
+                : '；只读旁观：${blocked!.owner.instance} 正在驱动'
+                    '（要接管用 xbume_lease{"op":"steal"}）';
+        final leaseJson = (held ?? blocked)
+            ?.toJson(now: DateTime.now(), mine: ctx.leases.instance);
         return McpToolResult.text(
           '已切换到 ${s.id}$app（端口 ${s.port}）'
-          '${route == null ? '，路由栈读取失败（可能不是 Flutter 界面）' : '，当前路由 $route'}$tail',
+          '${route == null ? '，路由栈读取失败（可能不是 Flutter 界面）' : '，当前路由 $route'}$tail$leaseText',
           structured: <String, Object?>{
             'sessionId': s.id,
             'wsUrl': s.wsUrl,
             'app': s.appName,
             'source': s.source,
             'route': route,
+            'mode': mode == 'observe' ? 'observe' : 'drive',
+            if (leaseJson != null) 'lease': leaseJson,
           },
         );
       },
@@ -449,7 +619,183 @@ McpTool _sessionCheckTool() => McpTool(
               milliseconds: (optionalInt(args, 'timeoutMs') ?? 20000)
                   .clamp(5000, 180000)),
         );
-        return McpToolResult.text(c.describe(), structured: c.toJson());
+        // 自检只读，但要把「谁在驱动」一并告知：否则 AI 会以为自己的写操作生效了。
+        final held = ctx.leases.peek(sessionLeaseKey(s));
+        final note = held == null
+            ? ''
+            : '\n占用：${held.owner == ctx.leases.me ? '你（可写）' : '${held.owner.instance}（只读旁观；写操作会被拒）'}'
+                '，${held.note.isEmpty ? '写操作' : held.note}，还有 ${leaseLeft(held)}';
+        return McpToolResult.text(c.describe() + note, structured: {
+          ...c.toJson(),
+          if (held != null)
+            'lease': held.toJson(now: DateTime.now(), mine: ctx.leases.instance),
+        });
+      },
+    );
+
+McpTool _clientsTool() => McpTool(
+      name: 'xbume_clients',
+      title: '本机 MCP 实例与会话占用',
+      description: '一 AI 一个 MCP 进程时的总览：本机有哪些实例（名字 / 端口 / pid / 是否带 '
+          'eval）、哪些会话正被谁驱动（租约跨实例可见）、本实例当前会话。'
+          '多个 AI 并行干活前先看它，避免抢同一个 app。',
+      group: ToolGroup.core,
+      inputSchema: _schema(const <String, Object?>{}),
+      handler: (ctx, args) async {
+        final inst = listInstances();
+        final leases = ctx.leases.list();
+        // 取时间要在读完租约之后：提前取会让刚拿到的 10 分钟租约显示成「11 分钟」。
+        final now = DateTime.now();
+        final me = ctx.leases.instance;
+        final sb = StringBuffer()
+          ..writeln('本实例 $me（pid $pid'
+              '${ctx.instancePort > 0 ? '，端口 ${ctx.instancePort}' : '，stdio'}）')
+          ..writeln('会话：${ctx.sessions.currentId ?? '未选'}')
+          ..writeln('MCP 实例 ${inst.length} 个：');
+        if (inst.isEmpty) {
+          sb.writeln('  （无登记；旧版本实例不写登记，用 xbume_sessions 看会话）');
+        }
+        for (final i in inst) {
+          final name = '${i['name']}';
+          final port = '${i['port'] ?? 0}';
+          sb.writeln('  · $name${port == '0' ? ' · stdio' : ' :$port'}'
+              ' · pid ${i['pid']} · ${i['transport'] ?? '?'}'
+              '${i['hasEval'] == true ? ' · eval' : ''}'
+              '${i['toolCount'] == null ? '' : ' · ${i['toolCount']} 工具'}'
+              '${name == me ? ' ← 你' : ''}');
+        }
+        sb.writeln('租约 ${leases.length} 份：');
+        if (leases.isEmpty) {
+          sb.writeln('  （暂无：没有 AI 在驱动会话）');
+        }
+        for (final l in leases) {
+          final mine = l.owner == ctx.leases.me;
+          sb.writeln('  · ${l.key} ← ${mine ? '你' : l.owner.instance}'
+              '${mine ? '' : l.owner.port > 0 ? ':${l.owner.port}' : ''}'
+              ' · ${l.note.isEmpty ? '写操作' : l.note}'
+              ' · ${leaseAgo(l.renewedAt, now: now)}续期'
+              ' · 还有 ${leaseLeft(l, now: now)}');
+        }
+        return McpToolResult.text(sb.toString().trimRight(),
+            structured: <String, Object?>{
+              'instance': me,
+              'pid': pid,
+              'port': ctx.instancePort,
+              'currentSession': ctx.sessions.currentId,
+              'instances': inst,
+              'leases': leases
+                  .map((l) => l.toJson(now: now, mine: me))
+                  .toList(growable: false),
+            });
+      },
+    );
+
+McpTool _leaseTool() => McpTool(
+      name: 'xbume_lease',
+      title: '会话租约：查看 / 申请 / 释放 / 接管',
+      description: '写操作（tap / input / swipe / navigate / eval / hot_reload / force 重启 / '
+          '场景回放 / 断点写）需要会话租约：空闲就自动拿到，被别人驱动则报 busy。'
+          'op=status 看谁在驱动；acquire 申请（可 waitMs 等对方释放）；'
+          'release 用完立即让出来；steal 强制接管（只在确认对方已停手时用）。'
+          '默认 10 分钟自动过期，每次写操作续期。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'op': prop('string', '操作',
+            enumValues: <String>['status', 'acquire', 'release', 'steal']),
+        'sessionId': _sessionIdProp(),
+        'ttlMs': prop('integer', '租约有效期（毫秒，默认 600000 = 10 分钟，每次写操作续期）'),
+        'waitMs': prop('integer', 'acquire 时最多等多久（毫秒，默认 0；上限 30000）'),
+        'note': prop('string', '备注：你接下来要做什么（对方在 xbume_clients 里能看到）'),
+      }, <String>['op']),
+      handler: (ctx, args) async {
+        final op = requireString(args, 'op', hint: 'status / acquire / release / steal').toLowerCase();
+        final me = ctx.leases.instance;
+        final now = DateTime.now();
+        final sid = optionalString(args, 'sessionId') ?? ctx.sessions.currentId;
+        if (sid == null || sid.isEmpty || sid == 'null') {
+          if (op != 'status') {
+            throw McpToolException('需要 sessionId（或先用 xbume_use_session 选定）',
+                hint: '先 xbume_sessions 看有哪些会话');
+          }
+          final leases = ctx.leases.list();
+          final sb = StringBuffer()..writeln('本实例 $me，租约 ${leases.length} 份：');
+          if (leases.isEmpty) sb.writeln('  （暂无）');
+          for (final l in leases) {
+            sb.writeln('  · ${l.key} ← '
+                '${l.owner == ctx.leases.me ? '你' : l.owner.instance}'
+                ' · ${l.note.isEmpty ? '写操作' : l.note}'
+                ' · 还有 ${leaseLeft(l, now: now)}');
+          }
+          return McpToolResult.text(sb.toString().trimRight(), structured: <String, Object?>{
+            'instance': me,
+            'leases': leases
+                .map((l) => l.toJson(now: now, mine: me))
+                .toList(growable: false),
+          });
+        }
+        final key = LeaseStore.sessionKey(sid);
+        switch (op) {
+          case 'status':
+            final l = ctx.leases.peek(key);
+            if (l == null) {
+              return McpToolResult.text('会话 $sid 空闲（没有租约，可以直接写）',
+                  structured: <String, Object?>{'sessionId': sid, 'idle': true});
+            }
+            final mine = l.owner == ctx.leases.me;
+            return McpToolResult.text(
+              '会话 $sid 由 ${mine ? '你' : l.owner.instance} 持有'
+              '（${l.note.isEmpty ? '写操作' : l.note}，${leaseAgo(l.renewedAt, now: now)}续期，'
+              '还有 ${leaseLeft(l, now: now)}）',
+              structured: <String, Object?>{
+                'sessionId': sid,
+                'idle': false,
+                'lease': l.toJson(now: now, mine: me),
+              },
+            );
+          case 'acquire':
+          case 'steal':
+            final ttl = Duration(
+                milliseconds:
+                    (optionalInt(args, 'ttlMs') ?? kDefaultLeaseTtl.inMilliseconds)
+                        .clamp(60000, 3600000));
+            final wait = Duration(
+                milliseconds: (optionalInt(args, 'waitMs') ?? 0).clamp(0, 30000));
+            final prev = ctx.leases.peek(key);
+            final a = await ctx.leases.acquire(
+              key,
+              note: optionalString(args, 'note') ?? 'xbume_lease',
+              ttl: ttl,
+              steal: op == 'steal',
+              wait: wait,
+            );
+            final l = a.lease;
+            if (l == null) throw busyLeaseError(sid, a.holder!);
+            final tookOver = op == 'steal' && prev != null && prev.owner != ctx.leases.me;
+            return McpToolResult.text(
+              '已持有会话 $sid 的租约（${leaseLeft(l)}后自动释放）'
+              '${tookOver ? '；已从 ${prev.owner.instance} 接管' : ''}。'
+              '写完 / 验证完请 xbume_lease{"op":"release"} 让出来。',
+              structured: <String, Object?>{
+                'sessionId': sid,
+                'lease': l.toJson(now: now, mine: me),
+                if (tookOver)
+                  'stolenFrom': prev.owner.toJson(),
+              },
+            );
+          case 'release':
+            final l = ctx.leases.peek(key);
+            if (l == null) {
+              return McpToolResult.text('会话 $sid 本来就没有租约',
+                  structured: <String, Object?>{'sessionId': sid, 'released': false});
+            }
+            final ok = await ctx.leases.release(key);
+            if (!ok) throw busyLeaseError(sid, l);
+            return McpToolResult.text('已释放会话 $sid 的租约',
+                structured: <String, Object?>{'sessionId': sid, 'released': true});
+          default:
+            throw McpToolException('未知 op：$op',
+                hint: '可用：status / acquire / release / steal');
+        }
       },
     );
 
@@ -581,7 +927,7 @@ McpTool _tapTool() => McpTool(
         'waitMs': prop('integer', '点击后等待动画/导航的毫秒数', defaultValue: 350),
       }),
       handler: (ctx, args) async {
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'tap');
         final ref = optionalInt(args, 'ref');
         final x = optionalDouble(args, 'x');
         final y = optionalDouble(args, 'y');
@@ -657,7 +1003,7 @@ McpTool _inputTool() => McpTool(
         'text'
       ]),
       handler: (ctx, args) async {
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'input');
         final text = (args['text'] ?? '').toString();
         final r = await ctx.sessions.serializeWrite<String>(
           () => s.client.evalStringOn(kLibTextInput, inputExpr(text)),
@@ -694,7 +1040,7 @@ McpTool _swipeTool() => McpTool(
         'ref': prop('integer', '对指定组件中心滑动（配合 direction 使用）'),
       }),
       handler: (ctx, args) async {
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'swipe');
         final durationMs =
             (optionalInt(args, 'durationMs') ?? 300).clamp(40, 5000);
         final from = args['from'];
@@ -773,7 +1119,7 @@ McpTool _navigateTool() => McpTool(
         'back': prop('boolean', 'true 时执行返回上一页', defaultValue: false),
       }),
       handler: (ctx, args) async {
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'navigate');
         final back = optionalBool(args, 'back');
         final name = optionalString(args, 'routeName');
         if (!back && name == null) {
@@ -1483,7 +1829,7 @@ McpTool _evalTool() => McpTool(
         if (expr.length > 4000) {
           throw McpToolException('表达式过长（${expr.length} 字符，上限 4000）');
         }
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'eval');
         final vm = s.client;
         final wantedLib = optionalString(args, 'lib');
         var uri = await _resolveEvalLib(vm, wantedLib);
@@ -1592,7 +1938,7 @@ McpTool _hotReloadTool() => McpTool(
             milliseconds:
                 (optionalInt(args, 'timeoutMs') ?? 60000).clamp(5000, 300000));
         var pid = optionalInt(args, 'pid');
-        final s = await resolveSession(ctx, args);
+        final s = await resolveDriveSession(ctx, args, 'hot_reload');
         if (pid == null) {
           pid = ctx.launcher.pidForPort(s.port);
           if (pid == null) {
@@ -1669,11 +2015,13 @@ McpTool _scenarioRunTool() => McpTool(
             if (s is Map) steps.add(Map<String, dynamic>.from(s));
           }
         }
+        // 场景运行会注入手势、改 app 状态：必须持会话租约（跨实例互斥）。
+        final target = await resolveDriveSession(ctx, args, 'scenario_run');
         try {
           final run = ctx.scenarios.start(
             name: name,
             steps: steps.isEmpty ? null : steps,
-            sessionId: optionalString(args, 'sessionId'),
+            sessionId: target.id,
             continueOnFail: optionalBool(args, 'continueOnFail'),
             shotEveryStep: optionalBool(args, 'shotEveryStep'),
           );

@@ -103,9 +103,9 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 **55 个**工具（core 19 + diagnose 4 + run-safe 3 + act 3 + device-write 3 +
+- 一次开全 **57 个**工具（core 21 + diagnose 4 + run-safe 3 + act 3 + device-write 3 +
   debug 6 + inspect 4 + data 4 + env 8 + ai 1）；其中 `xbume_eval` 还要 `--allow-eval`
-  （不加是 54 个），「AI 调试」入口会自动带上：
+  （加上是 58 个），「AI 调试」入口会自动带上：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
   stdio 拉起的进程要去客户端里关。
@@ -118,6 +118,7 @@ dart run xb_ume:mcp --http 46140
 | --- | --- |
 | `--stdio` | stdio 传输（默认） |
 | `--http <port>` | Streamable HTTP，默认 46140 |
+| `--name <name>` | 实例名（默认 HTTP 按端口 `mcp-<port>`、stdio 按 pid）。多个 AI 各跑一个进程时用它区分「谁在驱动」，名字会写进租约与 `xbume_clients` |
 | `--uri <port\|ws-url>` | 手工指定调试会话，跳过自动发现；可重复 |
 | `--tool-groups <list>` | `all` 或逗号分隔；可用组：`act`、`device-write`、`debug`、`inspect`、`data`、`env`、`ai`（`core` / `diagnose` / `run-safe` 默认开） |
 | `--no-tool-groups` | 只暴露 core 组 |
@@ -127,6 +128,64 @@ dart run xb_ume:mcp --http 46140
 
 不带 `--uri` 时，服务会自己扫描本机回环端口上的 VM service（含
 `adb forward` / `hdc fport` 转发来源），逻辑与电脑端守护进程共用一份实现。
+
+### 多 AI 并行：一 AI 一个实例 + 会话租约
+
+同时开几个 AI（或同一个 AI 开几个会话）连着同一台机器干活时，会撞两件事：
+
+1. **谁也没说清在驱动哪个会话**：一个 MCP 进程里「当前会话」是全局单值，A 选完
+   B 又选一次，A 后面所有操作会静默打到 B 的会话上（最贵的坑：热重载打错项目）。
+2. **两边同时写同一个 app**：一边点按一边改代码，手势和代码互相打断，
+   谁都验不出结果。
+
+对应三层隔离，按这个顺序理解：
+
+**第一层：一 AI 一个进程（`--name`）**
+
+每个 AI / 会话跑自己的 MCP 进程、自己的端口，实例名写进
+`$XB_UME_HOME/mcp/instances/<name>.json`：
+
+```bash
+# AI A
+dart run xb_ume:mcp --http 46140 --name claude-a --tool-groups all --allow-eval
+# AI B
+dart run xb_ume:mcp --http 46141 --name claude-b --tool-groups all --allow-eval
+# 让 xbume ai 自己挑一个没被占用的名字并单独拉起（多 AI 并行最省事）
+CURSOR_AGENT=1 dart run xb_ume:ai --new-instance
+```
+
+不带 `--name` 时按传输方式取名（HTTP = `mcp-<port>`，stdio = `mcp-<pid>`），同名且对方
+还活着会直接退出并提示换名，不会两个进程抢一个名字。GUI 的「AI 调试」页有
+「MCP 实例」下拉 + 「新建实例 / 停此实例」，等价于上面两行命令；`/api/mcp/instances`
+能看到本机所有实例与租约。
+
+**第二层：同一会话，只读旁路 + 写要租约**
+
+两个 AI 盯同一个 app 是常态，不该互相踢。所以：
+
+- **只读随时可用**：截图 / 找组件 / 组件树 / 时间轴 / 网络 / 日志 / 异常 /
+  调试状态（栈与变量）/ `xbume_session_check` 都不碰租约，谁都能看。
+- **写操作自动申请租约**：tap / input / swipe / navigate / eval / hot_reload /
+  debug 的断点与单步、场景运行、`use_session{mode: "drive"}` 会先拿
+  `session-<sessionId>` 租约。空闲时静默拿到；被占时直接报 busy，写清**谁占着、在干什么、
+  多久前续的、还剩多久**，并给三条出路：等（`xbume_lease{op:"acquire", waitMs}`，
+  上限 30s）／改成只读旁路／确认对方停手后 `op:"steal"`。
+- **用完就还**：租约默认 10 分钟 TTL，每次写操作续期；主动
+  `xbume_lease{op:"release"}` 立刻让出来。持有者进程退出（pid 没了）租约自动失效，不会
+  留下死锁。
+- **先看再动手**：`xbume_clients` 一次列出所有实例（名字 / 端口 / 是否带 eval / 工具数）
+  与每份租约（谁占着哪个会话、note、剩余时间）——接手前先看一眼，比撞上 busy 便宜。
+
+**第三层：设备级与启动级**
+
+- `launch-<deviceId>-<cwd哈希>` 启动租约：同设备同目录只允许一个人拉起 / 重启，
+  `force: true` 才会顶掉对方（会先说明要顶掉谁）。两个 MCP 进程不会同时 `flutter run`
+  一个项目、互相 adopt 同一个进程。
+- 装包 / 卸包 / 停进程 / 按键 / 原生点击是**设备级**写操作：同设备上有人正在驱动
+  任一会话时直接拒绝，避免把别人的 app 卸掉或在别人测到一半时切后台。
+
+租约文件在 `$XB_UME_HOME/leases/*.json`（GUI 侧为 `~/.xb_ume_ide/leases/`），
+读改写带同名 `.lock` 独占文件、tmp+rename 原子落盘，可直接 `cat` 排障。
 
 ---
 
@@ -201,7 +260,7 @@ dart run xb_ume:mcp --tool-groups act
 # 加上装包 / 卸包 / 停进程（高危，见「安全模型」）
 dart run xb_ume:mcp --tool-groups act,device-write
 
-# 全开（55 个，含 xbume_eval）
+# 全开（58 个，含 xbume_eval）
 dart run xb_ume:mcp --tool-groups all --allow-eval
 
 # 再加可选后端（会拉起 npx，首次需联网下载）
@@ -212,20 +271,22 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 3. 工具清单
 
-工具名统一前缀 `xbume_`。默认暴露 **26 个**（core 19 + diagnose 4 + run-safe 3）；
-加 `--allow-eval` 再多出 `xbume_eval`（27 个）。`--tool-groups all` 全开是 **56 个**
-（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 55）。
+工具名统一前缀 `xbume_`。默认暴露 **28 个**（core 21 + diagnose 4 + run-safe 3）；
+加 `--allow-eval` 再多出 `xbume_eval`（29 个）。`--tool-groups all` 全开是 **58 个**
+（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 57）。
 
 debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四组通过本机 GUI 的 HTTP
 接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
 连的是「GUI 当前选中的会话」，传 `sessionId` / `uri` 可覆盖。
 
-### core（19 个）
+### core（21 个）
 
 | 工具 | 主要参数 | 返回 |
 | --- | --- | --- |
 | `xbume_sessions` | `refresh?` | 会话列表：id / 端口 / app 名 / 平台 / 来源（adb:hdc:port）/ 当前选中；有 `launcher` 标记的会话由本服务或 GUI 拉起（`mcp拉起·可热重载(signal)` / `gui认领·可热重载(signal)` / `…·只读`），可直接复用。标记与 `xbume_hot_reload` 同源判定：`signal` = 发 `SIGUSR1`/`SIGUSR2`，`stdin` = 写自己进程 stdin，`none` = 没有通道（IDE 拉起） |
-| `xbume_use_session` | `sessionId` | 选定后续工具默认会话，并读一次路由栈做连通性验证；顺手附一行自检结论（不发重载） |
+| `xbume_use_session` | `sessionId`, `mode?`(drive/observe), `note?` | 选定后续工具默认会话，并读一次路由栈做连通性验证；顺手附一行自检结论（不发重载）。`mode: "drive"`（默认）会顺手申请会话租约（被别人占着则降级为 `observe` 并在文本里说明）；`observe` 只选不改，不碰租约 |
+| `xbume_clients` | — | 本机 MCP 实例与会话占用总览：每个实例的名字 / 端口 / pid / 是否带 `eval` / 工具数，每份租约「谁占着哪个会话、在干什么、还剩多久」，以及本实例当前会话。多 AI 并行干活前先看它 |
+| `xbume_lease` | `op`(status/acquire/release/steal), `sessionId?`, `ttlMs?`, `waitMs?`, `note?` | 写操作的**会话租约**：`status` 看谁在驱动、`acquire` 申请（`waitMs` 可等对方释放，上限 30s）、`release` 用完立即让出来、`steal` 确认对方已停手后强制接管。默认 10 分钟 TTL，每次写操作续期；持有者进程退出即失效 |
 | `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs` |
 | `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |
 | `xbume_find_widget` | `by`(type/key/text/semantics), `value`, `exact?`, `limit?` | `ref` / 类型 / Key / 文本 / 逻辑像素 bounds / 源码位置 |
@@ -604,6 +665,11 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 6. **不假装支持**：后端缺能力返回 `unsupported` 而不是静默失败；`record` 步骤直接报未实现。
 7. **eval 默认关**：`xbume_eval` 能在 app 进程内读写运行时状态，必须 `--allow-eval`
    （或 GUI 卡片勾「允许 eval」）才注册；只接受单条表达式，4000 字符上限，超长直接拒绝。
+8. **跨进程租约**：同一台机器上多个 AI / 会话（多个 MCP 进程、GUI 自己也算一个）靠
+   文件租约排队——写会话要 `session-<id>` 租约、拉起 app 要 `launch-<device>-<cwd>`
+   租约、装包/按键这类设备级写操作要求设备空闲。只读操作不排队；`force` / `steal`
+   是唯一能顶掉别人的口子，且都会在返回文本里说清顶掉了谁。租约 10 分钟 TTL、
+   持有者进程退出即失效。
 
 ---
 
@@ -624,6 +690,10 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | `xbume_device_logs` 返回 0 行 | Android 先确认 `adb logcat -d` 能出内容；鸿蒙 `hilog -x` 个别固件不支持时会回退限时流式，此时只衔接到调用那一刻的日志，先把 `durationMs` 调大再重试；iOS 模拟器看 `sinceMinutes` 窗口是否太小。 |
 | HTTP 模式 401 | 请求少了 `X-XBUME-Token`；从 `~/.xb_ume_ide/mcp.token` 读，或看 GUI「守护进程」页复制的配置。 |
 | HTTP 端口占用 | 换端口：`--http 46141`；GUI 探测会扫 46140-46149。 |
+| 写工具报 `busy`（「会话 … 正被 … 驱动」） | 同一台机器上另一个 AI / 会话占着这个会话：先 `xbume_clients` 看是谁、note 与剩余时间；等它释放（`xbume_lease{op:"acquire", waitMs: 10000}`，上限 30s）、改成只读旁路，或确认对方已停手后 `op:"steal"`。别用 `force` 顶掉别人正在跑的验证。 |
+| `--name` 报「实例名已被 pid … 占用」 | 上一个同名进程还活着：换个名字（`--name claude-a-2`），或先停掉它。`xbume_clients` / GUI 的 `/api/mcp/instances` 能看到本机实例与端口。 |
+| 工具报「设备上有别人在驱动」 | 装包 / 卸包 / 按键 / 原生点击是设备级写操作，同设备任一会话被别的实例驱动时会被拒：等对方 release，或让两边共用一个实例（只是读就旁路）。 |
+| 拉起 app 报「已有 … 在同一个目录跑」 | 同设备同目录已有启动租约：要接入就 `xbume_use_session`（只读旁路），确认要顶掉才传 `force: true`——返回里会写明顶掉了谁。 |
 | 会话在但工具全失败 | 常见于鸿蒙 Flutter 引擎（无 expression compilation service）：路由栈/字段树/沙盒等依赖 eval 的功能不可用，会给出明确提示。 |
 | macOS 上自动化卡在导航 | app 在后台时帧会被冻结：`open -a <绝对路径>` 把它切到前台再跑。 |
 | `xbume_hot_reload` 报「没有可用的热重载通道」 | 会话来自外部 IDE/终端（拿不到句柄），或 Windows 上认领来的进程（没有 SIGUSR）。先 `xbume_session_check` 看 `caps.reloadChannel`：`none` 就不要再试；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或让拉起方自己按 `r`。 |
