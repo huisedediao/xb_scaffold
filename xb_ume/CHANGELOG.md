@@ -1,3 +1,13 @@
+## 0.9.5
+
+- **调试页「项目目录」支持选文件夹**（用户：「这个地方，怎么不能选择文件夹？只能输入？我希望能够选择文件夹」）：调试页顶部项目目录输入框右侧新增「选择…」，复用 AI 调试页的目录浏览弹窗（后台 `/api/fs/dirs` 列目录，浏览器拿不到绝对路径）。`aiPickDir` 支持指定回填目标，选定后写回并派发 `change`，调试页原有的 `dbgLoadSaved();dbgProfileRefresh()` 自动执行；AI 页不传参仍默认 `ai-dir`，行为不变。弹窗从 `#page-ai` 移到页面顶层（`.page { display:none }` 下从调试页打不开），「会话/最近」候选在调试页加载 `/api/ai/config` 时一并填充。
+
+- **本机回环绕过代理（修复调试启动卡在「正在启动」）**（用户：GUI 一直显示「正在启动 flutter run -d macos …」，但 app 已经跑起来）：GUI / daemon / MCP 若继承了 `dart pub publish` 时 export 的 `http_proxy` / `https_proxy`（dart:io 的 HttpClient 默认 `findProxyFromEnvironment`），连本机 VM Service 的 WebSocket 也会被发给代理，`flutter run` 永远等不到 `A Dart VM Service`，240s 后超时。新增 `bin/src/device/proxy_env.dart`：进程级 `HttpOverrides` 让 `127.0.0.1 / localhost / ::1` 直连（其余地址仍按原代理），并提供 `no_proxy` 合并与启动提示；`ide_gui.dart` / `ide.dart` / `mcp.dart` 启动即安装该 override（MCP 提示走 stderr，不污染 stdio 协议）；`execEnvironment()` 给 `flutter run` 等子进程补回环 `no_proxy`；安装生成的 `.command` / `.bat` 启动器同样补 `no_proxy`。实测：代理指向死端口时，带 bypass 的 HTTP / WebSocket 回环连接正常，不带则失败。
+
+- **daemon 接入 GUI / MCP 拉起的会话（修复「VM 会话 / 接入会话」下拉为空）**：VM service 默认要求 auth code，不带 token 的 `GET /getVM` 返回 403，daemon 仅靠端口扫描发现不了任何会话。`_poll` 现在先读 `launch/live/<pid>.json`：取 `wsUri` 非空、pid 存活、命令行仍是 `flutter run` 的记录，`normalizeVmUri` 归一化后接入（按 ws 地址与端口去重，`source` 记为 `gui:<pid>` / `mcp:<pid>`）。app 退出后 WebSocket 断开，会话自动移除。外部 IDE 拉起的会话仍发现不了（token 只在 IDE 的 flutter run 输出里）。
+
+- **测试**：新增 `test/proxy_env_test.dart`（`no_proxy` 合并/去重、子进程环境）；`test/ai_prompt_test.dart` 同步 `aiPickDir` 新签名。
+
 ## 0.9.4
 
 - **热重载 / 热重启完成弹系统通知**（用户：「我希望热重载完成或者热重启完成，都有一个全局的提示（不论当前在哪个软件界面）」）：新增 `bin/src/notify/system_notifier.dart`——macOS 走 `osascript` 的 `display notification`（进通知中心），Windows 走 PowerShell + `System.Windows.Forms.NotifyIcon` 托盘气泡（Win10/11 自带，不装 BurntToast、不写 AppID）。**不看当前前台是谁**：按完热键人还在 IDE 里，页内 toast 根本没人看，这正是要它的原因。
