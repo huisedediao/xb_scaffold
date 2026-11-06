@@ -49,6 +49,35 @@ void main() {
       // 缺 key 的脏数据按「未设置」处理，不能让 GUI 崩。
       expect(XbHotkeyBinding.fromJson(<String, Object?>{'cmd': true}), isNull);
     });
+
+    test('Windows VK 码与 Ctrl+ 写法标签', () {
+      expect(kWindowsVirtualKeys['KeyR'], 0x52);
+      expect(kWindowsVirtualKeys['F5'], 0x74);
+      expect(kWindowsVirtualKeys['ArrowUp'], 0x26);
+      // 两张表收录的键必须一模一样：配置才能在 macOS / Windows 之间直接搬
+      expect(kWindowsVirtualKeys.keys.toSet(),
+          kMacVirtualKeyCodes.keys.toSet());
+      const b = XbHotkeyBinding(
+        key: 'KeyR',
+        cmd: true,
+        ctrl: true,
+        alt: true,
+        shift: true,
+      );
+      expect(b.windowsVirtualKey, 0x52);
+      expect(b.windowsLabel, 'Ctrl+Alt+Shift+Win+R');
+      expect(b.hasKeyCode, isTrue);
+      expect(const XbHotkeyBinding(key: 'AudioVolumeUp').hasKeyCode, isFalse);
+    });
+
+    test('RegisterHotKey 修饰位（含 MOD_NOREPEAT）', () {
+      // MOD_ALT=0x0001 / MOD_CONTROL=0x0002 / MOD_SHIFT=0x0004 / MOD_WIN=0x0008
+      // MOD_NOREPEAT=0x4000：按住不放只触发一次，否则热重载被长按连发
+      const b = XbHotkeyBinding(key: 'KeyR', cmd: true, shift: true);
+      expect(b.windowsModifiers, 0x4000 | 0x0008 | 0x0004);
+      const plain = XbHotkeyBinding(key: 'KeyR', alt: true);
+      expect(plain.windowsModifiers, 0x4000 | 0x0001);
+    });
   });
 
   group('校验', () {

@@ -1,8 +1,9 @@
 // 全局快捷键子进程管理（GUI 侧）。
 //
-// 真正的系统级热键注册在 hotkey_listener.dart 里（Carbon + 自己的事件循环），
-// 这里只负责：读 / 写 hotkeys.json、按精确 pid 拉起 / 停掉监听器、把运行状态
-// （是否在跑、注册成功没、最近一次触发结果）整理给 /api/hotkeys。
+// 真正的系统级热键注册在 hotkey_listener.dart 里（macOS 用 Carbon、Windows 用
+// user32 RegisterHotKey，各自堵在自己的原生事件循环上），这里只负责：读 / 写
+// hotkeys.json、按精确 pid 拉起 / 停掉监听器、把运行状态（是否在跑、注册成功没、
+// 最近一次触发结果）整理给 /api/hotkeys。
 //
 // 配置变了不做热更：停掉旧进程再拉起新进程，避免「注销 - 重注册」中间态把
 // 用户的热键短暂让给别人。
@@ -41,7 +42,7 @@ class HotkeyService {
   String _message = '';
   final List<String> _tail = <String>[];
 
-  bool get supported => Platform.isMacOS;
+  bool get supported => Platform.isMacOS || Platform.isWindows;
 
   String get _pidFile =>
       '${xbumeIdeDir(home)}${Platform.pathSeparator}$kHotkeysPidFileName';
@@ -49,7 +50,7 @@ class HotkeyService {
   /// GUI 启动时调用：有启用配置就拉起监听器（已在跑则保持）。
   Future<void> start() async {
     if (!supported) {
-      _message = '全局快捷键目前只支持 macOS';
+      _message = '全局快捷键目前只支持 macOS / Windows';
       return;
     }
     final cfg = readHotkeysConfig(home);
@@ -73,7 +74,7 @@ class HotkeyService {
       return <String, Object?>{
         ...status(),
         'ok': false,
-        'error': '全局快捷键目前只支持 macOS（其他平台可在页面内用按钮 / 调试页操作）',
+        'error': '全局快捷键目前只支持 macOS / Windows（其他平台可在页面内用按钮 / 调试页操作）',
       };
     }
     final cfg = XbHotkeysConfig.fromJson(raw);
@@ -256,6 +257,15 @@ class HotkeyService {
 
   bool _looksLikeListener(int pid) {
     try {
+      if (Platform.isWindows) {
+        // wmic 在新系统上已弃用，用 CIM 查命令行；参数直传，不经 shell。
+        final r = Process.runSync('powershell', <String>[
+          '-NoProfile',
+          '-Command',
+          '(Get-CimInstance Win32_Process -Filter "ProcessId=$pid").CommandLine',
+        ]);
+        return '${r.stdout}'.contains('hotkey_listener.dart');
+      }
       final r = Process.runSync('ps', <String>['-o', 'command=', '-p', '$pid']);
       return r.exitCode == 0 &&
           '${r.stdout}'.contains('hotkey_listener.dart');
@@ -266,6 +276,16 @@ class HotkeyService {
 
   bool _pidAlive(int p) {
     if (p <= 0) return false;
+    // Windows 没有 kill -0：用 tasklist 按 PID 过滤，什么都不输出就是没了。
+    if (Platform.isWindows) {
+      try {
+        final r =
+            Process.runSync('tasklist', <String>['/FI', 'PID eq $p', '/NH']);
+        return r.exitCode == 0 && RegExp('\\b$p\\b').hasMatch('${r.stdout}');
+      } catch (_) {
+        return false;
+      }
+    }
     try {
       return Process.runSync('kill', <String>['-0', '$p']).exitCode == 0;
     } catch (_) {

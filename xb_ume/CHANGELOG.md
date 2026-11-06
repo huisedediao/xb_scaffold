@@ -1,3 +1,19 @@
+## 0.9.3
+
+- **全局快捷键补齐 Windows**（用户：「Windows 支持吗？检查一下 ume 工具箱的功能，所有功能都需要支持 mac 和 Windows」）：监听器 `bin/src/hotkeys/hotkey_listener.dart` 改按平台分派——macOS 仍是 Carbon `RegisterEventHotKey`，**Windows 改用 user32 的 `RegisterHotKey` + 线程消息泵**。Windows 侧同样把注册放在主 isolate（`hwnd` 传 NULL，热键挂在线程消息队列上，必须有 `GetMessage` 循环取 `WM_HOTKEY`，Dart 自己不会泵这条队列），`MSG` 的 `message` / `wParam` 偏移按指针宽度现算（x64 = 8 / 16）而不写死结构体，修饰位带 `MOD_NOREPEAT`（长按只触发一次，避免热重载被连发）；退出时 `UnregisterHotKey`。触发链路沿用 `DebugHub.hot`：macOS 发 `SIGUSR1` / `SIGUSR2`，**Windows 没有这两个信号，改为写本工具拉起会话的 stdin（`r` / `R`）**——所以 Windows 上热键只能作用在本工具拉起的 `flutter run` 上，IDE / 终端起的会话本来就拿不到句柄（提示只读）。
+
+- **配置模型跨平台**（`hotkey_config.dart`）：新增 `kWindowsVirtualKeys`（VK 码表，收录范围与 macOS 表**一模一样**，`hotkeys.json` 可在两平台之间直接搬）、`windowsVirtualKey` / `windowsModifiers` / `windowsLabel`（`Ctrl+Alt+Shift+Win+R` 写法），`label` 按平台取；「至少带一个修饰键」的提示在 Windows 上说 `Ctrl / Alt / Win`。
+
+- **服务侧进程管理**：`HotkeyService.supported` 放开到 macOS + Windows；Windows 没有 `kill -0` / `ps`，判活改 `tasklist /FI "PID eq N" /NH`、复核「是不是我们的监听器」改 `Get-CimInstance Win32_Process` 查命令行——仍然只按 pid 精确停进程，不做名字匹配。
+
+- **GUI 按平台切换文案**：从 `/api/hotkeys` 的 `platform` 判断，Windows 显示 `Ctrl+Shift+R` 这类写法（不用 `⌘` / `⌃` / `⌥` 符号），弹窗提示与录制拒收文案同步；「只支持 macOS」的旧文案全部改掉。
+
+- **顺带补上的 Windows 缺口：兜底工具路径**（`bin/src/device/process.dart`）：Android SDK 加 `%LOCALAPPDATA%\Android\Sdk`，DevEco 加 `C:\Program Files\Huawei\DevEco Studio\sdk`（`node` / `ohpm` / `hvigor` 改从 SDK 上一级 `tools/` 推，不再写死 macOS 路径），flutter SDK 自证时认 `flutter.bat`，Homebrew 目录只在非 Windows 拼。GUI 本身早有一份同样的 Windows 分支，这次把 daemon / MCP 侧对齐。
+
+- **审计结论（「所有功能都要支持 mac + Windows」）**：逐个查过设备发现（adb / hdc / idevice）、`flutter run` 起停、日志、时间线、沙盒 / 数据库 / Storage / 路由 / 实例 / Widget 树、性能（`GetProcessTimes` / `GetProcessMemoryInfo`）、截图、自动化、IDE 跳转、守护进程与一键安装（Windows 走 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` + `cmd` 包装重定向日志、桌面快捷方式指向 `XBumeGui.bat`）、MCP 池——这些都已有 Windows 分支（`bin/` 下 `Platform.isWindows` 共 83 处）。真正只有 macOS 实现的只有全局快捷键，本次补上；iOS 模拟器（`xcrun simctl`）按平台限制仍仅 macOS 电脑，README 平台矩阵已注明。
+
+- 测试：`test/hotkey_config_test.dart` 11 → **13 项**（新增「Windows VK 码与 Ctrl+ 写法标签，两张表键集必须一致」、「RegisterHotKey 修饰位含 MOD_NOREPEAT」），`test/gui_hotkey_test.dart` 9 → **10 项**（新增「Windows 用 Ctrl+ 写法，提示文案不写死 macOS」）；macOS 监听器冒烟复测通过（注册 2 条 / 状态文件正确 / `SIGTERM` 退出写日志）。
+
 ## 0.9.2
 
 - **热重载 / 热重启支持全局快捷键（可自设，macOS 系统级）**（用户：「热重载、热重启，我希望增加键盘快捷键，可以自己设置快捷键（并且是全局生效，不管有没有在工具箱页面，我在任何软件下都要生效）」）：调试浮动条上两个按钮右侧显示当前键位，旁边新增「快捷键」按钮打开设置弹窗；点一下热重载 / 热重启那一行（或回车）进入录制，**在捕获阶段拦按键**（不被页面输入框 / 其它快捷键吃掉）：`Esc` 取消、`⌫` 清除、只按修饰键继续等、按下不支持的键当场提示，`⇧` 单独不算修饰（至少一个 `⌘` / `⌃` / `⌥`，避免吞掉正常输入），两条录成同一组合直接拒绝；录完自动勾上「启用」，再点「保存并应用」生效（约 1 秒），弹窗里会写监听器状态、已注册的键位、注册失败原因、最近一次触发结果与日志路径。

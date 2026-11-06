@@ -1,14 +1,17 @@
-// 全局快捷键监听器（macOS 系统级热键）。
+// 全局快捷键监听器（macOS / Windows 系统级热键）。
 //
 // 由 GUI（ide_gui.dart）作为子进程拉起，配置来自 ~/.xb_ume_ide/hotkeys.json：
 //   热重载 / 热重启 两条组合 → 按下时 POST /api/hotkey/action 给 GUI，
 //   由 GUI 的调试中枢对「当前 flutter run 会话」发 SIGUSR1 / SIGUSR2。
 //
-// 为什么必须单独一个进程 + Carbon：
+// 为什么必须单独一个进程 + 原生注册：
 //   macOS 的系统级热键最省事的是 Carbon 的 RegisterEventHotKey（不需要
 //   「辅助功能」授权）。它要求进程跑在 Carbon 事件循环（RunApplicationEventLoop）
 //   里，而 Dart 的事件循环不是 CFRunLoop，所以本进程的主 isolate 直接阻塞在
 //   CFRunLoop 上，把「按键 → HTTP」丢给后台 isolate；主线程只做同步回调。
+//   Windows 同理：user32 的 RegisterHotKey 把热键挂在线程消息队列上，必须有
+//   人 GetMessage 循环取 WM_HOTKEY，Dart 自己不会泵这条队列，于是主 isolate
+//   阻塞在 GetMessage 上，处理逻辑照样交给后台 isolate。两边结构完全对称。
 //
 // 配置变化不热更：GUI 保存后按精确 pid 停掉本进程再拉起（见 hotkey_service.dart）。
 //
@@ -98,8 +101,8 @@ void main(List<String> args) {
   _guiPort = int.tryParse(_argValue(args, '--port') ?? '') ?? 0;
   _tokenArg = _argValue(args, '--token');
 
-  if (!Platform.isMacOS) {
-    _log('全局快捷键只支持 macOS，本进程退出');
+  if (!Platform.isMacOS && !Platform.isWindows) {
+    _log('全局快捷键只支持 macOS / Windows，本进程退出');
     exit(0);
   }
 
@@ -137,7 +140,11 @@ Future<void> _run(XbHotkeysConfig cfg) async {
 
   // 2) 注册热键。任何一步失败都写日志 + 状态文件，退出让 GUI 显示原因。
   try {
-    _installCarbon(cfg);
+    if (Platform.isWindows) {
+      _installWindows(cfg);
+    } else {
+      _installCarbon(cfg);
+    }
   } catch (e) {
     _errors.add('注册失败：$e');
     _log('注册全局快捷键失败：$e');
@@ -147,8 +154,12 @@ Future<void> _run(XbHotkeysConfig cfg) async {
 
   _writeStatus();
   _log('监听中：${_registered.join(' / ')}');
-  // 3) 阻塞在 Carbon 事件循环：热键事件由 _onHotKey 同步回调。
-  _runApplicationEventLoop();
+  // 3) 阻塞在原生事件循环：热键事件由同步回调 / 消息泵交给后台 isolate。
+  if (Platform.isWindows) {
+    _pumpMessages();
+  } else {
+    _runApplicationEventLoop();
+  }
   _log('事件循环结束');
   _writeStatus();
   exit(0);
@@ -253,10 +264,121 @@ void _installCarbon(XbHotkeysConfig cfg) {
 void Function() _runApplicationEventLoop = () {};
 
 // ---------------------------------------------------------------------------
+// Windows（user32 RegisterHotKey + 线程消息泵）
+// ---------------------------------------------------------------------------
+
+/// WM_HOTKEY：热键按下后 PostThreadMessage 到注册线程的队列。
+const int _wmHotKey = 0x0312;
+
+// 这些 final 是惰性的：macOS 上永远不会碰到 user32.dll。
+final DynamicLibrary _user32 = DynamicLibrary.open('user32.dll');
+
+final int Function(Pointer<Void>, int, int, int) _registerHotKey = _user32
+    .lookupFunction<Int32 Function(Pointer<Void>, Int32, Uint32, Uint32),
+        int Function(Pointer<Void>, int, int, int)>('RegisterHotKey');
+
+final int Function(Pointer<Void>, int) _unregisterHotKey = _user32
+    .lookupFunction<Int32 Function(Pointer<Void>, Int32),
+        int Function(Pointer<Void>, int)>('UnregisterHotKey');
+
+/// GetMessageW(MSG*, HWND, UINT, UINT)：阻塞取一条消息；0 = WM_QUIT，
+/// -1 = 出错。
+final int Function(Pointer<Uint8>, Pointer<Void>, int, int) _getMessage = _user32
+    .lookupFunction<
+        Int32 Function(Pointer<Uint8>, Pointer<Void>, Uint32, Uint32),
+        int Function(
+            Pointer<Uint8>, Pointer<Void>, int, int)>('GetMessageW');
+
+/// 指针宽度（x64 = 8，x86 = 4）：MSG 里 hwnd 占这么多个字节。
+final int _kPtrSize = sizeOf<IntPtr>();
+
+/// MSG.message 的偏移：紧跟在 hwnd 后面。
+final int _kMsgMessageOffset = _kPtrSize;
+
+/// MSG.wParam 的偏移：message（UINT）之后按指针宽度对齐（x64 上是 16）。
+final int _kMsgWParamOffset =
+    (_kPtrSize + 4 + _kPtrSize - 1) & ~(_kPtrSize - 1);
+
+void _installWindows(XbHotkeysConfig cfg) {
+  void register(int id, XbHotkeyBinding? b, String label) {
+    if (b == null || b.isEmpty) return;
+    final vk = b.windowsVirtualKey;
+    if (vk == null) {
+      _errors.add('$label：不支持的按键 ${b.key}');
+      return;
+    }
+    // hwnd 传 NULL：热键挂在本线程的消息队列上，由 _pumpMessages 取。
+    final ok = _registerHotKey(nullptr, id, b.windowsModifiers, vk);
+    if (ok != 0) {
+      _registered.add('$label ${b.label}');
+    } else {
+      // 常见 GetLastError 1409：该组合已被别的程序注册。
+      _errors.add('$label ${b.label} 注册失败：可能已被其他应用占用');
+    }
+  }
+
+  register(_kIdReload, cfg.reload, '热重载');
+  register(_kIdRestart, cfg.restart, '热重启');
+  if (_registered.isEmpty) {
+    _errors.add('没有任何热键注册成功');
+  }
+  _writeStatus();
+}
+
+/// 消息泵：主 isolate 阻塞在这里，热键按下时把 id 丢给后台 isolate。
+///
+/// MSG 结构随指针宽度变，不能写死偏移：hwnd 在最前，message 紧随其后，
+/// wParam 再按指针宽度对齐（x64：0 / 8 / 16）。
+void _pumpMessages() {
+  const msgSize = 128; // 真实大小 48（x64）/ 28（x86），多留余量无害
+  final buf = _malloc(msgSize);
+  try {
+    while (true) {
+      final r = _getMessage(buf.cast<Uint8>(), nullptr, 0, 0);
+      if (r == 0 || r < 0) break; // WM_QUIT / 出错
+      if (_readUint(buf, _kMsgMessageOffset, 4) != _wmHotKey) continue;
+      final id = _readUint(buf, _kMsgWParamOffset, _kPtrSize);
+      _actionPort?.send(id);
+    }
+  } finally {
+    // 退出前注销，别把组合留给一个即将退出的进程（正常情况进程结束也会释放）。
+    _unregisterHotKey(nullptr, _kIdReload);
+    _unregisterHotKey(nullptr, _kIdRestart);
+    _free(buf);
+  }
+}
+
+/// 从结构体缓冲区按字节偏移读一个无符号整数（Pointer 的算术代替 struct pack）。
+int _readUint(Pointer<Void> base, int offset, int bytes) {
+  // cast 到 Uint8 后 `+ offset` 才是按字节偏移（Uint8 元素宽度就是 1）。
+  final at = (base.cast<Uint8>() + offset);
+  return bytes == 8 ? at.cast<Uint64>().value : at.cast<Uint32>().value;
+}
+
+// ---------------------------------------------------------------------------
 // libc 分配器（部署副本不允许 package:ffi）
 // ---------------------------------------------------------------------------
 
-final DynamicLibrary _libc = DynamicLibrary.process();
+/// 拿 malloc / free。
+///
+/// macOS / Linux 的 `DynamicLibrary.process()` 能查到 libSystem 里的符号；
+/// **Windows 的 process() 只看主模块（.exe），malloc 在 ucrtbase / msvcrt 里**，
+/// 所以必须显式打开（否则 Windows 上第一次 _malloc 就抛 ArgumentError）。
+final DynamicLibrary _libc = Platform.isWindows
+    ? _openWindowsLibc()
+    : DynamicLibrary.process();
+
+DynamicLibrary _openWindowsLibc() {
+  for (final name in <String>['ucrtbase.dll', 'msvcrt.dll']) {
+    try {
+      return DynamicLibrary.open(name);
+    } catch (_) {
+      // 换下一个候选。
+    }
+  }
+  return DynamicLibrary.process();
+}
+
 final Pointer<Void> Function(int) _malloc = _libc.lookupFunction<
     Pointer<Void> Function(IntPtr), Pointer<Void> Function(int)>('malloc');
 final void Function(Pointer<Void>) _free = _libc.lookupFunction<

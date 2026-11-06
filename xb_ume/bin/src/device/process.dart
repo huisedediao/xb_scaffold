@@ -150,9 +150,14 @@ List<String> fallbackBinDirs() {
   // 1) flutter SDK：GUI/daemon 自己就是被 SDK 里的 dart 拉起来的，这是最可靠
   //    的自证信号；其次是 FLUTTER_ROOT 与常见安装位置。
   var probe = File(Platform.resolvedExecutable).parent;
+  // Windows 的 flutter 是 flutter.bat（没有无后缀的可执行体）。
+  final flutterNames = Platform.isWindows
+      ? <String>['flutter.bat', 'flutter']
+      : <String>['flutter'];
   for (var i = 0; i < 6; i++) {
-    if (File('${probe.path}${sep}bin${sep}flutter').existsSync()) {
-      add('${probe.path}${sep}bin');
+    final binDir = '${probe.path}${sep}bin';
+    if (flutterNames.any((n) => File('$binDir$sep$n').existsSync())) {
+      add(binDir);
       break;
     }
     final parent = probe.parent;
@@ -168,22 +173,32 @@ List<String> fallbackBinDirs() {
     add('$home/.pub-cache/bin');
     add('$home/.local/bin');
   }
-  add('/opt/homebrew/bin');
-  add('/usr/local/bin');
+  if (!Platform.isWindows) {
+    add('/opt/homebrew/bin');
+    add('/usr/local/bin');
+  }
 
-  // 2) Android platform-tools。
+  // 2) Android platform-tools。Windows 默认在 %LOCALAPPDATA%\Android\Sdk，
+  //    macOS 在 ~/Library/Android/sdk。
+  final localAppData =
+      _envOf('LOCALAPPDATA') ?? (home == null ? null : '$home/AppData/Local');
   final androidSdks = <String?>[
     _envOf('ANDROID_HOME'),
     _envOf('ANDROID_SDK_ROOT'),
     if (home != null) '$home/Library/Android/sdk',
+    if (localAppData != null) '$localAppData/Android/Sdk',
   ];
   for (final sdk in androidSdks) {
     if (sdk != null) add('$sdk/platform-tools');
   }
 
   // 3) DevEco：hdc 在各 SDK 版本的 toolchains 下（version 目录要先列举）。
-  final deveco =
-      _envOf('DEVECO_SDK_HOME') ?? '/Applications/DevEco-Studio.app/Contents/sdk';
+  //    默认安装位置：macOS /Applications/DevEco-Studio.app/Contents/sdk
+  //                 Windows C:\Program Files\Huawei\DevEco Studio\sdk
+  const devecoMac = '/Applications/DevEco-Studio.app/Contents/sdk';
+  const devecoWin = r'C:\Program Files\Huawei\DevEco Studio\sdk';
+  final deveco = _envOf('DEVECO_SDK_HOME') ??
+      (Platform.isWindows ? devecoWin : devecoMac);
   final sdkDir = Directory(deveco);
   if (sdkDir.existsSync()) {
     for (final e in sdkDir.listSync(followLinks: false)) {
@@ -191,8 +206,10 @@ List<String> fallbackBinDirs() {
     }
   }
   add('$deveco/openharmony/toolchains');
+  // node / ohpm / hvigor 在 SDK 上一级目录的 tools 下（mac 与 Windows 同一布局）。
+  final devecoRoot = File(deveco).parent.path;
   for (final tool in <String>['node', 'ohpm', 'hvigor']) {
-    add('/Applications/DevEco-Studio.app/Contents/tools/$tool/bin');
+    add('$devecoRoot/tools/$tool/bin');
   }
 
   _fallbackDirsCache = dirs;

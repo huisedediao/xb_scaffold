@@ -6,7 +6,8 @@
 //    "restart": {"key": "KeyR", "cmd": true, "alt": true}}
 //
 // `key` 用浏览器 KeyboardEvent.code（物理键位，不受输入法 / 键盘布局影响），
-// 监听器再翻成 macOS 虚拟键码（Carbon RegisterEventHotKey 只认键码）。
+// 监听器再翻成本机虚拟键码：macOS 用 Carbon 键码，Windows 用 VK 码
+// （RegisterHotKey 只认这两样）。两张表收录的键完全一致，配置跨平台可读。
 //
 // 本文件与 hotkey_listener.dart 一起部署到 ~/.xb_ume_ide/src/hotkeys/，
 // 不能出现 package: 依赖（部署副本只按相对路径解析）。
@@ -120,6 +121,94 @@ const Map<String, int> kMacVirtualKeyCodes = <String, int>{
   'Delete': 0x75,
 };
 
+/// 浏览器 KeyboardEvent.code → Windows 虚拟键码（VK_*，RegisterHotKey 用）。
+///
+/// 收录范围与 [kMacVirtualKeyCodes] 一致：字母 / 数字 / F1~F20 / 方向键 /
+/// 编辑键 / 常用符号，两边键位一样，配置在 macOS 与 Windows 之间可以直接搬。
+const Map<String, int> kWindowsVirtualKeys = <String, int>{
+  'KeyA': 0x41,
+  'KeyB': 0x42,
+  'KeyC': 0x43,
+  'KeyD': 0x44,
+  'KeyE': 0x45,
+  'KeyF': 0x46,
+  'KeyG': 0x47,
+  'KeyH': 0x48,
+  'KeyI': 0x49,
+  'KeyJ': 0x4A,
+  'KeyK': 0x4B,
+  'KeyL': 0x4C,
+  'KeyM': 0x4D,
+  'KeyN': 0x4E,
+  'KeyO': 0x4F,
+  'KeyP': 0x50,
+  'KeyQ': 0x51,
+  'KeyR': 0x52,
+  'KeyS': 0x53,
+  'KeyT': 0x54,
+  'KeyU': 0x55,
+  'KeyV': 0x56,
+  'KeyW': 0x57,
+  'KeyX': 0x58,
+  'KeyY': 0x59,
+  'KeyZ': 0x5A,
+  'Digit0': 0x30,
+  'Digit1': 0x31,
+  'Digit2': 0x32,
+  'Digit3': 0x33,
+  'Digit4': 0x34,
+  'Digit5': 0x35,
+  'Digit6': 0x36,
+  'Digit7': 0x37,
+  'Digit8': 0x38,
+  'Digit9': 0x39,
+  'F1': 0x70,
+  'F2': 0x71,
+  'F3': 0x72,
+  'F4': 0x73,
+  'F5': 0x74,
+  'F6': 0x75,
+  'F7': 0x76,
+  'F8': 0x77,
+  'F9': 0x78,
+  'F10': 0x79,
+  'F11': 0x7A,
+  'F12': 0x7B,
+  'F13': 0x7C,
+  'F14': 0x7D,
+  'F15': 0x7E,
+  'F16': 0x7F,
+  'F17': 0x80,
+  'F18': 0x81,
+  'F19': 0x82,
+  'F20': 0x83,
+  'ArrowLeft': 0x25,
+  'ArrowUp': 0x26,
+  'ArrowRight': 0x27,
+  'ArrowDown': 0x28,
+  'Home': 0x24,
+  'End': 0x23,
+  'PageUp': 0x21,
+  'PageDown': 0x22,
+  'Delete': 0x2E,
+  'Enter': 0x0D,
+  'Tab': 0x09,
+  'Space': 0x20,
+  'Escape': 0x1B,
+  'Backspace': 0x08,
+  'Minus': 0xBD,
+  'Equal': 0xBB,
+  'Comma': 0xBC,
+  'Period': 0xBE,
+  'Slash': 0xBF,
+  'Backslash': 0xDC,
+  'Semicolon': 0xBA,
+  'Quote': 0xDE,
+  'BracketLeft': 0xDB,
+  'BracketRight': 0xDD,
+  'Backquote': 0xC0,
+};
+
 /// 键位的显示名（与前端 hkKeyLabel 保持同一套字符）。
 String hotkeyKeyLabel(String code) {
   if (code.startsWith('Key') && code.length == 4) {
@@ -183,6 +272,12 @@ class XbHotkeyBinding {
 
   int? get macKeyCode => kMacVirtualKeyCodes[key];
 
+  /// Windows 虚拟键码（VK_*）。
+  int? get windowsVirtualKey => kWindowsVirtualKeys[key];
+
+  /// 本机能不能注册这个键（两张表收录范围一致，这里按并集判断）。
+  bool get hasKeyCode => macKeyCode != null || windowsVirtualKey != null;
+
   /// Carbon 修饰键（RegisterEventHotKey 用）。
   int get carbonModifiers =>
       (cmd ? 0x0100 : 0) |
@@ -190,8 +285,18 @@ class XbHotkeyBinding {
       (alt ? 0x0800 : 0) |
       (ctrl ? 0x1000 : 0);
 
-  /// 展示用标签：⌃⌥⇧⌘R（macOS 菜单里的固定顺序）。
-  String get label {
+  /// Windows 修饰键（RegisterHotKey 用）：MOD_ALT / MOD_CONTROL / MOD_SHIFT /
+  /// MOD_WIN，另外带上 MOD_NOREPEAT（0x4000）——按住不放只触发一次，
+  /// 否则热重载会被长按连发。
+  int get windowsModifiers =>
+      (alt ? 0x0001 : 0) |
+      (ctrl ? 0x0002 : 0) |
+      (shift ? 0x0004 : 0) |
+      (cmd ? 0x0008 : 0) |
+      0x4000;
+
+  /// macOS 展示标签：⌃⌥⇧⌘R（Apple 菜单里的固定顺序）。
+  String get macLabel {
     final sb = StringBuffer();
     if (ctrl) sb.write('⌃');
     if (alt) sb.write('⌥');
@@ -200,6 +305,20 @@ class XbHotkeyBinding {
     sb.write(hotkeyKeyLabel(key));
     return sb.toString();
   }
+
+  /// Windows 展示标签：Ctrl+Alt+Shift+Win+R（Windows 菜单的写法习惯）。
+  String get windowsLabel {
+    final sb = StringBuffer();
+    if (ctrl) sb.write('Ctrl+');
+    if (alt) sb.write('Alt+');
+    if (shift) sb.write('Shift+');
+    if (cmd) sb.write('Win+');
+    sb.write(hotkeyKeyLabel(key));
+    return sb.toString();
+  }
+
+  /// 本机展示用标签：Windows 用 Ctrl+… 写法，其余用 ⌘ 符号。
+  String get label => Platform.isWindows ? windowsLabel : macLabel;
 
   /// 去重用的稳定标识（含修饰键顺序无关的比较）。
   String get identity =>
@@ -231,10 +350,14 @@ class XbHotkeyBinding {
   /// 校验一条绑定；合法返回 null，否则返回给用户看的错误文案。
   String? validate() {
     if (isEmpty) return null; // 未设置是合法状态
-    if (!kMacVirtualKeyCodes.containsKey(key)) {
+    if (!hasKeyCode) {
       return '不支持的按键「$key」：换成字母 / 数字 / F1~F20 / 方向键等';
     }
-    if (!hasModifier) return '至少带一个 ⌘ / ⌃ / ⌥：纯按键的组合会把正常输入吞掉';
+    if (!hasModifier) {
+      return Platform.isWindows
+          ? '至少带一个 Ctrl / Alt / Win：纯按键的组合会把正常输入吞掉'
+          : '至少带一个 ⌘ / ⌃ / ⌥：纯按键的组合会把正常输入吞掉';
+    }
     return null;
   }
 }

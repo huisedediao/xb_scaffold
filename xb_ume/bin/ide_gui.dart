@@ -12755,7 +12755,7 @@ const String guiHtml = r'''
   <button id="dbg-b-hot" onclick="dbgHot(false)" title="热重载（r）：改完代码不重启进程">⟳ 热重载<span class="kbd" id="dbg-b-hot-k"></span></button>
   <button id="dbg-b-restart" onclick="dbgHot(true)" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启<span class="kbd" id="dbg-b-restart-k"></span></button>
   <!-- 不用 ⌨ 等符号：部分系统字体把它渲染成方块，文字更稳 -->
-  <button id="dbg-b-hotkey" onclick="hkOpen()" title="设置全局快捷键（macOS 系统级：工具箱页面关掉、在别的软件里也生效）">快捷键</button>
+  <button id="dbg-b-hotkey" onclick="hkOpen()" title="设置全局快捷键（系统级：工具箱页面关掉、在别的软件里也生效；macOS / Windows）">快捷键</button>
   <span class="sep"></span>
   <button onclick="dbgStop()" title="停止 flutter run（只停本工具拉起的，按精确 PID）">■ 停止</button>
   <button onclick="document.getElementById('dbg-bar').classList.remove('on')" title="收起（从调试页刷新或重新操作可再现）">✕</button>
@@ -12769,8 +12769,8 @@ const String guiHtml = r'''
       <button onclick="hkClose()">关闭</button>
     </div>
     <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.6">
-      注册为 <b>macOS 系统级热键</b>：工具箱页面关掉、当前在别的软件里都生效（需要工具箱进程在跑）。
-      点组合框后直接按一次组合键录制，至少带一个 <b>⌘ / ⌃ / ⌥</b>；组合不能和系统或其他软件已占用的热键重复。
+      注册为 <b>系统级热键</b>（macOS 用 Carbon，Windows 用 RegisterHotKey）：工具箱页面关掉、当前在别的软件里都生效（需要工具箱进程在跑）。
+      点组合框后直接按一次组合键录制，至少带一个 <b id="hk-modhint">⌘ / ⌃ / ⌥</b>；组合不能和系统或其他软件已占用的热键重复。
     </div>
     <label class="chk" style="display:flex;align-items:center;gap:6px;margin:12px 0 4px">
       <input type="checkbox" id="hk-enabled" onchange="hkToggleEnabled(this)"> 启用全局快捷键
@@ -19846,12 +19846,14 @@ function dbgPause(){ dbgOp('pause', {}); }
 function dbgResume(step){ dbgOp('resume', step ? {step: step} : {}); }
 function dbgHot(restart){ dbgOp('hot', {restart: !!restart}); }
 
-// -- 全局快捷键（macOS 系统级热键） -------------------------------------------
+// -- 全局快捷键（系统级热键：macOS Carbon / Windows RegisterHotKey） --------
 // 配置在服务端 ~/.xb_ume_ide/hotkeys.json，由 GUI 拉起的监听器子进程用
-// Carbon RegisterEventHotKey 注册：页面关掉、在别的软件里都生效。
+// 原生 API 注册：页面关掉、在别的软件里都生效。
 var hkState = { enabled: false, reload: null, restart: null };
 var hkSt = {};
 var hkRec = '';
+// 服务端报的 platform：Windows 用 Ctrl+… 写法，不用 ⌘ / ⌃ / ⌥ 符号
+var hkWin = false;
 
 // 键位显示名（与 src/hotkeys/hotkey_config.dart 的 hotkeyKeyLabel 同一套字符）
 var hkKeyNames = {
@@ -19868,11 +19870,18 @@ function hkKeyLabel(code){
   if (/^F([1-9]|1[0-9]|20)$/.test(code)) return code;
   return hkKeyNames[code] || '';
 }
+function hkModLabel(b){
+  if (hkWin) {
+    return (b.ctrl ? 'Ctrl+' : '') + (b.alt ? 'Alt+' : '') +
+      (b.shift ? 'Shift+' : '') + (b.cmd ? 'Win+' : '');
+  }
+  return (b.ctrl ? '⌃' : '') + (b.alt ? '⌥' : '') + (b.shift ? '⇧' : '') + (b.cmd ? '⌘' : '');
+}
 function hkBindingLabel(b){
   if (!b || !b.key) return '';
   var k = hkKeyLabel(b.key);
   if (!k) return '';
-  return (b.ctrl ? '⌃' : '') + (b.alt ? '⌥' : '') + (b.shift ? '⇧' : '') + (b.cmd ? '⌘' : '') + k;
+  return hkModLabel(b) + k;
 }
 function hkSame(a, b){
   return !!a && !!b && a.key === b.key && !!a.cmd === !!b.cmd &&
@@ -19905,7 +19914,7 @@ function hkStatusText(d){
   if (!d) return '';
   var lines = [];
   if (d.supported === false) {
-    lines.push('当前系统（' + (d.platform || '?') + '）不支持全局快捷键：目前只实现了 macOS。');
+    lines.push('当前系统（' + (d.platform || '?') + '）不支持全局快捷键：目前只支持 macOS 与 Windows。');
   } else {
     lines.push('监听器：' + (d.running ? ('运行中（pid ' + (d.pid || '?') + '）') : '未运行') +
       (d.message ? ' · ' + d.message : ''));
@@ -19926,6 +19935,9 @@ function hkStatusText(d){
 function hkApply(d){
   if (!d || typeof d !== 'object') return;
   hkSt = d;
+  hkWin = d.platform === 'windows';
+  var hint = dbgEl('hk-modhint');
+  if (hint) hint.textContent = hkWin ? 'Ctrl / Alt / Win' : '⌘ / ⌃ / ⌥';
   if (d.ok !== false && d.config) {
     hkState = {
       enabled: !!d.config.enabled,
@@ -19964,7 +19976,7 @@ function hkClear(act){
   hkRender();
 }
 function hkRecord(act){
-  if (hkSt && hkSt.supported === false) { hkNote('全局快捷键目前只支持 macOS'); return; }
+  if (hkSt && hkSt.supported === false) { hkNote('全局快捷键目前只支持 macOS / Windows'); return; }
   hkRec = act;
   var el = dbgEl('hk-' + act);
   if (el) {
@@ -19987,7 +19999,7 @@ document.addEventListener('keydown', function(e){
   if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].indexOf(e.key) >= 0) return;
   var code = e.code || '';
   if (!hkKeyLabel(code)) { hkNote('这个按键不支持：换成字母 / 数字 / F1~F20 / 方向键等'); return; }
-  if (!mods) { hkNote('至少带一个 ⌘ / ⌃ / ⌥：纯按键的组合会把正常输入吞掉'); return; }
+  if (!mods) { hkNote((hkWin ? '至少带一个 Ctrl / Alt / Win' : '至少带一个 ⌘ / ⌃ / ⌥') + '：纯按键的组合会把正常输入吞掉'); return; }
   var b = { key: code, cmd: !!e.metaKey, ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey };
   var other = act === 'reload' ? hkState.restart : hkState.reload;
   if (hkSame(b, other)) { hkNote('热重载与热重启不能是同一个组合'); return; }

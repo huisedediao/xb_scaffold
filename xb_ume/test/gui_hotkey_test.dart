@@ -67,6 +67,17 @@ void main() {
       expect(seg.contains('hkSame('), isTrue, reason: '两条不能录成同一组合');
     });
 
+    test('Windows 用 Ctrl+ 写法，提示文案不写死 macOS', () {
+      // 服务端 /api/hotkeys 回报 platform=windows 时，标签与提示改成 Ctrl+… /
+      // Ctrl / Alt / Win，不用 ⌘ / ⌃ / ⌥ 符号。
+      expect(html.contains('function hkModLabel('), isTrue);
+      expect(html.contains("hkWin = d.platform === 'windows'"), isTrue);
+      expect(html.contains('id="hk-modhint"'), isTrue);
+      expect(html.contains('Ctrl / Alt / Win'), isTrue);
+      expect(html.contains('目前只实现了 macOS'), isFalse,
+          reason: 'Windows 也支持后，这句旧文案不能留');
+    });
+
     test('没打开调试页也要显示已设置的键位 / 弹窗能拉到服务端状态', () {
       // 启动与切到调试页各刷一次（工具条是全局浮层，不依赖调试 Tab）
       final loadCalls = RegExp(r'hkLoad\(\);').allMatches(html).length;

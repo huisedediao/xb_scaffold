@@ -69,7 +69,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 
 **运行模式**：电脑端 GUI 的会话相关能力（Flutter 输出、时间轴、异常、截图、自动化等）通过 VM service 工作，**debug** 下最完整；依赖 VM `evaluate` 的能力（应用沙盒、数据库、路由栈、Storage、实例、自动化 eval 步骤，以及 Locator 源码定位）必须 **debug**（profile 为 AOT 编译，通常无法求值表达式）；release 无 VM service。App 内面板在 release 下仍可渲染并采集日志/路由/帧，但调试细节会退化。
 
-电脑端 GUI 的日志、设备管理依赖对应平台工具：`adb` / `hdc` / Xcode `simctl` / `idevice_id`（`brew install libimobiledevice`）。
+电脑端 GUI 的日志、设备管理依赖对应平台工具：`adb` / `hdc` / Xcode `simctl` / `idevice_id`（`brew install libimobiledevice`）。Windows 上 adb 默认在 `%LOCALAPPDATA%\Android\Sdk\platform-tools`、hdc 在 `C:\Program Files\Huawei\DevEco Studio\sdk\<版本>\openharmony\toolchains`，GUI / MCP 会自动补进子进程 PATH；**全局快捷键（热重载 / 热重启）在 macOS（Carbon）与 Windows（user32 `RegisterHotKey`）都是系统级**（Windows 无 `SIGUSR`，触发时走本工具拉起会话的 stdin，所以只能用在本工具拉起的 `flutter run` 上），Linux 暂不支持。
 
 ## 安装
 
@@ -469,7 +469,7 @@ XBUme.registerStore('userNotifier', context.read<UserNotifier>());
 | Tab | 功能 | 前置 / 说明 |
 |---|---|---|
 | 守护进程 | daemon 状态、已接入会话、一键重启、IDE 优先级拖拽排序 | 需 `--install` 或 `--daemon`；页头「服务」菜单是同一套实现 |
-| 调试 | 起停 `flutter run`（已有会话直接复用），运行配置可按名字新建/切换（启动前做准备、按配置追加参数/环境变量、停止后清理）；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
+| 调试 | 起停 `flutter run`（已有会话直接复用），运行配置可按名字新建/切换（启动前做准备、按配置追加参数/环境变量、停止后清理）；**点源码行号下断点 / 再点取消**（也可按 `文件:行`），支持条件断点与日志断点（命中不暂停、求值写进输出后自动继续），条件 / 日志可就地编辑；命中后浮动条暂停/继续/单步（源码面板当前行跟着栈顶帧走，进到 SDK / 依赖包只读跟随）/热重载/热重启（可绑系统级全局快捷键，macOS / Windows）；调用栈、变量与求值、运行输出；断点自动记住，重连同一项目自动恢复，也可按「全部项目」总览清空；异常/网络定位行可一键下断点 | 只调 VM service，app 端零改动；外部会话可接入（热重载需本工具拉起的会话） |
 | 日志 | 设备日志（logcat / hilog / log stream / idevicesyslog）+ Flutter 输出（未选会话时为全部，选中后只显示该应用） | 设备工具可用；Flutter 输出需 daemon |
 | 时间轴 | 路由 / 网络 / 日志 / 异常按时间合并，可过滤、暂停、展开、跳转对应 Tab | 需选中会话 |
 | 异常 | 实时捕获框架异常与未捕获异常，栈帧可跳 IDE、可一键下断点，Tab 角标 + 红浮层提醒 | daemon 在跑即可，覆盖全部会话（不要求选中） |
