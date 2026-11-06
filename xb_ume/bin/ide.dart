@@ -34,8 +34,11 @@ import 'src/session/discovery.dart';
 // 服务控制：GUI / daemon 的启停、重启与重新部署；与 bin/ide_gui.dart 共用
 // 同一份实现（macOS 走 launchd，其他平台按命令行精确匹配进程）。
 import 'src/control/svc_control.dart';
+// GUI / MCP 拉起的 flutter run 记录（含带 token 的 VM 地址）。
+import 'src/device/live_store.dart';
 // 代理兜底：本机回环（VM Service / GUI API）不走 http_proxy。
 import 'src/device/proxy_env.dart';
+import 'src/scenario/vm_client.dart' show normalizeVmUri;
 
 /// App 端 XBUmeIdeJump.eventId，双端约定一致。
 const String kEventKind = 'xb_ume:openSource';
@@ -1419,10 +1422,40 @@ Future<void> _runSingleSession(String wsUrl, String ide) async {
   }
 }
 
+/// 接入本工具（GUI / MCP）拉起的 flutter run 会话。
+///
+/// VM service 默认要求 auth code：不带 token 的 `GET /getVM` 返回 403，
+/// 端口扫描因此发现不了它们。启动记录 `launch/live/<pid>.json` 里的
+/// `wsUri` 已经带 token，归一化后直接接入；只认 pid 存活且命令行仍是
+/// flutter run 的记录，避免接入无关进程。
+Future<void> _adoptLaunchRecords(String ide) async {
+  for (final record in readLaunchRecords()) {
+    final raw = (record.wsUri ?? '').trim();
+    if (raw.isEmpty || !recordStillValid(record)) continue;
+    final wsUrl = normalizeVmUri(raw);
+    if (wsUrl.isEmpty) continue;
+    final port = Uri.tryParse(wsUrl)?.port ?? 0;
+    // 端口扫描命中同一实例时地址不含 token，按端口去重。
+    final exists = _sessions.values.any((s) {
+      if (s.wsUrl == wsUrl) return true;
+      return port > 0 && (Uri.tryParse(s.wsUrl)?.port ?? 0) == port;
+    });
+    if (exists) continue;
+    final session = _Session(wsUrl, '${record.owner}:${record.pid}', ide);
+    _sessions[wsUrl] = session;
+    await session.connect();
+    if (!session.alive) _sessions.remove(wsUrl);
+  }
+}
+
 Future<void> _poll(String ide) async {
   if (_polling) return;
   _polling = true;
   try {
+    // GUI / MCP 拉起的会话：启动记录里已经有带 auth code 的完整地址，
+    // 直接接入。端口扫描拿不到 token（VM service 对无 token 的 /getVM
+    // 返回 403），所以不能只靠它。
+    await _adoptLaunchRecords(ide);
     final discovered = await discoverLocalVmServices(
       knownFingerprints: _knownFingerprints,
     );
