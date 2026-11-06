@@ -34,6 +34,8 @@ import 'src/session/discovery.dart';
 // 服务控制：GUI / daemon 的启停、重启与重新部署；与 bin/ide_gui.dart 共用
 // 同一份实现（macOS 走 launchd，其他平台按命令行精确匹配进程）。
 import 'src/control/svc_control.dart';
+// 代理兜底：本机回环（VM Service / GUI API）不走 http_proxy。
+import 'src/device/proxy_env.dart';
 
 /// App 端 XBUmeIdeJump.eventId，双端约定一致。
 const String kEventKind = 'xb_ume:openSource';
@@ -108,6 +110,13 @@ String? _argValue(List<String> args, String name) {
 }
 
 void main(List<String> args) {
+  // 必须在任何 WebSocket / HttpClient 之前：本机回环直连，避免继承了
+  // http_proxy 时把 VM Service / GUI API 的请求发给代理而卡住。
+  bypassProxyForLoopback();
+  final proxyHint = proxyEnvHint();
+  if (proxyHint != null) {
+    print('[xbume-ide] 检测到代理环境（$proxyHint）：本机回环连接已自动绕过代理。');
+  }
   // Zone 兑底：任何遗漏的未捕获异步异常（如各 socket 的 RST）只记录不退出
   // —— daemon 被杀 → launchd 拉起新实例 → DDS 重放缓冲跳转事件，用户
   // 实测每 30s~1min 全部位置重复跳转，宁吞勿崩。
@@ -460,6 +469,12 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
       // 一键开启：先确保守护进程（--ensure-daemon 幂等），再起 GUI。
       await File('$installDir${sep}XBumeGui.bat').writeAsString(
         '@echo off\r\n'
+        // 本机回环（VM Service / GUI API / 守护端口）不走代理；其余地址仍按
+        // 启动它的环境里的代理设置。dart:io 的 HttpClient 默认读 no_proxy。
+        'set "_xb_np=%NO_PROXY%"\r\n'
+        'if not defined _xb_np set "_xb_np=%no_proxy%"\r\n'
+        'set "NO_PROXY=127.0.0.1,localhost,::1,%_xb_np%"\r\n'
+        'set "no_proxy=%NO_PROXY%"\r\n'
         'start "xbume-daemon" /min "$dartBin" "$installDir${sep}ide.dart" --ensure-daemon\r\n'
         'start "xbume-gui" /min "$dartBin" "$installDir${sep}ide_gui.dart"\r\n',
       );
@@ -467,6 +482,11 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
       final launcher = File('$installDir${sep}xb_ume_gui.command');
       await launcher.writeAsString(
         '#!/bin/bash\n'
+        // 本机回环（VM Service / GUI API / 守护端口）不走代理；其余地址仍按
+        // 启动它的 shell 里的代理设置。dart:io 的 HttpClient 默认读 no_proxy。
+        '_xb_np="\${no_proxy:-\${NO_PROXY:-}}"\n'
+        'export NO_PROXY="127.0.0.1,localhost,::1\${_xb_np:+,\$_xb_np}"\n'
+        'export no_proxy="\$NO_PROXY"\n'
         // 双击启动 = 一键开启：守护进程不在就拉起来（幂等，失败不拦 GUI）。
         '"$dartBin" "$installDir/ide.dart" --ensure-daemon >/dev/null 2>&1\n'
         'exec "$dartBin" "$installDir/ide_gui.dart"\n',

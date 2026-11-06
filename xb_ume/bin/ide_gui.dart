@@ -40,6 +40,7 @@ import 'src/debug/source_view.dart';
 // 与本文件同名的本地解析器签名不同，不能整包导入。
 import 'src/device/adb.dart' show adbKeepAwakeArgs;
 import 'src/device/hdc.dart' show hdcKeepAwakeArgs;
+import 'src/device/proxy_env.dart';
 import 'src/device/run_profile.dart' show runProfileFilePath;
 // 服务控制：GUI / daemon 的启停、重启与重新部署（与 bin/ide.dart 共用同一
 // 份实现，避免两边各写一套进程管理、再次和 LaunchAgent 的 KeepAlive 抢实例）。
@@ -257,6 +258,13 @@ void setGuiAuthForTest(String token, int port) {
 }
 
 Future<void> main(List<String> args) async {
+  // 必须在任何 WebSocket / HttpClient 之前：本机回环直连，避免继承了
+  // http_proxy 时把 VM Service / GUI API 的请求发给代理而卡住。
+  bypassProxyForLoopback();
+  final proxyHint = proxyEnvHint();
+  if (proxyHint != null) {
+    print('[xbume-gui] 检测到代理环境（$proxyHint）：本机回环连接已自动绕过代理。');
+  }
   // 兜底：任何流回调/事件循环里的未捕获异常只记日志，不杀进程。
   return runZonedGuarded(() => _mainImpl(args), (e, st) {
     stderr.writeln('[uncaught] $e\n$st');
@@ -12214,23 +12222,6 @@ const String guiHtml = r'''
       </div>
       <pre id="ai-prompt" style="white-space:pre-wrap;max-height:calc(100vh - 400px);min-height:180px;overflow:auto;font-size:12px;line-height:1.55;margin:10px 0 0">点「一键开启」后，这里会出现可直接粘给 AI 的指令</pre>
     </div>
-    <div id="ai-dir-pick" style="display:none;position:fixed;inset:0;z-index:120;background:rgba(3,7,12,.62)" onclick="if(event.target===this)aiPickClose()">
-      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(780px,92vw);max-height:80vh;display:flex;flex-direction:column;background:#0f1620;border:1px solid #223041;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
-        <div class="row" style="padding:10px 12px;gap:6px;border-bottom:1px solid #223041;flex-wrap:nowrap">
-          <b style="white-space:nowrap">选择项目目录</b>
-          <button onclick="aiPickUp()" id="ai-pick-up" style="padding:4px 9px" title="上一级">↑ 上级</button>
-          <button onclick="aiPickLoad('')" style="padding:4px 9px" title="回到用户主目录">主目录</button>
-          <input id="ai-pick-path" placeholder="绝对路径，回车跳转" style="flex:1;min-width:0;width:0;font-size:12px" onkeydown="if(event.key==='Enter')aiPickLoad(this.value)">
-          <button onclick="aiPickClose()" style="padding:4px 9px" title="关闭（Esc）">✕</button>
-        </div>
-        <div id="ai-pick-cand" class="row" style="padding:6px 12px;gap:6px;flex-wrap:wrap;border-bottom:1px solid #223041"></div>
-        <div id="ai-pick-list" style="flex:1;overflow:auto;padding:4px 6px"></div>
-        <div class="row" style="padding:10px 12px;gap:8px;border-top:1px solid #223041;flex-wrap:nowrap">
-          <span id="ai-pick-tip" class="muted" style="flex:1;min-width:0;font-size:12px"></span>
-          <button class="primary" onclick="aiPickChoose()">选定此目录</button>
-        </div>
-      </div>
-    </div>
   </section>
   <section class="page" id="page-debug">
     <!-- 顶部工具条：会话 / 目录 / 设备 / 运行配置 / 接入（对应 VS Code 调试视图顶部） -->
@@ -12246,6 +12237,7 @@ const String guiHtml = r'''
           <input id="dbg-dir" list="dbg-dir-list" placeholder="/path/to/your/flutter/app" style="flex:1;min-width:0;width:0;margin-left:6px" onchange="dbgLoadSaved();dbgProfileRefresh()">
           <datalist id="dbg-dir-list"></datalist>
         </label>
+        <button onclick="aiPickDir('dbg-dir')" style="flex:0 0 auto;padding:6px 10px" title="浏览本机目录挑项目根（浏览器给不了绝对路径，这里由后台列目录）">选择…</button>
         <label class="chk" style="display:flex;align-items:center;flex:0 0 auto" title="flutter run -d 哪台设备。默认 macOS 桌面；手机上的会话请用下方「接入」">设备
           <select id="dbg-device" style="width:190px;margin-left:6px"></select>
         </label>
@@ -15463,8 +15455,10 @@ function aiShow(){
 // 绝对路径，所以改成后台列子目录、前端点选。只列目录，不读文件内容。
 var aiPickCur = '';    // 当前浏览到的目录
 var aiPickParent = ''; // 上一级（根目录为空）
-function aiPickDir(){
-  var inp = document.getElementById('ai-dir');
+var aiPickTarget = 'ai-dir'; // 选定后回填到哪个输入框（AI 页 / 调试页共用这个弹窗）
+function aiPickDir(targetId){
+  aiPickTarget = targetId || 'ai-dir';
+  var inp = document.getElementById(aiPickTarget);
   var ov = document.getElementById('ai-dir-pick');
   if (ov) ov.style.display = 'block';
   aiPickLoad(inp ? (inp.value || '').trim() : '');
@@ -15475,8 +15469,13 @@ function aiPickClose(){
 }
 function aiPickUp(){ if (aiPickParent) aiPickLoad(aiPickParent); }
 function aiPickChoose(){
-  var inp = document.getElementById('ai-dir');
-  if (inp && aiPickCur) inp.value = aiPickCur;
+  var inp = document.getElementById(aiPickTarget);
+  if (inp && aiPickCur) {
+    inp.value = aiPickCur;
+    // 目标输入框可能带 onchange（调试页要保存目录并刷新运行配置）；代码赋值
+    // 不会自动触发 change，这里手动派发一次。没有 onchange 的（AI 页）无副作用。
+    inp.dispatchEvent(new Event('change'));
+  }
   aiPickClose();
 }
 function aiPickLoad(p){
@@ -18056,6 +18055,9 @@ function dbgPlatformOf(dev){
 
 function dbgLoadOpts(){
   fetch('/api/ai/config').then(function(r){ return r.json(); }).then(function(d){
+    // 目录选择弹窗的「会话/最近」候选：没进过 AI 页时也要有（调试页也会打开它）。
+    aiSessionDirs = d.sessionDirs || [];
+    aiRecentDirs = d.recentDirs || [];
     var dirl = dbgEl('dbg-dir-list');
     if (dirl) {
       dirl.innerHTML = '';
@@ -20231,6 +20233,23 @@ function dbgOutHDrag(e){
   });
 })();
 </script>
+<div id="ai-dir-pick" style="display:none;position:fixed;inset:0;z-index:120;background:rgba(3,7,12,.62)" onclick="if(event.target===this)aiPickClose()">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(780px,92vw);max-height:80vh;display:flex;flex-direction:column;background:#0f1620;border:1px solid #223041;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+    <div class="row" style="padding:10px 12px;gap:6px;border-bottom:1px solid #223041;flex-wrap:nowrap">
+      <b style="white-space:nowrap">选择项目目录</b>
+      <button onclick="aiPickUp()" id="ai-pick-up" style="padding:4px 9px" title="上一级">↑ 上级</button>
+      <button onclick="aiPickLoad('')" style="padding:4px 9px" title="回到用户主目录">主目录</button>
+      <input id="ai-pick-path" placeholder="绝对路径，回车跳转" style="flex:1;min-width:0;width:0;font-size:12px" onkeydown="if(event.key==='Enter')aiPickLoad(this.value)">
+      <button onclick="aiPickClose()" style="padding:4px 9px" title="关闭（Esc）">✕</button>
+    </div>
+    <div id="ai-pick-cand" class="row" style="padding:6px 12px;gap:6px;flex-wrap:wrap;border-bottom:1px solid #223041"></div>
+    <div id="ai-pick-list" style="flex:1;overflow:auto;padding:4px 6px"></div>
+    <div class="row" style="padding:10px 12px;gap:8px;border-top:1px solid #223041;flex-wrap:nowrap">
+      <span id="ai-pick-tip" class="muted" style="flex:1;min-width:0;font-size:12px"></span>
+      <button class="primary" onclick="aiPickChoose()">选定此目录</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
 ''';

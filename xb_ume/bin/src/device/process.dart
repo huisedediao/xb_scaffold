@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'bridge.dart';
+import 'proxy_env.dart';
 
 /// 一次命令执行结果。
 class CmdResult {
@@ -236,7 +237,10 @@ Map<String, String> execEnvironment([Map<String, String>? extra]) {
   map.removeWhere((k, _) => k.toUpperCase() == 'PATH');
   map['PATH'] = execSearchPath();
   if (extra != null) map.addAll(extra);
-  return map;
+  // 子进程（flutter run 等）连本机 VM Service 也是回环：即使本进程继承了
+  // http_proxy，也要让回环绕过代理。放在 extra 之后，配置里的 no_proxy 只会
+  // 被补充、不会被丢掉回环地址。
+  return withLoopbackNoProxy(map);
 }
 
 /// 定位也可显式指定：`XB_UME_FLUTTER` 给 flutter 可执行文件或 SDK 根目录。

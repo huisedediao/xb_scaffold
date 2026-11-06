@@ -27,6 +27,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'src/device/proxy_env.dart';
 import 'src/device/registry.dart';
 import 'src/mcp/bridge_tools.dart';
 import 'src/mcp/debug_tools.dart';
@@ -289,6 +290,9 @@ Future<void> _runPoolEntry(
 }
 
 Future<void> main(List<String> argv) async {
+  // 必须在任何 WebSocket / HttpClient 之前：本机回环直连（MCP 调 GUI 的
+  // /api/* 也是回环），避免继承了 http_proxy 时被发给代理而卡住。
+  bypassProxyForLoopback();
   _Args args;
   try {
     args = _parseArgs(argv);
@@ -309,6 +313,10 @@ Future<void> main(List<String> argv) async {
     } catch (_) {
       // 路径不可写就只走 stderr。
     }
+  }
+  final proxyHint = proxyEnvHint();
+  if (proxyHint != null) {
+    _log('[xbume-mcp] 检测到代理环境（$proxyHint）：本机回环连接已自动绕过代理。');
   }
   final version = _readVersion();
   if (args.version) {

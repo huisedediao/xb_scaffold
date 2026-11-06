@@ -186,7 +186,7 @@ void main() {
       expect(src, contains("queryParameters['path']"));
       expect(src, contains('listSync(followLinks: false)'));
       expect(src, contains('id="ai-dir-pick"'));
-      expect(src, contains('function aiPickDir()'));
+      expect(src, contains('function aiPickDir('));
       expect(src, contains('function aiPickChoose()'));
       expect(src, contains("aiPickLoad(this.dataset.path)"));
       // 页面说明不能再说「AI 调试不复用 VM 会话」：本工具拉起的会话可以复用
