@@ -275,14 +275,24 @@ class DoorLockHomePage extends StatefulWidget {
   group('DebugHub（无会话）', () {
     late List<Map<String, Object?>> pushed;
     late DebugHub hub;
+    late Directory tmpHome;
 
     setUp(() {
       pushed = <Map<String, Object?>>[];
-      hub = DebugHub(push: pushed.add);
+      // 会话清单必须指向空的临时目录：hot 在拿不到当前会话时会认领清单，
+      // 指向真实 home 就会把开发机上正在跑的 flutter run 真的热重载掉。
+      tmpHome = Directory.systemTemp.createTempSync('xbume_dbg_');
+      hub = DebugHub(
+        push: pushed.add,
+        launcher: FlutterRunLauncher(recordsDir: tmpHome.path),
+      );
     });
 
     tearDown(() async {
       await hub.dispose();
+      try {
+        tmpHome.deleteSync(recursive: true);
+      } catch (_) {}
     });
 
     test('status 是干净的空态', () {
@@ -324,7 +334,8 @@ class DoorLockHomePage extends StatefulWidget {
       expect('${noClient['error']}', contains('未连接调试会话'));
     });
 
-    test('hot 无会话时明确说不能热重载', () async {
+    test('hot 无会话时明确说不能热重载（不认领真实清单）', () async {
+      // 临时清单为空：不会真的往某个 pid 发 SIGUSR1
       final r = await hub.handle('hot', const <String, Object?>{});
       expect(r['ok'], isFalse);
       expect('${r['error']}', contains('无法热重载'));

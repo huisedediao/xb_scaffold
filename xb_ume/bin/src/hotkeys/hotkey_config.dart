@@ -364,9 +364,20 @@ class XbHotkeyBinding {
 
 /// 全局快捷键配置。
 class XbHotkeysConfig {
-  const XbHotkeysConfig({this.enabled = false, this.reload, this.restart});
+  const XbHotkeysConfig({
+    this.enabled = false,
+    this.notify = true,
+    this.reload,
+    this.restart,
+  });
 
   final bool enabled;
+
+  /// 热重载 / 热重启完成后弹系统通知（与快捷键是否启用无关：按钮触发的也算）。
+  ///
+  /// 默认开——按完热键人还在编辑器里，没有这条提示就只能靠事后翻页面。
+  final bool notify;
+
   final XbHotkeyBinding? reload;
   final XbHotkeyBinding? restart;
 
@@ -395,6 +406,8 @@ class XbHotkeysConfig {
 
   Map<String, Object?> toJson() => <String, Object?>{
         'enabled': enabled,
+        // 始终写出来：老配置里没有这个键时，读到的默认值也要能落盘看清楚。
+        'notify': notify,
         if (reload != null) 'reload': reload!.toJson(),
         if (restart != null) 'restart': restart!.toJson(),
       };
@@ -403,6 +416,8 @@ class XbHotkeysConfig {
     if (raw is! Map) return empty;
     return XbHotkeysConfig(
       enabled: raw['enabled'] == true,
+      // 只有明确写 false 才关：老配置（没有这个键）按默认开。
+      notify: raw['notify'] != false,
       reload: XbHotkeyBinding.fromJson(raw['reload']),
       restart: XbHotkeyBinding.fromJson(raw['restart']),
     );
@@ -410,11 +425,13 @@ class XbHotkeysConfig {
 
   XbHotkeysConfig copyWith({
     bool? enabled,
+    bool? notify,
     XbHotkeyBinding? reload,
     XbHotkeyBinding? restart,
   }) =>
       XbHotkeysConfig(
         enabled: enabled ?? this.enabled,
+        notify: notify ?? this.notify,
         reload: reload ?? this.reload,
         restart: restart ?? this.restart,
       );

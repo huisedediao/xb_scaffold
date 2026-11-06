@@ -1,3 +1,19 @@
+## 0.9.4
+
+- **热重载 / 热重启完成弹系统通知**（用户：「我希望热重载完成或者热重启完成，都有一个全局的提示（不论当前在哪个软件界面）」）：新增 `bin/src/notify/system_notifier.dart`——macOS 走 `osascript` 的 `display notification`（进通知中心），Windows 走 PowerShell + `System.Windows.Forms.NotifyIcon` 托盘气泡（Win10/11 自带，不装 BurntToast、不写 AppID）。**不看当前前台是谁**：按完热键人还在 IDE 里，页内 toast 根本没人看，这正是要它的原因。
+
+- **两处入口都接上**：`/api/debug/op`（页面按钮 / 调试页）与 `/api/hotkey/action`（全局热键）成功后各调一次 `notifyHotDone`；`DebugHub._hot` 的返回值补 `restart` / `pid` / `message`，通知正文直接用那句「热重载完成（320ms）：Reloaded 12 libraries」，带着「已暂停在断点」也会一起显示。
+
+- **开关**：弹窗里新增「完成后发系统通知（热重载 / 热重启）」，落 `hotkeys.json` 的 `notify`，**默认开**（老配置没这个键也当开，只有明确写 `false` 才关）；与「启用全局快捷键」互不影响——不开热键、只用按钮也能收。
+
+- **细节**：标题与正文压掉换行、连续空格，正文按 200 字符截断（Windows 气泡正文会被系统硬截）；通知走后台进程且失败一律吞掉，弹不出来不影响热重载结果。
+
+- **加提示音（实测必需）**：第一版只发通知，用户反馈「没看见」。查下来 macOS 的 `display notification` 是以 `com.apple.ScriptEditor2` 身份发的——`usernoted` 日志里确实有 `Presenting`，但屏幕上什么都没有（专注模式 / 脚本编辑器未授权都会静默丢弃），而用 `display dialog` 的弹窗却能显示。所以另起一个进程响一声：macOS `afplay /System/Library/Sounds/Glass.aiff`，Windows `[System.Media.SystemSounds]::Asterisk.Play()`（进程退得太快声音会断，先 `Start-Sleep 900`）。声音走普通音频播放，不受通知权限 / 专注模式限制，与横幅互为兜底；同一个 `notify` 开关控制。
+
+- **测试**：新增 `test/system_notifier_test.dart` 9 项（两平台的通知与提示音命令、引号 / 反斜杠转义、非 mac/Win 返回 null、正文清洗与截断）；`hotkey_config_test` 增 notify 默认值与落盘断言；`gui_hotkey_test` 增开关回填与两处入口接线断言。
+
+- **修测试隔离（本机真会话被误伤）**：`debug_hub_test` 的「hot 无会话」用例原本用默认 `FlutterRunLauncher`，而 `_hot` 在拿不到当前会话时会 `adoptRecords()` 认领真实 `launch/live` 清单——开发机上有会话时它不再报错，而是直接把那个会话热重载掉（实测误碰了本机 `flutterjlink` 的会话）。给 `FlutterRunLauncher` 加 `recordsDir` 注入（认领 / 写 / 删记录全走它），该用例改指向空临时目录，从此不可能再碰真会话。
+
 ## 0.9.3
 
 - **全局快捷键补齐 Windows**（用户：「Windows 支持吗？检查一下 ume 工具箱的功能，所有功能都需要支持 mac 和 Windows」）：监听器 `bin/src/hotkeys/hotkey_listener.dart` 改按平台分派——macOS 仍是 Carbon `RegisterEventHotKey`，**Windows 改用 user32 的 `RegisterHotKey` + 线程消息泵**。Windows 侧同样把注册放在主 isolate（`hwnd` 传 NULL，热键挂在线程消息队列上，必须有 `GetMessage` 循环取 `WM_HOTKEY`，Dart 自己不会泵这条队列），`MSG` 的 `message` / `wParam` 偏移按指针宽度现算（x64 = 8 / 16）而不写死结构体，修饰位带 `MOD_NOREPEAT`（长按只触发一次，避免热重载被连发）；退出时 `UnregisterHotKey`。触发链路沿用 `DebugHub.hot`：macOS 发 `SIGUSR1` / `SIGUSR2`，**Windows 没有这两个信号，改为写本工具拉起会话的 stdin（`r` / `R`）**——所以 Windows 上热键只能作用在本工具拉起的 `flutter run` 上，IDE / 终端起的会话本来就拿不到句柄（提示只读）。

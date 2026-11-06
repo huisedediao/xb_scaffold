@@ -121,6 +121,20 @@ void main() {
       expect(emptyOn.active, isFalse);
       expect(emptyOn.hasAny, isFalse);
     });
+
+    test('完成通知默认开，只有明确写 false 才关', () {
+      // 默认开：不设置任何东西也该有「热重载完成」的提示
+      expect(XbHotkeysConfig.empty.notify, isTrue);
+      expect(XbHotkeysConfig.fromJson(<String, Object?>{}).notify, isTrue,
+          reason: '老配置里没有 notify 键，不能当成关');
+      expect(
+          XbHotkeysConfig.fromJson(<String, Object?>{'notify': false}).notify,
+          isFalse);
+      // notify 与快捷键是否启用无关：不开热键也能收通知
+      const noHotkey = XbHotkeysConfig(notify: true);
+      expect(noHotkey.active, isFalse);
+      expect(noHotkey.notify, isTrue);
+    });
   });
 
   group('落盘', () {
@@ -143,6 +157,12 @@ void main() {
       expect(back.enabled, isTrue);
       expect(back.reload?.label, '⇧⌘R');
       expect(back.restart?.label, '⌥⌘E');
+      // notify 也要写进文件：否则下次读回来又变回默认值
+      expect(file.readAsStringSync(), contains('"notify": true'));
+      expect(back.notify, isTrue);
+      expect(
+          writeHotkeysConfig(tmp.path, cfg.copyWith(notify: false)), isNull);
+      expect(readHotkeysConfig(tmp.path).notify, isFalse);
     });
 
     test('文件不存在 / 内容损坏都回默认配置', () {

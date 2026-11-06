@@ -508,10 +508,16 @@ class StopResult {
 
 /// flutter run 进程管理（单实例挂在 McpToolContext 上）。
 class FlutterRunLauncher {
-  FlutterRunLauncher({this.hdcOps});
+  FlutterRunLauncher({this.hdcOps, this.recordsDir});
 
   /// 启动前 hdc 体检用的副作用集合（null=真实实现；单测注入假实现）。
   final HdcOps? hdcOps;
+
+  /// 会话清单目录（`launch/live`）；null = 真实 home。
+  ///
+  /// 单测必须指向临时目录：认领清单会真的往清单里的 pid 发 SIGUSR1，
+  /// 指向真实 home 就会把开发机上正在跑的 flutter run 热重载掉。
+  final String? recordsDir;
 
   final Map<int, LaunchHandle> _live = <int, LaunchHandle>{};
 
@@ -1045,10 +1051,10 @@ class FlutterRunLauncher {
   /// 只校验「pid 存活 + 命令行仍是 flutter run」；陈旧记录直接删除。
   List<LaunchHandle> adoptRecords() {
     final adopted = <LaunchHandle>[];
-    for (final r in readLaunchRecords()) {
+    for (final r in readLaunchRecords(dir: recordsDir)) {
       if (_live.containsKey(r.pid)) continue;
       if (!recordStillValid(r)) {
-        removeLaunchRecord(r.pid);
+        removeLaunchRecord(r.pid, dir: recordsDir);
         removeLaunchFifo(r.fifo);
         continue;
       }
@@ -1084,11 +1090,11 @@ class FlutterRunLauncher {
       logPath: h.logPath,
       fifo: h.fifo,
       owner: h.owner,
-    ));
+    ), dir: recordsDir);
   }
   
   void _cleanupExited(int pid) {
-    removeLaunchRecord(pid);
+    removeLaunchRecord(pid, dir: recordsDir);
     final h = _live.remove(pid);
     if (h == null) return;
     removeLaunchFifo(h.fifo);
@@ -1122,7 +1128,7 @@ class FlutterRunLauncher {
       break;
     }
     for (final pid in dead) {
-      removeLaunchRecord(pid);
+      removeLaunchRecord(pid, dir: recordsDir);
       _live.remove(pid)?.dispose();
     }
     return hit;

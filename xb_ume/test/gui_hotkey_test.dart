@@ -31,11 +31,12 @@ void main() {
       expect(html.contains('.kbd:empty'), isTrue);
     });
 
-    test('设置弹窗含启用开关、两条录制框、保存与状态区', () {
+    test('设置弹窗含启用开关、完成通知开关、两条录制框、保存与状态区', () {
       for (final id in <String>[
         'hk-mask',
         'hk-card',
         'hk-enabled',
+        'hk-notify',
         'hk-reload',
         'hk-restart',
         'hk-msg',
@@ -46,6 +47,16 @@ void main() {
       expect(html.contains("onclick=\"hkRecord('reload')\""), isTrue);
       expect(html.contains("onclick=\"hkRecord('restart')\""), isTrue);
       expect(html.contains('保存并应用'), isTrue);
+    });
+
+    test('完成通知开关参与保存与回填，缺省当开', () {
+      expect(html.contains('onchange="hkToggleNotify(this)"'), isTrue);
+      expect(html.contains('function hkToggleNotify('), isTrue);
+      expect(html.contains('notify: hkState.notify !== false'), isTrue,
+          reason: '保存要把开关带上');
+      expect(html.contains('notify: d.config.notify !== false'), isTrue,
+          reason: '老配置没这个字段时要当成开');
+      expect(html.contains('完成后发系统通知'), isTrue);
     });
 
     test('录制在捕获阶段拦按键，并强制带 ⌘/⌃/⌥', () {
@@ -114,6 +125,22 @@ void main() {
       expect(i, greaterThanOrEqualTo(0));
       expect(src.substring(i, i + 900).contains('_hotkeyService?.stop()'), isTrue,
           reason: 'GUI 退出不能把监听器留在后台');
+    });
+
+    test('热重载 / 热重启完成都发系统通知（按钮与热键两条入口）', () {
+      final src = File('bin/ide_gui.dart').readAsStringSync();
+      expect(src.contains("import 'src/notify/system_notifier.dart';"), isTrue);
+      expect(src.contains('void notifyHotDone('), isTrue);
+      expect(src.contains('showSystemNotice('), isTrue);
+      expect(src.contains('readHotkeysConfig(_home).notify'), isTrue,
+          reason: '通知开关要读 hotkeys.json');
+      // 页面按钮 / 其他 op 走 /api/debug/op，热键走 /api/hotkey/action：两处都要接
+      expect(src.contains("if (op == 'hot') notifyHotDone(result);"), isTrue);
+      final kh = src.indexOf("path == '/api/hotkey/action'");
+      expect(kh, greaterThanOrEqualTo(0));
+      expect(src.substring(kh, kh + 900).contains('notifyHotDone(result);'),
+          isTrue,
+          reason: '快捷键触发的那条路也要发通知');
     });
   });
 

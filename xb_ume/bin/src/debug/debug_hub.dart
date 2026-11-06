@@ -902,7 +902,14 @@ class DebugHub {
     final pausedNow = _client?.paused ?? false;
     _message = '$prefix${restart ? '热重启' : '热重载'}完成（${r.elapsedMs}ms）：${r.message}'
         '${pausedNow ? '；已暂停在断点' : ''}';
-    return <String, Object?>{'elapsedMs': r.elapsedMs};
+    // message / restart / pid 一并回：GUI 要用它们拼系统通知（用户不在页面上时
+    // 也能知道重载好了，以及是哪个会话）。
+    return <String, Object?>{
+      'elapsedMs': r.elapsedMs,
+      'restart': restart,
+      'pid': pid,
+      'message': _message,
+    };
   }
 
   // ---------------------------------------------------------------- 断点

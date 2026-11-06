@@ -47,7 +47,9 @@ import 'src/control/log_history.dart';
 import 'src/control/svc_control.dart';
 // 全局快捷键：监听器子进程管理（配置模型与真正的热键注册分别在
 // src/hotkeys/hotkey_config.dart / hotkey_listener.dart）。
+import 'src/hotkeys/hotkey_config.dart';
 import 'src/hotkeys/hotkey_service.dart';
+import 'src/notify/system_notifier.dart';
 import 'src/perf/perf_metrics.dart';
 // 只取 VM service 地址归一：前端各处的 uri 来源不一（flutter run 输出是
 // http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
@@ -73,6 +75,21 @@ DateTime _guiStartedAt = DateTime.now();
 HotkeyService? _hotkeyService;
 HotkeyService get hotkeyService => _hotkeyService ??=
     HotkeyService(home: _home, port: _guiPort, token: _guiToken);
+
+/// 热重载 / 热重启成功后弹一条系统通知 + 响一声。
+///
+/// 用户按完热键眼睛还在 IDE 上，页面上的提示看不到，所以走系统通知
+/// （macOS 通知中心 / Windows 托盘气泡）；专注模式会把通知静默吞掉，
+/// 所以另起一个进程响一声（声音不受通知权限管）。开关在「快捷键」弹窗里
+/// （hotkeys.json 的 notify，默认开）。发不出来不影响热重载结果。
+void notifyHotDone(Map<String, Object?> result) {
+  if (!readHotkeysConfig(_home).notify) return;
+  final msg = '${result['message'] ?? ''}'.trim();
+  final elapsed = result['elapsedMs'];
+  final body =
+      msg.isNotEmpty ? msg : (elapsed is int ? '用时 ${elapsed}ms' : '');
+  showSystemNotice(result['restart'] == true ? '热重启完成' : '热重载完成', body);
+}
 
 /// 容错 UTF-8 解码：logcat 输出、外部 HTTP 响应可能含非法字节序列，
 /// 默认 utf8.decoder 遇到会抛 FormatException——且流回调里的异常
@@ -557,6 +574,8 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           ? args['op'].toString().trim()
           : 'status';
       final result = await state.debugHub.handle(op, args);
+      // 热重载 / 热重启成功 → 系统通知（页面提示在看 IDE 时看不到）。
+      if (op == 'hot') notifyHotDone(result);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(result));
       await req.response.close();
@@ -601,6 +620,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'hot',
         <String, Object?>{'restart': restart, 'via': 'hotkey'},
       );
+      notifyHotDone(result);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(result));
       await req.response.close();
@@ -12775,6 +12795,9 @@ const String guiHtml = r'''
     <label class="chk" style="display:flex;align-items:center;gap:6px;margin:12px 0 4px">
       <input type="checkbox" id="hk-enabled" onchange="hkToggleEnabled(this)"> 启用全局快捷键
     </label>
+    <label class="chk" style="display:flex;align-items:center;gap:6px;margin:0 0 4px" title="热重载 / 热重启结束后弹系统通知并响一声（macOS 通知中心 + Glass 提示音，Windows 托盘气泡 + 系统音），不论当前在哪个软件里；专注模式下通知可能被系统吞掉，所以另外响一声。不勾也不影响按钮操作">
+      <input type="checkbox" id="hk-notify" onchange="hkToggleNotify(this)"> 完成后发系统通知 + 提示音（热重载 / 热重启）
+    </label>
     <div class="hk-row">
       <span class="hk-name">热重载</span>
       <div id="hk-reload" class="hk-key unset" onclick="hkRecord('reload')" title="点一下，再按一次组合键">未设置</div>
@@ -19849,7 +19872,7 @@ function dbgHot(restart){ dbgOp('hot', {restart: !!restart}); }
 // -- 全局快捷键（系统级热键：macOS Carbon / Windows RegisterHotKey） --------
 // 配置在服务端 ~/.xb_ume_ide/hotkeys.json，由 GUI 拉起的监听器子进程用
 // 原生 API 注册：页面关掉、在别的软件里都生效。
-var hkState = { enabled: false, reload: null, restart: null };
+var hkState = { enabled: false, notify: true, reload: null, restart: null };
 var hkSt = {};
 var hkRec = '';
 // 服务端报的 platform：Windows 用 Ctrl+… 写法，不用 ⌘ / ⌃ / ⌥ 符号
@@ -19904,6 +19927,8 @@ function hkRender(){
   });
   var en = dbgEl('hk-enabled');
   if (en) en.checked = !!hkState.enabled;
+  var nf = dbgEl('hk-notify');
+  if (nf) nf.checked = hkState.notify !== false;
   var hk = dbgEl('dbg-b-hot-k');
   if (hk) hk.textContent = hkBindingLabel(hkState.reload);
   var rs = dbgEl('dbg-b-restart-k');
@@ -19941,6 +19966,8 @@ function hkApply(d){
   if (d.ok !== false && d.config) {
     hkState = {
       enabled: !!d.config.enabled,
+      // 老服务端 / 老配置可能没这个字段：缺省就当开
+      notify: d.config.notify !== false,
       reload: d.config.reload || null,
       restart: d.config.restart || null
     };
@@ -19969,6 +19996,9 @@ function hkClose(){
 }
 function hkToggleEnabled(el){
   hkState.enabled = !!(el && el.checked);
+}
+function hkToggleNotify(el){
+  hkState.notify = !!(el && el.checked);
 }
 function hkClear(act){
   hkState[act] = null;
@@ -20017,6 +20047,7 @@ function hkSave(btn){
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       enabled: !!hkState.enabled,
+      notify: hkState.notify !== false,
       reload: hkState.reload || null,
       restart: hkState.restart || null
     })
