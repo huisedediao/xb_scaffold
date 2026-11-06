@@ -858,13 +858,27 @@ class DebugHub {
 
   Future<Map<String, Object?>> _hot(Map<String, Object?> a) async {
     final restart = a['restart'] == true;
-    final pid = _resolvePid(null);
+    // 全局快捷键触发时在提示前面标一下来源，页面上的状态行能看出不是手点的。
+    final prefix = a['via'] == 'hotkey' ? '快捷键：' : '';
+    var pid = _resolvePid(null);
     if (pid == null) {
-      throw DebugException('当前没有本机 flutter run 会话，无法热重载：'
+      // 没接入会话（GUI 重启过 / 调试页没开）时按本工具拉起清单兜底：
+      // 恰好一个就直接用它（这正是全局快捷键的常见场景）；多个就报出来
+      // 让用户先选，绝不猜着往别的 app 上打热重载。
+      final live = launcher.adoptRecords();
+      if (live.length == 1) {
+        pid = live.first.pid;
+      } else if (live.length > 1) {
+        throw DebugException('$prefix本工具拉起了 ${live.length} 个 flutter run 会话'
+            '（pid ${live.map((h) => h.pid).join(' / ')}），先在「调试」页接入要重载的那个');
+      }
+    }
+    if (pid == null) {
+      throw DebugException('$prefix当前没有本机 flutter run 会话，无法热重载：'
           '先在「调试」里启动，或用会话列表接入 GUI/MCP 拉起的会话');
     }
     if (launcher.byPid(pid) == null) {
-      throw DebugException('pid $pid 不在本工具的运行清单里，无法热重载：'
+      throw DebugException('${prefix}pid $pid 不在本工具的运行清单里，无法热重载：'
           '请回到 IDE / 终端按 r');
     }
     // 热重启会换 isolate：VM 会为旧 isolate 的断点逐个发 BreakpointRemoved，
@@ -886,7 +900,7 @@ class DebugHub {
     // 热重载常直接把 UI 重建到断点上：把「已暂停」带在消息里，免得
     // 暂停事件先到、被这句覆盖后看不出停在哪（状态行/工具条仍显示位置）。
     final pausedNow = _client?.paused ?? false;
-    _message = '${restart ? '热重启' : '热重载'}完成（${r.elapsedMs}ms）：${r.message}'
+    _message = '$prefix${restart ? '热重启' : '热重载'}完成（${r.elapsedMs}ms）：${r.message}'
         '${pausedNow ? '；已暂停在断点' : ''}';
     return <String, Object?>{'elapsedMs': r.elapsedMs};
   }

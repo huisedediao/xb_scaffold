@@ -45,6 +45,9 @@ import 'src/device/run_profile.dart' show runProfileFilePath;
 // 份实现，避免两边各写一套进程管理、再次和 LaunchAgent 的 KeepAlive 抢实例）。
 import 'src/control/log_history.dart';
 import 'src/control/svc_control.dart';
+// 全局快捷键：监听器子进程管理（配置模型与真正的热键注册分别在
+// src/hotkeys/hotkey_config.dart / hotkey_listener.dart）。
+import 'src/hotkeys/hotkey_service.dart';
 import 'src/perf/perf_metrics.dart';
 // 只取 VM service 地址归一：前端各处的 uri 来源不一（flutter run 输出是
 // http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
@@ -64,6 +67,12 @@ String _svcBusyAction = '';
 
 /// GUI 启动时间（/api/svc/status 展示运行时长）。
 DateTime _guiStartedAt = DateTime.now();
+
+/// 全局快捷键服务（懒创建：端口与访问令牌要到 main 里才确定）。
+/// 真正的系统级热键由子进程 src/hotkeys/hotkey_listener.dart 注册。
+HotkeyService? _hotkeyService;
+HotkeyService get hotkeyService => _hotkeyService ??=
+    HotkeyService(home: _home, port: _guiPort, token: _guiToken);
 
 /// 容错 UTF-8 解码：logcat 输出、外部 HTTP 响应可能含非法字节序列，
 /// 默认 utf8.decoder 遇到会抛 FormatException——且流回调里的异常
@@ -336,6 +345,8 @@ Future<void> _mainImpl(List<String> args) async {
   _guiToken = generateGuiToken();
   _writeGuiTokenFile();
   print('[xbume-gui] 本地脚本访问令牌: $_home/.xb_ume_ide/gui.token');
+  // 全局快捷键：配置里开了就拉起监听器子进程（失败只记状态，不影响 GUI）。
+  unawaited(hotkeyService.start());
   _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree',
       trace: false);
   await openBrowser(port);
@@ -546,6 +557,50 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           ? args['op'].toString().trim()
           : 'status';
       final result = await state.debugHub.handle(op, args);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(result));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/hotkeys') {
+      // 全局快捷键：GET 状态，POST/PUT 保存（写 hotkeys.json + 按精确 pid 重启监听器）。
+      if (req.method == 'POST' || req.method == 'PUT') {
+        var body = const <String, Object?>{};
+        try {
+          final raw = await _readBodyText(req);
+          final parsed = raw.isEmpty ? null : jsonDecode(raw);
+          if (parsed is Map) {
+            body = parsed.map((k, v) => MapEntry('$k', v));
+          }
+        } catch (_) {
+          // 非 JSON 体当作「全部清空」处理，交给校验去拒。
+        }
+        final r = await hotkeyService.save(body);
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(r));
+        await req.response.close();
+        return;
+      }
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(hotkeyService.status()));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/hotkey/action' && req.method == 'POST') {
+      // 监听器按下热键后回调这里：对「当前本机 flutter run 会话」热重载 / 热重启。
+      var action = 'reload';
+      try {
+        final raw = await _readBodyText(req);
+        final parsed = raw.isEmpty ? null : jsonDecode(raw);
+        if (parsed is Map) action = '${parsed['action'] ?? 'reload'}';
+      } catch (_) {
+        // 非法体按热重载处理。
+      }
+      final restart = action.trim().toLowerCase() == 'restart';
+      final result = await state.debugHub.handle(
+        'hot',
+        <String, Object?>{'restart': restart, 'via': 'hotkey'},
+      );
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(result));
       await req.response.close();
@@ -10297,6 +10352,10 @@ const String kConfigName = 'config.json';
 /// DDS 会永久死锁（该会话此后对所有客户端无响应）；重启 / 停止 GUI 都
 /// 必须走这里，不能直接 kill -9。
 Future<void> gracefulShutdown(GuiState state) async {
+  // 先收掉全局热键监听器（否则 GUI 退出后它还在系统里占着快捷键）。
+  try {
+    await _hotkeyService?.stop().timeout(const Duration(seconds: 2));
+  } catch (_) {}
   try {
     await state.dispose().timeout(const Duration(seconds: 2));
   } catch (_) {}
@@ -11999,6 +12058,19 @@ const String guiHtml = r'''
   #dbg-bar button { flex:0 0 auto; padding:4px 10px; font-size:12px; white-space:nowrap; }
   #dbg-bar button:disabled { opacity:.4; cursor:not-allowed; }
   #dbg-bar .sep { flex:0 0 auto; width:1px; height:18px; background:var(--line); }
+  /* 已经设置的全局快捷键：直接标在按钮里（没设置时空 span 不占位） */
+  #dbg-bar .kbd { margin-left:4px; padding:0 3px; border:1px solid var(--line); border-radius:3px; color:var(--dim); font-size:10px; }
+  #dbg-bar .kbd:empty { display:none; }
+  /* 全局快捷键设置弹窗 */
+  #hk-mask { position:fixed; inset:0; z-index:130; display:none; align-items:center; justify-content:center; background:rgba(6,10,14,.72); }
+  #hk-mask.on { display:flex; }
+  #hk-card { width:min(580px,94vw); max-height:86vh; overflow:auto; background:#0d141c; border:1px solid var(--line); border-radius:10px; padding:14px 16px; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+  .hk-row { display:flex; align-items:center; gap:8px; margin:10px 0; }
+  .hk-row .hk-name { flex:0 0 64px; font-size:12px; }
+  .hk-key { flex:1; min-width:0; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:#0a1017; font-size:12px; text-align:center; cursor:pointer; user-select:none; }
+  .hk-key.unset { color:var(--dim); }
+  .hk-key.rec { border-color:#f0b429; color:#f0b429; }
+  #hk-stat { margin-top:8px; font-size:12px; line-height:1.6; white-space:pre-wrap; }
   #dbg-toast { position:fixed; left:50%; bottom:72px; transform:translateX(-50%); z-index:97; padding:6px 14px; border-radius:14px; background:#5c1a1a; color:#ffb4b4; border:1px solid #c0392b; font-size:12px; display:none; box-shadow:0 2px 10px rgba(0,0,0,.5); max-width:70vw; }
 </style>
 </head>
@@ -12680,13 +12752,47 @@ const String guiHtml = r'''
   <button id="dbg-b-into" onclick="dbgResume('into')" title="单步进入（F11）：进入被调用函数">↘ 进入</button>
   <button id="dbg-b-out" onclick="dbgResume('out')" title="单步跳出（⇧F11）：跑完当前函数">↖ 跳出</button>
   <span class="sep"></span>
-  <button id="dbg-b-hot" onclick="dbgHot(false)" title="热重载（r）：改完代码不重启进程">⟳ 热重载</button>
-  <button id="dbg-b-restart" onclick="dbgHot(true)" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启</button>
+  <button id="dbg-b-hot" onclick="dbgHot(false)" title="热重载（r）：改完代码不重启进程">⟳ 热重载<span class="kbd" id="dbg-b-hot-k"></span></button>
+  <button id="dbg-b-restart" onclick="dbgHot(true)" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启<span class="kbd" id="dbg-b-restart-k"></span></button>
+  <!-- 不用 ⌨ 等符号：部分系统字体把它渲染成方块，文字更稳 -->
+  <button id="dbg-b-hotkey" onclick="hkOpen()" title="设置全局快捷键（macOS 系统级：工具箱页面关掉、在别的软件里也生效）">快捷键</button>
   <span class="sep"></span>
   <button onclick="dbgStop()" title="停止 flutter run（只停本工具拉起的，按精确 PID）">■ 停止</button>
   <button onclick="document.getElementById('dbg-bar').classList.remove('on')" title="收起（从调试页刷新或重新操作可再现）">✕</button>
 </div>
 <div id="dbg-toast"></div>
+<!-- 全局快捷键设置：两条组合（热重载 / 热重启）录进 hotkeys.json，由监听器子进程注册 -->
+<div id="hk-mask" onclick="if(event.target===this)hkClose()">
+  <div id="hk-card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b>全局快捷键</b>
+      <button onclick="hkClose()">关闭</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.6">
+      注册为 <b>macOS 系统级热键</b>：工具箱页面关掉、当前在别的软件里都生效（需要工具箱进程在跑）。
+      点组合框后直接按一次组合键录制，至少带一个 <b>⌘ / ⌃ / ⌥</b>；组合不能和系统或其他软件已占用的热键重复。
+    </div>
+    <label class="chk" style="display:flex;align-items:center;gap:6px;margin:12px 0 4px">
+      <input type="checkbox" id="hk-enabled" onchange="hkToggleEnabled(this)"> 启用全局快捷键
+    </label>
+    <div class="hk-row">
+      <span class="hk-name">热重载</span>
+      <div id="hk-reload" class="hk-key unset" onclick="hkRecord('reload')" title="点一下，再按一次组合键">未设置</div>
+      <button onclick="hkClear('reload')">清除</button>
+    </div>
+    <div class="hk-row">
+      <span class="hk-name">热重启</span>
+      <div id="hk-restart" class="hk-key unset" onclick="hkRecord('restart')" title="点一下，再按一次组合键">未设置</div>
+      <button onclick="hkClear('restart')">清除</button>
+    </div>
+    <div class="row" style="gap:8px;margin-top:12px">
+      <button class="primary" onclick="hkSave(this)">保存并应用</button>
+      <button onclick="hkLoad()">刷新状态</button>
+      <span id="hk-msg" class="muted" style="font-size:12px"></span>
+    </div>
+    <div id="hk-stat" class="muted"></div>
+  </div>
+</div>
 <!-- 运行配置编辑弹窗：新建 / 编辑一条具名配置（存服务端，重启不丢） -->
 <div id="dbg-cfg-mask" style="position:fixed;inset:0;z-index:120;display:none;align-items:center;justify-content:center;background:rgba(6,10,14,.72)">
   <div style="width:min(640px,92vw);max-height:86vh;overflow:auto;background:#0d141c;border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
@@ -12828,6 +12934,7 @@ function showTab(t){
 document.querySelectorAll('.tab').forEach(function(t){ t.onclick = function(){ showTab(t); }; });
 // 深链：#ai 直接落在这个 Tab（文档、脚本、截图都用同一个入口）。
 window.addEventListener('load', function(){
+  hkLoad(); // 工具条上的快捷键标签（没打开调试页也要显）
   var want = (location.hash || '').replace(/^#/, '');
   if (!want) return;
   var t = document.querySelector('.tab[data-tab="' + want + '"]');
@@ -17901,6 +18008,7 @@ function dbgShow(){
   dbgProfileRefresh();
   refreshDaemon(); // 顺手刷新「接入会话」下拉
   dbgStatus();
+  hkLoad(); // 已设置的全局快捷键标到工具条按钮上
 }
 
 // 项目目录候选 + 设备下拉。默认选本机桌面（macos / windows）：不自动选手机，
@@ -19737,6 +19845,175 @@ function dbgDetach(btn){
 function dbgPause(){ dbgOp('pause', {}); }
 function dbgResume(step){ dbgOp('resume', step ? {step: step} : {}); }
 function dbgHot(restart){ dbgOp('hot', {restart: !!restart}); }
+
+// -- 全局快捷键（macOS 系统级热键） -------------------------------------------
+// 配置在服务端 ~/.xb_ume_ide/hotkeys.json，由 GUI 拉起的监听器子进程用
+// Carbon RegisterEventHotKey 注册：页面关掉、在别的软件里都生效。
+var hkState = { enabled: false, reload: null, restart: null };
+var hkSt = {};
+var hkRec = '';
+
+// 键位显示名（与 src/hotkeys/hotkey_config.dart 的 hotkeyKeyLabel 同一套字符）
+var hkKeyNames = {
+  Minus:'-', Equal:'=', Comma:',', Period:'.', Slash:'/', Backslash:'\\',
+  Semicolon:';', Quote:"'", BracketLeft:'[', BracketRight:']', Backquote:'`',
+  Space:'Space', Enter:'↩', Tab:'⇥', Escape:'Esc', Backspace:'⌫', Delete:'⌦',
+  Home:'↖', End:'↘', PageUp:'⇞', PageDown:'⇟',
+  ArrowLeft:'←', ArrowRight:'→', ArrowUp:'↑', ArrowDown:'↓'
+};
+function hkKeyLabel(code){
+  if (!code) return '';
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1[0-9]|20)$/.test(code)) return code;
+  return hkKeyNames[code] || '';
+}
+function hkBindingLabel(b){
+  if (!b || !b.key) return '';
+  var k = hkKeyLabel(b.key);
+  if (!k) return '';
+  return (b.ctrl ? '⌃' : '') + (b.alt ? '⌥' : '') + (b.shift ? '⇧' : '') + (b.cmd ? '⌘' : '') + k;
+}
+function hkSame(a, b){
+  return !!a && !!b && a.key === b.key && !!a.cmd === !!b.cmd &&
+    !!a.ctrl === !!b.ctrl && !!a.alt === !!b.alt && !!a.shift === !!b.shift;
+}
+function hkNote(text){
+  var el = dbgEl('hk-msg');
+  if (el) el.textContent = text || '';
+  if (text) dbgToast(text);
+}
+
+function hkRender(){
+  ['reload', 'restart'].forEach(function(act){
+    var el = dbgEl('hk-' + act);
+    if (!el) return;
+    var b = hkState[act];
+    var label = hkBindingLabel(b);
+    el.classList.toggle('unset', !label);
+    if (hkRec !== act) el.textContent = label || '未设置';
+  });
+  var en = dbgEl('hk-enabled');
+  if (en) en.checked = !!hkState.enabled;
+  var hk = dbgEl('dbg-b-hot-k');
+  if (hk) hk.textContent = hkBindingLabel(hkState.reload);
+  var rs = dbgEl('dbg-b-restart-k');
+  if (rs) rs.textContent = hkBindingLabel(hkState.restart);
+}
+
+function hkStatusText(d){
+  if (!d) return '';
+  var lines = [];
+  if (d.supported === false) {
+    lines.push('当前系统（' + (d.platform || '?') + '）不支持全局快捷键：目前只实现了 macOS。');
+  } else {
+    lines.push('监听器：' + (d.running ? ('运行中（pid ' + (d.pid || '?') + '）') : '未运行') +
+      (d.message ? ' · ' + d.message : ''));
+  }
+  if (d.registered && d.registered.length) lines.push('已注册：' + d.registered.join('  /  '));
+  if (d.errors && d.errors.length) lines.push('注册失败：' + d.errors.join('；'));
+  if (d.lastAction) {
+    var at = d.lastAt ? d.lastAt.replace('T', ' ').slice(0, 19) : '';
+    lines.push('最近触发：' + (d.lastAction === 'restart' ? '热重启' : '热重载') +
+      (d.lastResult ? ' → ' + d.lastResult : '') + (at ? '（' + at + '）' : ''));
+  }
+  if (d.configError) lines.push('配置问题：' + d.configError);
+  if (d.logPath) lines.push('日志：' + d.logPath);
+  return lines.join('\n');
+}
+
+// 服务端状态 → 页面状态（配置只在成功响应里覆盖：保存失败时别把用户刚录的抹掉）
+function hkApply(d){
+  if (!d || typeof d !== 'object') return;
+  hkSt = d;
+  if (d.ok !== false && d.config) {
+    hkState = {
+      enabled: !!d.config.enabled,
+      reload: d.config.reload || null,
+      restart: d.config.restart || null
+    };
+  }
+  hkRender();
+  var st = dbgEl('hk-stat');
+  if (st) st.textContent = hkStatusText(d);
+}
+
+function hkLoad(){
+  return fetch('/api/hotkeys').then(function(r){ return r.json(); })
+    .then(hkApply).catch(function(){});
+}
+
+function hkOpen(){
+  var m = dbgEl('hk-mask');
+  if (m) m.classList.add('on');
+  hkRender();
+  hkLoad();
+}
+function hkClose(){
+  hkRec = '';
+  var m = dbgEl('hk-mask');
+  if (m) m.classList.remove('on');
+  hkRender();
+}
+function hkToggleEnabled(el){
+  hkState.enabled = !!(el && el.checked);
+}
+function hkClear(act){
+  hkState[act] = null;
+  if (hkRec === act) hkRec = '';
+  hkRender();
+}
+function hkRecord(act){
+  if (hkSt && hkSt.supported === false) { hkNote('全局快捷键目前只支持 macOS'); return; }
+  hkRec = act;
+  var el = dbgEl('hk-' + act);
+  if (el) {
+    el.classList.add('rec');
+    el.classList.remove('unset');
+    el.textContent = '按下组合键…（Esc 取消）';
+  }
+}
+
+// 录制：捕获阶段拦下按键，避免被页面其他输入框 / 快捷键吃掉。
+document.addEventListener('keydown', function(e){
+  if (!hkRec) return;
+  var act = hkRec;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === 'Escape') { hkRec = ''; hkRender(); return; }
+  var mods = e.metaKey || e.ctrlKey || e.altKey;
+  if ((e.key === 'Backspace' || e.key === 'Delete') && !mods) { hkClear(act); return; }
+  // 只按了修饰键：继续等真正的键
+  if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].indexOf(e.key) >= 0) return;
+  var code = e.code || '';
+  if (!hkKeyLabel(code)) { hkNote('这个按键不支持：换成字母 / 数字 / F1~F20 / 方向键等'); return; }
+  if (!mods) { hkNote('至少带一个 ⌘ / ⌃ / ⌥：纯按键的组合会把正常输入吞掉'); return; }
+  var b = { key: code, cmd: !!e.metaKey, ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey };
+  var other = act === 'reload' ? hkState.restart : hkState.reload;
+  if (hkSame(b, other)) { hkNote('热重载与热重启不能是同一个组合'); return; }
+  hkState[act] = b;
+  hkState.enabled = true;
+  hkRec = '';
+  hkRender();
+  hkNote('已录制 ' + hkBindingLabel(b) + '，点「保存并应用」生效');
+}, true);
+
+function hkSave(btn){
+  var done = dbgBusy(btn, '保存中…');
+  fetch('/api/hotkeys', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      enabled: !!hkState.enabled,
+      reload: hkState.reload || null,
+      restart: hkState.restart || null
+    })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    done();
+    hkApply(d);
+    hkNote(d && d.ok === false ? (d.error || '保存失败') : (d.message || '已保存'));
+  }).catch(function(e){ done(); hkNote('请求失败：' + e); });
+}
 
 // 输出区：status 回全量（带 outSeq），WS 增量 push；旧快照不回退。
 function dbgOutSet(lines, seq){

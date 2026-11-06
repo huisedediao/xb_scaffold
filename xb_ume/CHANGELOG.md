@@ -1,3 +1,17 @@
+## 0.9.2
+
+- **热重载 / 热重启支持全局快捷键（可自设，macOS 系统级）**（用户：「热重载、热重启，我希望增加键盘快捷键，可以自己设置快捷键（并且是全局生效，不管有没有在工具箱页面，我在任何软件下都要生效）」）：调试浮动条上两个按钮右侧显示当前键位，旁边新增「快捷键」按钮打开设置弹窗；点一下热重载 / 热重启那一行（或回车）进入录制，**在捕获阶段拦按键**（不被页面输入框 / 其它快捷键吃掉）：`Esc` 取消、`⌫` 清除、只按修饰键继续等、按下不支持的键当场提示，`⇧` 单独不算修饰（至少一个 `⌘` / `⌃` / `⌥`，避免吞掉正常输入），两条录成同一组合直接拒绝；录完自动勾上「启用」，再点「保存并应用」生效（约 1 秒），弹窗里会写监听器状态、已注册的键位、注册失败原因、最近一次触发结果与日志路径。
+
+- **为什么是系统级**：热键注册在**独立子进程** `bin/src/hotkeys/hotkey_listener.dart` 里，用 macOS Carbon 的 `RegisterEventHotKey` + `InstallEventHandler`（**不需要「辅助功能」授权**），主 isolate 阻塞在 `RunApplicationEventLoop` 里收事件，按键再交后台 isolate `POST /api/hotkey/action` 给 GUI，由调试中枢对当前 `flutter run` 会话发 `SIGUSR1` / `SIGUSR2`——所以**浏览器关掉、停在别的软件里照样能用**，工具箱页面只是设置入口。配置落 `$XB_UME_HOME/hotkeys.json`（`enabled` / `reload` / `restart`，每条 `key` 用物理键位 `KeyboardEvent.code` + 修饰键），状态落 `hotkeys.status.json`（pid / 已注册 / 失败原因 / 最近结果），日志 `hotkeys.log`（256KB 封顶）。
+
+- **监听器生命周期**：GUI 启动时若配置已启用就拉起，保存配置时先按 **pid 文件 + 命令行含 `hotkey_listener.dart`** 精确收掉旧进程再拉新的（绝不按名字模糊杀）；GUI 退出（SIGTERM/SIGINT/SIGHUP）一并收掉；GUI 被 `kill -9` 时监听器靠 5 秒一次 `/ping` 心跳，连续 12 次不可达（60 秒）自杀，不留孤儿占热键；路径解析基于 `Platform.script`，部署副本 `~/.xb_ume_ide/src/hotkeys/` 与源码目录都能用。
+
+- **没有 PID 也能热重载**：快捷键通常在「工具箱没打开调试页」时按，`DebugHub` 的 `hot` 在拿不到 pid 时改为 `launcher.adoptRecords()` 兜底——本工具只拉起一个 `flutter run` 会话就直接用那个，多了则在提示里列出全部 pid 让你先在调试页接入（**不猜**）；提示前缀带「快捷键：」，区分是不是手点的。
+
+- 修掉两个只有真机才会暴露的坑：**信号监听不能放主 isolate**（它随后阻塞在 `RunApplicationEventLoop` 里，Dart 的异步信号消息收不到，实测 `SIGTERM` 打进去进程不退，只能 `kill -9`）——改到后台 isolate 监听再做 `exit(0)`；**后台 isolate 看不到主 isolate 赋的静态变量**（`_home` 是 `late final`，心跳日志一写就抛 `LateInitializationError`，连「自杀」都执行不到），spawn 时在 worker 里重新赋值。
+
+- 测试：新增 `test/hotkey_config_test.dart` 11 项（键码表 60+ 键 / 标签按 `⌃⌥⇧⌘` 拼 / Carbon 修饰位 / JSON 往返 / 纯按键与不支持键与重复组合被拒 / `active` 判定 / `hotkeys.json` 落盘往返 / 脏数据回默认 / 状态文件缺失）与 `test/gui_hotkey_test.dart` 9 项（工具条标签与「快捷键」入口 / 弹窗结构 / 录制走捕获阶段 / 三处刷新键位 / 路由与 `via=hotkey` / 启动拉起与退出回收 / `GET /api/hotkeys` 契约 / 非法组合与不支持键被拒且不落盘）。真实监听器冒烟：临时 home + `⌃⌥⇧⌘F19` / `⌃⌥⇧⌘F18`，`RegisterEventHotKey` 返回 0、状态文件写入正确、`SIGTERM` 正常退出。
+
 ## 0.9.1
 
 - **回收改为「解绑即停实例、重绑必新进程」**（用户：「如果解绑时杀掉进程呢？是不是可以避免很多问题，被解绑的 ai 重新绑定的时候是绑定全新的 mcp 服务」）：`PoolStore.releaseFor` / `releaseSlot` / `steal` 现在都按池文件里的精确 pid 发 `SIGTERM`（绝不按名字/命令行匹配）并把槽归零（`pid=0, port=0`、清绑定）；`allocate` 不再复用任何存活进程——优先空槽/死槽，碰到活着的残留进程先杀掉。理由：会话选择（`_currentByClient`）、场景运行状态（`ScenarioService._runs` / `_activeRunId` **是两个进程级全局**）、租约归属（owner = 实例名 + pid + 连接）都只在原进程里，复用等于把上一个人的状态交给下一个人。实测代价：复用 0.07s vs 冷启动 1.30s（同一台机、首次 `tools/call`）。
