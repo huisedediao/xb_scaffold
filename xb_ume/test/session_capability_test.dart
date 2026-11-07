@@ -217,4 +217,47 @@ void main() {
       }
     });
   });
+
+  group('子操作能力闸门', () {
+    test('沙盒：读不要 debug，上传 / 删除要 debug', () {
+      final needs = kToolActionNeeds['xbume_sandbox']!;
+      expect(needs.containsKey('list'), isFalse);
+      expect(needs.containsKey('read'), isFalse);
+      expect(needs.containsKey('download'), isFalse);
+      expect(needs['upload'], <String>[Cap.debug]);
+      expect(needs['delete'], <String>[Cap.debug]);
+      final agentCaps = sessionCaps(transport: SessionTransport.agent);
+      expect(missingCaps(agentCaps, needs['upload']!), <String>[Cap.debug]);
+    });
+
+    test('实例：stores / tree 不要 debug，find / set 要 debug', () {
+      final needs = kToolActionNeeds['xbume_instances']!;
+      expect(needs.containsKey('stores'), isFalse);
+      expect(needs.containsKey('tree'), isFalse);
+      expect(needs['find'], <String>[Cap.debug]);
+      expect(needs['set'], <String>[Cap.debug]);
+    });
+
+    test('性能：snapshot 不要额外能力，leak / gc / reassemble 要 gc', () {
+      final needs = kToolActionNeeds['xbume_perf']!;
+      expect(needs.containsKey('snapshot'), isFalse);
+      for (final action in <String>['leak', 'gc', 'reassemble']) {
+        expect(needs[action], contains(Cap.gc), reason: action);
+      }
+      final agentCaps = sessionCaps(transport: SessionTransport.agent);
+      expect(missingCaps(agentCaps, needs['gc']!), contains(Cap.gc));
+    });
+
+    test('表里出现的工具与能力键都合法', () {
+      for (final entry in kToolActionNeeds.entries) {
+        expect(entry.value, isNotEmpty, reason: '${entry.key} 空表没意义');
+        for (final need in entry.value.values) {
+          for (final cap in need) {
+            expect(kCapLabels.containsKey(cap), isTrue,
+                reason: '${entry.key} 用了未知能力 $cap');
+          }
+        }
+      }
+    });
+  });
 }

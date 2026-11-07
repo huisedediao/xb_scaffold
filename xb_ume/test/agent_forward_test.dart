@@ -86,4 +86,40 @@ void main() {
       expect(agentHostPortFor('adb:S1', span: -5), kAgentHostPortBase);
     });
   });
+
+  group('iOS 真机转发（iproxy）', () {
+    test('idevice_id -l：新老 UDID 都收，ERROR / 空行跳过', () {
+      expect(
+        parseIdeviceIds('00008101-000E6D843C68801E\n'
+            'aabbccddeeff00112233445566778899aabbccdd\n'
+            '\n'
+            'ERROR: no device found\n'),
+        <String>[
+          '00008101-000E6D843C68801E',
+          'aabbccddeeff00112233445566778899aabbccdd',
+        ],
+      );
+    });
+
+    test('无设备 / usbmuxd 没起时返回空列表', () {
+      expect(parseIdeviceIds(''), isEmpty);
+      expect(parseIdeviceIds('ERROR: Could not connect to lockdownd\n'),
+          isEmpty);
+      expect(parseIdeviceIds('No device found\n'), isEmpty);
+    });
+
+    test('iOS 设备并入统一设备列表，backend=ios', () {
+      final out = parseForwardTargets(
+        adbDevices: 'List of devices attached\nS1\tdevice\n',
+        ideviceIds: '00008101-000E6D843C68801E\n',
+      );
+      expect(out.map((t) => t.source),
+          <String>['adb:S1', 'ios:00008101-000E6D843C68801E']);
+    });
+
+    test('iproxy 参数：LOCAL:DEVICE 单参数 + -u UDID', () {
+      expect(iproxyArgs(47110, 47100, 'UDID1'),
+          <String>['47110:47100', '-u', 'UDID1']);
+    });
+  });
 }

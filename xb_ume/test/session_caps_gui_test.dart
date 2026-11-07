@@ -160,4 +160,37 @@ void main() {
       expect(registry, contains('[...forwardedAgents, ...scannedAgents]'));
     });
   });
+
+  group('沙盒写动作按能力置灰', () {
+    test('上传 / 删除按 debug 判定，直连渲染成不可点文本', () {
+      // 这两个动作要往沙盒里写（dart:io 写 + eval 删除），直连 Agent 不提供。
+      expect(gui, contains("capHas(sbCaps, 'debug')"));
+      expect(gui, contains('var sbCanWrite = '));
+      expect(gui, contains('sbCanWrite\n        ? \' <a href="javascript:void(0)" onclick="sbUpload(this)"'));
+      expect(gui, contains("' <span class=\"cap-off\" title=\"' + sbReadOnlyTip + '\">上传</span>'"));
+    });
+
+    test('浏览 / 读取 / 下载不受影响（只要 fs）', () {
+      for (final fn in <String>[
+        'function sbRefresh',
+        'function sbOpenSub',
+        'function dbOpenFromSandbox',
+      ]) {
+        expect(gui, contains(fn));
+      }
+      expect(gui, contains('/api/sandbox/download?uri='));
+      expect(gui, contains('/api/sandbox/downloadDir?uri='));
+    });
+  });
+
+  group('MCP 子操作闸门接线', () {
+    test('_callTool 按 action 查 kToolActionNeeds，与整工具闸门共用同一段逻辑', () {
+      final server = File('bin/src/mcp/server.dart').readAsStringSync();
+      expect(server, contains('Map<String, Object?>? capGap('));
+      expect(server, contains('final gap = capGap(need);'));
+      expect(server, contains(
+          'kToolActionNeeds[name]?[(args[\'action\'] ?? \'\').toString()]'));
+      expect(server, contains('final gap = capGap(actionNeed);'));
+    });
+  });
 }

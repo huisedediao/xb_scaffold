@@ -38,6 +38,7 @@ import 'src/mcp/router.dart';
 import 'src/mcp/scenario_service.dart';
 import 'src/mcp/server.dart';
 import 'src/mcp/session_registry.dart';
+import 'src/session/agent_forward.dart';
 import 'src/mcp/toolbox_tools.dart';
 import 'src/mcp/tools.dart';
 
@@ -278,6 +279,8 @@ Future<void> _runPoolEntry(
     entry.unregister();
     await hs.close(force: true);
     entry.dispose();
+    // MCP 单独跑时会自己拉起 iproxy（iOS 真机转发），退出前按句柄收掉。
+    await stopAgentForwardProcesses();
     done.complete();
   }
 
@@ -450,6 +453,7 @@ Future<void> main(List<String> argv) async {
       await hs.close(force: true);
       await server.close();
       await ctx.debugPool.disposeAll();
+      await stopAgentForwardProcesses();
       done.complete();
     }
 
@@ -468,6 +472,7 @@ Future<void> main(List<String> argv) async {
   } finally {
     unregisterInstance();
     await server.close();
+    await stopAgentForwardProcesses();
     await ctx.debugPool.disposeAll();
   }
   // stdin EOF 后显式退出：残留的 WebSocket/审计文件句柄会拖住事件循环。

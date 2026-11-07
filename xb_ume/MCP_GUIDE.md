@@ -369,13 +369,15 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | 截图 / Widget 树 / 找组件 | `shot` + `widgets`；Element 遍历顺序与 VM 侧一致，`ref` 可直接喂 `xbume_tap` |
 | 点击 / 输入 / 滑动 / 跳页面 | `act`；路由回包靠 `/v1/routes` 事件重放算当前路由名 |
 | 沙盒浏览 / 导出 / 存储 / 数据库（`fs`） | `xbume_sandbox` 的 list / read / download / downloadDir 直通（app 内 `dart:io`，只读）；`xbume_storage` 读 prefs，写回只能经 app 注册的 `allowWrite` 适配器；`xbume_db` 把库文件拉回本机后用本机 sqlite3 管 |
-| 性能采样（`perf`） | `xbume_perf`(`snapshot`)：帧耗时统计 + 进程 CPU / 内存（app 内采样，无 VM）；`leak` / `gc` / `reassemble` 仍需 `debug` |
+| 性能采样（`perf`） | `xbume_perf`(`snapshot`)：帧耗时统计 + 进程 CPU / 内存（app 内采样，无 VM）；`leak` / `gc` / `reassemble` 要 `gc`，调用前就报缺口 |
 | 实例字段树（`inspectable`） | `xbume_instances`(`stores` / `tree`)：读 app 用 `XBUme.registerInspectable` 注册的字段树；节点不带 `id`，所以没有展开(ref) / 改值 |
 | 路由源码定位（`srclocate:heuristic`） | `xbume_route_locate`(`locate`)：路由名 → 候选类名 → 在项目 `lib/` 下找声明（结果带 `heuristic: true`，不是「路由子树首个业务 widget」那种精确位置） |
 | 受限 Watch | `xbume_watch`(`kind: inspect|file`)：轮询 inspectable 字段路径 / 文件 size+mtime；条件只能写 `value > 10` / `value == done` 这类本地比较，命中同样能自动截图 |
 | 场景（`xbume_scenario_run`） | 步骤全走语义层，直连下也能跑；真正需要 VM 的步骤会明确报「需要 VM 通道」 |
 
-直连下会提前报能力缺口的：`xbume_route_stack`（`route:stack`，栈详情要读 `NavigatorState` 私有历史；直连只给流 `/v1/route/stack` 的事件重放近似栈，`approx: true`）、`xbume_eval` / 断点 / 单步 / 调用栈（`debug`）、热重载（`hot`）、GC / 泄漏、`xbume_instances` 的 `find` / `set`（要 `debug`）、沙盒的上传 / 删除。能力闸门在 `_callTool` 统一执行，报错里直接说缺什么、可以改用什么。
+直连下会提前报能力缺口的：`xbume_route_stack`（`route:stack`，栈详情要读 `NavigatorState` 私有历史；直连只给流 `/v1/route/stack` 的事件重放近似栈，`approx: true`）、`xbume_eval` / 断点 / 单步 / 调用栈（`debug`）、热重载（`hot`）、GC / 泄漏 / UI 重建（`gc`）、`xbume_instances` 的 `find` / `set`（`debug`）、沙盒的上传 / 删除（`debug`）。闸门在 `_callTool` 统一执行：整工具查 `kToolNeeds`，子操作查 `kToolActionNeeds`（工具 → `action` → 能力），两路共用同一个 `capGap()` 与 `capGapMessage`，报错里直接说缺什么、可以改用什么。
+
+iOS 真机的直连会话由 libimobiledevice 的 `idevice_id -l` + `iproxy` 自动转发（长驻进程、按句柄 kill）；MCP 退出时会清掉自己起的 iproxy，不残留端口。
 
 ### core（22 个）
 
@@ -455,9 +457,9 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 
 | 工具 | 主要参数 | 说明 |
 | --- | --- | --- |
-| `xbume_instances` | `action`(stores/find/tree/set), `class?`, `limit?`, `id?`, `depth?`, `field?`, `value?`, `vtype?` | 实例注册表、按类查所有存活实例（VM `getInstances`）、按 `id` 展开字段树、改字段值。直连会话只有 `stores` / `tree`（读 `XBUme.registerInspectable` 的字段树，`find` / `set` 要 `debug`） |
+| `xbume_instances` | `action`(stores/find/tree/set), `class?`, `limit?`, `id?`, `depth?`, `field?`, `value?`, `vtype?` | 实例注册表、按类查所有存活实例（VM `getInstances`）、按 `id` 展开字段树、改字段值。直连会话只有 `stores` / `tree`（读 `XBUme.registerInspectable` 的字段树），`find` / `set` 调用前就报 `debug` 缺口 |
 | `xbume_widget_tree` | `action`(tree/pick), `x?`, `y?` | 整棵 Widget 树（类型 / Key / 深度 / 逻辑像素 bounds，千节点级）；pick 按屏幕坐标反查组件，等价 GUI 点选 |
-| `xbume_perf` | `action`(snapshot/leak/gc/reassemble), `windowMs?`, `classes?` | CPU / 内存 / 帧耗时快照；leak 不传 `classes` 时自动按路由栈 + 项目内 State 类普查（结果为「栈中存活 / 树上 / 堆上 / 疑似泄漏」）；gc 强制回收；reassemble 触发重建（命中断点会返回「app 可能已暂停」而不是超时）。直连会话 `snapshot` 可用（app 内帧统计 + 进程采样），`leak` / `gc` / `reassemble` 报 `debug` 缺口 |
+| `xbume_perf` | `action`(snapshot/leak/gc/reassemble), `windowMs?`, `classes?` | CPU / 内存 / 帧耗时快照；leak 不传 `classes` 时自动按路由栈 + 项目内 State 类普查（结果为「栈中存活 / 树上 / 堆上 / 疑似泄漏」）；gc 强制回收；reassemble 触发重建（命中断点会返回「app 可能已暂停」而不是超时）。直连会话 `snapshot` 可用（app 内帧统计 + 进程采样），`leak` / `gc` / `reassemble` 调用前就报 `gc` 缺口 |
 | `xbume_compare` | `action`(run/status/stop), `sessionA`+`sessionB?`（或 `uriA`+`uriB`）, `name?`, `steps?` | 两个会话并行跑同一场景并逐步骤对比（同一份用例在改动前后 / 两个设备上） |
 
 ### data（4 个，需 `--tool-groups data`）
@@ -466,7 +468,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | --- | --- | --- |
 | `xbume_storage` | `action`(list/read/write/reload), `file?`, `xml?`, `dirty?` | 直接读 shared_prefs XML（Android/鸿蒙）或 plist（iOS）；write 先落文件、再经 app 内 SharedPreferences 回写生效；桌面端没有 prefs 文件时给出改用沙盒/DB 的提示。直连会话读走 `/v1/storage/*`，write 只能逐项经 app 注册的 `allowWrite` 适配器（沙盒不对外落任意文件） |
 | `xbume_db` | `action`(open/schema/query/csv/close), `path?`, `dbId?`, `table?`, `sql?`, `force?` | app 沙盒里的 SQLite：open 拿 `dbId`、schema 省略 `table` 时列出全部表、query 默认只读（写要 `force`）、csv 导出。直连会话同样可用：`open` 把库文件分块拉回本机缓存，之后用本机 sqlite3 管（256MB 上限） |
-| `xbume_sandbox` | `action`(list/read/download/downloadDir/upload/delete), `path?`, `offset?`, `max?`, `content?`, `contentBase64?`, `name?`, `saveTo?` | 浏览 / 读写 app 沙盒；`upload` 的 `path` 是目标目录 + `name` 是文件名（也可以直接传完整文件路径，工具会拆）；`downloadDir` 打成 tar。直连会话 list / read / download / downloadDir 可用（app 内 `dart:io` 只读），上传 / 删除要 `debug` |
+| `xbume_sandbox` | `action`(list/read/download/downloadDir/upload/delete), `path?`, `offset?`, `max?`, `content?`, `contentBase64?`, `name?`, `saveTo?` | 浏览 / 读写 app 沙盒；`upload` 的 `path` 是目标目录 + `name` 是文件名（也可以直接传完整文件路径，工具会拆）；`downloadDir` 打成 tar。直连会话 list / read / download / downloadDir 可用（app 内 `dart:io` 只读）；上传 / 删除要 `debug`——GUI 侧直接置灰，MCP 侧由 `kToolActionNeeds` 在调用前报缺口 |
 | `xbume_watch` | `action`(add/list/events/pause/remove/clear), `kind?`, `expr?`, `targetId?`, `lib?`, `condition?`, `intervalMs?`, `id?`, `on?` | VM：监听**表达式 / 字段**（`kind: expr|field`）的变化，可带命中条件，事件按时间返回。直连：`kind: inspect`（`targetId`=inspectable id，`expr`=字段路径，空=整棵树）或 `kind: file`（`expr`=文件路径，监听 size+mtime）；条件只能本地比较 `value > 10`、`value == done`，命中时同样自动截图 |
 
 ### env（8 个，需 `--tool-groups env`）

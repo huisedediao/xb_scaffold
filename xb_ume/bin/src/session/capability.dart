@@ -252,3 +252,29 @@ const Map<String, List<String>> kFeatureNeeds = <String, List<String>>{
   'instancesFind': <String>[Cap.debug],
   'instancesSet': <String>[Cap.debug],
 };
+
+/// 工具 → 子操作（`action`）→ 能力：整体能用、个别动作要更多能力的场合。
+///
+/// 为什么不直接写进 [kToolNeeds]：`xbume_sandbox` 的 list / read 直连就能用，
+/// 只有 upload / delete 要 eval 写文件；把它们整工具挂上 `debug` 会把直连
+/// 的只读浏览也一并发掉。闸门在 `server.dart::_callTool` 里按 `action` 查这张表，
+/// 与工具描述里「直连下 xx 要 debug」那句话共用同一份事实来源。
+const Map<String, Map<String, List<String>>> kToolActionNeeds =
+    <String, Map<String, List<String>>>{
+  // 沙盒：读（list / read / download / downloadDir）只要 fs；写要 VM。
+  'xbume_sandbox': <String, List<String>>{
+    'upload': <String>[Cap.debug],
+    'delete': <String>[Cap.debug],
+  },
+  // 实例：列注册表 / 展开字段树只要 inspectable；按类名堆扫描与写回要 eval。
+  'xbume_instances': <String, List<String>>{
+    'find': <String>[Cap.debug],
+    'set': <String>[Cap.debug],
+  },
+  // 性能：快照只要 perf；泄漏检测 / GC / UI 重建要 gc（直连两者都没有）。
+  'xbume_perf': <String, List<String>>{
+    'leak': <String>[Cap.gc],
+    'gc': <String>[Cap.gc],
+    'reassemble': <String>[Cap.gc],
+  },
+};

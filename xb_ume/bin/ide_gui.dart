@@ -18235,6 +18235,11 @@ function sbRender(d){
     + ' <a href="javascript:void(0)" onclick="sbRefresh()" style="margin-left:10px" title="重新读取当前目录">↻ 刷新</a></div>';
   if (!d.entries || !d.entries.length) { html += '<span class="muted">空目录</span>'; return html; }
   html += '<table class="sbtable"><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr>';
+  // 上传 / 删除要往沙盒里写：VM 会话才有（直连 Agent 只读，不提供任意写入口）。
+  // 直连下列表里的这两个链接直接不渲染成可点控件，而不是点完等后端报「只读」。
+  var sbCaps = curDaemonSession && curDaemonSession.caps ? curDaemonSession.caps : null;
+  var sbCanWrite = capHas(sbCaps, 'debug');
+  var sbReadOnlyTip = '直连会话沙盒只读：上传 / 删除需要 VM 通道（dart:io 写 + eval 删除）';
   d.entries.forEach(function(e){
     var q = encodeURIComponent(sbUri()), p = encodeURIComponent(e.path);
     var isDb = !e.dir && /\.(db|sqlite3?|db3)$/i.test(e.name);
@@ -18244,8 +18249,11 @@ function sbRender(d){
         + '<a href="javascript:void(0)" onclick="sbOpenSub(\'view\',this)" data-p="' + p + '"><button title="新标签页展示文件内容">查看</button></a>'
         + ' <a href="javascript:void(0)" onclick="sbOpenSub(\'tail\',this)" data-p="' + p + '"><button title="新标签页实时监听文件新增内容">监听</button></a>'
         + ' <a href="/api/sandbox/download?uri=' + q + '&path=' + p + '"><button>下载</button></a>')
-      + ' <a href="javascript:void(0)" onclick="sbUpload(this)" data-p="' + p + '" data-dir="' + (e.dir ? '1' : '0') + '" title="上传本地文件到此' + (e.dir ? '目录' : '文件所在目录') + '">上传</a>'
-      + ' <a href="javascript:void(0)" class="bad" onclick="sbDelete(this)" data-p="' + p + '" data-name="' + esc(e.name) + '" data-dir="' + (e.dir ? '1' : '0') + '" style="margin-left:6px" title="删除（不可恢复）">删除</a>';
+      + (sbCanWrite
+        ? ' <a href="javascript:void(0)" onclick="sbUpload(this)" data-p="' + p + '" data-dir="' + (e.dir ? '1' : '0') + '" title="上传本地文件到此' + (e.dir ? '目录' : '文件所在目录') + '">上传</a>'
+          + ' <a href="javascript:void(0)" class="bad" onclick="sbDelete(this)" data-p="' + p + '" data-name="' + esc(e.name) + '" data-dir="' + (e.dir ? '1' : '0') + '" style="margin-left:6px" title="删除（不可恢复）">删除</a>'
+        : ' <span class="cap-off" title="' + sbReadOnlyTip + '">上传</span>'
+          + ' <span class="cap-off" style="margin-left:6px" title="' + sbReadOnlyTip + '">删除</span>');
     var name = e.dir
       ? '<a href="javascript:void(0)" data-p="' + p + '" onclick="sbGoBtn(this)">' + esc(e.name) + '/</a>'
       : esc(e.name) + (e.link ? ' <span class="muted">[链接]</span>' : '');

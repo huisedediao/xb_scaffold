@@ -768,7 +768,7 @@ P1 当时仍然置灰（后续已补齐大部分）：沙盒 / 存储 / 数据�
 - 工具层不写 `if (vm) … else …`：`bin/src/session/session_api.dart` 定义语义方法，VM 实现还是那套表达式，直连实现把 `/v1/*` 的 JSON **整形回与 VM 逐字节相同的原始串**（`\u0001` 分字段、`\u0003` 分行、`NO_ROOT` / `NOT_FOUND` 哨兵），所以解析代码一份到底。做不到的语义抛 `SessionApiUnsupported`，工具层转成带能力键的报错。
 - 能力闸门在 `bin/src/mcp/server.dart::_callTool` 统一执行：缺能力直接 `isError` 回人话，不再等 handler 里连一个空地址才炸。
 
-> 真机上端口转发需要 `adb` / `hdc` 可用；设 `XBUME_AGENT_PROBE=0` 可整体关掉转发探测（CI 或不想让 daemon 调 adb 时）。
+> 真机上端口转发：Android 走 `adb`、鸿蒙走 `hdc`（注册式，转发表可查），iOS 真机走 libimobiledevice 的 `idevice_id -l` + `iproxy`（长驻进程，见 0.9.9 节）。设 `XBUME_AGENT_PROBE=0` 可整体关掉转发探测（CI 或不想让 daemon 调 adb / iproxy 时）。
 
 ### 0.9.9：直连通道（P3 数据面补齐：沙盒 / 数据库 / 性能 / 字段树 / 路由定位 / Watch）
 
@@ -779,12 +779,12 @@ P1/P2 只做了「读数据 + 看图点击」，真正排障还要看文件、�
 | 沙盒（`fs`） | 「应用沙盒」Tab（`/api/sandbox` 直连分支） | `GET /v1/sandbox/roots` / `list` / `stat` / `read`；`xbume_sandbox`（list / read / download / downloadDir） |
 | 存储（`fs`） | 「Storage」Tab（`/api/storage/*` 直连分支） | `GET /v1/storage/list` / `read` / `adapters`，`POST /v1/storage/set` / `remove`；`xbume_storage` |
 | 数据库（`fs`） | 「数据库」Tab（`/api/db/open` 直连分支） | `open` 用 `/v1/sandbox/stat` + 分块 `read` 把库拉回本机，再用本机 `sqlite3` 跑；`GET /v1/db/files` 列沙盒里的 `*.db` / `*.sqlite*` 候选 |
-| 性能（`perf`） | 「性能」Tab（`/api/perf` → `/v1/perf`） | 帧耗时统计（`SchedulerBinding.addTimingsCallback`）+ 进程 CPU / 内存；`xbume_perf`（`snapshot`） |
-| 实例字段树（`inspectable`） | 「实例」Tab（`/api/instances/stores` / `tree` → `/v1/inspect`） | 无 `id` 列注册表，带 `id` 出字段树（`depth` 1–4）；`xbume_instances`（`stores` / `tree`） |
+| 性能（`perf`） | 「性能」Tab（`/api/perf` → `/v1/perf`） | 帧耗时统计（`SchedulerBinding.addTimingsCallback`）+ 进程 CPU / 内存；`xbume_perf`（`snapshot`）；`leak` / `gc` / `reassemble` 要 `gc`，调用前就报缺口 |
+| 实例字段树（`inspectable`） | 「实例」Tab（`/api/instances/stores` / `tree` → `/v1/inspect`） | 无 `id` 列注册表，带 `id` 出字段树（`depth` 1–4）；`xbume_instances`（`stores` / `tree`）；`find`（按类名堆扫描）/ `set`（改值）要 `debug`，调用前就报缺口 |
 | 路由源码定位（`srclocate:heuristic`） | Locator 选中路由名 | 路由名 → 候选类名 → 在项目 `lib/` 下找类声明（结果带 `heuristic: true`）；`xbume_route_locate` |
 | Watch（受限） | Watch 面板新增直连行 | `kind: inspect`（轮询 inspectable 字段路径）/ `kind: file`（轮询 size+mtime）；`xbume_watch` |
 
-**沙盒只读**：`list` / `read` / `stat` / `download` / `downloadDir` 直通，全部在 app 进程内用 `dart:io` 跑，所以「能不能看到」就等于 app 自己的权限边界（`/v1/sandbox/roots` 先列候选根：Android 私有目录 / iOS `HOME` / 桌面 `HOME`，带 `ok` 可用性标记）。但**上传 / 删除不开放**——release 包里「让外部往任意路径写文件」的收益远小于风险，这两个动作仍报 `debug` 缺口。
+**沙盒只读**：`list` / `read` / `stat` / `download` / `downloadDir` 直通，全部在 app 进程内用 `dart:io` 跑，所以「能不能看到」就等于 app 自己的权限边界（`/v1/sandbox/roots` 先列候选根：Android 私有目录 / iOS `HOME` / 桌面 `HOME`，带 `ok` 可用性标记）。但**上传 / 删除不开放**——release 包里「让外部往任意路径写文件」的收益远小于风险。界面上这两个动作直接渲染成置灰文本（`.cap-off` + 悬停原因），不再「点完等后端回只读」；MCP 侧 `xbume_sandbox`(`upload` / `delete`) 由 `kToolActionNeeds` 在调用前就报 `debug` 缺口。
 
 **存储要适配器才能写**：读 `shared_prefs` / plist 与 VM 会话同形；写回只能逐项走 app 用 `XBUme.registerStorageAdapter(XBUmeMapStorageAdapter(allowWrite: true, …))` 主动开放的数据源（`/v1/storage/adapters` 先列，再 `set` / `remove`），沙盒不对外落任意文件。
 
@@ -795,6 +795,8 @@ P1/P2 只做了「读数据 + 看图点击」，真正排障还要看文件、�
 **路由定位是启发式**：直连没有 `NavigatorState` 私有历史，也没法 eval 出「路由子树的首个业务 widget」。退化成「路由名 → 候选类名（PascalCase 原样优先，再试 `+Page/Screen/View/Widget`）→ 扫 `<项目根>/lib` 找 `class X` 声明」，回包带 `heuristic: true` 与命中文件 / 行号，只用于「打开源码看一眼」，不保证是渲染该页的那个 widget。
 
 **Watch 受限但够用**：直连没有 eval，所以监听对象换成「inspectable 字段路径」或「文件 size+mtime」。条件也退化成**本地比较**——只支持 `value > 10` / `value == done` / `value contains ok` 这类「当前值 vs 字面量」，比 VM 侧的任意表达式弱；添加时语法不对直接拒绝，不会静默失效。命中条件时仍会自动截图（app 侧 PNG，落在 `~/.xb_ume_ide/scenarios/artifacts/`），所以「盯着某个状态变化，一变就留证据」在 release 包上同样成立。
+
+**iOS 真机靠 `iproxy` 长驻进程**：`adb` / `hdc` 的转发是注册式的（命令执行完就完事，转发表能查），iOS 没有这套机制，只能用 libimobiledevice 的 `idevice_id -l` 列 UDID 再 `iproxy <主机端口>:47100 -u <UDID>`。iproxy 是长驻进程，所以 IDE 侧自己持有 `Process` 句柄：同一 UDID + 同一主机端口才复用，否则先按句柄 kill 旧进程再起；stdout / stderr 必须 `drain`（管道写满会让转发卡死）。GUI（含 `--daemon` 的 `SIGTERM` / `SIGINT` / `SIGHUP` 钩子与锁连接接管退出）/ MCP（两处 shutdown + stdio finally）退出时都调 `stopAgentForwardProcesses()`，**只按句柄 kill，绝不按进程名匹配**（本机可能还有别的工具在用 iproxy）。端口分配把自持的 iproxy 端口并入占用表，并跳过所有已在监听的端口，两台 iPhone 不会抢同一个。实测坑：**iproxy 对不存在的设备也会立刻监听端口**（懒连接），所以「端口可连」只证明进程起来了，能否真的读到 app 仍由 `/v1/hello` 探测决定。
 
 真实 macOS example 上验过：`kind=inspect` 监听 `demo-memory.count`，把值从 `1` 改成 `2` 后 2 秒内收到 `old=1 new=2`；`kind=file` 监听日志文件，追加一行后收到 `size=1 → 2`，条件 `value contains size=2` 命中并落了一张截图。
 

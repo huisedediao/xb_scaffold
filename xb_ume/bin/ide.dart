@@ -186,6 +186,7 @@ Future<void> _mainImpl(List<String> args) async {
     return;
   }
   if (args.contains('--daemon')) {
+    _installShutdownHooks();
     await runDaemon(ide);
     return;
   }
@@ -1338,6 +1339,29 @@ Future<void> _acquireSingletonLock() async {
   });
 }
 
+/// daemon 退出时收掉自己拉起的 iproxy（iOS 真机转发）。
+///
+/// 按句柄 kill，不按进程名匹配：本机可能还有用户自己开的 iproxy / 别的工具，
+/// 宽泛匹配会误杀。注册失败（平台不支持该信号）时直接跳过。
+void _installShutdownHooks() {
+  Future<void> onSignal() async {
+    await stopAgentForwardProcesses();
+    exit(0);
+  }
+
+  for (final signal in <ProcessSignal>[
+    ProcessSignal.sigterm,
+    ProcessSignal.sigint,
+    ProcessSignal.sighup,
+  ]) {
+    try {
+      signal.watch().first.then((_) => onSignal()).catchError((_) {});
+    } catch (_) {
+      // 当前平台不支持该信号：跳过。
+    }
+  }
+}
+
 /// 通知当前持锁实例退出（接管协议）。
 Future<void> _requestEviction() async {
   try {
@@ -1365,7 +1389,9 @@ void _onLockConnection(Socket socket) {
     if (text.contains(kEvictToken)) {
       print('[xbume-ide] 检测到新实例接管，本实例退出。');
       _lockServer?.close();
-      exit(0);
+      // 先收掉自己拉起的 iproxy，再把端口交出去。
+      unawaited(stopAgentForwardProcesses().whenComplete(() => exit(0)));
+      return;
     }
     if (text.contains(kStatusToken)) {
       socket.write(jsonEncode(<String, Object?>{

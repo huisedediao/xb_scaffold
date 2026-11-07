@@ -69,7 +69,7 @@ App 内为纯 Dart 实现，不引入原生插件（Network 适配器依赖的 `
 
 **运行模式**：电脑端 GUI 的会话相关能力（Flutter 输出、时间轴、异常、截图、自动化等）通过 VM service 工作，**debug** 下最完整；依赖 VM `evaluate` 的能力（应用沙盒、数据库、路由栈详情、Storage、实例、自动化 eval 步骤，以及 Locator 源码定位）必须 **debug**（profile 为 AOT 编译，通常无法求值表达式）；release 无 VM service。App 内面板在 release 下仍可渲染并采集日志/路由/帧，但调试细节会退化。
 
-**release 包也能被驱动**：app 侧可启一个**默认关闭**的直连服务（`--dart-define=XBUME_AGENT=1`，只绑回环 + 可选 token），GUI / MCP 发现后自动多出一条 `（直连）` 会话。它没有 eval / 断点 / 热重载，但**截图、找组件、点击、输入、滑动、跳页面、场景回放**都能用（Element 遍历与手势注入走公开 API），所以「AI 看截图点按钮」不需要 debug 包。0.9.9 起还能**浏览/导出沙盒、经适配器读写存储、管理数据库、采样性能、看实例字段树、按路由名启发式定位源码、监听字段/文件变化**（Watch 条件退化成 `value > 10` 这类本地比较，命中自动截图）。做不到的项目按能力自动置灰 / 提前报错，不会点了才炸；路由栈**详情**需要 `NavigatorState` 私有历史，仍只有 VM 能给（直连只提供当前路由名）。详见 [GUI_GUIDE.md](GUI_GUIDE.md) 第二十节。
+**release 包也能被驱动**：app 侧可启一个**默认关闭**的直连服务（`--dart-define=XBUME_AGENT=1`，只绑回环 + 可选 token），GUI / MCP 发现后自动多出一条 `（直连）` 会话。它没有 eval / 断点 / 热重载，但**截图、找组件、点击、输入、滑动、跳页面、场景回放**都能用（Element 遍历与手势注入走公开 API），所以「AI 看截图点按钮」不需要 debug 包。0.9.9 起还能**浏览/导出沙盒、经适配器读写存储、管理数据库、采样性能、看实例字段树、按路由名启发式定位源码、监听字段/文件变化**（Watch 条件退化成 `value > 10` 这类本地比较，命中自动截图）。做不到的项目按能力自动置灰 / 提前报错，不会点了才炸；路由栈**详情**需要 `NavigatorState` 私有历史，仍只有 VM 能给（直连只提供当前路由名）。真机端口转发自动完成：Android `adb` / 鸿蒙 `hdc` / iOS 真机 `idevice_id` + `iproxy`（libimobiledevice，自持进程退出即清）。详见 [GUI_GUIDE.md](GUI_GUIDE.md) 第二十节。
 
 电脑端 GUI 的日志、设备管理依赖对应平台工具：`adb` / `hdc` / Xcode `simctl` / `idevice_id`（`brew install libimobiledevice`）。Windows 上 adb 默认在 `%LOCALAPPDATA%\Android\Sdk\platform-tools`、hdc 在 `C:\Program Files\Huawei\DevEco Studio\sdk\<版本>\openharmony\toolchains`，GUI / MCP 会自动补进子进程 PATH；**全局快捷键（热重载 / 热重启）在 macOS（Carbon）与 Windows（user32 `RegisterHotKey`）都是系统级**（Windows 无 `SIGUSR`，触发时走本工具拉起会话的 stdin，所以只能用在本工具拉起的 `flutter run` 上），Linux 暂不支持。
 

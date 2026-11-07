@@ -258,25 +258,38 @@ class McpServer {
     // 能力闸门：工具声明了硬性能力需求时先按会话能力判断，缺能力直接给人话
     // 报错（工具 handler 里不写 transport 分支）。会话还没选/还没扫到时不拦，
     // 交给 handler 报「未选择会话」。
+    final gateId = session.isEmpty ? ctx.sessions.currentId : session;
+    final gateTarget = gateId == null ? null : ctx.sessions.byId(gateId);
+    Map<String, Object?>? capGap(List<String> want) {
+      if (gateTarget == null || !gateTarget.hasChannel || want.isEmpty) {
+        return null;
+      }
+      final missing = missingCaps(gateTarget.caps, want);
+      if (missing.isEmpty) return null;
+      _audit(name, session, sw.elapsedMilliseconds, false, 'cap');
+      return mcpResult(
+        req.id,
+        McpToolResult.text(
+          capGapMessage(missing,
+              transport: gateTarget.transport,
+              vmDegraded: gateTarget.vmDegraded),
+          isError: true,
+        ).toJson(),
+      );
+    }
+
     final need = kToolNeeds[name];
     if (need != null && need.isNotEmpty) {
-      final id = session.isEmpty ? ctx.sessions.currentId : session;
-      final target = id == null ? null : ctx.sessions.byId(id);
-      if (target != null && target.hasChannel) {
-        final missing = missingCaps(target.caps, need);
-        if (missing.isNotEmpty) {
-          _audit(name, session, sw.elapsedMilliseconds, false, 'cap');
-          return mcpResult(
-            req.id,
-            McpToolResult.text(
-              capGapMessage(missing,
-                  transport: target.transport,
-                  vmDegraded: target.vmDegraded),
-              isError: true,
-            ).toJson(),
-          );
-        }
-      }
+      final gap = capGap(need);
+      if (gap != null) return gap;
+    }
+    // 子操作闸门：整工具能用、个别 action 要多更多能力时也提前拦（沙盒的
+    // upload / delete、实例的 find / set、性能的 leak / gc / reassemble）。
+    final actionNeed =
+        kToolActionNeeds[name]?[(args['action'] ?? '').toString()];
+    if (actionNeed != null && actionNeed.isNotEmpty) {
+      final gap = capGap(actionNeed);
+      if (gap != null) return gap;
     }
     var ok = true;
     try {
