@@ -709,7 +709,7 @@ dart run xb_ume:ide --uninstall
 - **热重载 / 热重启**：release 包（AOT）无热重载，置灰。
 - **照常可用**：日志、网络、异常、时间轴、路由栈、Storage、应用沙盒、数据库、截图、点击 / 输入 / 滑动、性能采样。
 
-> 上表是直连通道的「理论上限」。0.9.7 的 app 内直连服务只报 `inspect`，所以真实直连会话只有日志 / 网络 / 异常 / 时间轴可用，其余全部置灰（见下节）。
+> 上表是直连通道的「理论上限」。0.9.7 的 app 内直连服务只报 `inspect`；0.9.8 起报 `inspect,widgets,act,shot`（见下两节）。
 
 实现上是声明式的：控件只加 `data-need-caps="debug|hot|gc"`，由后台下发的 `caps` 统一裁剪；旧版 daemon 不返回 `caps` 时保守全开，行为与升级前一致。
 
@@ -742,10 +742,31 @@ P1 能用的（`caps=inspect`）：
 - 日志 Tab、异常 Tab（服务端每 2 秒轮询一次，清空后旧卡片不会复活）、Network Tab（列表 / 详情 / 清空）、时间轴 Tab（路由事件 + 网络事件）。
 - 会话下拉直接选中直连会话；MCP 侧用同一份 `caps` / `transport`，能力不满足的工具会提前报错而不是连一个空地址。
 
-P1 仍然置灰（能力上不可能，不是没做）：沙盒 / 存储 / 数据库（`fs`）、点击 / 输入 / 滑动（`act`）、组件树与路由栈（`widgets`）、截图（`shot`）、性能（`perf`）、断点 / 求值 / 单步（`debug`）、热重载（`hot`）、GC。
+P1 当时仍然置灰（0.9.8 已补齐前半）：沙盒 / 存储 / 数据库（`fs`）、点击 / 输入 / 滑动（`act`）、组件树与路由栈（`widgets`）、截图（`shot`）、性能（`perf`）、断点 / 求值 / 单步（`debug`）、热重载（`hot`）、GC。
 
-> 路由栈 Tab 在直连下也置灰：路由**当前栈**只能从 `NavigatorState._history`（`navigator.dart` 私有字段）读，只有 VM 的 eval 上下文拿得到；直连侧只能给你「路由事件流」（即时间轴里的 `route` 条目）。
->
+### 0.9.8：直连通道（P2 组件树 + 动作面）
+
+直连会话现在能**截图、找组件、点击、输入、滑动、跳页面**，验收标准就是「release 包上能看图点击」——AI 只看截图 + `xbume_find_widget` 的 `ref` 就能驱动真机，不需要 VM service。
+
+| 能力 | GUI | MCP 工具 |
+|---|---|---|
+| 截图（`shot`） | 「截图」Tab 真正可用（`/api/screenshot` 直连时 app 内光栅化回 PNG） | `xbume_screenshot` |
+| 组件树（`widgets`） | 「Widget 树」Tab（`/api/wtree` 直连时 app 内遍历 Element 树） | `xbume_find_widget` |
+| 点击 / 输入 / 滑动（`act`） | ——（GUI 无对应面板） | `xbume_tap` / `xbume_input` / `xbume_swipe` |
+| 跳页面（`act`） | ——（GUI 无对应面板） | `xbume_navigate`，回包带当前路由名 |
+| 日志 / 网络 / 异常 / 时间轴（`inspect`） | 对应 Tab | `xbume_console` / `xbume_network*` / `xbume_exceptions` / `xbume_timeline` |
+
+直连下仍然置灰的：
+
+- **路由栈 Tab**：按 `route:stack` 键置灰。栈详情（Route 类型 / 参数类型 / isPresent）读的是 `NavigatorState._history`，`navigator.dart` 私有字段，只有 VM eval 拿得到。直连侧只给「路由事件流」——当前路由名靠 `/v1/routes` 事件重放算出来，足够 `xbume_tap` / `xbume_navigate` 回包与场景的 `assertRoute` / `back` 使用，但拿不到栈里每个 Route 的类型信息（想看历史就去时间轴 Tab）。
+- **自动化 Tab**：按 `act,debug` 置灰。点击/输入本身直连能做，但这个面板的后端是 VM eval 驱动的场景录制/回放，一并置灰更诚实；命令行 `dart run xb_ume:run --uri http://…` 与 `xbume_scenario_run` 已经能跑直连会话。
+- **沙盒 / 存储 / 数据库（`fs`）**、性能（`perf`）、断点 / 单步 / 求值（`debug`）、热重载 / 热重启（`hot`）、GC / 泄漏检测：release 物理上做不到。
+
+实现要点（想改这块时先看这两条）：
+
+- 工具层不写 `if (vm) … else …`：`bin/src/session/session_api.dart` 定义语义方法，VM 实现还是那套表达式，直连实现把 `/v1/*` 的 JSON **整形回与 VM 逐字节相同的原始串**（`\u0001` 分字段、`\u0003` 分行、`NO_ROOT` / `NOT_FOUND` 哨兵），所以解析代码一份到底。做不到的语义抛 `SessionApiUnsupported`，工具层转成带能力键的报错。
+- 能力闸门在 `bin/src/mcp/server.dart::_callTool` 统一执行：缺能力直接 `isError` 回人话，不再等 handler 里连一个空地址才炸。
+
 > 真机上端口转发需要 `adb` / `hdc` 可用；设 `XBUME_AGENT_PROBE=0` 可整体关掉转发探测（CI 或不想让 daemon 调 adb 时）。
 
 ## 二十一、相关文档

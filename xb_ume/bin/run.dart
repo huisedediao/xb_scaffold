@@ -4,7 +4,7 @@
 //   dart run xb_ume:run <场景文件|场景名> --uri <ws-url|端口> [选项]
 //
 // 选项：
-//   --uri <v>              VM service 地址：完整 ws(s):// URL、host:port 或纯端口
+//   --uri <v>              VM service 地址（ws-url / host:port / 纯端口）或直连 http(s)://
 //   --report <out.html>    报告输出路径（默认 $XB_UME_HOME/scenarios/reports/）
 //   --continue-on-fail     失败后继续执行（默认失败即停止，剩余步骤跳过）
 //   --shot-every-step      每步都截图（默认只截失败步骤）
@@ -24,6 +24,8 @@ import 'dart:io';
 import 'src/scenario/runner.dart';
 import 'src/scenario/scenario_file.dart';
 import 'src/scenario/vm_client.dart';
+import 'src/session/agent_client.dart';
+import 'src/session/session_api.dart';
 
 const String _usage = '''
 xb_ume 场景命令行执行器
@@ -190,15 +192,18 @@ void main(List<String> argv) async {
   }
 
   final version = _readVersion();
-  final uri = normalizeVmUri(args.uri);
-  final vm = VmClient(uri);
+  // http(s):// 是 app 内直连；其余按 VM service 归一。
+  final isAgent = isAgentBaseUrl(args.uri);
+  final api = connectSessionApi(
+      isAgent ? normalizeAgentBaseUrl(args.uri) : normalizeVmUri(args.uri));
+  final uri = api.uri;
   final progress = !args.json;
   if (progress) {
     stdout.writeln('xb_ume run${version.isEmpty ? '' : ' $version'}');
     stdout.writeln('场景 $name（${steps.length} 步）→ $uri');
   }
-  final runner = ScenarioRunner(
-    vm,
+  final runner = ScenarioRunner.fromApi(
+    api,
     continueOnFail: args.continueOnFail,
     shotEveryStep: args.shotEveryStep,
     waitAfterMs: args.waitAfterMs,
@@ -221,10 +226,10 @@ void main(List<String> argv) async {
     report = await runner.run(name, steps);
   } catch (e) {
     stderr.writeln('执行失败：$e');
-    await vm.close();
+    await api.close();
     exit(2);
   }
-  await vm.close();
+  await api.close();
 
   // 报告路径：--report 显式指定；否则落到数据目录 scenarios/reports 下。
   String reportPath;

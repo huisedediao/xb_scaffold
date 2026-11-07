@@ -56,6 +56,7 @@ import 'src/perf/perf_metrics.dart';
 // http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
 import 'src/scenario/vm_client.dart' show normalizeVmUri;
 import 'src/session/agent_client.dart';
+import 'src/session/session_api.dart';
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
@@ -2916,11 +2917,30 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       }
       return;
     }
-    // ── 实时截图：_flutter.screenshot 返回 base64 PNG（DDS 转发，debug 可用）──
+    // ── 实时截图：VM 走 _flutter.screenshot（DDS 转发，debug 可用）；
+    // 直连会话（release）由 app 侧 toImage 编码，同样返回 base64 PNG。──
     if (path == '/api/screenshot') {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      if (isAgentBaseUrl(uri)) {
+        final api = connectSessionApi(uri);
+        try {
+          final b64 = await api.screenshotBase64();
+          req.response.headers.contentType = ContentType('image', 'png');
+          req.response.headers.set('Cache-Control', 'no-store');
+          req.response.add(base64Decode(b64));
+        } catch (e) {
+          req.response.statusCode = HttpStatus.badGateway;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': e.toString()}));
+        } finally {
+          await api.close();
+        }
         await req.response.close();
         return;
       }
@@ -2951,6 +2971,23 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       final uri = req.uri.queryParameters['uri'] ?? '';
       if (uri.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      if (isAgentBaseUrl(uri)) {
+        // 直连会话：Element 树在 app 内遍历后编码（AOT 无 eval）。
+        final api = connectSessionApi(uri);
+        try {
+          final tree = await api.widgetTreeJson();
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(tree));
+        } catch (e) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(
+              <String, Object?>{'ok': false, 'error': e.toString()}));
+        } finally {
+          await api.close();
+        }
         await req.response.close();
         return;
       }
@@ -12374,7 +12411,7 @@ const String guiHtml = r'''
     <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
     <div class="tab" data-tab="sandbox" data-need-caps="fs">应用沙盒</div>
     <div class="tab" data-tab="db" data-need-caps="fs">数据库</div>
-    <div class="tab" data-tab="routes" data-need-caps="widgets">路由栈</div>
+    <div class="tab" data-tab="routes" data-need-caps="route:stack">路由栈</div>
     <div class="tab" data-tab="network">Network</div>
     <div class="tab" data-tab="storage" data-need-caps="fs">Storage</div>
     <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
@@ -12384,7 +12421,7 @@ const String guiHtml = r'''
     <div class="tab" data-tab="perf" data-need-caps="perf">性能</div>
     <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
     <div class="tab" data-tab="wtree" style="display:none" data-need-caps="widgets">Widget树</div>
-    <div class="tab" data-tab="auto" data-need-caps="act">自动化</div>
+    <div class="tab" data-tab="auto" data-need-caps="act,debug">自动化</div>
     <div class="tab" data-tab="compare" data-need-caps="debug">对比</div>
   </div>
   <div id="hdr-right">
@@ -15336,7 +15373,8 @@ var CAP_LABELS = {
   'inspect': '日志 / 网络 / 异常 / 时间轴',
   'fs': '沙盒 / 存储 / 数据库',
   'act': '点击 / 输入 / 滑动',
-  'widgets': '组件树 / 路由栈',
+  'widgets': '组件树',
+  'route:stack': '路由栈详情',
   'shot': '截图',
   'perf': '性能 / 帧耗时',
   'debug': '断点 / 单步 / 变量树 / 求值',
@@ -15371,7 +15409,7 @@ function dbgApplyCaps(){
   var banner = document.getElementById('cap-banner');
   if (banner) {
     // 只报“真的缺什么”：早期版本写死了几个能力名，改了 caps 后会误报。
-    var all = ['inspect','fs','act','widgets','shot','perf','debug','hot','gc'];
+    var all = ['inspect','fs','act','widgets','route:stack','shot','perf','debug','hot','gc'];
     var missing = caps ? all.filter(function(n){ return caps.indexOf(n) < 0; }) : [];
     if (missing.length) {
       banner.style.display = '';

@@ -13,6 +13,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import '../paths.dart';
+import '../session/capability.dart';
 import 'client_scope.dart';
 import 'protocol.dart';
 import 'tools.dart';
@@ -254,6 +255,29 @@ class McpServer {
         : <String, Object?>{};
     final sw = Stopwatch()..start();
     final session = (args['sessionId'] ?? ctx.sessions.currentId ?? '').toString();
+    // 能力闸门：工具声明了硬性能力需求时先按会话能力判断，缺能力直接给人话
+    // 报错（工具 handler 里不写 transport 分支）。会话还没选/还没扫到时不拦，
+    // 交给 handler 报「未选择会话」。
+    final need = kToolNeeds[name];
+    if (need != null && need.isNotEmpty) {
+      final id = session.isEmpty ? ctx.sessions.currentId : session;
+      final target = id == null ? null : ctx.sessions.byId(id);
+      if (target != null && target.hasChannel) {
+        final missing = missingCaps(target.caps, need);
+        if (missing.isNotEmpty) {
+          _audit(name, session, sw.elapsedMilliseconds, false, 'cap');
+          return mcpResult(
+            req.id,
+            McpToolResult.text(
+              capGapMessage(missing,
+                  transport: target.transport,
+                  vmDegraded: target.vmDegraded),
+              isError: true,
+            ).toJson(),
+          );
+        }
+      }
+    }
     var ok = true;
     try {
       final result = await tool.handler(ctx, args);

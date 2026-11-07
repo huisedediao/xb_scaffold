@@ -15,6 +15,8 @@
 library;
 
 import '../device/flutter_run.dart';
+import '../session/agent_client.dart';
+import '../session/capability.dart';
 import 'session_registry.dart';
 
 /// 会话结论级别。
@@ -320,10 +322,15 @@ class SessionCheckResult {
       ..write('\n结论 $v$use：')
       ..write(judgement.usable ? '' : '先处理上面的问题；')
       ..write('可看${caps['inspector'] == true ? '' : ' ✗'}')
-      ..write(' / 可点${caps['eval'] == true ? '' : ' ✗'}')
+      ..write(' / 可点${(caps['act'] ?? caps['eval']) == true ? '' : ' ✗'}')
       ..write(' / 可重载${ch == 'none' ? ' ✗' : '（$ch，$probeText）'}');
 
     final lines = <String>[];
+    if (caps['transport'] == kTransportAgent) {
+      lines.add('直连 ✓ ${caps['agentUrl'] ?? ''}'
+          '${caps['agentVersion'] == null ? '' : '（v${caps['agentVersion']}）'}'
+          ' · 能力 ${capLabelsText((caps['agentCaps'] as List?)?.cast<String>() ?? const <String>[])}');
+    }
     if (libraries != null) {
       lines.add('VM ✓ isolate main（$libraries 库）');
     } else if (vmError != null) {
@@ -368,6 +375,8 @@ Future<SessionCheckResult> runSessionCheck(
   bool verifyReload = true,
   Duration verifyTimeout = const Duration(seconds: 20),
 }) async {
+  // 直连会话没有 VM 通道：探 /v1/hello 与能力清单，不跑 VM 那套自检。
+  if (!s.hasVm) return _runAgentSessionCheck(s, verifyTimeout: verifyTimeout);
   Map<String, Object?>? isolate;
   String? vmError;
   var evalOk = false;
@@ -461,6 +470,7 @@ Future<SessionCheckResult> runSessionCheck(
     judgement: judgement,
     caps: <String, Object?>{
       'eval': evalOk,
+      'act': evalOk,
       'inspector': exts.any((e) => e.startsWith('ext.flutter.inspector.')),
       'screenshot': exts.contains('ext.flutter.inspector.screenshot'),
       'widgetTree':
@@ -484,5 +494,70 @@ Future<SessionCheckResult> runSessionCheck(
     libraries: libraries,
     vmError: vmError,
     probe: probe,
+  );
+}
+
+/// 直连会话自检：探 `/v1/hello` + `/v1/state`，能力取 app 自报 ∩ 理论上限。
+///
+/// 直连没有 isolate / 热重载 / 求值，所以不跑 VM 那套探测；结论统一是
+/// `ready_no_reload`（能看能点、改代码需拉起方重启），服务不可达时是 `stale`。
+Future<SessionCheckResult> _runAgentSessionCheck(
+  McpSession s, {
+  Duration verifyTimeout = const Duration(seconds: 5),
+}) async {
+  final base = s.agentBaseUrl ?? '';
+  final app = (s.appName.isEmpty || s.appName == 'vm') ? '' : s.appName;
+  final caps = s.caps;
+  String? err;
+  var hello = const <String, Object?>{};
+  try {
+    final http = AgentClient(base, timeout: verifyTimeout);
+    hello = await http.hello();
+    await http.state();
+  } catch (e) {
+    err = '$e';
+  }
+  final missing = missingCaps(
+    caps,
+    const <String>[Cap.debug, Cap.hot, Cap.srclocateExact],
+  );
+  final warnings = <String>[
+    '直连会话（release 包没有 VM 调试服务）：${capLabelsText(missing)}不可用',
+    if (!caps.contains(Cap.routeStack))
+      '路由栈详情读不到（Navigator 历史是私有字段），只看时间轴里的路由事件流',
+    if (err != null) '直连服务不可达：$err',
+  ];
+  final judgement = SessionJudgement(
+    verdict: err == null ? SessionVerdict.readyNoReload : SessionVerdict.stale,
+    usable: err == null,
+    warnings: warnings,
+    next: err == null
+        ? const <String>['数据面 / 动作面可直接用；改代码需由拉起方重启 app']
+        : const <String>[
+            '确认 app 已开直连服务（--dart-define 打开 XBUmeAgent）',
+            'xbume_sessions{"refresh":true} 重新扫描',
+          ],
+  );
+  return SessionCheckResult(
+    sessionId: s.id,
+    port: s.port,
+    source: s.source,
+    app: app,
+    judgement: judgement,
+    caps: <String, Object?>{
+      'transport': kTransportAgent,
+      'eval': false,
+      'act': caps.contains(Cap.act),
+      'inspector': caps.contains(Cap.widgets),
+      'screenshot': caps.contains(Cap.shot),
+      'widgetTree': caps.contains(Cap.widgets),
+      'perf': caps.contains(Cap.perf),
+      'reloadChannel': 'none',
+      'agentUrl': base,
+      'agentVersion': hello['version'],
+      'agentCaps': caps.toList()..sort(),
+      'missing': missing,
+    },
+    launcher: const <String, Object?>{},
   );
 }

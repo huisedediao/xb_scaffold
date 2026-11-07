@@ -38,8 +38,7 @@ extension _P3Steps on ScenarioRunner {
       case 'visible':
         final t = (cond['widget'] ?? '').toString().trim();
         if (t.isEmpty) throw 'visible 条件需要 widget（组件类名）';
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _assertVisibleExpr(t));
+        final s = await api.assertVisibleRaw(t);
         return (s == 'FOUND', s == 'FOUND' ? '树中存在可见的 $t' : '树中不存在可见的 $t');
       case 'text':
         final contains = (cond['contains'] ?? '').toString();
@@ -47,8 +46,7 @@ extension _P3Steps on ScenarioRunner {
         if (contains.isEmpty && notContains.isEmpty) {
           throw 'text 条件需要 contains 或 notContains';
         }
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _pageTextExpr());
+        final s = await api.pageTextRaw();
         final texts = s.split('\u0002').where((e) => e.isNotEmpty).toList();
         if (contains.isNotEmpty) {
           final hit = texts.any((e) => e.contains(contains));
@@ -58,10 +56,9 @@ extension _P3Steps on ScenarioRunner {
         return (!bad, bad ? '页面文本仍含「$notContains」' : '页面文本未出现「$notContains」');
       case 'route':
         final name = (cond['name'] ?? '').toString();
-        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-        if (s == 'NO_ROOT' || s == 'NO_NAV') return (false, '无路由栈');
-        final names = s.split(',').where((e) => e.isNotEmpty).toList();
-        final top = names.isEmpty ? '' : names.last;
+        final names = await _routes();
+        if (names.isEmpty) return (false, '无路由栈');
+        final top = names.last;
         final ok = name.isEmpty || top.contains(name);
         return (ok, ok ? '栈顶路由 $top' : '栈顶路由 $top 不匹配 $name');
       case 'request':
@@ -87,8 +84,12 @@ extension _P3Steps on ScenarioRunner {
         final expr = (cond['expr'] ?? '').toString();
         if (expr.isEmpty) throw 'expr 条件需要 expr';
         final expect = (cond['expect'] ?? '').toString();
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', expr);
+        final String s;
+        try {
+          s = await api.evalRaw('package:flutter/src/widgets/binding.dart', expr);
+        } on SessionApiUnsupported catch (e) {
+          throw '$e';
+        }
         final ok = expect.isEmpty || s.contains(expect);
         return (ok, ok ? '表达式结果「$s」' : '表达式结果「$s」不含「$expect」');
       case 'log':
@@ -188,17 +189,15 @@ extension _P3Steps on ScenarioRunner {
     final parts = <String>[];
     if (include.contains('routes')) {
       try {
-        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-        parts.add(
-            'routes=${s.isEmpty || s == 'NO_ROOT' || s == 'NO_NAV' ? 'N/A' : s}');
+        final names = await _routes();
+        parts.add('routes=${names.isEmpty ? 'N/A' : names.join(' > ')}');
       } catch (_) {
         parts.add('routes=N/A');
       }
     }
     if (include.contains('text')) {
       try {
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _pageTextExpr());
+        final s = await api.pageTextRaw();
         final n = s.split('\u0002').where((e) => e.isNotEmpty).length;
         parts.add('text=$n 条');
       } catch (_) {
@@ -217,7 +216,7 @@ extension _P3Steps on ScenarioRunner {
     }
     if (include.contains('shot')) {
       try {
-        final b64 = await vm.screenshotBase64();
+        final b64 = await api.screenshotBase64();
         if (b64.isEmpty) {
           parts.add('shot=N/A');
         } else {
@@ -253,7 +252,7 @@ extension _P3Steps on ScenarioRunner {
       }
       if (attempt == max) break;
       final (x1, y1, x2, y2) = _swipeVector(dir, w, h, amount);
-      final (actual, err) = await swipeSequence(vm,
+      final (actual, err) = await api.swipe(
           x1: x1, y1: y1, x2: x2, y2: y2, durationMs: ms);
       if (err.isNotEmpty) return (actual, '滚动失败：$err', false);
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -384,17 +383,10 @@ extension _P3Steps on ScenarioRunner {
   }
 
   Future<(double, double)> _screenSize() async {
-    final s = await vm.evalStringOn(
-        'package:flutter/src/widgets/binding.dart',
-        '(() { final v = WidgetsBinding.instance.platformDispatcher.views.first; '
-            'final sz = v.physicalSize / v.devicePixelRatio; '
-            "return '\${sz.width},\${sz.height}'; })()");
-    final p = s.split(',');
-    final w = p.isNotEmpty ? double.tryParse(p[0].trim()) : null;
-    final h = p.length > 1 ? double.tryParse(p[1].trim()) : null;
-    if (w == null || h == null || w <= 0 || h <= 0) {
-      throw '无法读取屏幕尺寸（实际「$s」）';
-    }
+    final info = await api.screenInfo();
+    if (info == null) throw '无法读取屏幕尺寸（会话可能已断开）';
+    final (w, h, _) = info;
+    if (w <= 0 || h <= 0) throw '屏幕尺寸异常：$w x $h';
     return (w, h);
   }
 
@@ -418,6 +410,8 @@ extension _P3Steps on ScenarioRunner {
 
   Future<String> _observeTree() async {
     const group = 'xb_scene_observe';
+    final vm = api.vmClient;
+    if (vm == null) return 'tree=N/A';
     try {
       final iso = await vm.isolateId();
       final r = await vm.rawRpc(

@@ -54,11 +54,18 @@ const bool kXBUmeAgentEnvObfuscated = _kAgentObfuscatedRaw == '1' ||
     _kAgentObfuscatedRaw == 'TRUE' ||
     _kAgentObfuscatedRaw == 'True';
 
-/// P1 只读数据面能提供的能力键（与 bin/src/session/capability.dart 的 Cap 同源）。
+/// 直连通道已实现的能力键（与 bin/src/session/capability.dart 的 Cap 同源）。
 ///
-/// 这里只给 `inspect`（读数据）；`fs` / `act` / `widgets` / `shot` / `perf`
-/// 要等对应端点落地后再追加，避免 IDE 侧把没实现的功能点亮。
-const List<String> kXBUmeAgentCaps = <String>['inspect'];
+/// P1：`inspect`（日志/网络/异常/时间轴）；
+/// P2：`widgets`（组件树 / find_widget / ref）、`act`（点击/输入/滑动/跳转）、
+///     `shot`（app 内渲染截图）。
+/// `fs` / `perf` 等端点没落地前不要加进来，否则 IDE 侧会把没实现的功能点亮。
+const List<String> kXBUmeAgentCaps = <String>[
+  'inspect',
+  'widgets',
+  'act',
+  'shot',
+];
 
 /// 直连服务选项。
 class XBUmeAgentOptions {

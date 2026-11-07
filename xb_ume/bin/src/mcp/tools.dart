@@ -16,9 +16,9 @@ import '../device/flutter_run.dart';
 import '../device/registry.dart';
 import '../paths.dart';
 import '../scenario/expressions.dart';
-import '../scenario/gestures.dart';
 import '../scenario/inject.dart';
 import '../scenario/vm_client.dart';
+import '../session/session_api.dart';
 import 'client_scope.dart' show currentMcpClient;
 import 'debug_pool.dart';
 import 'gui_bridge.dart';
@@ -305,12 +305,10 @@ McpToolException busyLeaseError(
 }
 
 /// 路由栈顶名（失败返回 null，不阻断主流程）。
-Future<String?> _topRoute(VmClient vm) async {
+Future<String?> _topRoute(SessionApi? api) async {
+  if (api == null) return null;
   try {
-    final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-    if (s == 'NO_ROOT' || s == 'NO_NAV') return null;
-    final names = s.split(',').where((e) => e.isNotEmpty).toList();
-    return names.isEmpty ? null : names.last;
+    return await api.topRoute();
   } catch (_) {
     return null;
   }
@@ -565,7 +563,7 @@ McpTool _useSessionTool() => McpTool(
           held = a.lease;
           blocked = a.holder;
         }
-        final route = await _topRoute(s.client);
+        final route = await _topRoute(s.hasChannel ? s.api : null);
         final app =
             (s.appName.isEmpty || s.appName == 'vm') ? '' : ' ${s.appName}';
         // 顺手附一行自检（不发重载）：选完就知道能看 / 能点 / 能不能重载。
@@ -892,13 +890,13 @@ McpTool _screenshotTool() => McpTool(
         final s = await resolveSession(ctx, args);
         String b64;
         try {
-          b64 = await s.client.screenshotBase64();
+          b64 = await s.api.screenshotBase64();
         } catch (e) {
-          throw McpToolException('截图失败：$e', hint: '确认会话仍在调试模式运行（图形界面已渲染首帧）');
+          throw McpToolException('截图失败：$e', hint: '确认会话仍在运行且图形界面已渲染首帧');
         }
         if (b64.isEmpty) {
           throw McpToolException('截图返回空数据',
-              hint: 'iOS 需真机 debug 模式；release/AOT 不提供 inspector');
+              hint: 'iOS 需真机 debug 模式；直连通道需 app 渲染首帧后才能截图');
         }
         final bytes = base64Decode(b64);
         final size = pngSize(bytes);
@@ -954,14 +952,11 @@ McpTool _findWidgetTool() => McpTool(
         }
         final value = requireString(args, 'value');
         final limit = (optionalInt(args, 'limit') ?? 20).clamp(1, 200);
-        final raw = await s.client.evalStringOn(
-          kLibBinding,
-          findWidgetExpr(
-            by: by,
-            value: value,
-            exact: optionalBool(args, 'exact'),
-            limit: limit,
-          ),
+        final raw = await s.api.findWidgetRaw(
+          by: by,
+          value: value,
+          exact: optionalBool(args, 'exact'),
+          limit: limit,
         );
         final items = parseFindWidget(raw);
         final sb = StringBuffer();
@@ -1015,25 +1010,23 @@ McpTool _tapTool() => McpTool(
         final waitMs = (optionalInt(args, 'waitMs') ?? 350).clamp(0, 5000);
         final actual = await ctx.sessions.serializeWrite<String>(() async {
           if (ref != null) {
-            return evalInject(s.client, kLibBinding,
-                tapElementExpr(ref, pointer: nextPointerId()));
+            return s.api.tapRef(ref, pointer: nextPointerId());
           }
           if (by != null && value != null) {
-            final raw = await s.client.evalStringOn(
-                kLibBinding, findWidgetExpr(by: by, value: value, limit: 1));
+            final raw = await s.api
+                .findWidgetRaw(by: by, value: value, limit: 1);
             final items = parseFindWidget(raw);
             if (items.isEmpty) return 'NOT_FOUND';
             final idx = items.first['ref'];
             if (idx is! int) return 'NOT_FOUND';
-            return evalInject(s.client, kLibBinding,
-                tapElementExpr(idx, pointer: nextPointerId()));
+            return s.api.tapRef(idx, pointer: nextPointerId());
           }
           if (x != null && y != null) {
-            return evalInject(
-              s.client,
-              kLibBinding,
-              tapExpr(x.toString(), y.toString(),
-                  phys: optionalBool(args, 'phys'), pointer: nextPointerId()),
+            return s.api.tapAt(
+              x,
+              y,
+              phys: optionalBool(args, 'phys'),
+              pointer: nextPointerId(),
             );
           }
           return 'NO_TARGET';
@@ -1055,7 +1048,7 @@ McpTool _tapTool() => McpTool(
         if (waitMs > 0) {
           await Future<void>.delayed(Duration(milliseconds: waitMs));
         }
-        final route = await _topRoute(s.client);
+        final route = await _topRoute(s.api);
         return McpToolResult.text(
           '点击成功${actual.startsWith('OK:') ? ' @${actual.substring(3)}' : ''}'
           '${route == null ? '' : '，当前路由 $route'}',
@@ -1085,7 +1078,7 @@ McpTool _inputTool() => McpTool(
         final s = await resolveDriveSession(ctx, args, 'input');
         final text = (args['text'] ?? '').toString();
         final r = await ctx.sessions.serializeWrite<String>(
-          () => s.client.evalStringOn(kLibTextInput, inputExpr(text)),
+          () => s.api.inputText(text),
         );
         if (r == 'NO_CONN') {
           throw McpToolException('没有活跃的输入连接',
@@ -1136,21 +1129,20 @@ McpTool _swipeTool() => McpTool(
             if (x1 == null || y1 == null || x2 == null || y2 == null) {
               return ('', 'from/to 需要数字 x、y');
             }
-            return swipeSequence(s.client,
+            return s.api.swipe(
                 x1: x1, y1: y1, x2: x2, y2: y2, durationMs: durationMs);
           }
           if (direction == null) {
             return ('', '需要 direction 或 from+to');
           }
           if (ref != null) {
-            final c = await s.client
-                .evalStringOn(kLibBinding, elementCenterExpr(ref));
+            final c = await s.api.elementCenterRaw(ref);
             final p = c.split(',');
             if (p.length < 2) return ('', 'ref=$ref 无法定位：$c');
             final cx = double.tryParse(p[0]);
             final cy = double.tryParse(p[1]);
             if (cx == null || cy == null) return ('', 'ref=$ref 坐标解析失败：$c');
-            final info = await screenInfo(s.client);
+            final info = await s.api.screenInfo();
             if (info == null) return ('', '无法读取屏幕尺寸');
             final (w, h, _) = info;
             final vertical = direction == 'up' || direction == 'down';
@@ -1159,14 +1151,14 @@ McpTool _swipeTool() => McpTool(
                 direction == 'left' ? -len : (direction == 'right' ? len : 0.0);
             final dy =
                 direction == 'up' ? -len : (direction == 'down' ? len : 0.0);
-            return swipeSequence(s.client,
+            return s.api.swipe(
                 x1: cx,
                 y1: cy,
                 x2: cx + dx,
                 y2: cy + dy,
                 durationMs: durationMs);
           }
-          return swipeByDirection(s.client, direction,
+          return swipeByDirectionApi(s.api, direction,
               distance: optionalDouble(args, 'distance'),
               durationMs: durationMs);
         });
@@ -1204,10 +1196,8 @@ McpTool _navigateTool() => McpTool(
         if (!back && name == null) {
           throw McpToolException('需要 routeName 或 back=true');
         }
-        final op = await ctx.sessions.serializeWrite<String>(() => evalInject(
-            s.client,
-            kLibNavigator,
-            routeOpExpr(back ? 'pop' : 'push', name: name ?? '')));
+        final op = await ctx.sessions.serializeWrite<String>(
+            () => s.api.routeOp(back ? 'pop' : 'push', name: name ?? ''));
         final ok = op == 'OK';
         if (!ok) {
           final hint = switch (op) {
@@ -1226,7 +1216,7 @@ McpTool _navigateTool() => McpTool(
           throw McpToolException('导航失败：$op', hint: hint);
         }
         await Future<void>.delayed(const Duration(milliseconds: 400));
-        final stack = await _routeNames(s.client);
+        final stack = await _routeNames(s.api);
         return McpToolResult.text(
           '${back ? '返回' : '跳转 $name'}成功，路由栈：${stack.isEmpty ? 'N/A' : stack.join(' > ')}',
           structured: <String, Object?>{
@@ -1239,11 +1229,9 @@ McpTool _navigateTool() => McpTool(
       },
     );
 
-Future<List<String>> _routeNames(VmClient vm) async {
+Future<List<String>> _routeNames(SessionApi api) async {
   try {
-    final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-    if (s == 'NO_ROOT' || s == 'NO_NAV') return const <String>[];
-    return s.split(',').where((e) => e.isNotEmpty).toList();
+    return await api.routeNames();
   } catch (_) {
     return const <String>[];
   }
@@ -1259,7 +1247,16 @@ McpTool _routeStackTool() => McpTool(
       }),
       handler: (ctx, args) async {
         final s = await resolveSession(ctx, args);
-        final raw = await s.client.evalStringOn(kLibNavigator, routeStackExpr);
+        final String raw;
+        try {
+          raw = await s.api.routeStackRaw();
+        } on SessionApiUnsupported catch (e) {
+          throw McpToolException(
+            e.toString(),
+            hint: '直连通道读不到 NavigatorState 的私有路由历史；'
+                '改用 xbume_timeline(kinds: ["route"]) 看路由事件流',
+          );
+        }
         if (raw == 'NO_ROOT') throw McpToolException('app 尚未渲染首帧');
         if (raw == 'NO_NAV') throw McpToolException('界面没有 Navigator（可能是自定义路由）');
         final items = <Map<String, Object?>>[];
@@ -1306,8 +1303,7 @@ McpTool _networkTool() => McpTool(
                 .subtract(Duration(milliseconds: within.clamp(0, 86400000)))
                 .millisecondsSinceEpoch;
         final limit = (optionalInt(args, 'limit') ?? 30).clamp(1, 300);
-        final raw = await s.client.evalStringOn(
-            kLibXbUme, networkExpr(sinceMs: sinceMs, limit: limit * 3));
+        final raw = await s.api.networkRaw(sinceMs: sinceMs, limit: limit * 3);
         final urlFilter = optionalString(args, 'urlContains');
         final method = optionalString(args, 'method')?.toUpperCase();
         final minStatus = optionalInt(args, 'minStatus');
@@ -1383,15 +1379,12 @@ McpTool _networkDetailTool() => McpTool(
         final maxChars =
             (optionalInt(args, 'maxChars') ?? 2000).clamp(200, 20000);
         final limit = (optionalInt(args, 'limit') ?? 1).clamp(1, 5);
-        final raw = await s.client.evalStringOn(
-          kLibXbUme,
-          networkDetailExpr(
-            id: id,
-            urlContains: url,
-            method: optionalString(args, 'method'),
-            maxChars: maxChars,
-            limit: limit,
-          ),
+        final raw = await s.api.networkDetailRaw(
+          id: id,
+          urlContains: url,
+          method: optionalString(args, 'method'),
+          maxChars: maxChars,
+          limit: limit,
         );
         if (raw == 'NOT_FOUND') {
           throw McpToolException('没有匹配的网络记录（id=$id urlContains=$url）',
@@ -1486,18 +1479,15 @@ McpTool _consoleTool() => McpTool(
       handler: (ctx, args) async {
         final s = await resolveSession(ctx, args);
         final limit = (optionalInt(args, 'limit') ?? 50).clamp(1, 500);
-        final raw = await s.client.evalStringOn(
-          kLibXbUme,
-          consoleExpr(
-            level: optionalString(args, 'level'),
-            keyword: optionalString(args, 'keyword'),
-            sinceMs: optionalInt(args, 'sinceMs'),
-            limit: limit,
-            offset: (optionalInt(args, 'offset') ?? 0).clamp(0, 100000),
-            tail: optionalBool(args, 'tail', fallback: true),
-            maxChars: (optionalInt(args, 'maxChars') ?? 500).clamp(50, 4000),
-            withPath: true,
-          ),
+        final raw = await s.api.consoleRaw(
+          level: optionalString(args, 'level'),
+          keyword: optionalString(args, 'keyword'),
+          sinceMs: optionalInt(args, 'sinceMs'),
+          limit: limit,
+          offset: (optionalInt(args, 'offset') ?? 0).clamp(0, 100000),
+          tail: optionalBool(args, 'tail', fallback: true),
+          maxChars: (optionalInt(args, 'maxChars') ?? 500).clamp(50, 4000),
+          withPath: true,
         );
         final items = <Map<String, Object?>>[];
         String? logFilePath;
@@ -1565,15 +1555,12 @@ McpTool _exceptionsTool() => McpTool(
         final limit = (optionalInt(args, 'limit') ?? 20).clamp(1, 100);
         String raw;
         try {
-          raw = await s.client.evalStringOn(
-            kLibXbUme,
-            exceptionsExpr(
-              kind: optionalString(args, 'kind'),
-              typeContains: optionalString(args, 'typeContains'),
-              keyword: optionalString(args, 'keyword'),
-              sinceMs: optionalInt(args, 'sinceMs'),
-              limit: limit,
-            ),
+          raw = await s.api.exceptionsRaw(
+            kind: optionalString(args, 'kind'),
+            typeContains: optionalString(args, 'typeContains'),
+            keyword: optionalString(args, 'keyword'),
+            sinceMs: optionalInt(args, 'sinceMs'),
+            limit: limit,
           );
         } catch (e) {
           final m = e.toString();
@@ -1713,9 +1700,9 @@ McpTool _timelineTool() => McpTool(
             kinds.add(v);
           }
         }
-        final raw = await s.client.evalStringOn(
-          kLibXbUme,
-          timelineExpr(sinceMs: optionalInt(args, 'sinceMs'), limit: limit),
+        final raw = await s.api.timelineRaw(
+          sinceMs: optionalInt(args, 'sinceMs'),
+          limit: limit,
         );
         final events = <Map<String, Object?>>[];
         for (final row in raw.split('\u0003')) {

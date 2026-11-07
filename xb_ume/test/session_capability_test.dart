@@ -44,6 +44,7 @@ void main() {
         Cap.hot,
         Cap.srclocateExact,
         Cap.names,
+        Cap.routeStack,
       ]));
       expect(caps, isNot(contains(Cap.srclocateHeuristic)));
     });
@@ -60,7 +61,14 @@ void main() {
         Cap.srclocateHeuristic,
         Cap.names,
       ]));
-      for (final gone in <String>[Cap.debug, Cap.hot, Cap.gc, Cap.srclocateExact]) {
+      for (final gone in <String>[
+        Cap.debug,
+        Cap.hot,
+        Cap.gc,
+        Cap.srclocateExact,
+        // 路由栈详情要读 NavigatorState 私有历史，直连只有事件流。
+        Cap.routeStack,
+      ]) {
         expect(caps, isNot(contains(gone)), reason: '$gone 不应出现在直连会话');
       }
     });
@@ -176,6 +184,14 @@ void main() {
         expect(kToolNeeds[t], contains(Cap.debug), reason: '$t 需要 debug');
       }
       expect(kToolNeeds['xbume_hot_reload'], contains(Cap.hot));
+    });
+
+    test('路由栈详情单独登记 route:stack（不混进 widgets）', () {
+      expect(kToolNeeds['xbume_route_stack'], contains(Cap.routeStack));
+      final agentCaps = sessionCaps(transport: SessionTransport.agent);
+      expect(missingCaps(agentCaps, kToolNeeds['xbume_route_stack']!),
+          <String>[Cap.routeStack]);
+      expect(kCapLabels[Cap.routeStack], isNotEmpty);
     });
 
     test('数据面/动作面工具不得要求 debug（否则 release 会误报）', () {

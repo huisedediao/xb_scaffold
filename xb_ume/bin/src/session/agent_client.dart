@@ -79,6 +79,7 @@ class AgentClient {
   Future<Map<String, Object?>> postJson(
     String path, {
     Map<String, String>? query,
+    Map<String, Object?>? jsonBody,
   }) async {
     final uri = Uri.parse('$baseUrl$path').replace(
       queryParameters: <String, String>{
@@ -92,7 +93,15 @@ class AgentClient {
       final request = await client.postUrl(uri).timeout(timeout);
       request.headers.set('x-xbume-client', 'xbume-ide');
       if (token.isNotEmpty) request.headers.set('x-xbume-token', token);
-      request.headers.contentLength = 0;
+      if (jsonBody == null || jsonBody.isEmpty) {
+        request.headers.contentLength = 0;
+      } else {
+        // 动作参数走 JSON body：输入文本/url 参数里有换行、引号也不会拆坏 query。
+        final raw = utf8.encode(jsonEncode(jsonBody));
+        request.headers.contentType = ContentType.json;
+        request.headers.contentLength = raw.length;
+        request.add(raw);
+      }
       final response = await request.close().timeout(timeout);
       final body =
           await response.transform(utf8.decoder).join().timeout(timeout);

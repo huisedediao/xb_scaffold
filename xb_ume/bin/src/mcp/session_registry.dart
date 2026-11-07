@@ -12,9 +12,12 @@ import 'dart:async';
 import 'dart:io';
 
 import '../scenario/vm_client.dart';
+import '../session/agent_client.dart';
 import '../session/agent_forward.dart';
+import '../session/agent_session_api.dart';
 import '../session/capability.dart';
 import '../session/discovery.dart';
+import '../session/session_api.dart';
 import 'client_scope.dart';
 
 /// 一个可操作的调试会话。
@@ -93,6 +96,9 @@ class McpSession {
 
   VmClient? _client;
 
+  /// 传输层语义接口（工具/场景只认它，不判断 transport）。
+  SessionApi? _api;
+
   VmClient get client {
     if (!hasVm) {
       throw StateError(
@@ -101,15 +107,36 @@ class McpSession {
     return _client ??= VmClient(wsUrl);
   }
 
+  /// 当前应使用的通道：VM 优先（`vmDegraded` 时退到直连）。
+  SessionApi get api {
+    if (hasVm && !vmDegraded) {
+      final cached = _api;
+      if (cached != null && !cached.isAgent) return cached;
+      return _api = VmSessionApi(client, uri: wsUrl);
+    }
+    final base = agentBaseUrl;
+    if (base != null && base.isNotEmpty) {
+      final cached = _api;
+      if (cached != null && cached.isAgent && cached.uri == base) return cached;
+      return _api = AgentSessionApi(AgentClient(base), uri: base);
+    }
+    throw StateError('会话 $id 当前没有可用通道（VM 未连接且无直连 Agent）');
+  }
+
+  /// 是否有任一可用通道。
+  bool get hasChannel => (hasVm && !vmDegraded) || (agentBaseUrl ?? '').isNotEmpty;
+
   bool get connected => _client != null;
 
   /// 扫描到新一轮配对结果时更新通道信息（不断开已建的 VM 连接）。
   void applyLogical(LogicalSession l) {
+    final oldBase = agentBaseUrl;
     transport = l.transport;
     agentBaseUrl = l.agent?.baseUrl;
     agentPort = l.agent?.port;
     agentCaps = l.agent?.caps.toSet();
     obfuscated = l.obfuscated;
+    if (oldBase != agentBaseUrl) _api = null;
     if (l.vm != null) vmDegraded = false;
   }
 
@@ -150,6 +177,16 @@ class McpSession {
       };
 
   Future<void> close() async {
+    final api = _api;
+    _api = null;
+    // 直连通道持有 HttpClient：不能只断 VM，否则重扫后旧连接泄漏。
+    if (api != null && api.isAgent) {
+      try {
+        await api.close();
+      } catch (_) {
+        // 关闭失败按已断开处理。
+      }
+    }
     final c = _client;
     _client = null;
     if (c != null) {

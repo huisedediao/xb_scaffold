@@ -13,9 +13,7 @@ import 'dart:io';
 
 import '../device/bridge.dart';
 import '../device/registry.dart';
-import 'expressions.dart';
-import 'gestures.dart';
-import 'inject.dart';
+import '../session/session_api.dart';
 import 'vm_client.dart';
 
 part 'steps.dart';
@@ -69,63 +67,37 @@ class ScenarioRunReport {
   Duration get duration => endedAt.difference(startedAt);
 }
 
-String _escEvalString(String s) => s
-    .replaceAll(r'\', r'\\')
-    .replaceAll(r'$', r'\$')
-    .replaceAll("'", r"\'")
-    .replaceAll('\n', r'\n')
-    .replaceAll('\r', r'\r')
-    .replaceAll('\t', r'\t');
-
 /// 每次注入唯一 pointer id：PointerDownEvent 默认 pointer=0，down 派发中业务
 /// 异常导致 up 未发时，_hitTests 残留会让后续 tap 撞断言永久卡死。
 int _nextPointer() => DateTime.now().microsecondsSinceEpoch & 0x3fffffff;
 
-/// input：直接调当前焦点 client 的 updateEditingValue（需先 tap 输入框）。
-String _inputExpr(String text) =>
-    '(() { final c = TextInput._instance._currentConnection; '
-    "if (c == null) return 'NO_CONN'; "
-    "final s = '${_escEvalString(text)}'; "
-    '(c._client as dynamic).updateEditingValue(TextEditingValue('
-    'text: s, selection: TextSelection.collapsed(offset: s.length))); '
-    "return 'OK'; })()";
-
-/// assertVisible：树中存在类型匹配（支持泛型前缀）且有尺寸的 RenderBox。
-String _assertVisibleExpr(String type) {
-  final t = _escEvalString(type);
-  return '(() { final root = WidgetsBinding.instance.renderViewElement; '
-      "if (root == null) return 'NO_ROOT'; "
-      'final se = <Element>[root!]; '
-      'while (se.isNotEmpty) { final e = se.removeLast(); '
-      "final t = e.widget.runtimeType.toString(); var ok = t == '$t'; "
-      "if (!ok) { final g = t.indexOf('<'); if (g > 0 && t.substring(0, g) == '$t') ok = true; } "
-      'if (ok) { final r = e.renderObject; if (r is RenderBox && r.attached '
-      "&& r.hasSize && r.size.width > 0 && r.size.height > 0) return 'FOUND'; } "
-      'final kids = <Element>[]; e.visitChildren(kids.add); '
-      'for (var i = kids.length - 1; i >= 0; i--) se.add(kids[i]); } '
-      "return 'NOT_FOUND'; })()";
-}
-
-/// 路由栈快照（navigator.dart 上下文）：路由名逗号拼接。
-/// 当前可见页面文本（跳过 offstage 保活子树），以 \u0002 分隔。
-String _pageTextExpr({int limit = 200}) =>
-    '(() { final root = WidgetsBinding.instance.renderViewElement; '
-    "if (root == null) return ''; "
-    'final out = <String>[]; final seen = <String>{}; '
-    'void add(String? t) { if (t == null) return; final s = t.trim(); '
-    'if (s.isEmpty) return; if (seen.add(s)) out.add(s); } '
-    'void visit(Element e) { if (out.length >= $limit) return; '
-    'final tn = e.widget.runtimeType.toString(); '
-    "if (tn == 'Offstage') { try { if ((e.widget as dynamic).offstage == true) return; } catch (_) {} } "
-    "try { if (tn == 'Text') { add((e.widget as dynamic).data as String?); } "
-    "else if (tn == 'EditableText') { add((e.widget as dynamic).controller.text as String?); } "
-    '} catch (_) {} '
-    'e.visitChildren(visit); } visit(root); '
-    'return out.join(String.fromCharCode(2)); })()';
-
 class ScenarioRunner {
+  /// 兼容旧调用：VM 会话包成 [SessionApi]（表达式仍由 VM 执行）。
   ScenarioRunner(
-    this.vm, {
+    VmClient vm, {
+    bool continueOnFail = false,
+    bool shotEveryStep = false,
+    int waitAfterMs = 700,
+    String? shotsDir,
+    String shotPrefix = 'run',
+    void Function(ScenarioStepResult r)? onStep,
+    bool Function()? shouldStop,
+    DeviceRegistry? devices,
+  }) : this.fromApi(
+          VmSessionApi(vm),
+          continueOnFail: continueOnFail,
+          shotEveryStep: shotEveryStep,
+          waitAfterMs: waitAfterMs,
+          shotsDir: shotsDir,
+          shotPrefix: shotPrefix,
+          onStep: onStep,
+          shouldStop: shouldStop,
+          devices: devices,
+        );
+
+  /// 任意通道（VM / 直连）：步骤只调 [SessionApi] 的语义方法。
+  ScenarioRunner.fromApi(
+    this.api, {
     this.continueOnFail = false,
     this.shotEveryStep = false,
     this.waitAfterMs = 700,
@@ -136,7 +108,7 @@ class ScenarioRunner {
     DeviceRegistry? devices,
   }) : _devices = devices;
 
-  final VmClient vm;
+  final SessionApi api;
   final bool continueOnFail;
   final bool shotEveryStep;
   final int waitAfterMs;
@@ -222,7 +194,7 @@ class ScenarioRunner {
     }
     return ScenarioRunReport(
       name: name,
-      uri: vm.uri,
+      uri: api.uri,
       startedAt: started,
       endedAt: DateTime.now(),
       results: results,
@@ -232,7 +204,7 @@ class ScenarioRunner {
 
   Future<String?> _shot(int i) async {
     try {
-      final b64 = await vm.screenshotBase64();
+      final b64 = await api.screenshotBase64();
       if (b64.isEmpty) return null;
       if (shotsDir != null && shotsDir!.isNotEmpty) {
         try {
@@ -256,19 +228,20 @@ class ScenarioRunner {
         final x = (st['x'] as num?)?.toDouble();
         final y = (st['y'] as num?)?.toDouble();
         if (x == null || y == null) return ('', 'tap 需要 x/y 数值坐标', false);
-        final s = await evalInject(
-            vm,
-            kLibBinding,
-            tapExpr(x.toString(), y.toString(),
-                phys: (st['phys'] ?? false) == true, pointer: _nextPointer()));
+        final s = await api.tapAt(
+          x,
+          y,
+          phys: (st['phys'] ?? false) == true,
+          pointer: _nextPointer(),
+        );
         return (
           s,
-          s == 'OK'
+          s == 'OK' || s.startsWith('OK:')
               ? ''
               : (s.startsWith('ERR:')
                   ? 'tap 派发异常: ${s.substring(4)}'
                   : s == 'BUSY'
-                      ? busyHint
+                      ? '注入总线忙碌（动画/build 中），稍后重试'
                       : 'tap 注入异常: $s'),
           false
         );
@@ -276,8 +249,7 @@ class ScenarioRunner {
         return await _swipe(st);
       case 'input':
         final text = (st['text'] ?? '').toString();
-        final s = await vm.evalStringOn(
-            'package:flutter/src/services/text_input.dart', _inputExpr(text));
+        final s = await api.inputText(text);
         return (
           s,
           s == 'OK'
@@ -292,9 +264,8 @@ class ScenarioRunner {
         await Future.delayed(Duration(milliseconds: ms.clamp(0, 60000)));
         return ('waited $ms ms', '', false);
       case 'back':
-        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-        if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈', false);
-        final names = s.split(',').where((e) => e.isNotEmpty).toList();
+        final names = await _routes();
+        if (names.isEmpty) return ('NO_ROUTES', '无路由栈', false);
         if (names.length <= 1) {
           return ('${names.length} route', '已是最后一个路由，无法返回', false);
         }
@@ -308,8 +279,7 @@ class ScenarioRunner {
       case 'assertVisible':
         final t = (st['widget'] ?? '').toString().trim();
         if (t.isEmpty) return ('', 'assertVisible 需要 widget（页面/组件类名）', false);
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _assertVisibleExpr(t));
+        final s = await api.assertVisibleRaw(t);
         return (
           s,
           s == 'FOUND'
@@ -321,10 +291,9 @@ class ScenarioRunner {
         );
       case 'assertRoute':
         final name = (st['name'] ?? '').toString();
-        final s = await vm.evalStringOn(kLibNavigator, routesExpr);
-        if (s == 'NO_ROOT' || s == 'NO_NAV') return (s, '无路由栈', false);
-        final names = s.split(',').where((e) => e.isNotEmpty).toList();
-        final top = names.isEmpty ? '' : names.last;
+        final names = await _routes();
+        if (names.isEmpty) return ('NO_ROUTES', '无路由栈', false);
+        final top = names.last;
         return (
           top,
           name.isEmpty || top.contains(name) ? '' : '栈顶路由 $top 不匹配 $name',
@@ -334,12 +303,18 @@ class ScenarioRunner {
         final cls = (st['class'] ?? '').toString().trim();
         if (cls.isEmpty) return ('', 'assertInstance 需要 class', false);
         final n = await _instanceCount(cls);
+        if (n < 0) return ('', 'assertInstance 需要 VM 通道（直连读不到堆实例）', false);
         return ('$n 个', n > 0 ? '' : '堆/树上不存在 $cls 实例', false);
       case 'eval':
         final expr = (st['expr'] ?? '').toString();
         if (expr.isEmpty) return ('', 'eval 需要 expr', false);
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', expr);
+        final String s;
+        try {
+          s = await api.evalRaw(
+              'package:flutter/src/widgets/binding.dart', expr);
+        } on SessionApiUnsupported catch (e) {
+          return ('', '$e', false);
+        }
         final expect = (st['expect'] ?? '').toString();
         return (
           s,
@@ -352,8 +327,7 @@ class ScenarioRunner {
         if (contains.isEmpty && notContains.isEmpty) {
           return ('', 'assertText 需要 contains 或 notContains', false);
         }
-        final s = await vm.evalStringOn(
-            'package:flutter/src/widgets/binding.dart', _pageTextExpr());
+        final s = await api.pageTextRaw();
         final texts = s.split('\u0002').where((e) => e.isNotEmpty).toList();
         if (contains.isNotEmpty) {
           final hit = texts.where((e) => e.contains(contains)).toList();
@@ -419,8 +393,7 @@ class ScenarioRunner {
       return ('', 'swipe 需要 x1/y1/x2/y2', false);
     }
     // 与 MCP 共用一份实现：相位守卫 / 指针 id / timeStamp 细节只维护一处。
-    final (actual, err) = await swipeSequence(
-      vm,
+    final (actual, err) = await api.swipe(
       x1: x1,
       y1: y1,
       x2: x2,
@@ -431,12 +404,23 @@ class ScenarioRunner {
     return (actual, err, false);
   }
 
-  /// 路由操作（pop / pushNamed），与 GUI /api/routeop 同一套 eval。
+  /// 路由操作（pop / pushNamed），与 GUI /api/routeop 同一语义。
   Future<String> _routeOp(String op, {String name = ''}) =>
-      evalInject(vm, kLibNavigator, routeOpExpr(op, name: name));
+      api.routeOp(op, name: name);
 
-  /// 堆/树上实例计数（getClassList + getInstances）。
+  /// 路由名（失败/不支持时返回空列表，不阻断步骤）。
+  Future<List<String>> _routes() async {
+    try {
+      return await api.routeNames();
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  /// 堆/树上实例计数（getClassList + getInstances，仅 VM 通道）；不支持返回 -1。
   Future<int> _instanceCount(String cls) async {
+    final vm = api.vmClient;
+    if (vm == null) return -1;
     final iso = await vm.isolateId();
     final classList = await vm.rawRpc('getClassList', {'isolateId': iso});
     var count = 0;
@@ -456,31 +440,10 @@ class ScenarioRunner {
     return count;
   }
 
-  /// app 端 ume 的 network 记录（与 GUI /api/network 同源）。
+  /// app 端 ume 的 network 记录（与 GUI /api/network 同源；直连走 `/v1/network`）。
   Future<List<Map<String, String>>> _netRecords(
       {DateTime? since, int limit = 100}) async {
-    final cutoffExpr = since == null
-        ? ''
-        : "final c = DateTime.parse('${since.toIso8601String()}'); ";
-    final filterExpr = since == null ? '' : '.where((e) => e.time.isAfter(c)) ';
-    final raw = await vm.evalStringOn(
-      'package:xb_ume/src/core/xb_ume.dart',
-      '(() { final n = XBUme.controller.network; $cutoffExpr'
-          "return n$filterExpr.map((e) => [e.method, e.url, "
-          "(e.statusCode ?? '').toString(), e.status.name].join('\\u0001')).join('\\u0002'); })()",
-    );
-    final items = <Map<String, String>>[];
-    for (final line in raw.split('\u0002')) {
-      if (line.isEmpty) continue;
-      final p = line.split('\u0001');
-      if (p.length < 4) continue;
-      items.add(<String, String>{
-        'method': p[0],
-        'url': p[1],
-        'statusCode': p[2],
-        'status': p[3],
-      });
-    }
+    final items = await api.networkRecords(since: since, limit: limit);
     return items.length > limit ? items.sublist(items.length - limit) : items;
   }
 

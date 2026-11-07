@@ -360,6 +360,18 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
 连的是「GUI 当前选中的会话」，传 `sessionId` / `uri` 可覆盖。
 
+会话既可以是 VM（debug / profile），也可以是 app 内直连（release，`uri` 形如 `http://127.0.0.1:4711x`）。
+工具层不区分通道，按会话的真实能力决定能不能做：
+
+| 直连会话能做的 | 说明 |
+| --- | --- |
+| 日志 / 网络 / 异常 / 时间轴 / 会话自检 | `inspect`，与 VM 会话返回同形 |
+| 截图 / Widget 树 / 找组件 | `shot` + `widgets`；Element 遍历顺序与 VM 侧一致，`ref` 可直接喂 `xbume_tap` |
+| 点击 / 输入 / 滑动 / 跳页面 | `act`；路由回包靠 `/v1/routes` 事件重放算当前路由名 |
+| 场景（`xbume_scenario_run`） | 步骤全走语义层，直连下也能跑；真正需要 VM 的步骤会明确报「需要 VM 通道」 |
+
+直连下会提前报能力缺口的：`xbume_route_stack`（`route:stack`，栈详情要读 `NavigatorState` 私有历史）、`xbume_eval` / 断点 / 单步 / 调用栈（`debug`）、热重载（`hot`）、GC / 泄漏、沙盒 / 存储（`fs`）。能力闸门在 `_callTool` 统一执行，报错里直接说缺什么、可以改用什么。
+
 ### core（22 个）
 
 | 工具 | 主要参数 | 返回 |
@@ -369,14 +381,14 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 | `xbume_clients` | — | 本机 MCP 实例与会话占用总览：每个实例的名字 / 端口 / pid / 是否带 `eval` / 工具数，每份租约「谁占着哪个会话、在干什么、还剩多久」，以及本实例当前会话，末尾附服务池 5 个槽的绑定情况。多 AI 并行干活前先看它 |
 | `xbume_pool` | `op`(status/release/steal), `slot?` | 服务池：一条连接（一个窗口）绑一个 MCP 实例，绑定标识 `b-xxxxxx`，10 分钟不调用自动回收（连同实例一起停掉，重绑会拉起全新实例）。`status` 看 5 个槽各绑给谁 / 在干什么 / 还剩多久；`release` 用完立即释放并停实例；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。池满时调别的工具会直接回「需要排队」 |
 | `xbume_lease` | `op`(status/acquire/release/steal), `sessionId?`, `ttlMs?`, `waitMs?`, `note?` | 写操作的**会话租约**：`status` 看谁在驱动、`acquire` 申请（`waitMs` 可等对方释放，上限 30s）、`release` 用完立即让出来、`steal` 确认对方已停手后强制接管。默认 10 分钟 TTL，每次写操作续期；持有者进程退出即失效 |
-| `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs` |
+| `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs`。直连会话走另一套判据（探 `/v1/hello` + `/v1/state`，可用即 `ready_no_reload`，`caps` 里带 `transport=agent` / `agentUrl` / `agentCaps`） |
 | `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |
 | `xbume_find_widget` | `by`(type/key/text/semantics), `value`, `exact?`, `limit?` | `ref` / 类型 / Key / 文本 / 逻辑像素 bounds / 源码位置 |
 | `xbume_tap` | `ref?` 或 `by`+`value` 或 `x`+`y`；`phys?`, `waitMs?` | 是否命中 + 操作后路由名 |
 | `xbume_input` | `text` | 整体替换当前焦点输入框内容（需先 tap 输入框建立连接） |
 | `xbume_swipe` | `from`+`to` 或 `direction`(+`distance`,`ref`), `durationMs?` | 注入带时间戳的 8 段移动事件 |
 | `xbume_navigate` | `routeName?`, `back?` | pushNamed / pop，返回最新路由栈 |
-| `xbume_route_stack` | — | 从底到顶：路由名 / Route 类型 / 参数类型 / isPresent |
+| `xbume_route_stack` | — | 从底到顶：路由名 / Route 类型 / 参数类型 / isPresent。需 `route:stack` 能力（直连会话没有，改用 `xbume_timeline{kinds:["route"]}` 看事件流） |
 | `xbume_network` | `urlContains?`, `method?`, `minStatus?`, `withinLastMs?`, `limit?` | app 内 xb_ume 拦截记录（需 app 接入 Network 模块） |
 | `xbume_network_detail` | `id?` 或 `urlContains`(+`method?`), `maxChars?`, `limit?` | 完整请求/响应头、body、发起点调用栈（敏感头已 `***` 脱敏）；答「这个 500 返回了什么」 |
 | `xbume_console` | `level?`, `keyword?`, `sinceMs?`, `limit?`, `offset?`, `tail?`, `maxChars?` | app 内 xb_ume 日志；默认取**最新** `limit` 条（`tail: true`），`tail: false` 时从 `offset` 往后取；返回 `nextSinceMs` 当游标，下一轮传 `sinceMs` 只拿新增 |

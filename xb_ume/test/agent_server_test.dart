@@ -36,6 +36,7 @@ void main() {
     String method = 'GET',
     String? token,
     Map<String, String>? query,
+    Map<String, Object?>? body,
   }) async {
     final client = HttpClient();
     try {
@@ -43,10 +44,17 @@ void main() {
           Uri.parse('${server.baseUrl}$path').replace(queryParameters: query);
       final req = await client.openUrl(method, uri);
       if (token != null) req.headers.set('x-xbume-token', token);
-      if (method == 'POST') req.headers.contentLength = 0;
+      if (body != null) {
+        final payload = utf8.encode(jsonEncode(body));
+        req.headers.contentType = ContentType.json;
+        req.headers.contentLength = payload.length;
+        req.add(payload);
+      } else if (method == 'POST') {
+        req.headers.contentLength = 0;
+      }
       final res = await req.close();
-      final body = await res.transform(utf8.decoder).join();
-      final parsed = body.isEmpty ? <String, Object?>{} : jsonDecode(body);
+      final text = await res.transform(utf8.decoder).join();
+      final parsed = text.isEmpty ? <String, Object?>{} : jsonDecode(text);
       return <String, Object?>{
         'status': res.statusCode,
         'body': parsed is Map ? parsed : <String, Object?>{'raw': parsed},
@@ -290,8 +298,41 @@ void main() {
 
     test('未知端点 404；没有 eval / 执行类端点', () async {
       expect((await call('/v1/eval'))['status'], 404);
-      expect((await call('/v1/tap'))['status'], 404);
+      expect((await call('/v1/exec'))['status'], 404);
       expect((await call('/v1/state', method: 'DELETE'))['status'], 405);
+    });
+
+    test('动作端点只收 POST（GET 405），不做任意求值', () async {
+      for (final p in <String>[
+        '/v1/tap',
+        '/v1/input',
+        '/v1/swipe',
+        '/v1/navigate',
+      ]) {
+        final r = await call(p);
+        expect(r['status'], 405, reason: '$p 应只支持 POST');
+        expect('${(r['body'] as Map)['error']}', contains('POST'));
+      }
+    });
+
+    test('动作端点缺参 400，且不需要求值/文件写入', () async {
+      expect((await call('/v1/tap', method: 'POST'))['status'], 400);
+      expect((await call('/v1/input', method: 'POST'))['status'], 400);
+      expect((await call('/v1/swipe', method: 'POST'))['status'], 400);
+      expect(
+        (await call('/v1/navigate', method: 'POST', body: {'op': 'push'}))['status'],
+        400,
+      );
+      expect((await call('/v1/widgets'))['status'], 400);
+      expect((await call('/v1/center'))['status'], 400);
+      expect((await call('/v1/assert'))['status'], 400);
+    });
+
+    test('无渲染树时返回结构化失败，不是 500', () async {
+      // 本测试不初始化 widget binding：只验证「没首帧就不抛」的兜底分支。
+      final wtree = await call('/v1/wtree');
+      expect(wtree['status'], 200);
+      expect((wtree['body'] as Map)['ok'], isFalse);
     });
 
     test('clear 只清指定缓冲，别的照旧', () async {

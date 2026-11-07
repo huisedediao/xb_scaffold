@@ -188,9 +188,10 @@ class ScenarioService {
 
   Future<void> _execute(
       ScenarioRun run, List<Map<String, dynamic>> steps) async {
-    final vm = sessions.requireCurrent(run.sessionId).client;
-    final runner = ScenarioRunner(
-      vm,
+    // 直连会话也能跑场景：步骤只调 SessionApi 的语义方法。
+    final session = sessions.requireCurrent(run.sessionId);
+    final runner = ScenarioRunner.fromApi(
+      session.api,
       continueOnFail: run.continueOnFail,
       shotEveryStep: run.shotEveryStep,
       devices: devices,

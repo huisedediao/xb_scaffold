@@ -23,6 +23,10 @@ abstract final class Cap {
   /// 组件树 / find_widget / ref。
   static const String widgets = 'widgets';
 
+  /// 路由栈详情（含 routeType / isPresent）：需要读 NavigatorState 私有历史，
+  /// 所以只有 VM eval 能拿到；直连只能看时间轴里的路由事件流。
+  static const String routeStack = 'route:stack';
+
   /// 截图。
   static const String shot = 'shot';
 
@@ -86,6 +90,7 @@ const Set<String> kVmCaps = <String>{
   Cap.fs,
   Cap.act,
   Cap.widgets,
+  Cap.routeStack,
   Cap.shot,
   Cap.perf,
   Cap.gc,
@@ -149,6 +154,7 @@ const Map<String, String> kCapLabels = <String, String>{
   Cap.fs: '沙盒 / 存储 / 数据库',
   Cap.act: '点击 / 输入 / 滑动',
   Cap.widgets: '组件树',
+  Cap.routeStack: '路由栈详情',
   Cap.shot: '截图',
   Cap.perf: '性能采样',
   Cap.gc: '触发 GC / UI 重建',
@@ -215,6 +221,7 @@ const Map<String, List<String>> kToolNeeds = <String, List<String>>{
   'xbume_perf': <String>[Cap.perf],
   'xbume_screenshot': <String>[Cap.shot],
   'xbume_widget_tree': <String>[Cap.widgets],
+  'xbume_route_stack': <String>[Cap.routeStack],
   'xbume_find_widget': <String>[Cap.widgets],
   'xbume_tap': <String>[Cap.act],
   'xbume_input': <String>[Cap.act],

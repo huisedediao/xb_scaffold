@@ -230,7 +230,7 @@ void main() {
 
     test('scrollUntil 首次检查命中就不滚动', () async {
       final vm = _FakeVm()
-        ..replies.addAll(<String>['400,800']) // 屏幕尺寸
+        ..replies.addAll(<String>['2\u0001400\u0001800']) // dpr、逻辑宽、逻辑高
         ..evalReply = 'FOUND'; // visible 条件
       final report = await _runner(vm).run('t', [
         {
@@ -246,7 +246,8 @@ void main() {
 
     test('scrollUntil 滚动一次后命中', () async {
       final vm = _FakeVm()
-        ..replies.addAll(<String>['400,800', 'NOT_FOUND', 'FOUND']);
+        ..replies.addAll(
+            <String>['2\u0001400\u0001800', 'NOT_FOUND', 'FOUND']);
       final report = await _runner(vm).run('t', [
         {
           'type': 'scrollUntil',
@@ -262,7 +263,7 @@ void main() {
 
     test('scrollUntil 用尽次数失败', () async {
       final vm = _FakeVm()
-        ..replies.addAll(<String>['400,800', 'NOT_FOUND', 'NOT_FOUND'])
+        ..replies.addAll(<String>['2\u0001400\u0001800', 'NOT_FOUND', 'NOT_FOUND'])
         ..evalReply = 'NOT_FOUND';
       final report = await _runner(vm).run('t', [
         {

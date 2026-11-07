@@ -1,6 +1,6 @@
 // 直连 Agent 服务的 dart:io 实现（Android / iOS / 桌面 / 命令行）。
 //
-// 只读数据面，端点与返回形状刻意与 GUI 现有 `/api/*` 保持一致：
+// 数据面（P1）与动作面（P2），端点与返回形状刻意与 GUI 现有 `/api/*` 保持一致：
 //   GET  /v1/hello            服务标识 + 包名/版本/能力（发现用，不校验 token）
 //   GET  /v1/state            各缓冲区条数、落盘路径、运行时长
 //   GET  /v1/logs             应用日志（level / tag / keyword / sinceMs 过滤）
@@ -9,11 +9,24 @@
 //   GET  /v1/network/detail   单条请求全字段（与 /api/network/detail 同形）
 //   GET  /v1/routes           路由事件
 //   GET  /v1/frames           帧耗时
-//   GET  /v1/timeline         路由+网络合并事件（已是 GUI 时间轴条目形状）
+//   GET  /v1/timeline         路由+网络+日志+异常合并事件（GUI 时间轴条目形状）
 //   POST /v1/clear?what=...   清空某个缓冲区（logs/exceptions/network/routes/frames）
 //
-// 安全：默认只绑 127.0.0.1，且只接受回环来源；token 非空时数据端点必须带
-// `x-xbume-token`。没有任何执行/eval/文件写入端点——release 包也不该有。
+//   GET  /v1/screen           屏幕 dpr / 逻辑尺寸 / 物理尺寸
+//   GET  /v1/widgets          按类型/Key/文本/语义查组件（ref 可直接喂 tap）
+//   GET  /v1/wtree            整棵 Element 树快照（GUI Widget 树页同形）
+//   GET  /v1/center           第 ref 个组件的中心点
+//   GET  /v1/assert           树中是否存在某类型且有尺寸的组件
+//   GET  /v1/pagetext         当前页面可见文本
+//   GET  /v1/screenshot       整屏 PNG（base64，app 内光栅化）
+//   POST /v1/tap              按 ref 或坐标点击
+//   POST /v1/input            向焦点输入框替换文本
+//   POST /v1/swipe            滑动（8 段 move 在 app 内完成）
+//   POST /v1/navigate         按名字 push / back pop
+//
+// 安全：默认只绑 127.0.0.1，且只接受回环来源；token 非空时除 hello 外的端点
+// 都必须带 `x-xbume-token`。没有任意 eval / 文件写入 / 调试协议端点——release
+// 包也不该有。
 library;
 
 import 'dart:async';
@@ -25,6 +38,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/xb_ume_controller.dart';
 import '../models/xb_ume_network_item.dart';
+import 'xb_ume_agent_actions.dart';
 import 'xb_ume_agent_types.dart';
 
 /// 起服务；`options.enabled == false` 时直接返回 null（默认关闭）。
@@ -154,6 +168,23 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
         return;
       }
       final query = req.uri.queryParameters;
+      // POST 允许 JSON body（推荐）或 query 传参；两者都兼容，方便 curl 调试。
+      final body = req.method == 'POST' ? await _readJsonBody(req) : const <String, Object?>{};
+      Object? arg(String key) => body[key] ?? query[key];
+      String strArg(String key, [String fallback = '']) =>
+          (arg(key) ?? fallback).toString();
+      double? numArg(String key) {
+        final v = arg(key);
+        if (v is num) return v.toDouble();
+        return double.tryParse((v ?? '').toString());
+      }
+
+      bool boolArg(String key) {
+        final v = arg(key);
+        if (v is bool) return v;
+        final s = (v ?? '').toString().toLowerCase();
+        return s == '1' || s == 'true';
+      }
 
       switch (path) {
         case '/v1/state':
@@ -212,7 +243,8 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
           ));
           return;
         case '/v1/timeline':
-          await send(HttpStatus.ok, _timelineJson(query));
+          await send(HttpStatus.ok,
+              _timelineJson(query, full: query['full'] == '1'));
           return;
         case '/v1/clear':
           if (req.method != 'POST') {
@@ -240,6 +272,212 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
           }
           await send(HttpStatus.ok, <String, Object?>{'ok': true, 'what': what});
           return;
+        // -- 组件树 / 动作 / 截图（P2）------------------------------------
+        case '/v1/screen':
+          final p = agentScreenInfoRaw().split(kAgentSep);
+          final dpr = double.tryParse(p.isNotEmpty ? p[0] : '') ?? 1;
+          final w = double.tryParse(p.length > 1 ? p[1] : '') ?? 0;
+          final h = double.tryParse(p.length > 2 ? p[2] : '') ?? 0;
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': true,
+            'dpr': dpr,
+            'width': w,
+            'height': h,
+            'physW': (w * dpr).round(),
+            'physH': (h * dpr).round(),
+          });
+          return;
+        case '/v1/widgets':
+          final by = strArg('by', 'type').toLowerCase();
+          final value = strArg('value');
+          if (value.isEmpty) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': '缺少 value'});
+            return;
+          }
+          final limit = _intParam(strArg('limit'), 20, 1, 200);
+          final raw = agentFindWidgetsRaw(
+            by: by,
+            value: value,
+            exact: boolArg('exact'),
+            limit: limit,
+          );
+          final items = <Map<String, Object?>>[];
+          for (final row in raw.split(kAgentRow)) {
+            if (row.isEmpty) continue;
+            final f = row.split(kAgentSep);
+            if (f.length < 7) continue;
+            final bs = f[4].split(',');
+            items.add(<String, Object?>{
+              'ref': int.tryParse(f[0]),
+              'depth': int.tryParse(f[1]),
+              'type': f[2],
+              'key': f[3],
+              'bounds': bs.length < 4
+                  ? null
+                  : <int>[
+                      for (final v in bs) int.tryParse(v) ?? 0,
+                    ],
+              'text': f[5],
+              // AOT 无 kernel：拿不到 creationLocation，恒为空串。
+              'source': f[6],
+            });
+          }
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': true,
+            'by': by,
+            'value': value,
+            'count': items.length,
+            'items': items,
+            // 与 VM 侧 findWidgetExpr 同格式：主机侧解析代码可直接复用。
+            'raw': raw,
+          });
+          return;
+        case '/v1/wtree':
+          final snap = agentWidgetTreeJson();
+          if (snap['ok'] != true) {
+            await send(HttpStatus.ok,
+                <String, Object?>{'ok': false, 'error': 'app 尚未渲染首帧'});
+            return;
+          }
+          await send(HttpStatus.ok, snap);
+          return;
+        case '/v1/center':
+          final ref = int.tryParse(strArg('ref'));
+          if (ref == null) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': '缺少 ref'});
+            return;
+          }
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': true,
+            'result': agentElementCenterRaw(ref),
+          });
+          return;
+        case '/v1/assert':
+          final type = strArg('type');
+          if (type.isEmpty) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': '缺少 type'});
+            return;
+          }
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': true,
+            'result': agentAssertVisibleRaw(type),
+          });
+          return;
+        case '/v1/pagetext':
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': true,
+            'text': agentPageTextRaw(limit: _intParam(strArg('limit'), 200, 1, 2000)),
+          });
+          return;
+        case '/v1/screenshot':
+          final shot = await agentScreenshot(
+            pixelRatio: numArg('pixelRatio'),
+          );
+          await send(HttpStatus.ok, shot);
+          return;
+        case '/v1/tap': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          final ref = int.tryParse(strArg('ref'));
+          String result;
+          if (ref != null) {
+            result = await agentTapRef(ref);
+          } else {
+            final x = numArg('x');
+            final y = numArg('y');
+            if (x == null || y == null) {
+              await send(HttpStatus.badRequest,
+                  <String, Object?>{'error': '需要 ref 或 x/y'});
+              return;
+            }
+            result = await agentTapAt(x, y, phys: boolArg('phys'));
+          }
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': result == 'OK' || result.startsWith('OK:'),
+            'result': result,
+          });
+          return;
+        }
+        case '/v1/input': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          // text 允许为空（等价于清空输入框），但 body/query 必须显式给这个键。
+          if (!body.containsKey('text') && !query.containsKey('text')) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': '缺少 text'});
+            return;
+          }
+          final result = agentInputText(strArg('text'));
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': result == 'OK',
+            'result': result,
+          });
+          return;
+        }
+        case '/v1/swipe': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          final x1 = numArg('x1');
+          final y1 = numArg('y1');
+          final x2 = numArg('x2');
+          final y2 = numArg('y2');
+          if (x1 == null || y1 == null || x2 == null || y2 == null) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': '需要 x1/y1/x2/y2'});
+            return;
+          }
+          final (result, err) = await agentSwipe(
+            x1: x1,
+            y1: y1,
+            x2: x2,
+            y2: y2,
+            durationMs: _intParam(strArg('durationMs'), 300, 40, 5000),
+            phys: boolArg('phys'),
+          );
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': err.isEmpty,
+            'result': result,
+            'error': err,
+          });
+          return;
+        }
+        case '/v1/navigate': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          final op = strArg('op', 'push').toLowerCase();
+          final name = strArg('name');
+          if (op == 'push' && name.isEmpty) {
+            await send(HttpStatus.badRequest,
+                <String, Object?>{'error': 'push 需要 name'});
+            return;
+          }
+          final result = await agentRouteOp(op == 'pop' ? 'pop' : 'push',
+              name: name);
+          await send(HttpStatus.ok, <String, Object?>{
+            'ok': result == 'OK',
+            'result': result,
+          });
+          return;
+        }
         default:
           await send(HttpStatus.notFound,
               <String, Object?>{'error': '未知端点：$path'});
@@ -255,6 +493,23 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
         // 客户端提前断开时 close 会抛，忽略。
       }
     }
+  }
+
+  /// 读 JSON body；非 JSON / 空 body 一律当空对象（兼容 curl 不传 body）。
+  Future<Map<String, Object?>> _readJsonBody(HttpRequest req) async {
+    try {
+      final raw = await utf8.decoder.bind(req).join();
+      if (raw.trim().isEmpty) return const <String, Object?>{};
+      final parsed = jsonDecode(raw);
+      if (parsed is Map) {
+        return <String, Object?>{
+          for (final e in parsed.entries) e.key.toString(): e.value,
+        };
+      }
+    } catch (e) {
+      debugPrint('[xb_ume] 直连 Agent 请求体解析失败：$e');
+    }
+    return const <String, Object?>{};
   }
 
   bool _authorized(HttpRequest req) {
@@ -417,7 +672,12 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
 
   /// 时间轴：路由事件 + 网络事件，字段与 GUI `_tlItems` 条目一致，
   /// 前端 upsert 逻辑可原样复用。
-  Map<String, Object?> _timelineJson(Map<String, String> query) {
+  ///
+  /// [full] 额外带日志与异常（MCP `xbume_timeline` 用；GUI 只订阅路由+网络）。
+  Map<String, Object?> _timelineJson(
+    Map<String, String> query, {
+    bool full = false,
+  }) {
     final limit = _intParam(query['limit'], 500, 1, 2000);
     final sinceMs = _intParam(query['sinceMs'], 0, 0, 1 << 62);
     final items = <Map<String, Object?>>[];
@@ -449,6 +709,33 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
         'err': e.error ?? '',
       });
     }
+    if (full) {
+      for (final e in _controller.logs) {
+        final ms = e.time.millisecondsSinceEpoch;
+        if (ms <= sinceMs) continue;
+        items.add(<String, Object?>{
+          't': 'log',
+          'id': '${ms}_${e.tag.hashCode}',
+          'ms': ms,
+          'level': e.level.name,
+          'tag': e.tag,
+          'msg': e.message,
+        });
+      }
+      for (final e in _controller.exceptions) {
+        final ms = e.time.millisecondsSinceEpoch;
+        if (ms <= sinceMs) continue;
+        items.add(<String, Object?>{
+          't': 'exception',
+          'id': '${ms}_${e.type.hashCode}',
+          'ms': ms,
+          'kind': e.kind.name,
+          'type': e.type,
+          'count': e.count,
+          'msg': e.message,
+        });
+      }
+    }
     items.sort((a, b) => ((a['ms'] as int)).compareTo(b['ms'] as int));
     final out = items.length > limit
         ? items.sublist(items.length - limit)
@@ -460,7 +747,7 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
 // -- 工具函数 -------------------------------------------------------------
 
 /// 随包发布的版本号（发版时同步 pubspec 与本值）。
-const String kXBUmeAgentVersion = '0.9.7';
+const String kXBUmeAgentVersion = '0.9.8';
 
 int _intParam(String? raw, int fallback, int min, int max) {
   final v = int.tryParse(raw ?? '') ?? fallback;
