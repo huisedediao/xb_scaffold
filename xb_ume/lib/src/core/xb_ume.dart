@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../agent/xb_ume_agent.dart';
 import '../config/xb_ume_config.dart';
 import '../models/xb_ume_log_item.dart';
 import '../persistence/xb_ume_persistence.dart';
@@ -22,6 +23,19 @@ class XBUme {
       extraPlugins: extraPlugins,
     );
   }
+
+  /// 显式启动直连服务（release 包内也能让 IDE 读日志/网络/异常）。
+  ///
+  /// 默认关闭：只有 `--dart-define=XBUME_AGENT=1` 或本方法会起服务。
+  static Future<XBUmeAgentServer?> startAgentServer({
+    XBUmeAgentOptions? options,
+  }) {
+    return XBUmeBinding.instance.startAgentServer(options: options);
+  }
+
+  /// 已启动的直连服务（未启动为 null）。
+  static XBUmeAgentServer? get agentServer =>
+      XBUmeBinding.instance.agentServer;
 
   static XBUmeController get controller => XBUmeBinding.instance.controller;
 

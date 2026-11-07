@@ -97,6 +97,34 @@ void main() {
       );
       expect(caps, contains(Cap.names));
     });
+
+    test('app 自报能力与理论上限求交（P1 只报 inspect）', () {
+      final caps = sessionCaps(
+        transport: SessionTransport.agent,
+        agentCaps: const <String>{Cap.inspect},
+      );
+      // names 是混淆与否推出来的，不靠 app 自报。
+      expect(caps, <String>[Cap.inspect, Cap.names]);
+    });
+
+    test('app 报的未知能力键不会凭空点亮（只取上限内的）', () {
+      final caps = sessionCaps(
+        transport: SessionTransport.agent,
+        agentCaps: const <String>{Cap.inspect, Cap.debug, 'teleport'},
+      );
+      // debug 是 VM 独占，直连永远拿不到；teleport 无从映射。
+      expect(caps, <String>[Cap.inspect, Cap.names]);
+    });
+
+    test('双通道里 agent 少报能力不影响 VM 侧', () {
+      final caps = sessionCaps(
+        transport: SessionTransport.both,
+        agentCaps: const <String>{Cap.inspect},
+      );
+      expect(caps, containsAll(kVmCaps.where((c) => c != Cap.names)));
+      expect(caps, contains(Cap.debug));
+      expect(caps, contains(Cap.fs));
+    });
   });
 
   group('缺口文案', () {

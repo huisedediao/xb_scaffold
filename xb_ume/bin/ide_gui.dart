@@ -55,6 +55,7 @@ import 'src/perf/perf_metrics.dart';
 // 只取 VM service 地址归一：前端各处的 uri 来源不一（flutter run 输出是
 // http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
 import 'src/scenario/vm_client.dart' show normalizeVmUri;
+import 'src/session/agent_client.dart';
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
 const int kGuiPortBase = 46129;
@@ -510,6 +511,33 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           if (src.contains('_guiWindowsVscodeAppClis')) 'windows-ide',
         ],
       }));
+      await req.response.close();
+      return;
+    }
+    // ── 直连会话数据面（P1）───────────────────────────────────────────────
+    // 纯直连会话（release 包）没有 VM service：网络列表/详情/清空改由 app 内
+    // Agent 提供，返回形状与 VM eval 路径一致，前端不用区分通道。
+    if (kAgentProxyPaths.contains(path) &&
+        await _proxyAgentRequest(req, path)) {
+      return;
+    }
+    // 直连会话的异常轮询开关（前端选中会话时 POST 一下）。
+    if (path == '/api/agent/sub' && req.method == 'POST') {
+      final uri = req.uri.queryParameters['uri'] ?? '';
+      if (!isAgentBaseUrl(uri)) {
+        await _rejectRequest(req, HttpStatus.badRequest, '只接受直连会话 uri');
+        return;
+      }
+      await state.startAgentWatch(uri);
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
+      await req.response.close();
+      return;
+    }
+    if (path == '/api/agent/off' && req.method == 'POST') {
+      state.stopAgentWatch();
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
       return;
     }
@@ -4452,6 +4480,69 @@ class _PayloadTooLargeException implements Exception {
 // GUI 状态与模块逻辑
 // ---------------------------------------------------------------------------
 
+// ── 直连会话数据面转发 ──────────────────────────────────────────────
+/// 直连会话可代理的读接口：与 VM eval 分支返回同形，前端无感。
+const Set<String> kAgentProxyPaths = <String>{
+  '/api/network',
+  '/api/network/detail',
+  '/api/network/clear',
+};
+
+/// 若 `uri` 是直连会话（http://）就把请求转给 app 内 Agent。
+/// 返回 false 表示不是直连会话，调用方继续走原 VM 分支。
+Future<bool> _proxyAgentRequest(HttpRequest req, String path) async {
+  final uri = req.uri.queryParameters['uri'] ?? '';
+  if (!isAgentBaseUrl(uri)) return false;
+  final id = req.uri.queryParameters['id'] ?? '';
+  final client = AgentClient(uri);
+
+  Future<void> replyJson(Object? body) async {
+    req.response.headers.contentType = ContentType.json;
+    req.response.write(jsonEncode(body));
+    await req.response.close();
+  }
+
+  // clear 有副作用，只允许 POST：避免 <img>/跨站表单直接触发。
+  if (path == '/api/network/clear' && req.method != 'POST') {
+    req.response.headers.set('Allow', 'POST');
+    req.response.statusCode = HttpStatus.methodNotAllowed;
+    await replyJson(<String, Object?>{'error': '该接口仅支持 POST'});
+    return true;
+  }
+  try {
+    if (path == '/api/network') {
+      final items = await client.network(limit: 500);
+      // 与 VM 分支一致：最新在前。
+      await replyJson(<String, Object?>{'items': items.reversed.toList()});
+      return true;
+    }
+    if (path == '/api/network/detail') {
+      if (id.isEmpty) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await replyJson(<String, Object?>{'error': '缺少 id'});
+        return true;
+      }
+      final item = await client.networkDetail(id);
+      // 发起位置栈由主机侧解析成可跳转的帧（与 VM 分支同一个解析器）。
+      final raw = '${item['initiatorStack'] ?? ''}';
+      final frames = raw
+          .split('\n')
+          .where((line) => line.trim().isNotEmpty)
+          .map(_excParseFrame)
+          .toList();
+      await replyJson(<String, Object?>{...item, 'initiatorFrames': frames});
+      return true;
+    }
+    await client.clearNetwork();
+    await replyJson(<String, Object?>{'ok': true});
+    return true;
+  } catch (e) {
+    req.response.statusCode = HttpStatus.badGateway;
+    await replyJson(<String, Object?>{'error': '$e'});
+    return true;
+  }
+}
+
 class GuiState {
   GuiState() : startedAt = DateTime.now();
 
@@ -4530,7 +4621,149 @@ class GuiState {
 
   void clearExceptions() {
     _exceptions.clear();
+    _agentExcIndex.clear();
+    // 清空下限：app 端环形缓冲还在，没有下限下一轮会把旧异常拉回来。
+    _agentExcFloorMs = DateTime.now().millisecondsSinceEpoch;
     broadcast(<String, Object?>{'type': 'exceptionsCleared'});
+  }
+
+  // -- 直连会话异常轮询（P1）---------------------------------------------
+  // release 包没有 VM 流，Flutter.Error / 未捕获异常都拿不到；改从 app 内
+  // Agent 的 `/v1/exceptions` 拉。同一时刻只跟一个会话（与时间轴一致）。
+  Timer? _agentExcTimer;
+  String? _agentExcUri;
+  bool _agentExcBusy = false;
+  int _agentExcFail = 0;
+
+  /// agent 端异常 id → [_exceptions] 下标（app 端会合并重复异常，id 不重复）。
+  final Map<String, int> _agentExcIndex = <String, int>{};
+
+  /// 清空时刻：早于此时间的历史异常不再从 app 端回填。
+  int _agentExcFloorMs = 0;
+
+  String? get agentWatchUri => _agentExcUri;
+
+  /// 开始跟一个直连会话的异常（首次立即同步，之后 2s 一轮）。
+  Future<void> startAgentWatch(String uri) async {
+    if (uri == _agentExcUri && _agentExcTimer != null) return;
+    stopAgentWatch();
+    _agentExcUri = uri;
+    _agentExcFail = 0;
+    await _pollAgentExceptions();
+    if (_agentExcUri != uri) return;
+    _agentExcTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_pollAgentExceptions()),
+    );
+  }
+
+  void stopAgentWatch() {
+    _agentExcTimer?.cancel();
+    _agentExcTimer = null;
+    _agentExcUri = null;
+    _agentExcBusy = false;
+  }
+
+  Future<void> _pollAgentExceptions() async {
+    final uri = _agentExcUri;
+    if (uri == null || _agentExcBusy) return;
+    _agentExcBusy = true;
+    try {
+      final items = await AgentClient(uri).exceptions(limit: 200);
+      if (_agentExcUri != uri) return;
+      _agentExcFail = 0;
+      _mergeAgentExceptions(uri, items);
+    } catch (e) {
+      _agentExcFail++;
+      if (_agentExcFail == 1 || _agentExcFail % 10 == 0) {
+        print('[xbume-gui] 直连异常同步失败($uri): $e');
+      }
+    } finally {
+      _agentExcBusy = false;
+    }
+  }
+
+  void _mergeAgentExceptions(String uri, List<Map<String, Object?>> items) {
+    for (final it in items) {
+      final agentId = '${it['id'] ?? ''}';
+      if (agentId.isEmpty) continue;
+      final count = (it['count'] as num?)?.toInt() ?? 1;
+      final ts = DateTime.tryParse('${it['time'] ?? ''}')?.millisecondsSinceEpoch ??
+          DateTime.now().millisecondsSinceEpoch;
+      if (ts <= _agentExcFloorMs) continue;
+      final idx = _agentExcIndex[agentId];
+      if (idx != null &&
+          idx < _exceptions.length &&
+          _exceptions[idx]['agentExcId'] == agentId) {
+        final old = _exceptions[idx];
+        if (old['count'] != count || old['ts'] != ts) {
+          old['count'] = count;
+          old['ts'] = ts;
+          old['time'] = _clockAt(ts);
+          broadcast(<String, Object?>{'type': 'exception', 'item': old});
+        }
+        continue;
+      }
+      final rec = _agentExcRecord(uri, it, agentId, count, ts);
+      _agentExcIndex[agentId] = _exceptions.length;
+      _exceptions.add(rec);
+      if (_exceptions.length > 200) {
+        _exceptions.removeAt(0);
+        // 下标集体前移：重建索引（条数少，代价可忽）。
+        _agentExcIndex.clear();
+        for (var i = 0; i < _exceptions.length; i++) {
+          final key = '${_exceptions[i]['agentExcId'] ?? ''}';
+          if (key.isNotEmpty) _agentExcIndex[key] = i;
+        }
+      }
+      broadcast(<String, Object?>{'type': 'exception', 'item': rec});
+    }
+  }
+
+  /// app 侧结构化异常 → GUI 异常卡片记录（字段与 VM 流解析结果同形）。
+  Map<String, Object?> _agentExcRecord(
+    String uri,
+    Map<String, Object?> it,
+    String agentId,
+    int count,
+    int ts,
+  ) {
+    final type = '${it['type'] ?? ''}';
+    final message = '${it['message'] ?? ''}';
+    final frames = <Map<String, Object?>>[];
+    for (final line in '${it['stack'] ?? ''}'.split('\n')) {
+      if (line.trim().isEmpty) continue;
+      frames.add(_excParseFrame(line));
+    }
+    final context = '${it['context'] ?? ''}';
+    final widget = '${it['widget'] ?? ''}';
+    final widgetFile = '${it['widgetFile'] ?? ''}';
+    final rec = <String, Object?>{
+      'id': ++_excSeq,
+      'agentExcId': agentId,
+      'summary': message.isEmpty ? type : '$type: $message',
+      if (type.isNotEmpty) 'type': type,
+      if (context.isNotEmpty) 'desc': context,
+      if (widget.isNotEmpty) 'widget': widget,
+      if (widgetFile.isNotEmpty) 'widgetFile': widgetFile,
+      if (it['widgetLine'] != null) 'widgetLine': it['widgetLine'],
+      if (frames.isNotEmpty) 'stack': frames,
+      'hash': '${it['signature'] ?? message}',
+      'channel': '${it['kind'] ?? ''}' == 'flutter' ? 'framework' : 'uncaught',
+      'source': 'agent',
+      'wsUri': uri,
+      'time': _clockAt(ts),
+      'ts': ts,
+      'count': count,
+    };
+    return rec;
+  }
+
+  /// 毫秒时间戳 → 时钟文本（与日志/异常卡片一致）。
+  String _clockAt(int ms) {
+    final t = DateTime.fromMillisecondsSinceEpoch(ms);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
   }
 
   void start() {
@@ -5054,6 +5287,29 @@ class GuiState {
     final uri = _tlUri;
     if (uri == null || _tlBusy) return null;
     _tlBusy = true;
+    // 直连会话（release）：app 内 Agent 直接给出与 GUI 同形的事件条目，
+    // 省掉 VM eval 那套分隔符协议。
+    if (isAgentBaseUrl(uri)) {
+      try {
+        final events = await AgentClient(uri)
+            .timeline(sinceMs: _tlFloorMs, limit: 1000);
+        _tlFail = 0;
+        if (_tlUri != uri) return null;
+        final changed = _tlUpsert(events);
+        if (_tlUri == uri && changed.isNotEmpty) {
+          broadcast(<String, Object?>{'type': 'tl', 'items': changed});
+        }
+        return null;
+      } catch (e) {
+        _tlFail++;
+        if (_tlFail == 1 || _tlFail % 10 == 0) {
+          print('[xbume-gui] 时间轴同步失败($uri): $e');
+        }
+        return '$e';
+      } finally {
+        _tlBusy = false;
+      }
+    }
     final rpc = _tlRpc ??= _SandboxRpc(uri);
     try {
       final raw = await rpc.evalStringOn(
@@ -12111,25 +12367,25 @@ const String guiHtml = r'''
   <h1>xb_ume 工具箱</h1>
   <div class="tabs">
     <div class="tab active" data-tab="daemon">守护进程</div>
-    <div class="tab" data-tab="ai">AI 调试</div>
+    <div class="tab" data-tab="ai" data-need-caps="shot,debug">AI 调试</div>
     <div class="tab" data-tab="debug">调试</div>
     <div class="tab" data-tab="logs">日志</div>
     <div class="tab" data-tab="timeline">时间轴</div>
     <div class="tab" data-tab="exc">异常<span id="exc-badge" style="display:none;background:#c0392b;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:4px"></span></div>
-    <div class="tab" data-tab="sandbox">应用沙盒</div>
-    <div class="tab" data-tab="db">数据库</div>
-    <div class="tab" data-tab="routes">路由栈</div>
+    <div class="tab" data-tab="sandbox" data-need-caps="fs">应用沙盒</div>
+    <div class="tab" data-tab="db" data-need-caps="fs">数据库</div>
+    <div class="tab" data-tab="routes" data-need-caps="widgets">路由栈</div>
     <div class="tab" data-tab="network">Network</div>
-    <div class="tab" data-tab="storage">Storage</div>
+    <div class="tab" data-tab="storage" data-need-caps="fs">Storage</div>
     <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
     <div class="tab" data-tab="status" style="display:none">状态</div>
-    <div class="tab" data-tab="instances">实例</div>
-    <div class="tab" data-tab="shot">截图</div>
-    <div class="tab" data-tab="perf">性能</div>
+    <div class="tab" data-tab="instances" data-need-caps="debug">实例</div>
+    <div class="tab" data-tab="shot" data-need-caps="shot">截图</div>
+    <div class="tab" data-tab="perf" data-need-caps="perf">性能</div>
     <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
-    <div class="tab" data-tab="wtree" style="display:none">Widget树</div>
-    <div class="tab" data-tab="auto">自动化</div>
-    <div class="tab" data-tab="compare">对比</div>
+    <div class="tab" data-tab="wtree" style="display:none" data-need-caps="widgets">Widget树</div>
+    <div class="tab" data-tab="auto" data-need-caps="act">自动化</div>
+    <div class="tab" data-tab="compare" data-need-caps="debug">对比</div>
   </div>
   <div id="hdr-right">
     <span id="svc-badge-gui" class="svc-badge" title="GUI 进程">GUI ○</span>
@@ -15077,6 +15333,12 @@ function tlGoNet(id){
 // ── 能力置灰（P0）：会话能做什么由 transport 决定，控件用 data-need-caps 声明 ──
 // 未知 caps（旧版 daemon）时保守全开，行为与以前一致。
 var CAP_LABELS = {
+  'inspect': '日志 / 网络 / 异常 / 时间轴',
+  'fs': '沙盒 / 存储 / 数据库',
+  'act': '点击 / 输入 / 滑动',
+  'widgets': '组件树 / 路由栈',
+  'shot': '截图',
+  'perf': '性能 / 帧耗时',
   'debug': '断点 / 单步 / 变量树 / 求值',
   'hot': '热重载 / 热重启',
   'gc': '触发 GC / UI 重建',
@@ -15085,6 +15347,7 @@ var CAP_LABELS = {
 };
 var lastDaemonSessions = []; // 最近一轮 /api/daemon 的会话（置灰与切换时复用）
 var curDaemonSession = null; // 当前选中会话（含 caps / transport）
+var lastAgentSub = ''; // 已订阅异常的直连会话 uri（空 = 未订阅）
 function capHas(caps, need){
   if (!caps) return true;
   return need.split(',').every(function(n){ return caps.indexOf(n) >= 0; });
@@ -15092,18 +15355,31 @@ function capHas(caps, need){
 function capLabelOf(n){ return CAP_LABELS[n] || n; }
 function dbgSetCurrentSession(s){
   curDaemonSession = s || null;
+  // 直连会话：异常由 app 内 Agent 轮询（GUI 侧没有 VM 流可用）；
+  // 切回 VM/未选中时关掉，避免白请求。
+  var tr = (s && s.transport) || 'vm';
+  var want = (tr === 'agent' && s && s.uri) ? s.uri : '';
+  if (want !== lastAgentSub) {
+    lastAgentSub = want;
+    fetch(want ? ('/api/agent/sub?uri=' + encodeURIComponent(want)) : '/api/agent/off',
+      { method: 'POST' }).catch(function(){});
+  }
   dbgApplyCaps();
 }
 function dbgApplyCaps(){
   var caps = curDaemonSession && curDaemonSession.caps ? curDaemonSession.caps : null;
   var banner = document.getElementById('cap-banner');
   if (banner) {
-    var missing = caps ? ['debug','hot','gc'].filter(function(n){ return caps.indexOf(n) < 0; }) : [];
+    // 只报“真的缺什么”：早期版本写死了几个能力名，改了 caps 后会误报。
+    var all = ['inspect','fs','act','widgets','shot','perf','debug','hot','gc'];
+    var missing = caps ? all.filter(function(n){ return caps.indexOf(n) < 0; }) : [];
     if (missing.length) {
       banner.style.display = '';
-      banner.textContent = '当前会话为直连通道（release 包无 VM 调试服务）：' +
-        missing.map(capLabelOf).join('、') + ' 不可用；' +
-        '日志 / 网络 / 异常 / 时间轴 / 路由 / 存储 / 沙盒 / 截图 / 点击 照常可用。';
+      var still = missing.indexOf('inspect') < 0
+        ? '日志 / 网络 / 异常 / 时间轴照常可用。'
+        : '';
+      banner.textContent = '当前会话为直连通道（app 内 Agent）：' +
+        missing.map(capLabelOf).join('、') + ' 不可用；' + still;
     } else {
       banner.style.display = 'none';
     }
@@ -15177,7 +15453,9 @@ function refreshDaemon(){
         if (s.app) vmApps[v] = s.app;
         // 只有 VM 通道时才记 VM uri（纯直连会话的 uri 是 http，不能当 ws 用）。
         var tr = s.transport || 'vm';
-        if (tr !== 'agent') vmUriBySource[v] = s.uri; // 沙盒 Tab 用来源找 uri
+        // 直连会话也要记：各 Tab 统一用 `?uri=` 取数，服务端按 http:// 前缀
+        // 判定走 Agent。
+        vmUriBySource[v] = s.uri;
         if (tr !== 'vm' && s.agentUrl) agentUrlBySource[v] = s.agentUrl;
         if (s.fp) fpBySource[v] = s.fp;
         // 显示应用包名（如有）与通道类型，value 仍为会话来源，保证过滤匹配不变。

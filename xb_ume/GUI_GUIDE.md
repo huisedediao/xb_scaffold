@@ -709,9 +709,44 @@ dart run xb_ume:ide --uninstall
 - **热重载 / 热重启**：release 包（AOT）无热重载，置灰。
 - **照常可用**：日志、网络、异常、时间轴、路由栈、Storage、应用沙盒、数据库、截图、点击 / 输入 / 滑动、性能采样。
 
+> 上表是直连通道的「理论上限」。0.9.7 的 app 内直连服务只报 `inspect`，所以真实直连会话只有日志 / 网络 / 异常 / 时间轴可用，其余全部置灰（见下节）。
+
 实现上是声明式的：控件只加 `data-need-caps="debug|hot|gc"`，由后台下发的 `caps` 统一裁剪；旧版 daemon 不返回 `caps` 时保守全开，行为与升级前一致。
 
-> 0.9.6 只落地了「发现 + 能力下发 + 置灰」这一层：app 内直连服务（`lib/`）与工具侧语义接口在后续版本提供，所以现在所有真实会话仍是 `（VM）`，界面不会出现置灰。
+### 0.9.7：直连通道（P1 只读数据面）
+
+app 侧可以自己起一个**只读**的 loopback HTTP 服务，让 release 包（没有 VM service）也能被读到日志 / 网络 / 异常 / 路由 / 帧数据。默认关闭，编译期打开：
+
+```bash
+flutter build apk --release \
+  --dart-define=XBUME_AGENT=1 \
+  --dart-define=XBUME_AGENT_PORT=47100 \
+  --dart-define=XBUME_AGENT_TOKEN=<可选，长度任意的随机串> \
+  --dart-define=XBUME_AGENT_APP=<可选，安卓会自动读进程名，其他平台想让下拉显示包名就填>
+```
+
+> 开关写 `=1` / `=true` 都行（内部没直接用 `bool.fromEnvironment`：它只认 `true`，写 `=1` 会静默不生效）。端口与 token 可不填，分别默认 `47100` / 不校验。
+
+也可以代码里显式打开（测试包更方便）：
+
+```dart
+final server = await XBUme.startAgentServer();   // 默认端口 47100、只监听回环
+// …
+await server?.close();
+```
+
+装了带直连服务的包后，下拉里会出现 `（直连）` / `（VM+直连）` 会话，**不需要手工 adb forward**：daemon 每轮轮询会给在线设备建 `adb -s <serial> forward tcp:4711x tcp:47100`（鸿蒙走 `hdc fport`），主机端口按设备稳定分配在 `47110~47149`。
+
+P1 能用的（`caps=inspect`）：
+
+- 日志 Tab、异常 Tab（服务端每 2 秒轮询一次，清空后旧卡片不会复活）、Network Tab（列表 / 详情 / 清空）、时间轴 Tab（路由事件 + 网络事件）。
+- 会话下拉直接选中直连会话；MCP 侧用同一份 `caps` / `transport`，能力不满足的工具会提前报错而不是连一个空地址。
+
+P1 仍然置灰（能力上不可能，不是没做）：沙盒 / 存储 / 数据库（`fs`）、点击 / 输入 / 滑动（`act`）、组件树与路由栈（`widgets`）、截图（`shot`）、性能（`perf`）、断点 / 求值 / 单步（`debug`）、热重载（`hot`）、GC。
+
+> 路由栈 Tab 在直连下也置灰：路由**当前栈**只能从 `NavigatorState._history`（`navigator.dart` 私有字段）读，只有 VM 的 eval 上下文拿得到；直连侧只能给你「路由事件流」（即时间轴里的 `route` 条目）。
+>
+> 真机上端口转发需要 `adb` / `hdc` 可用；设 `XBUME_AGENT_PROBE=0` 可整体关掉转发探测（CI 或不想让 daemon 调 adb 时）。
 
 ## 二十一、相关文档
 

@@ -192,7 +192,8 @@ void main() {
       final caps = (out.single.toJson()['caps'] as List).cast<String>();
       expect(caps, isNot(contains(Cap.names)));
       expect(caps, isNot(contains(Cap.srclocateExact)));
-      expect(caps, contains(Cap.srclocateHeuristic));
+      // 能力以 app 自报为准（与上限求交），混淆只是再扣掉 names。
+      expect(caps, <String>['act', 'fs', 'inspect']);
     });
 
     test('vmDegraded 时输出去掉调试能力', () {

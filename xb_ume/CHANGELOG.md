@@ -1,3 +1,21 @@
+## 0.9.7
+
+- **app 内直连服务（P1：release 包也能被读到数据）**：新增 `lib/src/agent/`（`xb_ume_agent_types` / `xb_ume_agent_io` / `xb_ume_agent_stub` / 条件导入入口）。release 包没有 VM service，`eval` / 断点 / 热重载物理不可用，但日志、异常、网络、路由、帧数据本来就在 process 内——现在 app 自己起一个**只读** loopback HTTP 服务（默认 `127.0.0.1:47100`），IDE 侧用固定协议取数：`/v1/hello`（服务标识 / 包名 / `bootId` / 自报能力 / 可选 `vmPort`）、`/v1/state`、`/v1/logs`（`level` / `tag` / `keyword` / `sinceMs` / `limit`）、`/v1/exceptions`、`/v1/network` 与 `/v1/network/detail`（字段形状与 GUI `/api/network*` 完全一致，头拍成 `[{k,v}]` 且敏感头打码）、`/v1/routes`、`/v1/frames`、`/v1/timeline`（条目就是 GUI `_tlItems` 的 `t=route|net` 形状）；写操作只有 `POST /v1/network/clear` 与 `POST /v1/clear?what=logs|exceptions|network|routes|frames`。**没有任何 eval / 点击 / 截图 / 执行类端点**，默认只监听回环（拒绝非回环来源）、非 GET/POST 一律 405，可选 `XBUME_AGENT_TOKEN` 走常量时间比较（`/v1/hello` 免 token，只回非敏感元信息）。
+
+- **默认关闭，编译期打开**：`--dart-define=XBUME_AGENT=1`（`=true` 也可以）才随 app 启动，可配 `XBUME_AGENT_PORT` / `XBUME_AGENT_TOKEN` / `XBUME_AGENT_APP` / `XBUME_AGENT_OBFUSCATED`；也可在代码里 `await XBUme.startAgentServer()` 显式打开（返回句柄，`close()` 可关）。启动失败只打日志、不影响 app 启动。包名在 Android 上自动从 `/proc/self/cmdline` 取（release 下唯一可靠的应用标识），其他平台用 `XBUME_AGENT_APP` 补。`lib/` 全程走条件导入（`dart.library.io`），Web 构建不受影响。
+
+- **能力自报 → 会话按真实能力收窄**：P1 只报 `['inspect']`（读数据）。`bin/src/session/capability.dart` 的 `sessionCaps` 新增 `agentCaps` 参数，与理论上限 `kAgentCaps` **求交**，所以直连会话只剩 `inspect`：沙盒 / 存储 / 数据库、点击 / 输入 / 滑动、组件树 / 路由栈、截图、性能、调试面全部自动置灰——不再出现「看着能点、点了报错」。daemon 的 `/api/daemon` 与 MCP 会话表都把 app 自报的能力透传下去。
+
+- **主机侧自动端口转发**：新增 `bin/src/session/agent_forward.dart`——`adb -s <serial> forward` / `hdc -t <target> fport` 把主机端口映射到设备 `47100`，主机端口按设备标识稳定哈希落在 `47110~47149`（与 VM 的 46xxx 段错开），冲突顺延、已有同设备同远端映射直接复用；8 秒缓存 + 设备列表变化即刷新，`XBUME_AGENT_PROBE=0` 可整体关掉（CI / 单测）。daemon 的 `_pollAgents` 与 MCP 的会话扫描都把「本地回环扫描」与「转发后探测」结果按指纹合并去重（转发优先），同一 app 的 VM 与直连仍合成一条逻辑会话；MCP 单独跑（没开 GUI / daemon）也会自己建转发，不依赖 daemon 先跑。
+
+- **GUI 接入直连数据面**：会话 uri 是 `http://` 时，`/api/network`、`/api/network/detail`、`/api/network/clear` 直接代理给 app（`bin/src/session/agent_client.dart`，回环强制 `findProxy = DIRECT`，避免本机代理把请求吃掉）；选中直连会话时前端 `POST /api/agent/sub?uri=`，服务端每 2 秒轮询该 app 的异常并转成既有卡片形状（`source='agent'`，清空后旧卡片不会复活），切走 / 关闭时 `POST /api/agent/off`；时间轴 `_timelinePoll` 增加直连分支（`sinceMs` 增量拉取，复用 `_tlUpsert` 去重）。前端不需要传通道类型：Tab 统一照旧用 `?uri=`。
+
+- **Tab 级置灰**：AI 调试（需 `shot`+`debug`）、沙盒 / 数据库 / Storage（`fs`）、路由栈与 Widget 树（`widgets`）、实例（`debug`）、截图（`shot`）、性能（`perf`）、自动化（`act`）、对比（`debug`）都挂了 `data-need-caps`；顶部黄条改为按当前会话实际缺项生成文案。路由栈 P1 不做：`NavigatorState._history` 是 `navigator.dart` 的私有字段，只有 VM 的 eval 上下文读得到，直连侧只能给路由事件流，所以按 `widgets` 置灰而不是给个半残页面。
+
+- **测试**：新增 `test/agent_server_test.dart`（15 项：起真实回环 HttpServer 验 hello / state / 日志过滤 / 异常字段 / 网络列表与详情的形状 / 清空只收 POST / 未知 id 404 / 时间轴与路由 / token 401 / 无 eval 端点 / 定向清空 / 默认关闭）、`test/agent_forward_test.dart`（10 项：adb / hdc 列表解析、端口稳定哈希与区间、非法 span）；`session_capability_test` 补 3 项（自报能力求交、越权键不点亮、双通道互不影响），`session_merge_test` 按「能力以 app 自报为准」同步。
+
+- **踩坑**：① `TestWidgetsFlutterBinding.ensureInitialized()` 会把 `HttpClient` 换成「一律返回 400」的 mock，真实回环请求全废——agent 服务测试不初始化 binding，并在 `setUp` 里把 `HttpOverrides.global` 置空。② `bool.fromEnvironment('XBUME_AGENT')` 只认 `true`：按文档写 `--dart-define=XBUME_AGENT=1` 会静默不生效（实测 A=false），改成读字符串后 `=1` / `=true` 都算开。
+
 ## 0.9.6
 
 - **会话能力模型（P0：双通道的第一步）**：新增 `bin/src/session/capability.dart`——把「一条会话能做什么」抽成能力键（`inspect` / `fs` / `act` / `widgets` / `shot` / `perf` / `gc` / `debug` / `hot` / `srclocate:*` / `names`），`transport`（`vm` / `agent` / `both`）→ `caps` 的换算是纯函数，工具前置校验与 GUI 置灰共用同一份事实来源。VM 掉线（`vmDegraded`）自动按直连能力算，混淆包丢 `names`，双通道取并集且精确源码定位优先。

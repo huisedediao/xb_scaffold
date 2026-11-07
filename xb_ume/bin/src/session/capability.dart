@@ -95,7 +95,10 @@ const Set<String> kVmCaps = <String>{
   Cap.names,
 };
 
-/// 直连（app 内 Agent）通道的能力：少 debug / hot / gc / 精确源码定位。
+/// 首连（app 内 Agent）通道的能力：少 debug / hot / gc / 精确源码定位。
+///
+/// 这是「理论上限」：实际能力取 app 自报的 caps 与它的交集，P1 的 Agent
+/// 只实现只读数据面，所以真实会话会窄到 `inspect`。
 const Set<String> kAgentCaps = <String>{
   Cap.inspect,
   Cap.fs,
@@ -110,10 +113,13 @@ const Set<String> kAgentCaps = <String>{
 ///
 /// [vmDegraded]：VM 通道存在但当前不可用（连接失败/端口漂移），本轮按直连
 /// 通道的能力算，等下一轮探测恢复后再回到 VM。
+/// [agentCaps]：app 在 `/v1/hello` 里自报的能力键；传 null 表示不明（旧版
+/// app），按理论上限算。自报值会与 [kAgentCaps] 求交，防止 app 版本越权声明。
 Set<String> sessionCaps({
   required SessionTransport transport,
   bool obfuscated = false,
   bool vmDegraded = false,
+  Set<String>? agentCaps,
 }) {
   final useVm = !vmDegraded &&
       (transport == SessionTransport.vm || transport == SessionTransport.both);
@@ -122,7 +128,11 @@ Set<String> sessionCaps({
   final caps = <String>{};
   if (useVm) caps.addAll(kVmCaps);
   if (useAgent) {
-    caps.addAll(kAgentCaps);
+    if (agentCaps == null) {
+      caps.addAll(kAgentCaps);
+    } else {
+      caps.addAll(kAgentCaps.where(agentCaps.contains));
+    }
     // 混淆后类型名变成 A/B/C：按类型查找、源码文本匹配都会失真。
     if (!obfuscated) caps.add(Cap.names);
   }

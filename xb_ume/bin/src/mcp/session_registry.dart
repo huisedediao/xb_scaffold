@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../scenario/vm_client.dart';
+import '../session/agent_forward.dart';
 import '../session/capability.dart';
 import '../session/discovery.dart';
 import 'client_scope.dart';
@@ -29,6 +30,7 @@ class McpSession {
     this.transport = SessionTransport.vm,
     this.agentBaseUrl,
     this.agentPort,
+    this.agentCaps,
     this.obfuscated = false,
   });
 
@@ -46,6 +48,7 @@ class McpSession {
       transport: l.transport,
       agentBaseUrl: l.agent?.baseUrl,
       agentPort: l.agent?.port,
+      agentCaps: l.agent?.caps.toSet(),
       obfuscated: l.obfuscated,
     );
   }
@@ -69,6 +72,9 @@ class McpSession {
   String? agentBaseUrl;
   int? agentPort;
 
+  /// app 自报的能力键（null = 旧版 app 没报，按理论上限算）。
+  Set<String>? agentCaps;
+
   /// 直连包是否开了 --obfuscate（类型名不可读）。
   bool obfuscated;
 
@@ -82,6 +88,7 @@ class McpSession {
         transport: transport,
         obfuscated: obfuscated,
         vmDegraded: vmDegraded,
+        agentCaps: agentCaps,
       );
 
   VmClient? _client;
@@ -101,6 +108,7 @@ class McpSession {
     transport = l.transport;
     agentBaseUrl = l.agent?.baseUrl;
     agentPort = l.agent?.port;
+    agentCaps = l.agent?.caps.toSet();
     obfuscated = l.obfuscated;
     if (l.vm != null) vmDegraded = false;
   }
@@ -263,15 +271,23 @@ class SessionRegistry {
         );
       }
       // 直连通道：同一 app 的 VM + 直连合并成一条逻辑会话（VM 优先）。
-      // 直连服务是 P1 才落地的，这里探测失败就只是没有 agent 通道。
-      final agents = await discoverLocalAgents(
+      // 设备上的 Agent 只监听设备回环，先 adb forward / hdc fport 再探（端口
+      // 按序列号稳定分配，daemon 建过的直接复用）。MCP 单独跑也要能看见
+      // release 包，所以不依赖 daemon 先建好。
+      final scannedAgents = await discoverLocalAgents(
         // 已经确认是 VM service 的端口不必再打 /v1/hello。
         skipPorts: <int>{...skipPorts, for (final d in discovered) d.port},
         freshPorts: force,
       );
+      final forwardedAgents = await ensureAgentForwards(force: force);
+      // 转发来的带设备标识（adb:SERIAL#port:N），优先于裸端口扫描结果。
+      final agentsByFingerprint = <String, DiscoveredAgent>{};
+      for (final a in <DiscoveredAgent>[...forwardedAgents, ...scannedAgents]) {
+        agentsByFingerprint.putIfAbsent(a.fingerprint, () => a);
+      }
       final logical = mergeLogicalSessions(
         vmSessions: discovered,
-        agents: agents,
+        agents: agentsByFingerprint.values.toList(),
       );
       for (final l in logical) {
         seen.add(l.id);

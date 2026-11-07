@@ -57,8 +57,10 @@ void main() {
       expect(gui, contains('dbgSessionTransportText(s)'));
     });
 
-    test('纯直连会话不把 http 地址当 VM ws 用', () {
-      expect(gui, contains("if (tr !== 'agent') vmUriBySource[v] = s.uri;"));
+    test('直连会话的 uri 也记进 vmUriBySource（各 Tab 统一按 ?uri= 取数）', () {
+      // 服务端按 http:// 前缀判定走 Agent，前端不需要区分通道。
+      expect(gui, contains('vmUriBySource[v] = s.uri;'));
+      expect(gui, isNot(contains("if (tr !== 'agent') vmUriBySource[v] = s.uri;")));
       expect(gui, contains('agentUrlBySource[v] = s.agentUrl;'));
     });
 
@@ -73,6 +75,34 @@ void main() {
       expect(gui, isNot(contains("el.disabled = !ok;")));
       expect(gui, contains('[data-cap-blocked="1"]'));
       expect(gui, contains("var pauseBtn = dbgEl('dbg-b-pause');"));
+    });
+    test('Tab 级置灰（P1 直连只留数据面）', () {
+      for (final tag in <String>[
+        'data-tab="sandbox" data-need-caps="fs"',
+        'data-tab="db" data-need-caps="fs"',
+        'data-tab="storage" data-need-caps="fs"',
+        'data-tab="routes" data-need-caps="widgets"',
+        'data-tab="wtree" style="display:none" data-need-caps="widgets"',
+        'data-tab="shot" data-need-caps="shot"',
+        'data-tab="perf" data-need-caps="perf"',
+        'data-tab="auto" data-need-caps="act"',
+        'data-tab="compare" data-need-caps="debug"',
+        'data-tab="ai" data-need-caps="shot,debug"',
+      ]) {
+        expect(gui, contains(tag), reason: '缺少 $tag');
+      }
+    });
+
+    test('提示条按当前会话真实缺项生成，不写死能力名', () {
+      expect(gui, contains("var all = ['inspect','fs','act','widgets','shot','perf','debug','hot','gc'];"));
+      expect(gui, isNot(contains("['debug','hot','gc'].filter")));
+    });
+
+    test('直连会话选上即订阅异常轮询，切走就关', () {
+      expect(gui, contains("var want = (tr === 'agent' && s && s.uri) ? s.uri : '';"));
+      expect(gui, contains("'/api/agent/sub?uri='"));
+      expect(gui, contains("'/api/agent/off'"));
+      expect(gui, contains('if (want !== lastAgentSub) {'));
     });
   });
 
@@ -90,6 +120,12 @@ void main() {
       expect(daemon, contains('..._selfPorts,'));
       expect(daemon, contains('for (final d in _lastDiscovered) d.port,'));
       expect(daemon, contains('kLockPort,'));
+    });
+
+    test('设备上的直连服务先建转发再探测，转发结果优先', () {
+      expect(daemon, contains('await ensureAgentForwards();'));
+      expect(daemon, contains('...forwarded, ...scanned'));
+      expect(daemon, contains('byFingerprint.putIfAbsent(a.fingerprint'));
     });
 
     test('手工 --uri 会话不被扫描结果挤掉', () {
@@ -116,6 +152,11 @@ void main() {
       expect(registry, contains('mergeLogicalSessions('));
       expect(registry, contains('McpSession.fromLogical'));
       expect(registry, contains('existing.applyLogical(l);'));
+    });
+
+    test('MCP 单独跑也能看见设备上的直连服务（自己建转发）', () {
+      expect(registry, contains('await ensureAgentForwards(force: force);'));
+      expect(registry, contains('[...forwardedAgents, ...scannedAgents]'));
     });
   });
 }

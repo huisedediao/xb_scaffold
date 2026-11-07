@@ -569,10 +569,14 @@ class LogicalSession {
   }
 
   /// 各能力键的可用性（与 tools / GUI 共用同一套换算）。
+  ///
+  /// 直连通道按 app 自报的 caps 求交：P1 的 Agent 只有只读数据面，声明的是
+  /// `inspect`，所以不会把没实现的沙盒/截图/点击点亮。
   Set<String> caps({bool vmDegraded = false}) => sessionCaps(
         transport: transport,
         obfuscated: obfuscated,
         vmDegraded: vmDegraded,
+        agentCaps: agent?.caps.toSet(),
       );
 
   Map<String, Object?> toJson({bool vmDegraded = false}) => <String, Object?>{

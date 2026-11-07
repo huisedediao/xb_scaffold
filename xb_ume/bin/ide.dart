@@ -31,6 +31,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'src/session/discovery.dart';
+import 'src/session/agent_forward.dart';
 import 'src/session/capability.dart';
 // 服务控制：GUI / daemon 的启停、重启与重新部署；与 bin/ide_gui.dart 共用
 // 同一份实现（macOS 走 launchd，其他平台按命令行精确匹配进程）。
@@ -1505,15 +1506,24 @@ Set<int> get _selfPorts => <int>{
 
 Future<void> _pollAgents() async {
   try {
-    _agents = await discoverLocalAgents(
+    final skip = <int>{
       // 自己 + GUI/MCP 端口，以及已经确认是 VM service 的端口都跳过。
-      skipPorts: <int>{
-        ..._selfPorts,
-        for (final d in _lastDiscovered) d.port,
-      },
-    );
+      ..._selfPorts,
+      for (final d in _lastDiscovered) d.port,
+    };
+    final scanned = await discoverLocalAgents(skipPorts: skip);
+    // app 的 Agent 只监听设备本机回环，必须先 adb forward / hdc fport 才能读到。
+    // 转发已存在时直接复用（端口按序列号稳定分配，不抢用户的转发）。
+    final forwarded = await ensureAgentForwards();
+    // 转发来源带设备标识（adb:SERIAL#port:N），优先于裸端口扫描结果。
+    final byFingerprint = <String, DiscoveredAgent>{};
+    for (final a in <DiscoveredAgent>[...forwarded, ...scanned]) {
+      byFingerprint.putIfAbsent(a.fingerprint, () => a);
+    }
+    _agents = byFingerprint.values.toList()
+      ..sort((a, b) => a.port.compareTo(b.port));
   } catch (e) {
-    // 探测失败不影响 VM 会话（release 直连服务 P1 才落地）。
+    // 探测失败不影响 VM 会话（直连只是辅助通道）。
     print('[xbume-ide] 直连探测异常: $e');
   }
 }

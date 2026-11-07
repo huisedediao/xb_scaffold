@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../agent/xb_ume_agent.dart';
 import '../config/xb_ume_config.dart';
 import '../models/xb_ume_exception_item.dart';
 import '../models/xb_ume_log_item.dart';
@@ -55,6 +56,10 @@ class XBUmeBinding {
     binding._registerDefaultPlugins();
     // debug/profile 下向 GUI 暴露进程级 CPU/内存（ext.xbume.processStats）。
     XBUmeProcessStats.install();
+    // 直连通道（release 可用）：默认关闭，`--dart-define=XBUME_AGENT=1` 打开。
+    unawaited(binding._startAgentServer(
+      XBUmeAgentOptions.fromEnvironment(),
+    ));
     for (final plugin in extraPlugins) {
       controller.registerPlugin(plugin);
     }
@@ -75,6 +80,29 @@ class XBUmeBinding {
   final XBUmeController controller;
   final XBUmeRouteObserver routeObserver;
   final XBUmeConfig config;
+
+  /// app 内直连服务（未启动时为 null）。
+  XBUmeAgentServer? _agentServer;
+
+  XBUmeAgentServer? get agentServer => _agentServer;
+
+  Future<void> _startAgentServer(XBUmeAgentOptions options) async {
+    if (!options.enabled || _agentServer != null) return;
+    _agentServer =
+        await startXBUmeAgentServer(controller: controller, options: options);
+  }
+
+  /// 代码里显式启动直连服务（默认对 127.0.0.1 开放，端口占用时返回 null）。
+  Future<XBUmeAgentServer?> startAgentServer({
+    XBUmeAgentOptions? options,
+  }) async {
+    final existing = _agentServer;
+    if (existing != null) return existing;
+    return _agentServer = await startXBUmeAgentServer(
+      controller: controller,
+      options: options ?? const XBUmeAgentOptions(enabled: true),
+    );
+  }
 
   DebugPrintCallback? _originDebugPrint;
   FlutterExceptionHandler? _originFlutterError;
@@ -222,6 +250,9 @@ class XBUmeBinding {
 
   void dispose() {
     WidgetsBinding.instance.removeTimingsCallback(_timingsCallback);
+    final agent = _agentServer;
+    _agentServer = null;
+    if (agent != null) unawaited(agent.close());
 
     if (_originDebugPrint != null) {
       debugPrint = _originDebugPrint!;
