@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../scenario/vm_client.dart';
+import '../session/capability.dart';
 import '../session/discovery.dart';
 import 'client_scope.dart';
 
@@ -25,7 +26,29 @@ class McpSession {
     required this.fingerprint,
     required this.appName,
     this.manual = false,
+    this.transport = SessionTransport.vm,
+    this.agentBaseUrl,
+    this.agentPort,
+    this.obfuscated = false,
   });
+
+  /// 由发现层的逻辑会话直接构造（VM / 直连 / 双通道）。
+  factory McpSession.fromLogical(LogicalSession l, {bool manual = false}) {
+    return McpSession(
+      id: l.id,
+      // 直连会话没有 VM 通道：wsUrl 留空，client 访问时给明确报错。
+      wsUrl: l.vm?.wsUrl ?? '',
+      port: l.port,
+      source: l.source,
+      fingerprint: l.fingerprint,
+      appName: l.appName,
+      manual: manual,
+      transport: l.transport,
+      agentBaseUrl: l.agent?.baseUrl,
+      agentPort: l.agent?.port,
+      obfuscated: l.obfuscated,
+    );
+  }
 
   final String id;
   final String wsUrl;
@@ -39,11 +62,48 @@ class McpSession {
   /// 由 --uri 手工注入：扫描时不被移除（可能在另一台机器的转发端口上）。
   final bool manual;
 
+  /// 当前可用通道（扫描时按配对结果更新）。
+  SessionTransport transport;
+
+  /// 直连（app 内 Agent）通道；没有时为 null。
+  String? agentBaseUrl;
+  int? agentPort;
+
+  /// 直连包是否开了 --obfuscate（类型名不可读）。
+  bool obfuscated;
+
+  /// VM 通道存在但本轮连不上：能力按直连算，下一轮探测恢复后回到 VM。
+  bool vmDegraded = false;
+
+  bool get hasVm => wsUrl.isNotEmpty;
+
+  /// 能力集合（工具前置校验与 GUI 置灰共用）。
+  Set<String> get caps => sessionCaps(
+        transport: transport,
+        obfuscated: obfuscated,
+        vmDegraded: vmDegraded,
+      );
+
   VmClient? _client;
 
-  VmClient get client => _client ??= VmClient(wsUrl);
+  VmClient get client {
+    if (!hasVm) {
+      throw StateError(
+          '会话 $id 是直连会话（无 VM 通道），该功能需要 VM 调试服务');
+    }
+    return _client ??= VmClient(wsUrl);
+  }
 
   bool get connected => _client != null;
+
+  /// 扫描到新一轮配对结果时更新通道信息（不断开已建的 VM 连接）。
+  void applyLogical(LogicalSession l) {
+    transport = l.transport;
+    agentBaseUrl = l.agent?.baseUrl;
+    agentPort = l.agent?.port;
+    obfuscated = l.obfuscated;
+    if (l.vm != null) vmDegraded = false;
+  }
 
   /// 会话所属设备（从 source 里拆出 adb:/hdc: 前缀），无转发映射时为 null。
   String? get deviceId {
@@ -73,6 +133,12 @@ class McpSession {
         'platform': platform,
         'connected': connected,
         'current': current,
+        'transport': sessionTransportName(transport),
+        if (agentPort != null) 'agentPort': agentPort,
+        if ((agentBaseUrl ?? '').isNotEmpty) 'agentUrl': agentBaseUrl,
+        if (obfuscated) 'obfuscated': true,
+        if (vmDegraded) 'vmDegraded': true,
+        'caps': caps.toList()..sort(),
       };
 
   Future<void> close() async {
@@ -170,9 +236,12 @@ class SessionRegistry {
     }
     _lastRefresh = DateTime.now();
     try {
-      final ports = await loopbackListeningPorts();
+      final ports = await loopbackListeningPorts(force: force);
       _lastScannedPorts = ports.length;
-      final discovered = await discoverLocalVmServices(skipPorts: skipPorts);
+      final discovered = await discoverLocalVmServices(
+        skipPorts: skipPorts,
+        freshPorts: force,
+      );
       final seen = <String>{};
       for (final d in discovered) {
         final id = 's${d.port}';
@@ -192,6 +261,34 @@ class SessionRegistry {
           fingerprint: d.fingerprint,
           appName: d.name,
         );
+      }
+      // 直连通道：同一 app 的 VM + 直连合并成一条逻辑会话（VM 优先）。
+      // 直连服务是 P1 才落地的，这里探测失败就只是没有 agent 通道。
+      final agents = await discoverLocalAgents(
+        // 已经确认是 VM service 的端口不必再打 /v1/hello。
+        skipPorts: <int>{...skipPorts, for (final d in discovered) d.port},
+        freshPorts: force,
+      );
+      final logical = mergeLogicalSessions(
+        vmSessions: discovered,
+        agents: agents,
+      );
+      for (final l in logical) {
+        seen.add(l.id);
+        final existing = _sessions[l.id];
+        if (existing != null) {
+          existing.applyLogical(l);
+          continue;
+        }
+        _sessions[l.id] = McpSession.fromLogical(l);
+      }
+      // 手工注入的 VM 会话也要补上直连通道（--uri 场景）。
+      for (final l in logical) {
+        if (l.agent == null) continue;
+        for (final s in _sessions.values) {
+          if (s.id == l.id || !s.manual) continue;
+          if (s.port == l.vmPort) s.applyLogical(l);
+        }
       }
       // 端口已消失的会话移除（fingerprint 相同的重连由新端口覆盖）。
       for (final id in _sessions.keys.toList()) {

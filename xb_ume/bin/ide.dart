@@ -31,6 +31,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'src/session/discovery.dart';
+import 'src/session/capability.dart';
 // 服务控制：GUI / daemon 的启停、重启与重新部署；与 bin/ide_gui.dart 共用
 // 同一份实现（macOS 走 launchd，其他平台按命令行精确匹配进程）。
 import 'src/control/svc_control.dart';
@@ -1185,6 +1186,12 @@ String _ideLabel(String cli) {
 
 final Map<String, _Session> _sessions = <String, _Session>{};
 
+/// 本轮直连（app 内 Agent）探测结果：只用于状态列表，不参与 IDE 跳转。
+List<DiscoveredAgent> _agents = <DiscoveredAgent>[];
+
+/// 本轮 VM 探测结果：与 [_agents] 合并后输出 transport / caps。
+List<DiscoveredSession> _lastDiscovered = <DiscoveredSession>[];
+
 /// 日志时间前缀（daemon 日志无时间戳曾严重阻碍排障：无法对齐「重启→重
 /// 放」时间线）。
 String get _logTs => DateTime.now().toIso8601String().substring(11, 19);
@@ -1364,17 +1371,7 @@ void _onLockConnection(Socket socket) {
         'type': 'status',
         'pid': pid,
         'uptimeSec': DateTime.now().difference(_daemonStartedAt).inSeconds,
-        'sessions': <Map<String, Object?>>[
-          for (final session in _sessions.values)
-            if (session.alive)
-              <String, Object?>{
-                'source': session.source,
-                'uri': session.wsUrl,
-                // 实例指纹（端口无关）：同一实例重连后端口可能变化，
-                // GUI 前端据此恢复用户选中的会话。
-                if (session.fingerprint != null) 'fp': session.fingerprint,
-              },
-        ],
+        'sessions': _statusSessions(),
       }));
     }
   }, onError: (Object _) {
@@ -1459,6 +1456,10 @@ Future<void> _poll(String ide) async {
     final discovered = await discoverLocalVmServices(
       knownFingerprints: _knownFingerprints,
     );
+    _lastDiscovered = discovered;
+
+    // 直连通道（P0 先只做发现与展示，不改跳转链路）。
+    await _pollAgents();
 
     // 接入新会话。
     for (final s in discovered) {
@@ -1493,10 +1494,75 @@ Future<void> _poll(String ide) async {
 }
 
 // ---------------------------------------------------------------------------
-// VM service 自动发现实现已抽到 src/session/discovery.dart（daemon 与 MCP
-// server 共用）：discoverLocalVmServices / probeVmService /
-// forwardedPortsByDevice / loopbackListeningPorts。
+// 直连（app 内 Agent）发现：P0 只做探测 + 列表展示，能力由 caps 驱动 GUI 置灰。
 // ---------------------------------------------------------------------------
+
+/// daemon 自身与 GUI/MCP 常驻服务的端口，探测时跳过（避免把自己当 app）。
+Set<int> get _selfPorts => <int>{
+      kLockPort,
+      for (var p = 46129; p <= 46149; p++) p,
+    };
+
+Future<void> _pollAgents() async {
+  try {
+    _agents = await discoverLocalAgents(
+      // 自己 + GUI/MCP 端口，以及已经确认是 VM service 的端口都跳过。
+      skipPorts: <int>{
+        ..._selfPorts,
+        for (final d in _lastDiscovered) d.port,
+      },
+    );
+  } catch (e) {
+    // 探测失败不影响 VM 会话（release 直连服务 P1 才落地）。
+    print('[xbume-ide] 直连探测异常: $e');
+  }
+}
+
+/// 当前会话列表（VM + 直连合并），带 transport / caps 供 GUI 置灰使用。
+List<Map<String, Object?>> _statusSessions() {
+  final vmAlive = <String, _Session>{
+    for (final s in _sessions.values)
+      if (s.alive) s.wsUrl: s,
+  };
+  final logical = mergeLogicalSessions(
+    vmSessions: _lastDiscovered,
+    agents: _agents,
+  );
+  final out = <Map<String, Object?>>[];
+  for (final l in logical) {
+    if (l.vm != null && !vmAlive.containsKey(l.vm!.wsUrl)) continue;
+    out.add(<String, Object?>{
+      'source': l.source,
+      'uri': l.uri,
+      // 实例指纹（端口无关）：同一实例重连后端口可能变化，
+      // GUI 前端据此恢复用户选中的会话。
+      'fp': l.fingerprint,
+      'transport': sessionTransportName(l.transport),
+      if (l.vmPort != null) 'vmPort': l.vmPort,
+      if (l.agentPort != null) 'agentPort': l.agentPort,
+      if ((l.agent?.baseUrl ?? '').isNotEmpty) 'agentUrl': l.agent!.baseUrl,
+      // Flutter 的 getVM.name 恒为 'vm'，无信息量：透传给 GUI 会把下拉
+      // 变成「vm · adb:…」，直连包名才是真正可用的 app 标识。
+      if (l.appName.isNotEmpty && l.appName != 'vm') 'app': l.appName,
+      if (l.obfuscated) 'obfuscated': true,
+      'caps': l.caps().toList()..sort(),
+    });
+  }
+  // --uri 手工注入的会话不在扫描结果里，单独补上（transport=vm，能力全开）。
+  for (final s in _sessions.values) {
+    if (!s.alive) continue;
+    final manual = s.source.startsWith('manual:');
+    if (!manual) continue;
+    out.add(<String, Object?>{
+      'source': s.source,
+      'uri': s.wsUrl,
+      if (s.fingerprint != null) 'fp': s.fingerprint,
+      'transport': kTransportVm,
+      'caps': kVmCaps.toList()..sort(),
+    });
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // VM service 客户端（手写 JSON-RPC over WebSocket）

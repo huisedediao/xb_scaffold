@@ -11792,6 +11792,10 @@ const String guiHtml = r'''
   .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
   .muted { color:var(--dim); }
   .ok { color:#46d68c; } .bad { color:#e5484d; }
+  /* 能力置灰（P0）：直连会话缺的能力，对应控件不可点但可见。 */
+  .cap-off { opacity:.42; cursor:not-allowed; }
+  #cap-banner { display:none; margin:0 0 8px; padding:7px 10px; border-radius:6px;
+    background:#3a2c12; color:#e8b465; font-size:12px; line-height:1.5; border:1px solid #5a4318; }
   #logview { font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; padding:8px; height:calc(100vh - 210px); overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
   #tl-body { font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; background:#070b10; border:1px solid var(--line); border-radius:8px; height:calc(100vh - 250px); overflow-y:auto; }
   .tl-row { display:flex; align-items:baseline; gap:8px; padding:2px 8px; border-left:3px solid transparent; cursor:pointer; white-space:nowrap; overflow:hidden; }
@@ -12160,7 +12164,7 @@ const String guiHtml = r'''
 <main>
   <section class="page active" id="page-daemon">
     <div class="card">
-      <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button><button onclick="rtOp('reassemble')" title="ext.flutter.reassemble：重建全部 Widget（实例 Tab 字段写回后立即生效）；完整热重载需 IDE 编译 kernel，此处不做">UI 重建</button><button onclick="rtOp('gc')" title="_collectAllGarbage：触发全量 GC（泄漏检测前用）">触发 GC</button><span id="rt-op-stat" class="muted"></span></div>
+      <div class="row"><b>守护进程状态</b><button onclick="refreshDaemon()">刷新</button><button class="primary" onclick="restartDaemon()">重启守护进程</button><button onclick="rtOp('reassemble')" data-need-caps="gc" title="ext.flutter.reassemble：重建全部 Widget（实例 Tab 字段写回后立即生 效）；完整热重载需 IDE 编译 kernel，此处不做">UI 重建</button><button onclick="rtOp('gc')" data-need-caps="gc" title="_collectAllGarbage：触发全量 GC（泄漏检测前用）">触发 GC</button><span id="rt-op-stat" class="muted"></span></div>
       <div id="daemon-status" class="muted">查询中…</div>
     </div>
     <div class="card">
@@ -12224,6 +12228,8 @@ const String guiHtml = r'''
     </div>
   </section>
   <section class="page" id="page-debug">
+    <!-- 能力提示条：直连（release）会话缺 debug/hot/gc 时出现 -->
+    <div id="cap-banner"></div>
     <!-- 顶部工具条：会话 / 目录 / 设备 / 运行配置 / 接入（对应 VS Code 调试视图顶部） -->
     <div class="card dbg-tools">
       <div class="row">
@@ -12266,7 +12272,7 @@ const String guiHtml = r'''
           <label class="chk" style="display:flex;align-items:center;flex:1;min-width:0" title="接入已经在跑的调试会话（含 IDE 拉起的）：断点/单步可用；热重载需要本工具拉起的会话">接入会话
             <select id="dbg-attach" style="flex:1;min-width:0;margin-left:6px"></select>
           </label>
-          <button onclick="dbgAttach(this)">接入</button>
+          <button onclick="dbgAttach(this)" data-need-caps="debug" title="接入一条 VM 调试会话（断点/单步/求值）">接入</button>
           <button onclick="dbgDetach(this)" title="只断开调试连接，app 继续跑">断开</button>
         </div>
       </div>
@@ -12283,8 +12289,8 @@ const String guiHtml = r'''
             <b>断点</b>
             <span id="dbg-bp-n" class="muted" style="font-size:12px"></span>
             <button id="dbg-bp-all" onclick="dbgToggleAllBps(this)" title="当前会话还没有断点">停用全部</button>
-            <button onclick="dbgSrcOpen()" style="margin-left:auto" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button>
-            <button onclick="dbgListBp(this)">刷新</button>
+            <button onclick="dbgSrcOpen()" style="margin-left:auto" data-need-caps="debug" title="打开项目源码，点行号就能下断点 / 再点取消（不用手输文件:行）">源码下断点</button>
+            <button onclick="dbgListBp(this)" data-need-caps="debug">刷新</button>
           </div>
           <div class="dbg-bpadd">
             <div class="dbg-bprow">
@@ -12296,7 +12302,7 @@ const String guiHtml = r'''
               <input id="dbg-bp-log" placeholder="日志表达式（命中不暂停，如 'i=$i'）" onkeydown="if(event.key==='Enter')dbgAddBp()">
             </div>
             <div class="dbg-bprow">
-              <button class="primary" id="dbg-bp-add" onclick="dbgAddBp(this)">加断点</button>
+              <button class="primary" id="dbg-bp-add" onclick="dbgAddBp(this)" data-need-caps="debug">加断点</button>
               <button id="dbg-bp-cancel" onclick="dbgCancelBpEdit()" style="display:none" title="放弃修改，回到新加断点">取消</button>
             </div>
           </div>
@@ -12323,7 +12329,7 @@ const String guiHtml = r'''
       </div>
       <!-- 中栏：调用栈 / 变量 / 求值（主区，变量树吃掉剩余高度） -->
       <div class="card dbg-varcol dbg-col">
-        <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto">刷新</button></div>
+        <div class="row"><b>调用栈 / 变量</b><span id="dbg-frame" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><button onclick="dbgStack()" style="flex:0 0 auto" data-need-caps="debug">刷新</button></div>
         <div id="dbg-stack" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
           <input id="dbg-var-filter" placeholder="筛选变量：名字包含即可（忽略大小写），如 count" style="flex:1;min-width:0;font-size:12px" title="模糊匹配变量名；命中项与通往它的祖先保留，其余隐藏。输入停下后会自动把整棵树拉下来补扫，Esc 清空" oninput="dbgVarFilterOnInput()" onkeydown="if(event.key==='Escape')dbgVarFilterClear()">
@@ -12333,7 +12339,7 @@ const String guiHtml = r'''
         <div id="dbg-vars" class="dbg-list"></div>
         <div class="row" style="margin-top:6px;gap:6px;flex-wrap:nowrap">
           <input id="dbg-eval" placeholder="选中帧里求值，如 widget.runtimeType" style="flex:1;min-width:0;font-size:12px" onkeydown="if(event.key==='Enter')dbgEval()">
-          <button onclick="dbgEval()">求值</button>
+          <button onclick="dbgEval()" data-need-caps="debug">求值</button>
         </div>
         <div id="dbg-eval-out" class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;overflow:auto"></div>
       </div>
@@ -12486,7 +12492,7 @@ const String guiHtml = r'''
   <section class="page" id="page-routes">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <button onclick="rtRefresh()" title="重新拉取当前会话的路由栈">刷新</button>
-      <button onclick="leakCheck()" title="GC 后对本会话浏览过的页面 State 类做树上/堆上双计数：不在路由栈中但堆上仍有实例即疑似泄漏">泄漏检测</button>
+      <button onclick="leakCheck()" data-need-caps="gc" title="GC 后对本会话浏览过的页面 State 类做树上/堆上双计数：不在路由栈中但堆上仍有实例即疑似泄漏">泄漏检测</button>
       <input id="rt-leak-cls" placeholder="手动补充 State 类名（可选，逗号分隔）" style="width:230px" onkeydown="if(event.key==='Enter')leakCheck()">
       <span class="muted">选中会话 app 的 Navigator 路由栈（栈底 → 栈顶，当前路由高亮）</span>
     </div>
@@ -12758,14 +12764,14 @@ const String guiHtml = r'''
 <!-- 调试浮动工具条（VSCode 风格）：连着会话就出现，暂停时高亮；跨 Tab 常驻 -->
 <div id="dbg-bar">
   <span class="why" id="dbg-bar-why">调试中</span>
-  <button id="dbg-b-pause" onclick="dbgPause()" title="暂停（异步停在最近的 Dart 代码）">⏸ 暂停</button>
-  <button id="dbg-b-resume" onclick="dbgResume()" title="继续（F5）">▶ 继续</button>
-  <button id="dbg-b-over" onclick="dbgResume('over')" title="单步跳过（F10）：执行完当前行">↷ 跳过</button>
-  <button id="dbg-b-into" onclick="dbgResume('into')" title="单步进入（F11）：进入被调用函数">↘ 进入</button>
-  <button id="dbg-b-out" onclick="dbgResume('out')" title="单步跳出（⇧F11）：跑完当前函数">↖ 跳出</button>
+  <button id="dbg-b-pause" onclick="dbgPause()" data-need-caps="debug" title="暂停（异步停在最近的 Dart 代码）">⏸ 暂停</button>
+  <button id="dbg-b-resume" onclick="dbgResume()" data-need-caps="debug" title="继续（F5）">▶ 继续</button>
+  <button id="dbg-b-over" onclick="dbgResume('over')" data-need-caps="debug" title="单步跳过（F10）：执行完当前行">↷ 跳过</button>
+  <button id="dbg-b-into" onclick="dbgResume('into')" data-need-caps="debug" title="单步进入（F11）：进入被调用函数">↘ 进入</button>
+  <button id="dbg-b-out" onclick="dbgResume('out')" data-need-caps="debug" title="单步跳出（⇧F11）：跑完当前函数">↖ 跳出</button>
   <span class="sep"></span>
-  <button id="dbg-b-hot" onclick="dbgHot(false)" title="热重载（r）：改完代码不重启进程">⟳ 热重载<span class="kbd" id="dbg-b-hot-k"></span></button>
-  <button id="dbg-b-restart" onclick="dbgHot(true)" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启<span class="kbd" id="dbg-b-restart-k"></span></button>
+  <button id="dbg-b-hot" onclick="dbgHot(false)" data-need-caps="hot" title="热重载（r）：改完代码不重启进程">⟳ 热重载<span class="kbd" id="dbg-b-hot-k"></span></button>
+  <button id="dbg-b-restart" onclick="dbgHot(true)" data-need-caps="hot" title="热重启（R）：重建 isolate，断点自动重下">⥀ 热重启<span class="kbd" id="dbg-b-restart-k"></span></button>
   <!-- 不用 ⌨ 等符号：部分系统字体把它渲染成方块，文字更稳 -->
   <button id="dbg-b-hotkey" onclick="hkOpen()" title="设置全局快捷键（系统级：工具箱页面关掉、在别的软件里也生效；macOS / Windows）">快捷键</button>
   <span class="sep"></span>
@@ -12896,6 +12902,7 @@ document.addEventListener('visibilitychange', function(){ clog('页面' + (docum
 var lastDaemonRunning = null;
 var vmApps = {}; // 会话来源 → 应用包名（/api/daemon 返回，回放日志无 app 时兑底展示）
 var vmUriBySource = {}; // 会话来源 → VM service ws uri（沙盒 Tab 用）
+var agentUrlBySource = {}; // 会话来源 → 直连 Agent baseUrl（P1 用；P0 只记录）
 var platformNames = { android: 'Android', ohos: '鸿蒙', 'ios-sim': 'iOS 模拟器', 'ios-real': 'iOS 真机', windows: 'Windows', macos: 'macOS' };
 function connect() {
   ws = new WebSocket('ws://' + location.host + '/ws?token=' + encodeURIComponent(XBUME_TOKEN));
@@ -15067,6 +15074,76 @@ function tlGoNet(id){
     setTimeout(wait, 150);
   })();
 }
+// ── 能力置灰（P0）：会话能做什么由 transport 决定，控件用 data-need-caps 声明 ──
+// 未知 caps（旧版 daemon）时保守全开，行为与以前一致。
+var CAP_LABELS = {
+  'debug': '断点 / 单步 / 变量树 / 求值',
+  'hot': '热重载 / 热重启',
+  'gc': '触发 GC / UI 重建',
+  'srclocate:exact': '精确源码定位',
+  'names': '可读类型名'
+};
+var lastDaemonSessions = []; // 最近一轮 /api/daemon 的会话（置灰与切换时复用）
+var curDaemonSession = null; // 当前选中会话（含 caps / transport）
+function capHas(caps, need){
+  if (!caps) return true;
+  return need.split(',').every(function(n){ return caps.indexOf(n) >= 0; });
+}
+function capLabelOf(n){ return CAP_LABELS[n] || n; }
+function dbgSetCurrentSession(s){
+  curDaemonSession = s || null;
+  dbgApplyCaps();
+}
+function dbgApplyCaps(){
+  var caps = curDaemonSession && curDaemonSession.caps ? curDaemonSession.caps : null;
+  var banner = document.getElementById('cap-banner');
+  if (banner) {
+    var missing = caps ? ['debug','hot','gc'].filter(function(n){ return caps.indexOf(n) < 0; }) : [];
+    if (missing.length) {
+      banner.style.display = '';
+      banner.textContent = '当前会话为直连通道（release 包无 VM 调试服务）：' +
+        missing.map(capLabelOf).join('、') + ' 不可用；' +
+        '日志 / 网络 / 异常 / 时间轴 / 路由 / 存储 / 沙盒 / 截图 / 点击 照常可用。';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  var nodes = document.querySelectorAll('[data-need-caps]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (el.getAttribute('data-cap-title') === null) {
+      el.setAttribute('data-cap-title', el.title || '');
+    }
+    var need = el.getAttribute('data-need-caps') || '';
+    var ok = capHas(caps, need);
+    // 不能直接改 disabled：dbgRenderBar 等地方已按「已连接/已暂停」管着它。
+    // 能力不足用独立标记 + 捕获阶段点击拦截，两种限制可叠加。
+    el.setAttribute('data-cap-blocked', ok ? '0' : '1');
+    el.classList.toggle('cap-off', !ok);
+    el.setAttribute('aria-disabled', ok ? 'false' : 'true');
+    var base = el.getAttribute('data-cap-title') || '';
+    el.title = ok ? base : (base ? base + ' · ' : '') + '当前会话不支持：' +
+      need.split(',').map(capLabelOf).join('、');
+  }
+}
+// 能力不足的控件在捕获阶段就拦掉（鼠标与键盘都拦），不依赖 disabled。
+document.addEventListener('click', function(ev){
+  var el = ev.target && ev.target.closest ? ev.target.closest('[data-cap-blocked="1"]') : null;
+  if (!el) return;
+  ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
+}, true);
+document.addEventListener('keydown', function(ev){
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  var el = ev.target && ev.target.closest ? ev.target.closest('[data-cap-blocked="1"]') : null;
+  if (!el) return;
+  ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
+}, true);
+function dbgSessionTransportText(s){
+  var tr = (s && s.transport) || 'vm';
+  if (tr === 'both') return '（VM+直连）';
+  if (tr === 'agent') return '（直连）';
+  return '（VM）';
+}
 function refreshDaemon(){
   fetch('/api/daemon').then(function(r){ return r.json(); }).then(function(d){
     var el = document.getElementById('daemon-status');
@@ -15078,6 +15155,7 @@ function refreshDaemon(){
       el.innerHTML = '<span class="bad">未运行</span>（启动：dart run xb_ume:ide --install）';
       vm.style.display = ''; vm.textContent = 'VM 未连接'; vm.title = '守护进程未运行';
       sel.style.display = 'none';
+      dbgSetCurrentSession(null);
       var aselDown = document.getElementById('dbg-attach');
       if (aselDown) {
         dbgAttachList = [];
@@ -15087,7 +15165,8 @@ function refreshDaemon(){
       if (lastDaemonRunning === false) clog('daemon 恢复运行');
       lastDaemonRunning = true;
       var ss = d.sessions || [];
-      var sess = ss.map(function(s){ return (s.app ? s.app + ' · ' : '') + esc(s.source) + ' → ' + esc(s.uri); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
+      lastDaemonSessions = ss;
+      var sess = ss.map(function(s){ return (s.app ? s.app + ' · ' : '') + esc(s.source) + ' → ' + esc(s.uri) + dbgSessionTransportText(s); }).join('<br>') || '<span class="muted">无已接入的调试会话</span>';
       el.innerHTML = '<span class="ok">运行中</span> pid=' + d.pid + '，已运行 ' + Math.floor(d.uptimeSec / 60) + ' 分 ' + (d.uptimeSec % 60) + ' 秒<br>调试会话：<br>' + sess;
       vm.style.display = 'none';
       sel.style.display = '';
@@ -15096,10 +15175,13 @@ function refreshDaemon(){
       ss.forEach(function(s){
         var v = s.source || s.uri;
         if (s.app) vmApps[v] = s.app;
-        vmUriBySource[v] = s.uri; // 沙盒 Tab 用来源找 uri
+        // 只有 VM 通道时才记 VM uri（纯直连会话的 uri 是 http，不能当 ws 用）。
+        var tr = s.transport || 'vm';
+        if (tr !== 'agent') vmUriBySource[v] = s.uri; // 沙盒 Tab 用来源找 uri
+        if (tr !== 'vm' && s.agentUrl) agentUrlBySource[v] = s.agentUrl;
         if (s.fp) fpBySource[v] = s.fp;
-        // 显示应用包名（如有），value 仍为会话来源，保证过滤匹配不变。
-        var text = (s.app ? s.app + ' · ' : '') + v;
+        // 显示应用包名（如有）与通道类型，value 仍为会话来源，保证过滤匹配不变。
+        var text = (s.app ? s.app + ' · ' : '') + v + dbgSessionTransportText(s);
         html += '<option value="' + esc(v) + '">' + esc(text) + '</option>';
       });
       sel.innerHTML = html;
@@ -15111,7 +15193,7 @@ function refreshDaemon(){
         var ahtml = '<option value="">选择一条调试会话（共 ' + ss.length + ' 个）</option>';
         ss.forEach(function(s, i){
           ahtml += '<option value="' + i + '">'
-            + esc((s.app ? s.app + ' · ' : '') + (s.source || s.uri)) + '</option>';
+            + esc((s.app ? s.app + ' · ' : '') + (s.source || s.uri) + dbgSessionTransportText(s)) + '</option>';
         });
         var apv = asel.value;
         asel.innerHTML = ahtml;
@@ -15150,6 +15232,12 @@ function refreshDaemon(){
       if (vmFilter !== prevVmFilter) {
         renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); pfOnVmChange();
       }
+      // 能力置灰：把当前选中会话（含 caps）交给置灰逻辑；未选中 → 全开。
+      var curEntry = null;
+      for (var ci = 0; ci < ss.length; ci++) {
+        if ((ss[ci].source || ss[ci].uri) === vmFilter) { curEntry = ss[ci]; break; }
+      }
+      dbgSetCurrentSession(curEntry);
       sel.title = ss.map(function(s){ return (s.source || s.uri) + ' → ' + s.uri; }).join('\n') || '无已接入的调试会话（电脑上运行 flutter run 后自动接入）';
     }
     var order = d.config && d.config.ideOrder;
@@ -15663,6 +15751,13 @@ setInterval(refreshMcp, 15000);
 function setVmFilter(v){
   vmFilter = v; saveVmFp(fpBySource[v] || '');
   clog('用户选择: ' + (v || '(未选择)') + ' fp=' + (fpBySource[v] || ''));
+  // 置灰立即跟随选择（不等下一轮 5s 轮询）。
+  var hit = null;
+  for (var i = 0; i < lastDaemonSessions.length; i++) {
+    var s = lastDaemonSessions[i];
+    if ((s.source || s.uri) === v) { hit = s; break; }
+  }
+  dbgSetCurrentSession(hit);
   sbPath = null; dbReset(); renderLogs(); sbRefresh(); rtRefresh(); nwRefresh(); stRefresh(); tlResub();
   pfOnVmChange();
 }

@@ -1,3 +1,17 @@
+## 0.9.6
+
+- **会话能力模型（P0：双通道的第一步）**：新增 `bin/src/session/capability.dart`——把「一条会话能做什么」抽成能力键（`inspect` / `fs` / `act` / `widgets` / `shot` / `perf` / `gc` / `debug` / `hot` / `srclocate:*` / `names`），`transport`（`vm` / `agent` / `both`）→ `caps` 的换算是纯函数，工具前置校验与 GUI 置灰共用同一份事实来源。VM 掉线（`vmDegraded`）自动按直连能力算，混淆包丢 `names`，双通道取并集且精确源码定位优先。
+
+- **发现层能认直连会话了**：`bin/src/session/discovery.dart` 新增 `probeAgent` / `discoverLocalAgents`（`GET /v1/hello`，只读非敏感元信息，不校验 token）与 `mergeLogicalSessions`——同一个 app 的 VM 通道与直连通道合并成一条逻辑会话（id 沿用 `s<port>`，VM 优先）。配对规则：精确（app 自报 vmPort == 转发远端端口，且设备一致）＞ 兼底（同设备两边各剩唯一候选）＞ 并列两条（同包多进程时宁可多一条也不错配）。`forwardedPortMap` 现在保留设备侧端口。
+
+- **daemon / MCP 会话表带通道与能力**：daemon 每轮轮询顺带探测直连服务（跳过自身 46129~46149 端口），`/api/daemon` 的 `sessions` 每项新增 `transport` / `caps` / `agentPort` / `agentUrl` / `obfuscated` / `vmPort`；`--uri` 手工会话仍以 `transport=vm` 单独补上。MCP 侧 `McpSession` 同步 `transport` / `caps` / `agentBaseUrl` / `agentPort`，纯直连会话（无 VM）访问 `client` 时给出明确报错而不是连一个空地址。
+
+- **GUI 置灰（声明式）**：会话下拉显示 `（VM）` / `（直连）` / `（VM+直连）`；需要 VM 的控件只加 `data-need-caps="debug|hot|gc"`，`dbgApplyCaps()` 统一切 `disabled` + `.cap-off` + tooltip 追加「当前会话不支持：…」，切会话立即生效（不等 5s 轮询）。调试页顶部新增 `#cap-banner` 黄条说明缺哪些能力、哪些照常可用。未知 `caps`（旧 daemon）时保守全开，行为与升级前一致。本版已标注：接入会话、断点相关、调用栈/求值、底部暂停/单步/热重载/热重启、UI 重建/触发 GC/泄漏检测。
+
+- **直连服务本身仍待 P1**：本版只做「发现 + 能力下发 + 置灰」这一层，app 内 `HttpServer`（`lib/`）与工具侧语义接口在 P1/P2 落地；当前所有真实会话仍是 `transport=vm`，因此界面行为不变（回归 719 项测试全绿）。
+
+- **测试**：新增 `test/session_capability_test.dart`（16 项）、`test/session_merge_test.dart`（13 项）、`test/session_probe_agent_test.dart`（5 项）、`test/session_caps_gui_test.dart`（13 项）。
+
 ## 0.9.5
 
 - **调试页「项目目录」支持选文件夹**（用户：「这个地方，怎么不能选择文件夹？只能输入？我希望能够选择文件夹」）：调试页顶部项目目录输入框右侧新增「选择…」，复用 AI 调试页的目录浏览弹窗（后台 `/api/fs/dirs` 列目录，浏览器拿不到绝对路径）。`aiPickDir` 支持指定回填目标，选定后写回并派发 `change`，调试页原有的 `dbgLoadSaved();dbgProfileRefresh()` 自动执行；AI 页不传参仍默认 `ai-dir`，行为不变。弹窗从 `#page-ai` 移到页面顶层（`.page { display:none }` 下从调试页打不开），「会话/最近」候选在调试页加载 `/api/ai/config` 时一并填充。
