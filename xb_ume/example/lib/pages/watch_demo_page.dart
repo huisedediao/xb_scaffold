@@ -24,6 +24,9 @@ class _WatchDemoPageState extends State<WatchDemoPage> {
     _vm = WatchDemoVm();
     // 暴露给 GUI 实例 Tab（重复 id 覆盖，退出后保留最后一次注册的实例）。
     XBUme.registerStore('watch-demo', _vm);
+    // 直连会话（release）没有 eval，只能读 app 注册的字段树：同一份状态
+    // 再挂一个 inspectable。
+    XBUme.registerInspectable(_WatchDemoInspectable(_vm));
   }
 
   @override
@@ -112,4 +115,24 @@ class WatchDemoVm extends ChangeNotifier {
     _timer?.cancel();
     super.dispose();
   }
+}
+
+/// 直连会话的字段快照：每次 inspect() 现读 VM，计数变化在面板上能直接看到。
+class _WatchDemoInspectable extends XBUmeInspectable {
+  _WatchDemoInspectable(this.vm);
+
+  final WatchDemoVm vm;
+
+  @override
+  String get inspectId => 'watch-demo';
+
+  @override
+  String get inspectType => 'WatchDemoVm';
+
+  @override
+  Map<String, dynamic> inspect() => <String, dynamic>{
+        'count': vm.count,
+        'phase': vm.phase,
+        'running': vm.running,
+      };
 }

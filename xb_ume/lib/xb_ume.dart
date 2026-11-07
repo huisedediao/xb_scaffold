@@ -4,6 +4,7 @@ export 'src/config/xb_ume_config.dart';
 export 'src/core/xb_ume.dart';
 export 'src/core/xb_ume_binding.dart';
 export 'src/core/xb_ume_controller.dart';
+export 'src/core/xb_ume_inspectable.dart';
 export 'src/core/xb_ume_plugin.dart';
 export 'src/core/xb_ume_route_observer.dart';
 export 'src/core/xb_ume_storage_adapter.dart';

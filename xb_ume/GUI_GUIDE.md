@@ -709,7 +709,8 @@ dart run xb_ume:ide --uninstall
 - **热重载 / 热重启**：release 包（AOT）无热重载，置灰。
 - **照常可用**：日志、网络、异常、时间轴、路由栈、Storage、应用沙盒、数据库、截图、点击 / 输入 / 滑动、性能采样。
 
-> 上表是直连通道的「理论上限」。0.9.7 的 app 内直连服务只报 `inspect`；0.9.8 起报 `inspect,widgets,act,shot`（见下两节）。
+> 上表是直连通道的「理论上限」。0.9.7 的 app 内直连服务只报 `inspect`；0.9.8 起报 `inspect,widgets,act,shot`；0.9.9 起报
+> `inspect,widgets,act,shot,perf,inspectable,fs,srclocate:heuristic`（见下三节）。
 
 实现上是声明式的：控件只加 `data-need-caps="debug|hot|gc"`，由后台下发的 `caps` 统一裁剪；旧版 daemon 不返回 `caps` 时保守全开，行为与升级前一致。
 
@@ -742,7 +743,7 @@ P1 能用的（`caps=inspect`）：
 - 日志 Tab、异常 Tab（服务端每 2 秒轮询一次，清空后旧卡片不会复活）、Network Tab（列表 / 详情 / 清空）、时间轴 Tab（路由事件 + 网络事件）。
 - 会话下拉直接选中直连会话；MCP 侧用同一份 `caps` / `transport`，能力不满足的工具会提前报错而不是连一个空地址。
 
-P1 当时仍然置灰（0.9.8 已补齐前半）：沙盒 / 存储 / 数据库（`fs`）、点击 / 输入 / 滑动（`act`）、组件树与路由栈（`widgets`）、截图（`shot`）、性能（`perf`）、断点 / 求值 / 单步（`debug`）、热重载（`hot`）、GC。
+P1 当时仍然置灰（后续已补齐大部分）：沙盒 / 存储 / 数据库（`fs`）、点击 / 输入 / 滑动（`act`）、组件树与路由栈（`widgets`）、截图（`shot`）、性能（`perf`）、断点 / 求值 / 单步（`debug`）、热重载（`hot`）、GC。其中 `act` / `widgets` / `shot` 由 0.9.8 补齐，`fs` / `perf` 由 0.9.9 补齐；`debug` / `hot` / `gc` 以及路由栈**详情**仍是 VM 独占。
 
 ### 0.9.8：直连通道（P2 组件树 + 动作面）
 
@@ -760,7 +761,7 @@ P1 当时仍然置灰（0.9.8 已补齐前半）：沙盒 / 存储 / 数据库�
 
 - **路由栈 Tab**：按 `route:stack` 键置灰。栈详情（Route 类型 / 参数类型 / isPresent）读的是 `NavigatorState._history`，`navigator.dart` 私有字段，只有 VM eval 拿得到。直连侧只给「路由事件流」——当前路由名靠 `/v1/routes` 事件重放算出来，足够 `xbume_tap` / `xbume_navigate` 回包与场景的 `assertRoute` / `back` 使用，但拿不到栈里每个 Route 的类型信息（想看历史就去时间轴 Tab）。
 - **自动化 Tab**：按 `act,debug` 置灰。点击/输入本身直连能做，但这个面板的后端是 VM eval 驱动的场景录制/回放，一并置灰更诚实；命令行 `dart run xb_ume:run --uri http://…` 与 `xbume_scenario_run` 已经能跑直连会话。
-- **沙盒 / 存储 / 数据库（`fs`）**、性能（`perf`）、断点 / 单步 / 求值（`debug`）、热重载 / 热重启（`hot`）、GC / 泄漏检测：release 物理上做不到。
+- **断点 / 单步 / 求值（`debug`）**、热重载 / 热重启（`hot`）、GC / 泄漏检测：release 物理上做不到。（沙盒 / 存储 / 数据库与性能采样 0.9.9 已补齐，见下节；沙盒的**上传 / 删除**、`xbume_instances` 的 `find` / `set` 仍要 `debug`。）
 
 实现要点（想改这块时先看这两条）：
 
@@ -768,6 +769,34 @@ P1 当时仍然置灰（0.9.8 已补齐前半）：沙盒 / 存储 / 数据库�
 - 能力闸门在 `bin/src/mcp/server.dart::_callTool` 统一执行：缺能力直接 `isError` 回人话，不再等 handler 里连一个空地址才炸。
 
 > 真机上端口转发需要 `adb` / `hdc` 可用；设 `XBUME_AGENT_PROBE=0` 可整体关掉转发探测（CI 或不想让 daemon 调 adb 时）。
+
+### 0.9.9：直连通道（P3 数据面补齐：沙盒 / 数据库 / 性能 / 字段树 / 路由定位 / Watch）
+
+P1/P2 只做了「读数据 + 看图点击」，真正排障还要看文件、看库、看帧、看业务状态。这版把这些也搬到 app 内，全部用 AOT 可用的公开 API，能力自报升到 `inspect,widgets,act,shot,perf,inspectable,fs,srclocate:heuristic`。
+
+| 能力 | GUI | 新端点 / MCP 工具 |
+|---|---|---|
+| 沙盒（`fs`） | 「应用沙盒」Tab（`/api/sandbox` 直连分支） | `GET /v1/sandbox/roots` / `list` / `stat` / `read`；`xbume_sandbox`（list / read / download / downloadDir） |
+| 存储（`fs`） | 「Storage」Tab（`/api/storage/*` 直连分支） | `GET /v1/storage/list` / `read` / `adapters`，`POST /v1/storage/set` / `remove`；`xbume_storage` |
+| 数据库（`fs`） | 「数据库」Tab（`/api/db/open` 直连分支） | `open` 用 `/v1/sandbox/stat` + 分块 `read` 把库拉回本机，再用本机 `sqlite3` 跑；`GET /v1/db/files` 列沙盒里的 `*.db` / `*.sqlite*` 候选 |
+| 性能（`perf`） | 「性能」Tab（`/api/perf` → `/v1/perf`） | 帧耗时统计（`SchedulerBinding.addTimingsCallback`）+ 进程 CPU / 内存；`xbume_perf`（`snapshot`） |
+| 实例字段树（`inspectable`） | 「实例」Tab（`/api/instances/stores` / `tree` → `/v1/inspect`） | 无 `id` 列注册表，带 `id` 出字段树（`depth` 1–4）；`xbume_instances`（`stores` / `tree`） |
+| 路由源码定位（`srclocate:heuristic`） | Locator 选中路由名 | 路由名 → 候选类名 → 在项目 `lib/` 下找类声明（结果带 `heuristic: true`）；`xbume_route_locate` |
+| Watch（受限） | Watch 面板新增直连行 | `kind: inspect`（轮询 inspectable 字段路径）/ `kind: file`（轮询 size+mtime）；`xbume_watch` |
+
+**沙盒只读**：`list` / `read` / `stat` / `download` / `downloadDir` 直通，全部在 app 进程内用 `dart:io` 跑，所以「能不能看到」就等于 app 自己的权限边界（`/v1/sandbox/roots` 先列候选根：Android 私有目录 / iOS `HOME` / 桌面 `HOME`，带 `ok` 可用性标记）。但**上传 / 删除不开放**——release 包里「让外部往任意路径写文件」的收益远小于风险，这两个动作仍报 `debug` 缺口。
+
+**存储要适配器才能写**：读 `shared_prefs` / plist 与 VM 会话同形；写回只能逐项走 app 用 `XBUme.registerStorageAdapter(XBUmeMapStorageAdapter(allowWrite: true, …))` 主动开放的数据源（`/v1/storage/adapters` 先列，再 `set` / `remove`），沙盒不对外落任意文件。
+
+**数据库拉回本机管**：直连侧只负责把库文件（含 `-wal` / `-shm`）分块传回主机缓存，schema / query / csv 全部在主机侧用本机 `sqlite3` 做，所以直连和 VM 会话的 DB 行为一致（只读默认、写要 `force`、单库 256MB 上限）。
+
+**字段树是只读的**：app 用 `XBUme.registerInspectable(...)` 注册一个 `XBUmeInspectable`，`/v1/inspect` 展开它的字段（`value` / `children` / `opaque` 三种节点）。节点不带对象 `id`，所以「按 `ref` 展开」与「改字段值」在直连下没有入口（要 `debug`）；写状态请走 `XBUmeStorageAdapter`。注意**未展开的节点没有 `children` 键**，Host 侧据此判「已到深度上限」，不会把空 map 当成空对象。
+
+**路由定位是启发式**：直连没有 `NavigatorState` 私有历史，也没法 eval 出「路由子树的首个业务 widget」。退化成「路由名 → 候选类名（PascalCase 原样优先，再试 `+Page/Screen/View/Widget`）→ 扫 `<项目根>/lib` 找 `class X` 声明」，回包带 `heuristic: true` 与命中文件 / 行号，只用于「打开源码看一眼」，不保证是渲染该页的那个 widget。
+
+**Watch 受限但够用**：直连没有 eval，所以监听对象换成「inspectable 字段路径」或「文件 size+mtime」。条件也退化成**本地比较**——只支持 `value > 10` / `value == done` / `value contains ok` 这类「当前值 vs 字面量」，比 VM 侧的任意表达式弱；添加时语法不对直接拒绝，不会静默失效。命中条件时仍会自动截图（app 侧 PNG，落在 `~/.xb_ume_ide/scenarios/artifacts/`），所以「盯着某个状态变化，一变就留证据」在 release 包上同样成立。
+
+真实 macOS example 上验过：`kind=inspect` 监听 `demo-memory.count`，把值从 `1` 改成 `2` 后 2 秒内收到 `old=1 new=2`；`kind=file` 监听日志文件，追加一行后收到 `size=1 → 2`，条件 `value contains size=2` 命中并落了一张截图。
 
 ## 二十一、相关文档
 

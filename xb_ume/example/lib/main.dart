@@ -38,6 +38,15 @@ Future<void> main() async {
   XBUme.registerStorageAdapter(
     XBUmeMapStorageAdapter(id: 'memory', data: memoryStore, allowWrite: true),
   );
+  // 直连会话（release）的「实例」Tab 只能看 app 主动注册的字段树：
+  // 这里把内存存储挂上去，验证面板展开与值变化。
+  XBUme.registerInspectable(
+    XBUmeMapInspectable(
+      inspectId: 'demo-memory',
+      inspectType: 'DemoMemoryStore',
+      data: memoryStore,
+    ),
+  );
 
   runApp(const MyApp());
 }

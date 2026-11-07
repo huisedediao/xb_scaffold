@@ -56,6 +56,8 @@ import 'src/perf/perf_metrics.dart';
 // http://，daemon 会话列表是 ws://），连 WebSocket 前统一成 ws(s)。
 import 'src/scenario/vm_client.dart' show normalizeVmUri;
 import 'src/session/agent_client.dart';
+import 'src/session/agent_watch.dart';
+import 'src/session/route_locate.dart';
 import 'src/session/session_api.dart';
 
 /// GUI 服务端口基数（被占用时向后顺延最多 10 个）。
@@ -1197,6 +1199,22 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话：没有 Navigator 内部栈，只能按 app 内路由事件重放近似栈
+      // （响应带 approx=true，前端与工具必须自行降级）。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/route/stack',
+              timeout: const Duration(seconds: 20));
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(j));
+        } catch (e) {
+          req.response.statusCode = HttpStatus.badGateway;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{'error': '$e'}));
+        }
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       final sw = Stopwatch()..start();
       try {
@@ -1727,6 +1745,72 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
+      // 直连会话：没有 eval，走启发式——路由名/指定类名 → 候选类名 → 在项目
+      // 源码里找声明（结果带 heuristic=true，调用方自行降级展示）。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final wantClass = (req.uri.queryParameters['class'] ?? '').trim();
+          var routeName = (req.uri.queryParameters['name'] ?? '').trim();
+          if (routeName.isEmpty) {
+            final st = await _agentGet(uri, '/v1/route/stack',
+                timeout: const Duration(seconds: 20));
+            for (final n in (st['navigators'] as List? ?? const <Object?>[])
+                .whereType<Map>()) {
+              if ((n['index'] as num?)?.toInt() != nav) continue;
+              final routes = (n['routes'] as List? ?? const <Object?>[]);
+              if (idx >= 0 && idx < routes.length) {
+                routeName = '${(routes[idx] as Map)['name'] ?? ''}'.trim();
+              }
+            }
+          }
+          var root = (req.uri.queryParameters['root'] ?? '').trim();
+          if (root.isEmpty) root = state.projectRootForVmUri(uri) ?? '';
+          if (root.isEmpty) {
+            root = '${_guiReadConfigRaw()['aiProjectDir'] ?? ''}'.trim();
+          }
+          if (root.isEmpty) {
+            for (final d in state.sessionProjectRoots) {
+              if (Directory('$d/lib').existsSync()) {
+                root = d;
+                break;
+              }
+            }
+          }
+          if (root.isEmpty) {
+            throw '直连会话无法自动推断项目根：请带 root=<项目根>，'
+                '或在「AI」页指定项目目录';
+          }
+          final candidates = <String>[
+            if (wantClass.isNotEmpty) wantClass,
+            ...routeClassCandidates(routeName),
+          ];
+          if (candidates.isEmpty) {
+            throw '没有可用的候选类名'
+                '（路由名：${routeName.isEmpty ? '空' : routeName}）：'
+                '可显式传 class=<页面类名>';
+          }
+          final hit = findClassInProject(root, candidates);
+          if (hit == null) {
+            throw '启发式定位失败：在 $root 下未找到 '
+                '${candidates.take(4).join(' / ')}（共 ${candidates.length} 个候选）';
+          }
+          String? ideError;
+          if (open) ideError = await _guiLaunchIde(hit.file, hit.line);
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            ...hit.toJson(),
+            'routeName': routeName,
+            'root': root,
+            if (ideError != null) 'message': ideError,
+          }));
+        } catch (e) {
+          await fail(e);
+          return;
+        }
+        await req.response.close();
+        return;
+      }
+
       final rpc = _SandboxRpc(uri);
       final sw = Stopwatch()..start();
       // 诊断中间值提到 try 外：失败日志要能区分「项目根找错」「包根没读到」
@@ -2146,6 +2230,18 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话：写回走 app 内注册的适配器，文件本身由 app 自己写，
+      // 这里没有「app 内 SharedPreferences 实例」需要 reload。
+      if (isAgentBaseUrl(uri)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': true,
+          'keys': null,
+          'note': '直连会话经 app 内适配器写回，无需 reload',
+        }));
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final inst = await _findSharedPrefsInstance(rpc);
@@ -2198,6 +2294,79 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
+      // 直连会话：沙盒只读（list/read 直通 app 内 dart:io），写回只能经 app
+      // 自己注册的可写存储适配器——release 包不对外落任意文件。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          if (path == '/api/storage/list') {
+            final j = await _agentGet(uri, '/v1/storage/list');
+            req.response.headers.contentType = ContentType.json;
+            req.response.write(jsonEncode(j));
+            await req.response.close();
+            return;
+          }
+          final listed = await _agentGet(uri, '/v1/storage/list');
+          final files = (listed['files'] as List? ?? const <Object?>[])
+              .map((e) => e.toString())
+              .toList(growable: false);
+          final file = req.uri.queryParameters['file'] ??
+              (files.isEmpty ? '' : files.first);
+          if (file.isEmpty) {
+            throw '未找到 shared_prefs（app 可能尚未写入过 preferences，或平台存储格式不同）';
+          }
+          if (path == '/api/storage/read') {
+            final j = await _agentStorageRead(uri, file);
+            req.response.headers.contentType = ContentType.json;
+            req.response.write(jsonEncode(j));
+            await req.response.close();
+            return;
+          }
+          // write：body 为 `{xml, dirty}`（与 VM 分支同一套前端），这里只用
+          // dirty 逐项走适配器；没有 dirty 就无法写（XML 全文落不了盘）。
+          final raw = await _readBodyText(req, lenient: true);
+          var dirty = <Map>[];
+          var adapter = req.uri.queryParameters['adapter'] ?? '';
+          if (raw.trimLeft().startsWith('{')) {
+            final j = jsonDecode(raw);
+            if (j is Map) {
+              final ds = j['dirty'];
+              if (ds is List) dirty = ds.whereType<Map>().toList();
+              if (adapter.isEmpty) adapter = '${j['adapter'] ?? ''}';
+            }
+          }
+          if (adapter.isEmpty) {
+            final adapters = await _agentGet(uri, '/v1/storage/adapters',
+                timeout: const Duration(seconds: 20));
+            for (final a in (adapters['items'] as List? ?? const <Object?>[])) {
+              if (a is Map && a['writable'] == true) {
+                adapter = '${a['id'] ?? ''}';
+                break;
+              }
+            }
+          }
+          if (adapter.isEmpty) {
+            throw '直连会话沙盒只读：该 app 没有注册可写存储适配器'
+                '（app 侧可用 XBUme.registerStorageAdapter(..., allowWrite: true) 打开写回）';
+          }
+          if (dirty.isEmpty) {
+            throw '直连会话没有可写回的改动项（write 需要 dirty：[{name,type,value}]）';
+          }
+          final res =
+              await _agentStorageWrite(uri, adapter: adapter, dirty: dirty);
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(<String, Object?>{
+            'ok': true,
+            'file': file,
+            'adapter': adapter,
+            'live': res,
+            'applied': ((res['applied'] as int?) ?? 0) > 0,
+          }));
+          await req.response.close();
+        } catch (e) {
+          await fail(e);
+        }
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         // 包名与 preferences 目录探测。
@@ -2413,6 +2582,19 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
+      // 直连会话：app 内 dart:io 直接列目录，返回形状与 VM 分支一致。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/sandbox/list',
+              query: <String, String>{'path': dir});
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(j));
+          await req.response.close();
+        } catch (e) {
+          await fail(e);
+        }
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       // 列目录的 app 端表达式（d 须为绝对路径）。
       String listExpr(String d) => "(() { final sb = StringBuffer(); "
@@ -2552,6 +2734,25 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话：app 内直接读文件（二进制自动回 base64），形状同 VM 分支。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/sandbox/read',
+              query: <String, String>{
+                'path': target,
+                'offset': '$offset',
+                'max': '$max',
+              });
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(j));
+        } catch (e) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
+        }
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final sizeRaw = (await rpc.evalString(
@@ -2628,6 +2829,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话沙盒只读：没有删除端点（release 包不提供外部删文件能力）。
+      if (isAgentBaseUrl(uri)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '直连会话沙盒只读，删除请在 VM 会话下操作',
+        }));
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final result = (await rpc.evalString(
@@ -2674,6 +2885,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             'error': 'bad request（uri/path 必填）'
           }),
         );
+        await req.response.close();
+        return;
+      }
+      // 直连会话沙盒只读：没有上传端点（同上）。
+      if (isAgentBaseUrl(uri)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '直连会话沙盒只读，上传请在 VM 会话下操作',
+        }));
         await req.response.close();
         return;
       }
@@ -2822,6 +3043,51 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               .clamp(500, 5000)
               .toInt();
       final windowUs = windowMs * 1000;
+      // 直连会话：帧耗时 + 进程 CPU/内存由 app 内采样，形状对齐 VM 分支；
+      // 没有 Dart VM，所以 heap / isolate CPU 不给（前端按“无 VM”降级）。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/perf',
+              query: <String, String>{'windowMs': '$windowMs'},
+              timeout: const Duration(seconds: 20));
+          final stats = j['processStats'];
+          final payload = <String, Object?>{
+            'ok': true,
+            'ts': j['ts'] ?? DateTime.now().millisecondsSinceEpoch,
+            'windowMs': j['windowMs'] ?? windowMs,
+            'vm': <String, Object?>{
+              'name': '${j['app'] ?? ''}',
+              'os': '${j['os'] ?? ''}',
+              'version': '',
+              'isolates': (j['isolates'] as num?)?.toInt() ?? 1,
+            },
+            if (j['frames'] != null) 'frames': j['frames'],
+            'heapError': j['heapError'] ?? '直连会话没有 Dart VM 堆指标',
+            'cpuError': j['cpuError'] ?? '直连会话没有 Dart isolate 采样',
+          };
+          if (stats is Map && stats['supported'] != false) {
+            payload['processStats'] = stats;
+            final rss = (stats['rss'] as num?)?.toInt() ?? 0;
+            if (rss > 0) {
+              payload['process'] = <String, Object?>{
+                'rss': rss,
+                'name': '进程',
+                'items': const <Object?>[],
+              };
+            }
+          }
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(payload));
+        } catch (e) {
+          req.response.statusCode = HttpStatus.badGateway;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+            jsonEncode(<String, Object?>{'ok': false, 'error': e.toString()}),
+          );
+        }
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final iso = await rpc.isolateId();
@@ -3857,6 +4123,21 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话：注册表来自 app 内注册的 XBUmeInspectable（没有 VM 对象注册表）。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/inspect',
+              timeout: const Duration(seconds: 20));
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(j));
+        } catch (e) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
+        }
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         // 注册表：_stores 值是 WeakReference，经 resolvedStores getter 解包
@@ -3918,6 +4199,17 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           .clamp(1, 100);
       if (uri.isEmpty || cls.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      // 直连会话：没有 eval / 堆扫描，按类名找不到实例（只能看注册的字段树）。
+      if (isAgentBaseUrl(uri)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '直连会话不支持按类名查找实例（需要 eval / 堆扫描）：'
+              '请用「注册表 Store」看 app 注册的 XBUmeInspectable',
+        }));
         await req.response.close();
         return;
       }
@@ -4023,6 +4315,22 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
+      // 直连会话：字段树由 app 注册的 XBUmeInspectable 提供，形状与 VM 同形。
+      if (isAgentBaseUrl(uri)) {
+        try {
+          final j = await _agentGet(uri, '/v1/inspect',
+              query: <String, String>{'id': id, 'depth': '$depth'},
+              timeout: const Duration(seconds: 20));
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode(j));
+        } catch (e) {
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(
+              jsonEncode(<String, Object?>{'ok': false, 'error': '$e'}));
+        }
+        await req.response.close();
+        return;
+      }
       final rpc = _SandboxRpc(uri);
       try {
         final iso = await rpc.isolateId();
@@ -4057,6 +4365,17 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         req.response.write(jsonEncode(
           <String, Object?>{'ok': false, 'error': '字段名不合法：$field'},
         ));
+        await req.response.close();
+        return;
+      }
+      // 直连会话：写回要 eval（给字段赋值并触发 notifyListeners），做不到。
+      if (isAgentBaseUrl(uri)) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode(<String, Object?>{
+          'ok': false,
+          'error': '直连会话不支持字段写回（需要 eval）；'
+              '持久化状态可走 XBUmeStorageAdapter 或 app 自己的入口',
+        }));
         await req.response.close();
         return;
       }
@@ -4158,15 +4477,25 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             await fail('缺少 uri/path', code: HttpStatus.badRequest);
             return;
           }
-          final rpc = _SandboxRpc(uri);
+          // 直连会话没有 VM：stat / 分块下载都走 app 内 Agent 的只读端点。
+          final agent = isAgentBaseUrl(uri);
+          final rpc = agent ? null : _SandboxRpc(uri);
           try {
-            final stat = await rpc.evalString(
-              "(() { final st = File('${_escPath(target)}').statSync(); "
-              "return '\${st.size}\\t\${st.modified.millisecondsSinceEpoch}'; })()",
-            );
-            final parts = stat.split('\t');
-            final size = int.tryParse(parts.first) ?? 0;
-            final mtime = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+            var size = 0;
+            var mtime = 0;
+            if (rpc == null) {
+              final st = await _agentStat(uri, target);
+              size = st.size;
+              mtime = st.mtime;
+            } else {
+              final stat = await rpc.evalString(
+                "(() { final st = File('${_escPath(target)}').statSync(); "
+                "return '\${st.size}\\t\${st.modified.millisecondsSinceEpoch}'; })()",
+              );
+              final parts = stat.split('\t');
+              size = int.tryParse(parts.first) ?? 0;
+              mtime = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+            }
             if (size <= 0) {
               await fail('文件为空或不是普通文件', code: HttpStatus.badRequest);
               return;
@@ -4190,7 +4519,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
               if (tmp.existsSync()) tmp.deleteSync();
               final raf = tmp.openSync(mode: FileMode.write);
               try {
-                await _readSandboxFileChunks(rpc, target, raf.writeFromSync);
+                if (rpc == null) {
+                  await _readAgentFileChunks(uri, target, raf.writeFromSync);
+                } else {
+                  await _readSandboxFileChunks(rpc, target, raf.writeFromSync);
+                }
               } finally {
                 raf.closeSync();
               }
@@ -4237,7 +4570,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             }));
             await req.response.close();
           } finally {
-            await rpc.close();
+            await rpc?.close();
           }
           return;
         }
@@ -4336,7 +4669,9 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
         return;
       }
-      final rpc = _SandboxRpc(uri);
+      // 直连会话没有 VM：文件走 Agent 的只读分块端点；目录逐个 list 后在本机
+      // 打 USTAR（与 VM 分支同一种 tar 结构）。
+      final rpc = isAgentBaseUrl(uri) ? null : _SandboxRpc(uri);
       Future<void> fail(Object e, {int code = HttpStatus.badGateway}) async {
         req.response.statusCode = code;
         req.response.headers.contentType = ContentType.json;
@@ -4344,16 +4679,16 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         await req.response.close();
       }
 
-      // 分段读取文件：每次 evaluate 读 1MB 并 gzip 压缩传输，
-      // app 端与 GUI 端内存峰值均为常数级，文件大小无上限。
-
       var streaming = false; // 响应已开始流式输出（此时不能再改状态码）
       try {
         if (path == '/api/sandbox/download') {
-          final size = int.parse(
-            (await rpc.evalString("File('${_escPath(target)}').lengthSync()"))
-                .trim(),
-          );
+          final size = rpc == null
+              ? (await _agentStat(uri, target)).size
+              : int.parse(
+                  (await rpc.evalString(
+                          "File('${_escPath(target)}').lengthSync()"))
+                      .trim(),
+                );
           req.response.headers.contentType = ContentType.binary;
           req.response.headers.set(
             'Content-Disposition',
@@ -4361,30 +4696,44 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           );
           req.response.contentLength = size;
           streaming = true;
-          await _readSandboxFileChunks(rpc, target, req.response.add);
+          if (rpc == null) {
+            await _readAgentFileChunks(uri, target, req.response.add);
+          } else {
+            await _readSandboxFileChunks(rpc, target, req.response.add);
+          }
           await req.response.close();
           return;
         }
         // 文件夹：递归列出全部文件，逐个流式写入 USTAR tar（无压缩）。
-        final info = await rpc.evalString(
-          "Platform.operatingSystem + '\\t' + Directory.current.path",
-        );
-        final os = info.split('\t').first;
-        final listing = await rpc.evalString(
-          "(() { final files = Directory('${_escPath(target)}')"
-          ".listSync(recursive: true, followLinks: false).whereType<File>().toList(); "
-          "final sb = StringBuffer()..writeln(files.length); "
-          "for (final f in files) { "
-          "try { sb..write(f.path)..write('\\t')..write(f.lengthSync())..write('\\t')"
-          "..write(f.lastModifiedSync().millisecondsSinceEpoch)..writeln(); } catch (_) {} } "
-          "return sb.toString(); })()",
-        );
-        final lines = listing.split('\n').where((l) => l.isNotEmpty).toList();
+        var os = '';
         final files = <List<String>>[];
-        for (final line in lines.skip(1)) {
-          final parts = line.split('\t');
-          if (parts.length < 3) continue;
-          files.add(<String>[parts[0], parts[1], parts[2]]);
+        if (rpc == null) {
+          final probe = await _agentGet(uri, '/v1/sandbox/list',
+              query: <String, String>{'path': target});
+          os = '${probe['os'] ?? ''}';
+          for (final f in await _agentWalkFiles(uri, target)) {
+            files.add(<String>[f.path, '${f.size}', '${f.mtime}']);
+          }
+        } else {
+          final info = await rpc.evalString(
+            "Platform.operatingSystem + '\\t' + Directory.current.path",
+          );
+          os = info.split('\t').first;
+          final listing = await rpc.evalString(
+            "(() { final files = Directory('${_escPath(target)}')"
+            ".listSync(recursive: true, followLinks: false).whereType<File>().toList(); "
+            "final sb = StringBuffer()..writeln(files.length); "
+            "for (final f in files) { "
+            "try { sb..write(f.path)..write('\\t')..write(f.lengthSync())..write('\\t')"
+            "..write(f.lastModifiedSync().millisecondsSinceEpoch)..writeln(); } catch (_) {} } "
+            "return sb.toString(); })()",
+          );
+          final lines = listing.split('\n').where((l) => l.isNotEmpty);
+          for (final line in lines.skip(1)) {
+            final parts = line.split('\t');
+            if (parts.length < 3) continue;
+            files.add(<String>[parts[0], parts[1], parts[2]]);
+          }
         }
         final name = _baseName(target, os);
         req.response.headers.contentType = ContentType.binary;
@@ -4404,7 +4753,11 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
             continue;
           }
           req.response.add(header);
-          await _readSandboxFileChunks(rpc, f[0], req.response.add);
+          if (rpc == null) {
+            await _readAgentFileChunks(uri, f[0], req.response.add);
+          } else {
+            await _readSandboxFileChunks(rpc, f[0], req.response.add);
+          }
           final padding = (512 - (size % 512)) % 512;
           if (padding > 0) {
             req.response.add(List<int>.filled(padding, 0));
@@ -4425,7 +4778,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
           await fail(e);
         }
       } finally {
-        await rpc.close();
+        await rpc?.close();
       }
       return;
     }
@@ -5482,18 +5835,39 @@ class GuiState {
     final lib = (body['lib'] ?? '').toString().trim();
     final cond = (body['condition'] ?? '').toString().trim();
     var bad = '';
+    // 直连会话没有 eval：只能轮询 app 已能给出的数据（inspectable 字段树 /
+    // 文件元信息），条件也退化成「当前值 vs 字面量」的本地比较。
+    final agentKind = kind == 'inspect' || kind == 'file';
     if (uri.isEmpty) bad = '缺少 uri';
-    if (bad.isEmpty && kind != 'field' && kind != 'expr') {
-      bad = '监听类型只支持 field / expr';
+    if (bad.isEmpty &&
+        kind != 'field' &&
+        kind != 'expr' &&
+        !agentKind) {
+      bad = '监听类型只支持 field / expr / inspect / file';
+    }
+    if (bad.isEmpty && agentKind && !isAgentBaseUrl(uri)) {
+      bad = kind == 'inspect'
+          ? 'inspect 监听只支持直连会话（VM 会话请监听字段/表达式）'
+          : 'file 监听只支持直连会话（VM 会话请监听表达式）';
     }
     if (bad.isEmpty && kind == 'field') {
       if (targetId.isEmpty) bad = 'field 监听缺少实例 id';
       if (bad.isEmpty && !watchFieldOk(expr)) bad = '字段名不合法：$expr';
     }
-    if (bad.isEmpty && expr.isEmpty) bad = '表达式为空';
+    if (bad.isEmpty && kind == 'inspect' && targetId.isEmpty) {
+      bad = 'inspect 监听缺少 inspectable id';
+    }
+    if (bad.isEmpty && kind == 'file' && expr.isEmpty) {
+      bad = 'file 监听缺少文件路径';
+    }
+    // inspect 的 expr 是字段路径，允许为空（= 监听整棵树）。
+    if (bad.isEmpty && !agentKind && expr.isEmpty) bad = '表达式为空';
     if (bad.isEmpty && expr.length > 2000) bad = '表达式过长（最多 2000 字）';
     if (bad.isEmpty && cond.length > 2000) {
       bad = '条件表达式过长（最多 2000 字）';
+    }
+    if (bad.isEmpty && agentKind && cond.isNotEmpty) {
+      if (watchCondLite(cond, '') == null) bad = watchCondLiteHint();
     }
     if (bad.isNotEmpty) return <String, Object?>{'ok': false, 'error': bad};
     // 同一目标重复添加直接返回已有项（连点/重复点「监听」不产生重复轮询）。
@@ -5511,7 +5885,14 @@ class GuiState {
       }
     }
     var label = (body['label'] ?? '').toString().trim();
-    if (label.isEmpty) label = kind == 'field' ? expr : 'expr: $expr';
+    if (label.isEmpty) {
+      label = switch (kind) {
+        'field' => expr,
+        'inspect' => expr.isEmpty ? '$targetId（整棵树）' : '$targetId.$expr',
+        'file' => 'file: $expr',
+        _ => 'expr: $expr',
+      };
+    }
     if (label.length > 120) label = '${label.substring(0, 120)}…';
     final w = _WatchState(
       id: 'w${++_watchSeq}',
@@ -5589,6 +5970,11 @@ class GuiState {
   }
 
   Future<void> _watchPollOne(_WatchState w) async {
+    // 直连会话：没有 eval，改轮询 app 已能给出的数据。
+    if (w.kind == 'inspect' || w.kind == 'file') {
+      await _watchPollAgent(w);
+      return;
+    }
     final rpc = _watchRpcs[w.uri] ??= _SandboxRpc(w.uri);
     try {
       final res = w.kind == 'field'
@@ -5658,6 +6044,91 @@ class GuiState {
       // 连接可能已失效：丢弃复用连接，下一轮重建。
       final dead = _watchRpcs.remove(w.uri);
       if (dead != null) unawaited(dead.close());
+    }
+  }
+
+  /// 直连会话的监听轮询：inspectable 字段树 / 文件元信息。
+  ///
+  /// 值变化与 VM 侧同口径（写时间轴 + WS 推送）；区别是条件只能本地比较
+  /// 当前值（没有 eval），且 inspect 只能看到 app 已注册的字段。
+  Future<void> _watchPollAgent(_WatchState w) async {
+    try {
+      final String raw;
+      if (w.kind == 'file') {
+        final st = await _agentStat(w.uri, w.expr);
+        raw = st.dir
+            ? '目录 mtime=${st.mtime}'
+            : 'size=${st.size} mtime=${st.mtime}';
+      } else {
+        final j = await _agentGet(
+          w.uri,
+          '/v1/inspect',
+          query: <String, String>{'id': w.targetId, 'depth': '3'},
+        );
+        if (j['ok'] != true) {
+          throw '${j['error'] ?? '取字段树失败'}';
+        }
+        final node = j['node'];
+        if (node is! Map) throw '字段树响应缺少 node';
+        raw = agentWatchPick(node.cast<String, Object?>(), w.expr);
+      }
+      w.polls++;
+      final old = w.lastValue;
+      final first = !w.hasValue;
+      // 展示串截断，但变化对比用原始串（避免 400 字以后的改动漏报）。
+      final display = raw.length > 400 ? '${raw.substring(0, 400)}…' : raw;
+      w.hasValue = true;
+      w.lastValue = display;
+      if (!first && raw != w.lastRaw) {
+        w.changes++;
+        _watchEmit(w, old: old, newValue: display);
+      }
+      w.lastRaw = raw;
+      if (w.autoShot && w.condition.isNotEmpty) {
+        final met = watchCondLite(w.condition, raw) ?? false;
+        if (met && !w.condPrev) {
+          final shot = await _watchShotAgent(w.uri);
+          w.shots++;
+          _watchEmit(w,
+              old: display, newValue: display, shot: shot, condMet: true);
+        }
+        w.condPrev = met;
+      }
+      w.fails = 0;
+      w.lastError = '';
+      broadcast(<String, Object?>{'type': 'watchState', 'item': w.toJson()});
+    } catch (e) {
+      w.fails++;
+      w.lastError = e.toString();
+      if (w.fails == 1 || w.fails % 10 == 0) _watchEmit(w, err: w.lastError);
+      if (w.fails >= 30) {
+        w.paused = true;
+        w.lastError = '${w.lastError}（连续失败 30 次，已自动暂停）';
+        _broadcastWatches();
+      } else {
+        broadcast(<String, Object?>{'type': 'watchState', 'item': w.toJson()});
+      }
+    }
+  }
+
+  /// 直连会话的条件命中截图：app 侧编码 base64 PNG，与 VM 侧同一目录命名。
+  Future<String?> _watchShotAgent(String uri) async {
+    try {
+      final api = connectSessionApi(uri);
+      try {
+        final b64 = await api.screenshotBase64();
+        if (b64.isEmpty) return null;
+        final dir = Directory(_autoArtifactsDir);
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        final f =
+            'watch-${DateTime.now().millisecondsSinceEpoch}-${++_watchShotSeq}.png';
+        File('$_autoArtifactsDir/$f').writeAsBytesSync(base64Decode(b64));
+        return f;
+      } finally {
+        await api.close();
+      }
+    } catch (_) {
+      return null;
     }
   }
 
@@ -5845,6 +6316,9 @@ class _WatchState {
   bool paused = false;
   bool hasValue = false;
   String lastValue = '';
+
+  /// 直连监听的原始值（lastValue 是它的展示截断版），仅用于变化对比。
+  String lastRaw = '';
   bool condPrev = false;
   int changes = 0;
   int shots = 0;
@@ -9178,6 +9652,245 @@ Future<int> _readSandboxFileChunks(
   return size;
 }
 
+// ── 直连会话（app 内 Agent）的文件/存储辅助 ────────────────────────────
+
+/// 直连会话 `GET /v1/*`。
+Future<Map<String, Object?>> _agentGet(
+  String base,
+  String path, {
+  Map<String, String>? query,
+  Duration timeout = const Duration(seconds: 10),
+}) =>
+    AgentClient(base, timeout: timeout).getJson(path, query: query);
+
+/// 直连会话 `POST /v1/*`。
+Future<Map<String, Object?>> _agentPost(
+  String base,
+  String path, {
+  Map<String, String>? query,
+  Map<String, Object?>? body,
+  Duration timeout = const Duration(seconds: 10),
+}) =>
+    AgentClient(base, timeout: timeout)
+        .postJson(path, query: query, jsonBody: body);
+
+/// 直连会话取文件元信息（`/v1/sandbox/stat`）。
+Future<({int size, int mtime, bool dir})> _agentStat(
+  String base,
+  String path,
+) async {
+  final j = await _agentGet(base, '/v1/sandbox/stat',
+      query: <String, String>{'path': path});
+  if (j['ok'] != true) {
+    throw StateError('${j['error'] ?? 'stat 失败'}：$path');
+  }
+  return (
+    size: (j['size'] as num?)?.toInt() ?? -1,
+    mtime: (j['mtime'] as num?)?.toInt() ?? 0,
+    dir: j['dir'] == true,
+  );
+}
+
+/// 直连会话分块读文件：每块 1MB，base64 传（app 端只读一次，内存常数级）。
+Future<int> _readAgentFileChunks(
+  String base,
+  String path,
+  void Function(List<int> chunk) onChunk,
+) async {
+  const chunkSize = 1024 * 1024;
+  var offset = 0;
+  var size = -1;
+  while (true) {
+    final j = await _agentGet(base, '/v1/sandbox/read', query: <String, String>{
+      'path': path,
+      'offset': '$offset',
+      'max': '$chunkSize',
+      'b64': '1',
+    });
+    if (j['ok'] != true) {
+      throw StateError('${j['error'] ?? 'read 失败'}：$path');
+    }
+    size = (j['fileSize'] as num?)?.toInt() ?? 0;
+    final raw = '${j['b64'] ?? ''}';
+    final bytes = raw.isEmpty ? const <int>[] : base64Decode(raw);
+    if (bytes.isNotEmpty) onChunk(bytes);
+    offset += bytes.length;
+    // 空块或已到末尾：防止 size 变化导致死循环。
+    if (offset >= size || bytes.isEmpty) break;
+  }
+  return size < 0 ? offset : size;
+}
+
+/// 直连会话递归列文件（逐个目录调 `/v1/sandbox/list`，深度与条数都设上限）。
+Future<List<({String path, int size, int mtime})>> _agentWalkFiles(
+  String base,
+  String dir, {
+  int maxFiles = 20000,
+}) async {
+  final out = <({String path, int size, int mtime})>[];
+  var level = <String>[dir];
+  for (var depth = 0;
+      depth < 64 && level.isNotEmpty && out.length < maxFiles;
+      depth++) {
+    final next = <String>[];
+    for (final d in level) {
+      Map<String, Object?> j;
+      try {
+        j = await _agentGet(base, '/v1/sandbox/list',
+            query: <String, String>{'path': d});
+      } catch (_) {
+        continue;
+      }
+      for (final e in (j['entries'] as List? ?? const <Object?>[])) {
+        if (e is! Map) continue;
+        final p = '${e['path'] ?? ''}';
+        if (p.isEmpty) continue;
+        if (e['dir'] == true) {
+          next.add(p);
+          continue;
+        }
+        out.add((
+          path: p,
+          size: (e['size'] as num?)?.toInt() ?? 0,
+          mtime: (e['mtime'] as num?)?.toInt() ?? 0,
+        ));
+        if (out.length >= maxFiles) break;
+      }
+      if (out.length >= maxFiles) break;
+    }
+    level = next;
+  }
+  return out;
+}
+
+/// 直连会话读 prefs 原文：文本直接给；二进制 plist 用本机 plutil 转 XML
+/// （与 VM 分支展示一致）。非 macOS 主机没有 plutil，回 b64 与说明。
+Future<Map<String, Object?>> _agentStorageRead(
+  String base,
+  String file,
+) async {
+  final j = await _agentGet(base, '/v1/storage/read',
+      query: <String, String>{'file': file},
+      timeout: const Duration(seconds: 20));
+  if (j['ok'] != true) {
+    throw StateError('${j['error'] ?? '读取失败'}：$file');
+  }
+  if (j['binary'] != true) {
+    return <String, Object?>{'file': file, 'xml': '${j['text'] ?? ''}'};
+  }
+  final b64 = '${j['b64'] ?? ''}';
+  if (!Platform.isMacOS) {
+    return <String, Object?>{
+      'file': file,
+      'xml': '',
+      'binary': true,
+      'b64': b64,
+      'note': '二进制 plist 需要本机 plutil 转 XML（macOS 宿主可用）',
+    };
+  }
+  final bytes = base64Decode(b64);
+  final stem =
+      '${Directory.systemTemp.path}/xbume_pref_${DateTime.now().microsecondsSinceEpoch}';
+  final tmpBin = File('$stem.plist');
+  final tmpXml = '$stem.xml';
+  try {
+    await tmpBin.writeAsBytes(bytes);
+    final pr = await Process.run(
+        'plutil', <String>['-convert', 'xml1', '-o', tmpXml, tmpBin.path]);
+    if (pr.exitCode != 0) {
+      throw StateError('plutil 转换失败：${pr.stderr}');
+    }
+    return <String, Object?>{'file': file, 'xml': await File(tmpXml).readAsString()};
+  } finally {
+    try {
+      await tmpBin.delete();
+    } catch (_) {}
+    try {
+      await File(tmpXml).delete();
+    } catch (_) {}
+  }
+}
+
+/// 直连会话写回 prefs：只经 app 自己注册且 `writable` 的适配器，沙盒文件
+/// 保持只读（release 包不该允许外部落任意文件）。
+Future<Map<String, Object?>> _agentStorageWrite(
+  String base, {
+  required String adapter,
+  required List<Map> dirty,
+}) async {
+  var applied = 0;
+  final failed = <String>[];
+  final skipped = <String>[];
+  for (final row in dirty) {
+    final key = (row['name'] ?? '').toString().trim();
+    if (key.isEmpty) continue;
+    if (row['del'] == true) {
+      final j = await _agentPost(base, '/v1/storage/remove',
+          body: <String, Object?>{'adapter': adapter, 'key': key});
+      if (j['ok'] == true) {
+        applied++;
+      } else {
+        failed.add('$key：${j['error']}');
+      }
+      continue;
+    }
+    final v = _prefsDirectValue(row);
+    if (v == null) {
+      skipped.add(key);
+      continue;
+    }
+    final j = await _agentPost(base, '/v1/storage/set', body: <String, Object?>{
+      'adapter': adapter,
+      'key': key,
+      'type': v.type,
+      'value': v.value,
+    });
+    if (j['ok'] == true) {
+      applied++;
+    } else {
+      failed.add('$key：${j['error']}');
+    }
+  }
+  return <String, Object?>{
+    'applied': applied,
+    'failed': failed,
+    'skipped': skipped,
+  };
+}
+
+/// prefs 行 → 适配器写回值；不支持的类型返回 null（计入 skipped）。
+({String type, String value})? _prefsDirectValue(Map row) {
+  final raw = (row['value'] ?? '').toString();
+  final type = (row['type'] ?? '').toString();
+  switch (type) {
+    case 'boolean':
+    case 'bool':
+      return (type: 'bool', value: raw.trim() == 'true' ? 'true' : 'false');
+    case 'integer':
+    case 'long':
+    case 'int':
+      return (type: 'int', value: raw.trim());
+    case 'double':
+    case 'real':
+    case 'float':
+      return (type: 'double', value: raw.trim());
+    case 'set':
+    case 'array':
+      // 集合在 GUI 里是逗号串，适配器侧按 JSON 数组收更自然。
+      final members = raw
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+      return (type: 'json', value: jsonEncode(members));
+    case 'string':
+      return (type: 'string', value: raw);
+    default:
+      // rawios 等原始片段无法拆成 key/value，跳过。
+      return null;
+  }
+}
+
 /// SQLite 数据库文件的本地缓存目录（GUI 本机，源文件在 app 沙盒里）。
 String dbCacheDir() {
   final home = Platform.environment['HOME'] ??
@@ -12416,7 +13129,7 @@ const String guiHtml = r'''
     <div class="tab" data-tab="storage" data-need-caps="fs">Storage</div>
     <!-- 状态面板暂时隐藏，代码保留，恢复时去掉 display:none -->
     <div class="tab" data-tab="status" style="display:none">状态</div>
-    <div class="tab" data-tab="instances" data-need-caps="debug">实例</div>
+    <div class="tab" data-tab="instances" data-need-caps="inspectable">实例</div>
     <div class="tab" data-tab="shot" data-need-caps="shot">截图</div>
     <div class="tab" data-tab="perf" data-need-caps="perf">性能</div>
     <!-- Widget 树功能暂时隐藏（parent 参照标注定位待优化），代码保留，恢复时去掉 display:none -->
@@ -12830,13 +13543,14 @@ const String guiHtml = r'''
          把屏幕占满（见 #in-sticky 的 CSS）。 -->
     <div id="in-sticky">
     <div style="display:flex;align-items:center;gap:10px">
-      <button onclick="inLoadStores()" title="列出 app 端 XBUme.registerStore 注册的实例">注册表 Store</button>
+      <button onclick="inLoadStores()" title="VM：列出 app 端 XBUme.registerStore 注册的实例；直连：列出 XBUme.registerInspectable 注册的字段树">注册表 Store</button>
       <input id="in-cls" placeholder="类名（如 CounterState / UserNotifier）" style="width:260px" onkeydown="if(event.key==='Enter')inFind()">
-      <button class="primary" onclick="inFind()" title="按类名查找：先遍历 Element 树找 State，再堆扫描捞全部实例">查找实例</button>
-      <span id="in-stat" class="muted">选中会话 app 内的运行时实例（仅 debug 可 用）</span>
+      <button class="primary" onclick="inFind()" data-need-caps="debug" title="按类名查找：先遍历 Element 树找 State，再堆扫描捞全部实例（需要 eval，直连会话不可用）">查找实例</button>
+      <span id="in-stat" class="muted">选中会话 app 内的运行时实例</span>
     </div>
     <div class="inwatch">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <!-- VM 会话：按间隔 eval 字段/表达式（streak 需要 debug） -->
+      <div id="in-watch-vm" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap" data-need-caps="debug">
         <b style="font-size:12px">Watch 监听</b>
         <input id="in-watch-expr" placeholder="表达式（如 DateTime.now().second）" style="width:280px" onkeydown="if(event.key==='Enter')inWatchExpr()">
         <input id="in-watch-lib" placeholder="库 uri（可选，默认 binding.dart）" style="width:230px">
@@ -12848,17 +13562,34 @@ const String guiHtml = r'''
         </select>
         <button onclick="inWatchExpr()">监听表达式</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <div id="in-watch-cond-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px" data-need-caps="debug">
         <input id="in-watch-cond" placeholder="条件表达式（true 时自动截图，可空）" style="width:300px">
         <label style="font-size:12px;display:flex;align-items:center;gap:3px"><input type="checkbox" id="in-watch-shot" checked> 条件成立自动截图</label>
         <span class="muted" style="font-size:12px">字段监听：在字段行点「监听」；条件与监听同上下文求值</span>
+      </div>
+      <!-- 直连会话：无 eval，只能轮询 app 已给出的字段树 / 文件元信息 -->
+      <div id="in-watch-agent" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
+        <b style="font-size:12px">Watch（直连）</b>
+        <select id="in-watch-store" data-need-caps="inspectable" title="app 内 XBUme.registerInspectable 注册的字段树；先点「注册表 Store」加载"></select>
+        <input id="in-watch-path" placeholder="字段路径（空=整棵树；如 count、items[0].name）" style="width:250px" data-need-caps="inspectable" onkeydown="if(event.key==='Enter')inWatchAgentField()">
+        <button onclick="inWatchAgentField()" data-need-caps="inspectable">监听字段</button>
+        <input id="in-watch-file" placeholder="文件路径（沙盒内，如 /data/.../a.log）" style="width:250px" data-need-caps="fs" onkeydown="if(event.key==='Enter')inWatchAgentFile()">
+        <button onclick="inWatchAgentFile()" data-need-caps="fs">监听文件</button>
+        <select id="in-watch-ms2">
+          <option value="200">200ms</option>
+          <option value="500" selected>500ms</option>
+          <option value="1000">1s</option>
+          <option value="2000">2s</option>
+        </select>
+        <input id="in-watch-cond2" placeholder="条件（可空）：value>10、value==done、contains:ok" style="width:230px">
+        <span class="muted" style="font-size:12px">直连只能轮询 app 已给出的字段树/文件元信息；条件本地比较当前值</span>
       </div>
       <div id="in-watch-list" class="inwatch-list"></div>
     </div>
     <div id="in-list" style="margin-top:8px"></div>
     </div>
     <div id="in-tree" style="margin-top:8px"></div>
-    <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。「Watch 监听」按间隔轮询字段/表达式，值变化写入时间轴；条件表达式成立时自动截图（落盘 scenarios/artifacts）。</div>
+    <div class="muted" style="margin-top:6px">三条途径定位实例：「注册表 Store」读 app 端 XBUme.registerStore(id, obj) 注册的对象（如 Provider 的 ChangeNotifier）；「查找实例」按类名先遍历 Element 树（树上存活的 State），再堆扫描（getClassList + getInstances，覆盖不在树上的单例）。字段树可直接编辑基础类型字段（int/double/bool/String）并写回 app，ChangeNotifier 类型写回后自动 notifyListeners。「Watch 监听」按间隔轮询字段/表达式，值变化写入时间轴；条件成立时自动截图（落盘 scenarios/artifacts）。直连会话（release）没有 eval：「注册表 Store」读 app 用 XBUme.registerInspectable / XBUmeMapInspectable 注册的字段树，Watch 退化为轮询该字段树（指定路径）或文件元信息，条件只能写成 value > 字面量 这类本地比较；按类名查找、堆扫描、字段写回仍需 eval，所以直连下置灰。</div>
   </section>
   <section class="page" id="page-shot">
     <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
@@ -15371,6 +16102,7 @@ function tlGoNet(id){
 // 未知 caps（旧版 daemon）时保守全开，行为与以前一致。
 var CAP_LABELS = {
   'inspect': '日志 / 网络 / 异常 / 时间轴',
+  'inspectable': '实例字段树',
   'fs': '沙盒 / 存储 / 数据库',
   'act': '点击 / 输入 / 滑动',
   'widgets': '组件树',
@@ -15403,13 +16135,14 @@ function dbgSetCurrentSession(s){
       { method: 'POST' }).catch(function(){});
   }
   dbgApplyCaps();
+  if (typeof inWatchMode === 'function') inWatchMode();
 }
 function dbgApplyCaps(){
   var caps = curDaemonSession && curDaemonSession.caps ? curDaemonSession.caps : null;
   var banner = document.getElementById('cap-banner');
   if (banner) {
     // 只报“真的缺什么”：早期版本写死了几个能力名，改了 caps 后会误报。
-    var all = ['inspect','fs','act','widgets','route:stack','shot','perf','debug','hot','gc'];
+    var all = ['inspect','inspectable','fs','act','widgets','route:stack','shot','perf','debug','hot','gc'];
     var missing = caps ? all.filter(function(n){ return caps.indexOf(n) < 0; }) : [];
     if (missing.length) {
       banner.style.display = '';
@@ -16092,6 +16825,11 @@ function pfMB(n){
   if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB';
   return (n / 1048576).toFixed(1) + ' MB';
 }
+function pfAppend(id, txt){
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = el.textContent ? (el.textContent + ' · ' + txt) : txt;
+}
 function pfSetInterval(v){
   pfInterval = parseInt(v, 10) || 2000;
   if (pfActive() && pfLive) { pfStart(); pfPoll(true); }
@@ -16191,6 +16929,7 @@ function pfApply(d, ms){
   var memVal = pss || fp || rss;
   var heapMb = heap ? heap.used / 1048576 : null;
   var memMb = memVal ? memVal / 1048576 : null;
+  var fr = d.frames || null;
 
   var cpuEl = document.getElementById('pf-cpu');
   if (cpuEl) {
@@ -16211,6 +16950,24 @@ function pfApply(d, ms){
       (d.cpuAutoEnabled ? ' · 已开启采样' : ''));
   } else {
     pfSetText('pf-cpu-sub', d.cpuError ? ('不可用：' + d.cpuError) : '—');
+  }
+  // 直连会话（无 Dart VM）：帧耗时来自 app 内帧统计。拿不到整进程 CPU 时
+  // CPU 卡片改显帧率；拿到了就附在副标题里，不丢信息。
+  if (fr && typeof fr.count === 'number') {
+    var fpsTxt = (typeof fr.fps === 'number' ? fr.fps.toFixed(1) : '—') + ' fps';
+    var jankTxt = '卡顿 ' + (fr.jank || 0) + '/' + fr.count;
+    if (cpu == null) {
+      var fe = document.getElementById('pf-cpu');
+      if (fe) { fe.textContent = fpsTxt; fe.style.color = ''; }
+      pfSetText('pf-cpu-k', '帧率（直连会话 · app 内帧统计）');
+      pfSetText('pf-cpu-sub', '平均 ' + (fr.avgTotalMs || 0).toFixed(1) + ' ms'
+        + '（build ' + (fr.avgBuildMs || 0).toFixed(1)
+        + ' / raster ' + (fr.avgRasterMs || 0).toFixed(1) + ' 最长 '
+        + (fr.maxTotalMs || 0).toFixed(1) + '） · ' + jankTxt
+        + ' · 窗口 ' + Math.round(fr.windowMs || 0) + ' ms');
+    } else {
+      pfAppend('pf-cpu-sub', '帧 ' + fpsTxt + '（' + jankTxt + '）');
+    }
   }
   if (heap) {
     pfSetText('pf-heap', pfMB(heap.used));
@@ -18063,8 +18820,9 @@ function inActive(){ var t = document.querySelector('.tab.active'); return t && 
 function inStat(s){ document.getElementById('in-stat').textContent = s; }
 function inRefresh(){
   if (!inActive()) return;
+  inWatchMode();
   if (!inUri()) {
-    document.getElementById('in-list').innerHTML = '<span class="muted">请先选择 VM（页头右侧会话下拉框）</span>';
+    document.getElementById('in-list').innerHTML = '<span class="muted">请先选择会话（页头右侧下拉框）</span>';
     document.getElementById('in-tree').innerHTML = '';
     inWatches = [];
     inWatchRender();
@@ -18074,16 +18832,28 @@ function inRefresh(){
 }
 function inApi(path){
   var uri = inUri();
-  if (!uri) return Promise.reject('请先选择 VM');
+  if (!uri) return Promise.reject('请先选择会话');
   return fetch(path + (path.indexOf('?') < 0 ? '?' : '&') + 'uri=' + encodeURIComponent(uri))
     .then(function(r){ return r.json(); });
+}
+// 直连会话：注册表来自 app 注册的 XBUmeInspectable（提示文案也跟着换）。
+function inAgentSession(){ return !!(curDaemonSession && curDaemonSession.transport === 'agent'); }
+function inRegHint(){
+  return inAgentSession() ? '直连会话：app 内用 XBUme.registerInspectable(XBUmeMapInspectable(...)) 注册' : '未注册时请先在 app 内调 XBUme.registerStore';
 }
 function inLoadStores(){
   var list = document.getElementById('in-list');
   inStat('读取注册表…'); document.getElementById('in-tree').innerHTML = '';
   inApi('/api/instances/stores').then(function(d){
     if (!d.ok) { list.innerHTML = '<span class="bad">' + esc(d.error) + '</span>'; inStat('读取失败'); return; }
-    inRenderList(d.items.map(function(it){ return { id: it.instId, cls: it.cls, source: 'store', name: it.id }; }), '注册表 ' + d.items.length + ' 项（未注册时请先在 app 内调 XBUme.registerStore）');
+    // 直连 Watch 用同一个注册表选 inspectable，顺带填好下拉框。
+    var sel = document.getElementById('in-watch-store');
+    if (sel) {
+      sel.innerHTML = (d.items || []).map(function(it){
+        return '<option value="' + esc(it.instId) + '">' + esc(it.id) + ' · ' + esc(it.cls) + '</option>';
+      }).join('');
+    }
+    inRenderList(d.items.map(function(it){ return { id: it.instId, cls: it.cls, source: 'store', name: it.id }; }), '注册表 ' + d.items.length + ' 项（' + inRegHint() + '）');
   }).catch(function(e){ list.innerHTML = '<span class="bad">' + esc(String(e)) + '</span>'; inStat('读取失败'); });
 }
 function inFind(){
@@ -18289,9 +19059,27 @@ function inWatchOpts(){
     intervalMs: parseInt(document.getElementById('in-watch-ms').value, 10) || 500
   };
 }
-function inWatchAdd(body, okMsg){
-  if (!inUri()) { inStat('请先选择 VM'); return; }
-  var payload = Object.assign({ uri: inUri() }, inWatchOpts(), body);
+function inWatchOptsAgent(){
+  return {
+    lib: '',
+    condition: (document.getElementById('in-watch-cond2').value || '').trim(),
+    autoShot: true,
+    intervalMs: parseInt(document.getElementById('in-watch-ms2').value, 10) || 500
+  };
+}
+// 直连行只在直连会话里显示；VM 行反之（并靠 data-need-caps=debug 置灰兜底）。
+function inWatchMode(){
+  var agent = inAgentSession();
+  var vm = document.getElementById('in-watch-vm');
+  var cond = document.getElementById('in-watch-cond-row');
+  var ag = document.getElementById('in-watch-agent');
+  if (vm) vm.style.display = agent ? 'none' : 'flex';
+  if (cond) cond.style.display = agent ? 'none' : 'flex';
+  if (ag) ag.style.display = agent ? 'flex' : 'none';
+}
+function inWatchAdd(body, okMsg, opts){
+  if (!inUri()) { inStat('请先选择会话'); return; }
+  var payload = Object.assign({ uri: inUri() }, opts || inWatchOpts(), body);
   inStat('添加监听…');
   fetch('/api/watch/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) })
     .then(function(r){ return r.json(); })
@@ -18311,6 +19099,27 @@ function inWatchExpr(){
 function inWatchField(ownerId, name){
   if (!watchFieldOkJs(name)) { inStat('字段名不合法：' + name); return; }
   inWatchAdd({ kind:'field', targetId: ownerId, expr: name, label: name }, '已监听字段 ' + name);
+}
+// 直连：监听 inspectable 的某个字段路径（空 = 整棵树）。
+function inWatchAgentField(){
+  var sel = document.getElementById('in-watch-store');
+  var id = sel ? (sel.value || '').trim() : '';
+  if (!id) { inStat('请先点「注册表 Store」加载字段树，或在下方选一个 inspectable'); return; }
+  var path = (document.getElementById('in-watch-path').value || '').trim();
+  inWatchAdd({ kind:'inspect', targetId: id, expr: path, label: id + (path ? '.' + path : '（整棵树）') },
+    '已监听 ' + id + (path ? '.' + path : '（整棵树）'), inWatchOptsAgent());
+}
+// 直连：监听文件元信息（size / mtime），适合看日志或数据库是否在长。
+function inWatchAgentFile(){
+  var p = (document.getElementById('in-watch-file').value || '').trim();
+  if (!p) { inStat('请输入文件路径'); return; }
+  inWatchAdd({ kind:'file', expr: p, label: 'file: ' + p }, '已监听文件 ' + p, inWatchOptsAgent());
+}
+function inWatchKindName(k){
+  if (k === 'field') return '字段';
+  if (k === 'inspect') return '字段(直连)';
+  if (k === 'file') return '文件';
+  return '表达式';
 }
 function inWatchUpsert(item){
   if (!item || !item.id) return;
@@ -18358,7 +19167,7 @@ function inWatchRender(){
     var stat = '<span class="wstat muted">变化 ' + (w.changes || 0) + ' · 截图 ' + (w.shots || 0) + '</span>';
     var st = '<span class="wst">' + inWatchStatus(w) + '</span>';
     return '<div class="wrow" data-wid="' + esc(w.id) + '">'
-      + '<span class="muted" style="font-size:12px;flex:none">' + (w.kind === 'field' ? '字段' : '表达式') + '</span>'
+      + '<span class="muted" style="font-size:12px;flex:none">' + inWatchKindName(w.kind) + '</span>'
       + '<b style="flex:none">' + esc(w.label || w.expr) + '</b>'
       + '<span class="muted" style="font-size:12px">' + meta + '</span>'
       + stat + st

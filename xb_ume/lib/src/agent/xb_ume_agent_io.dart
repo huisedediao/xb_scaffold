@@ -24,6 +24,21 @@
 //   POST /v1/swipe            滑动（8 段 move 在 app 内完成）
 //   POST /v1/navigate         按名字 push / back pop
 //
+//   GET  /v1/sandbox/roots    可访问的沙盒根（带可用性）
+//   GET  /v1/sandbox/list     列目录（?path=，空 = 第一个可用根）
+//   GET  /v1/sandbox/stat     文件/目录元信息
+//   GET  /v1/sandbox/read     读文件（?offset=&max=&b64=；二进制自动回 base64）
+//   GET  /v1/storage/list     shared_prefs 文件列表
+//   GET  /v1/storage/read     prefs 原文（iOS plist 回 base64，IDE 侧转 XML）
+//   GET  /v1/storage/adapters app 注册的存储适配器 dump
+//   POST /v1/storage/set      经可写适配器写回一个 key
+//   POST /v1/storage/remove   经可写适配器删一个 key
+//   GET  /v1/db/files         沙盒里的 SQLite 文件列表（只列不查）
+//
+//   GET  /v1/perf             帧耗时统计 + 进程 CPU/内存（无 VM 采样）
+//   GET  /v1/inspect          app 注册的字段树（无 id=列表，带 id=树）
+//   GET  /v1/route/stack      路由栈近似（按路由事件重放，approx=true）
+//
 // 安全：默认只绑 127.0.0.1，且只接受回环来源；token 非空时除 hello 外的端点
 // 都必须带 `x-xbume-token`。没有任意 eval / 文件写入 / 调试协议端点——release
 // 包也不该有。
@@ -36,9 +51,14 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../core/xb_process_stats.dart';
 import '../core/xb_ume_controller.dart';
 import '../models/xb_ume_network_item.dart';
 import 'xb_ume_agent_actions.dart';
+import 'xb_ume_agent_fs.dart';
+import 'xb_ume_agent_inspectable.dart';
+import 'xb_ume_agent_perf.dart';
+import 'xb_ume_agent_routes.dart';
 import 'xb_ume_agent_types.dart';
 
 /// 起服务；`options.enabled == false` 时直接返回 null（默认关闭）。
@@ -53,7 +73,7 @@ Future<XBUmeAgentServer?> startXBUmeAgentServer({
   // 采不到再留空由 `--dart-define=XBUME_AGENT_APP` 补。
   final resolved = options.packageName.isNotEmpty
       ? options
-      : options.copyWith(packageName: _detectPackageName());
+      : options.copyWith(packageName: agentDetectPackageName());
   final server = _XBUmeAgentServer(controller, resolved);
   try {
     await server.start();
@@ -62,22 +82,6 @@ Future<XBUmeAgentServer?> startXBUmeAgentServer({
     debugPrint('[xb_ume] 直连 Agent 启动失败（不影响 app）：$e');
     await server.close();
     return null;
-  }
-}
-
-/// 读进程名当包名：Android 的 `/proc/self/cmdline` 首段通常就是包名（
-/// `com.foo.bar` 或 `com.foo.bar:push`）。其他平台读不到，返回空串。
-String _detectPackageName() {
-  if (!Platform.isAndroid) return '';
-  try {
-    final raw = File('/proc/self/cmdline').readAsStringSync();
-    final first = raw.split('\u0000').first.trim();
-    if (first.isEmpty) return '';
-    // 子进程名带 `:xxx` 后缀，归一化到主包名。
-    final i = first.indexOf(':');
-    return i > 0 ? first.substring(0, i) : first;
-  } catch (_) {
-    return '';
   }
 }
 
@@ -110,6 +114,12 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
     );
     debugPrint('[xb_ume] 直连 Agent 已启动：http://127.0.0.1:${http.port} '
         '($appLabel, caps=${_options.caps.join(',')})');
+    // 进程 CPU 是两次采样做差，先打一针基准：GUI 第一次轮询就有百分比。
+    try {
+      XBUmeProcessStats.sample();
+    } catch (_) {
+      // 采样失败不影响服务。
+    }
   }
 
   @override
@@ -478,6 +488,143 @@ class _XBUmeAgentServer implements XBUmeAgentServer {
           });
           return;
         }
+        case '/v1/sandbox/roots':
+          await send(
+            HttpStatus.ok,
+            agentSandboxRootsJson(
+              pkg: _options.packageName,
+              os: agentPlatformName(),
+              home: agentHomeDir(),
+            ),
+          );
+          return;
+        case '/v1/sandbox/list':
+          await send(
+            HttpStatus.ok,
+            agentSandboxListJson(
+              path: strArg('path'),
+              pkg: _options.packageName,
+              os: agentPlatformName(),
+              home: agentHomeDir(),
+            ),
+          );
+          return;
+        case '/v1/sandbox/stat':
+          await send(HttpStatus.ok, agentSandboxStatJson(strArg('path')));
+          return;
+        case '/v1/sandbox/read':
+          await send(
+            HttpStatus.ok,
+            agentSandboxReadJson(
+              strArg('path'),
+              offset: int.tryParse(strArg('offset')) ?? 0,
+              max: _intParam(strArg('max'), 65536, 1, 2 * 1024 * 1024),
+              forceB64: boolArg('b64'),
+            ),
+          );
+          return;
+        case '/v1/storage/list':
+          await send(
+            HttpStatus.ok,
+            agentStorageListJson(
+              pkg: _options.packageName,
+              os: agentPlatformName(),
+              home: agentHomeDir(),
+            ),
+          );
+          return;
+        case '/v1/storage/read':
+          await send(HttpStatus.ok, agentStorageReadJson(strArg('file')));
+          return;
+        case '/v1/storage/adapters':
+          await send(
+            HttpStatus.ok,
+            await agentStorageAdaptersJson(_controller),
+          );
+          return;
+        case '/v1/storage/set': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          await send(
+            HttpStatus.ok,
+            await agentStorageSetJson(
+              _controller,
+              adapter: strArg('adapter'),
+              key: strArg('key'),
+              type: strArg('type', 'string'),
+              value: strArg('value'),
+            ),
+          );
+          return;
+        }
+        case '/v1/storage/remove': {
+          if (req.method != 'POST') {
+            req.response.headers.set('Allow', 'POST');
+            await send(HttpStatus.methodNotAllowed,
+                <String, Object?>{'error': '该接口仅支持 POST'});
+            return;
+          }
+          await send(
+            HttpStatus.ok,
+            await agentStorageRemoveJson(
+              _controller,
+              adapter: strArg('adapter'),
+              key: strArg('key'),
+            ),
+          );
+          return;
+        }
+        case '/v1/db/files':
+          await send(
+            HttpStatus.ok,
+            agentDbFilesJson(
+              pkg: _options.packageName,
+              os: agentPlatformName(),
+              home: agentHomeDir(),
+              dir: strArg('dir'),
+              limit: _intParam(strArg('limit'), 200, 1, 2000),
+            ),
+          );
+          return;
+        case '/v1/perf':
+          await send(
+            HttpStatus.ok,
+            agentPerfJson(
+              _controller,
+              windowMs: _intParam(strArg('windowMs'), 2000, 500, 5000),
+              app: appLabel,
+            ),
+          );
+          return;
+        // 直连会话的「实例」面板：app 注册的 XBUmeInspectable。
+        // 不带 id 列注册表；带 id 展开字段树（depth 1–4）。
+        case '/v1/inspect':
+          final inspectId = strArg('id');
+          await send(
+            HttpStatus.ok,
+            inspectId.isEmpty
+                ? agentInspectStoresJson(_controller)
+                : agentInspectTreeJson(
+                    _controller,
+                    inspectId,
+                    depth: _intParam(strArg('depth'), 2, 1, 4),
+                  ),
+          );
+          return;
+        // 路由栈：直连只能按事件重放近似（approx=true，前端/工具自行降级）。
+        case '/v1/route/stack':
+          await send(
+            HttpStatus.ok,
+            agentRouteStackJson(
+              _controller,
+              eventLimit: _intParam(strArg('limit'), 50, 1, 500),
+            ),
+          );
+          return;
         default:
           await send(HttpStatus.notFound,
               <String, Object?>{'error': '未知端点：$path'});

@@ -85,6 +85,7 @@ void main() {
         'data-tab="wtree" style="display:none" data-need-caps="widgets"',
         'data-tab="shot" data-need-caps="shot"',
         'data-tab="perf" data-need-caps="perf"',
+        'data-tab="instances" data-need-caps="inspectable"',
         'data-tab="auto" data-need-caps="act,debug"',
         'data-tab="compare" data-need-caps="debug"',
         'data-tab="ai" data-need-caps="shot,debug"',
@@ -94,7 +95,7 @@ void main() {
     });
 
     test('提示条按当前会话真实缺项生成，不写死能力名', () {
-      expect(gui, contains("var all = ['inspect','fs','act','widgets','route:stack','shot','perf','debug','hot','gc'];"));
+      expect(gui, contains("var all = ['inspect','inspectable','fs','act','widgets','route:stack','shot','perf','debug','hot','gc'];"));
       expect(gui, isNot(contains("['debug','hot','gc'].filter")));
     });
 

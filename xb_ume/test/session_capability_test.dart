@@ -34,6 +34,7 @@ void main() {
       final caps = sessionCaps(transport: SessionTransport.vm);
       expect(caps, containsAll(<String>[
         Cap.inspect,
+        Cap.inspectable,
         Cap.fs,
         Cap.act,
         Cap.widgets,
@@ -53,6 +54,7 @@ void main() {
       final caps = sessionCaps(transport: SessionTransport.agent);
       expect(caps, containsAll(<String>[
         Cap.inspect,
+        Cap.inspectable,
         Cap.fs,
         Cap.act,
         Cap.widgets,

@@ -14,6 +14,10 @@ abstract final class Cap {
   /// 状态 / 路由 / 日志 / 网络 / 异常 / 时间轴 / 帧统计。
   static const String inspect = 'inspect';
 
+  /// 实例字段树：VM 靠 `getObject` 展开任意对象；直连只能读 app 注册的
+  /// `XBUmeInspectable`（按类名查找 / 堆扫描 / 字段写回仍然只有 VM 有）。
+  static const String inspectable = 'inspectable';
+
   /// 沙盒 / SQLite / shared_prefs。
   static const String fs = 'fs';
 
@@ -87,6 +91,7 @@ String sessionTransportName(SessionTransport t) {
 /// VM service 通道全量能力（debug/profile）。
 const Set<String> kVmCaps = <String>{
   Cap.inspect,
+  Cap.inspectable,
   Cap.fs,
   Cap.act,
   Cap.widgets,
@@ -106,6 +111,7 @@ const Set<String> kVmCaps = <String>{
 /// 只实现只读数据面，所以真实会话会窄到 `inspect`。
 const Set<String> kAgentCaps = <String>{
   Cap.inspect,
+  Cap.inspectable,
   Cap.fs,
   Cap.act,
   Cap.widgets,
@@ -151,6 +157,7 @@ Set<String> sessionCaps({
 /// 能力 → 人话（GUI tooltip 与工具报错共用）。
 const Map<String, String> kCapLabels = <String, String>{
   Cap.inspect: '日志 / 网络 / 异常 / 时间轴',
+  Cap.inspectable: '实例字段树',
   Cap.fs: '沙盒 / 存储 / 数据库',
   Cap.act: '点击 / 输入 / 滑动',
   Cap.widgets: '组件树',
@@ -240,4 +247,8 @@ const Map<String, List<String>> kFeatureNeeds = <String, List<String>>{
   'gc': <String>[Cap.gc],
   'reassemble': <String>[Cap.gc],
   'sourceExact': <String>[Cap.srclocateExact],
+  // 实例面板：列注册表 / 展开字段树直连也能用（读 app 自报的字段树），
+  // 但按类名查找（Element 树 + 堆扫描）与字段写回都要 eval。
+  'instancesFind': <String>[Cap.debug],
+  'instancesSet': <String>[Cap.debug],
 };

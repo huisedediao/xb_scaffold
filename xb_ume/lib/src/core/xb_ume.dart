@@ -7,6 +7,7 @@ import '../persistence/xb_ume_persistence.dart';
 import '../ui/xb_ume_host.dart';
 import 'xb_ume_binding.dart';
 import 'xb_ume_controller.dart';
+import 'xb_ume_inspectable.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_storage_adapter.dart';
 import 'xb_ume_store_registry.dart';
@@ -78,5 +79,17 @@ class XBUme {
   /// ChangeNotifier、全局 State、单例）。重复 id 覆盖；GUI 按本 id 定位实例。
   static void registerStore(String id, Object store) {
     XBUmeStoreRegistry.register(id, store);
+  }
+
+  /// 注册直连会话（release / AOT，无 eval）可见的字段树。
+  ///
+  /// VM 会话走 [registerStore]；没 VM 时只能由 app 自己把字段 dump 成 Map，
+  /// 详见 [XBUmeInspectable]。
+  static bool registerInspectable(XBUmeInspectable inspectable) {
+    return controller.registerInspectable(inspectable);
+  }
+
+  static bool unregisterInspectable(String inspectId) {
+    return controller.unregisterInspectable(inspectId);
   }
 }

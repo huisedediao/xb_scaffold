@@ -349,7 +349,10 @@ McpTool _watchTool() => McpTool(
       title: '监听字段 / 表达式变化',
       description: '给实例字段或 eval 表达式加监听：值变化时写时间轴，可带条件命中截图。'
           'add（kind=expr|field；field 要 targetId）、list、events（取增量）、'
-          'pause（恢复/暂停）、remove、clear。适合等一个状态变化再断言。',
+          'pause（恢复/暂停）、remove、clear。适合等一个状态变化再断言。'
+          '直连会话（release）没有 eval：kind=inspect（轮询 XBUme.registerInspectable '
+          '的字段树，targetId=inspectable id，expr=字段路径可空）或 kind=file'
+          '（expr=文件路径，监听 size/mtime）；条件只能写 value > 10、value == done。',
       group: ToolGroup.data,
       inputSchema: _schema(<String, Object?>{
         'action': prop('string', '操作',
@@ -357,11 +360,16 @@ McpTool _watchTool() => McpTool(
             defaultValue: 'list'),
         'sessionId': prop('string', '会话 id（省略用当前会话）'),
         'uri': prop('string', 'VM service 地址（一般不用传）'),
-        'kind': prop('string', 'add：expr / field', defaultValue: 'expr'),
-        'expr': prop('string', 'add：表达式（field 时是字段名）'),
-        'targetId': prop('string', 'add kind=field：实例 id'),
+        'kind': prop('string', 'add：expr / field；直连会话可用 inspect / file',
+            defaultValue: 'expr'),
+        'expr': prop('string',
+            'add：表达式（field 是字段名；inspect 是字段路径，可空=整棵树；file 是文件路径）'),
+        'targetId': prop('string',
+            'add kind=field：实例 id；kind=inspect：inspectable id'),
         'lib': prop('string', 'add：求值库（可空）'),
-        'condition': prop('string', 'add：命中条件（可空）'),
+        'condition': prop('string',
+            'add：命中条件（可空；直连只支持 value <op> 字面量）'),
+        'intervalMs': prop('integer', 'add：轮询间隔 200–10000ms，缺省 500'),
         'id': prop('string', 'pause / remove 用：监听项 id'),
         'on': prop('boolean', 'pause：true 恢复 / false 暂停', defaultValue: false),
       }),
@@ -369,23 +377,30 @@ McpTool _watchTool() => McpTool(
         final action = (optionalString(args, 'action') ?? 'list').trim();
         final uri = await _uriOf(ctx, args);
         if (action == 'add') {
-          final expr = requireString(args, 'expr', hint: '例如 state.count');
+          final kind = optionalString(args, 'kind') ?? 'expr';
+          final expr = optionalString(args, 'expr') ?? '';
+          // inspect 允许空 expr（监听整棵树），其余类型必须给值。
+          if (expr.isEmpty && kind != 'inspect') {
+            requireString(args, 'expr', hint: '例如 state.count');
+          }
           final j = await _gui(ctx, '/api/watch/add', method: 'POST', rawBody: jsonEncode(<String, Object?>{
             'uri': uri,
-            'kind': optionalString(args, 'kind') ?? 'expr',
+            'kind': kind,
             'expr': expr,
             if (optionalString(args, 'targetId') != null)
               'targetId': optionalString(args, 'targetId'),
             if (optionalString(args, 'lib') != null) 'lib': optionalString(args, 'lib'),
             if (optionalString(args, 'condition') != null)
               'condition': optionalString(args, 'condition'),
+            if (args['intervalMs'] != null) 'intervalMs': args['intervalMs'],
           }));
           if (j['ok'] == false) {
             throw McpToolException('加监听失败：${j['error'] ?? '未知原因'}');
           }
           final item = j['item'];
           final id = item is Map ? item['id'] : j['id'];
-          return McpToolResult.text('已监听 $expr（id=${id ?? '?'}）', structured: j);
+          final what = expr.isEmpty ? '$kind（整棵树）' : expr;
+          return McpToolResult.text('已监听 $what（id=${id ?? '?'}）', structured: j);
         }
         if (action == 'remove' || action == 'pause') {
           final id = requireString(args, 'id', hint: '先 action=list 看 id');
@@ -849,7 +864,9 @@ McpTool _routeLocateTool() => McpTool(
         'open': prop('boolean', 'locate：是否顺手在 IDE 打开（默认 false）',
             defaultValue: false),
         'file': prop('string', 'info：Widget 所在源文件绝对路径'),
-        'class': prop('string', 'info：Widget 类名'),
+        'class': prop('string',
+            'info：Widget 类名；locate：直连会话可选，指定要定位的页面类名'),
+        'root': prop('string', 'locate：直连会话的项目根（启发式搜索源码用）'),
         'op': prop('string', 'op：pop / remove / push'),
         'name': prop('string', 'op=push：路由名'),
       }),
@@ -868,6 +885,9 @@ McpTool _routeLocateTool() => McpTool(
                   '${r['name'] ?? '(未命名)'} · ${r['type'] ?? ''}'
                   '${(r['args'] ?? '').toString().isEmpty ? '' : ' args=${r['args']}'}');
             }
+          }
+          if (j['approx'] == true) {
+            lines.add('（直连会话：按路由事件重放的近似栈，顺序可能与真实栈不同）');
           }
           return McpToolResult.text(
             lines.isEmpty ? '没有路由' : lines.join('\n'),
@@ -941,12 +961,18 @@ McpTool _routeLocateTool() => McpTool(
           'nav': nav,
           'idx': idx,
           'open': optionalBool(args, 'open') ? 1 : 0,
+          // 直连会话：启发式定位要项目根，可选指定页面类名（比按路由名猜准）。
+          if (optionalString(args, 'root') != null)
+            'root': optionalString(args, 'root'),
+          if (optionalString(args, 'class') != null)
+            'class': optionalString(args, 'class'),
         });
         final cls = j['className'] ?? j['widget'] ?? '?';
         final file = j['file'] ?? j['path'];
         final line = j['line'];
         return McpToolResult.text(
-          '$cls${file == null ? '' : ' · $file:${line ?? ''}'}',
+          '$cls${file == null ? '' : ' · $file:${line ?? ''}'}'
+          '${j['heuristic'] == true ? '（启发式，候选：${(j['candidates'] as List? ?? const <Object?>[]).take(4).join(' / ')}）' : ''}',
           structured: j,
         );
       },

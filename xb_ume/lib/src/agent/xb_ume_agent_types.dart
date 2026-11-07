@@ -58,13 +58,20 @@ const bool kXBUmeAgentEnvObfuscated = _kAgentObfuscatedRaw == '1' ||
 ///
 /// P1：`inspect`（日志/网络/异常/时间轴）；
 /// P2：`widgets`（组件树 / find_widget / ref）、`act`（点击/输入/滑动/跳转）、
-///     `shot`（app 内渲染截图）。
-/// `fs` / `perf` 等端点没落地前不要加进来，否则 IDE 侧会把没实现的功能点亮。
+///     `shot`（app 内渲染截图）；
+/// P3：`fs`（沙盒只读 / shared_prefs 读写 / SQLite 文件枚举）、
+///     `perf`（帧耗时统计 + 进程 CPU/内存；没有 VM 的堆/isolate 采样）、
+///     `inspectable`（app 注册的字段树，替代 VM 的实例展开）、
+///     `srclocate:heuristic`（路由事件 + 路由名推类名，在本机源码里找声明）。
 const List<String> kXBUmeAgentCaps = <String>[
   'inspect',
+  'fs',
   'widgets',
   'act',
   'shot',
+  'perf',
+  'inspectable',
+  'srclocate:heuristic',
 ];
 
 /// 直连服务选项。

@@ -16,6 +16,7 @@ import '../models/xb_ume_widget_node.dart';
 import '../persistence/xb_ume_persistence.dart';
 import 'xb_ring_buffer.dart';
 import 'xb_ume_log_file.dart';
+import 'xb_ume_inspectable.dart';
 import 'xb_ume_log_file_factory.dart';
 import 'xb_ume_plugin.dart';
 import 'xb_ume_storage_adapter.dart';
@@ -60,6 +61,9 @@ class XBUmeController extends ChangeNotifier {
   final LinkedHashMap<String, XBUmeStorageAdapter> _storageAdapters =
       LinkedHashMap<String, XBUmeStorageAdapter>();
 
+  final LinkedHashMap<String, XBUmeInspectable> _inspectables =
+      LinkedHashMap<String, XBUmeInspectable>();
+
   final ValueNotifier<int> changeTick = ValueNotifier<int>(0);
   final ValueNotifier<bool> panelVisible = ValueNotifier<bool>(false);
 
@@ -80,6 +84,8 @@ class XBUmeController extends ChangeNotifier {
   List<XBUmePlugin> get plugins => _plugins.values.toList(growable: false);
   List<XBUmeStorageAdapter> get storageAdapters =>
       _storageAdapters.values.toList(growable: false);
+  List<XBUmeInspectable> get inspectables =>
+      _inspectables.values.toList(growable: false);
 
   bool get restored => _restored;
 
@@ -119,6 +125,30 @@ class XBUmeController extends ChangeNotifier {
     plugin.onUnregister(this);
     _emitChanged(persist: false);
     return true;
+  }
+
+  /// 注册一个「直连会话可见」的字段树（VM 会话看不到这份注册表，走 VM 自身）。
+  bool registerInspectable(XBUmeInspectable inspectable) {
+    _inspectables[inspectable.inspectId] = inspectable;
+    _emitChanged(persist: false);
+    return true;
+  }
+
+  bool unregisterInspectable(String inspectId) {
+    final removed = _inspectables.remove(inspectId);
+    if (removed == null) return false;
+    _emitChanged(persist: false);
+    return true;
+  }
+
+  XBUmeInspectable? findInspectable(String inspectId) {
+    final direct = _inspectables[inspectId];
+    if (direct != null) return direct;
+    // 允许按类型名找（GUI 里可能出现 name 而非 id）。
+    for (final it in _inspectables.values) {
+      if (it.inspectType == inspectId) return it;
+    }
+    return null;
   }
 
   bool registerStorageAdapter(XBUmeStorageAdapter adapter) {
