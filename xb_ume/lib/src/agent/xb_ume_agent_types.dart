@@ -38,8 +38,8 @@ const String kXBUmeAgentEnvToken = String.fromEnvironment('XBUME_AGENT_TOKEN');
 
 /// 编译期应用标识：`--dart-define=XBUME_AGENT_APP=com.example.app`。
 ///
-/// 纯 Dart 拿不到包名；Android 会尝试从 `/proc/self/cmdline` 自采，采不到
-/// （iOS / 桌面 / 自定义进程名）才需要构建方显式给一个，用于下拉展示。
+/// 纯 Dart 拿不到包名；Android / 鸿蒙会尝试从 `/proc/self/cmdline` 自采，
+/// 采不到（iOS / 桌面 / 自定义进程名）才需要构建方显式给一个，用于下拉展示。
 const String kXBUmeAgentEnvApp = String.fromEnvironment('XBUME_AGENT_APP');
 
 /// 编译期混淆标记：`--dart-define=XBUME_AGENT_OBFUSCATED=1`。

@@ -796,6 +796,8 @@ P1/P2 只做了「读数据 + 看图点击」，真正排障还要看文件、�
 
 **Watch 受限但够用**：直连没有 eval，所以监听对象换成「inspectable 字段路径」或「文件 size+mtime」。条件也退化成**本地比较**——只支持 `value > 10` / `value == done` / `value contains ok` 这类「当前值 vs 字面量」，比 VM 侧的任意表达式弱；添加时语法不对直接拒绝，不会静默失效。命中条件时仍会自动截图（app 侧 PNG，落在 `~/.xb_ume_ide/scenarios/artifacts/`），所以「盯着某个状态变化，一变就留证据」在 release 包上同样成立。
 
+**非 VM 通道的平台覆盖**：Android（`adb forward`）、鸿蒙 OHOS（`hdc fport`）、iOS 真机（`iproxy`）、iOS 模拟器与 macOS / Windows / Linux 桌面（模拟器与宿主共用回环，无需转发，直接扫本地回环端口）。鸿蒙侧的沙盒根是 `/data/storage/el2/base` / `el1/base`、存储目录是 `.../preferences`，都不依赖包名；包名 / bundle 名由 app 从 `/proc/self/cmdline` 自采（Android 与鸿蒙同一套，模拟器 / 桌面采不到时用 `XBUME_AGENT_APP` 补）。
+
 **iOS 真机靠 `iproxy` 长驻进程**：`adb` / `hdc` 的转发是注册式的（命令执行完就完事，转发表能查），iOS 没有这套机制，只能用 libimobiledevice 的 `idevice_id -l` 列 UDID 再 `iproxy <主机端口>:47100 -u <UDID>`。iproxy 是长驻进程，所以 IDE 侧自己持有 `Process` 句柄：同一 UDID + 同一主机端口才复用，否则先按句柄 kill 旧进程再起；stdout / stderr 必须 `drain`（管道写满会让转发卡死）。GUI（含 `--daemon` 的 `SIGTERM` / `SIGINT` / `SIGHUP` 钩子与锁连接接管退出）/ MCP（两处 shutdown + stdio finally）退出时都调 `stopAgentForwardProcesses()`，**只按句柄 kill，绝不按进程名匹配**（本机可能还有别的工具在用 iproxy）。端口分配把自持的 iproxy 端口并入占用表，并跳过所有已在监听的端口，两台 iPhone 不会抢同一个。实测坑：**iproxy 对不存在的设备也会立刻监听端口**（懒连接），所以「端口可连」只证明进程起来了，能否真的读到 app 仍由 `/v1/hello` 探测决定。
 
 真实 macOS example 上验过：`kind=inspect` 监听 `demo-memory.count`，把值从 `1` 改成 `2` 后 2 秒内收到 `old=1 new=2`；`kind=file` 监听日志文件，追加一行后收到 `size=1 → 2`，条件 `value contains size=2` 命中并落了一张截图。

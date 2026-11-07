@@ -671,4 +671,30 @@ void main() {
       expect('${missing['error']}', contains('AppState'));
     });
   });
+
+  group('包名自采（Android / 鸿蒙）', () {
+    test('Android 主进程与子进程', () {
+      expect(parsePackageFromCmdline('com.foo.bar\u0000'), 'com.foo.bar');
+      expect(parsePackageFromCmdline('com.foo.bar:push\u0000--key value'),
+          'com.foo.bar');
+    });
+
+    test('鸿蒙 bundle 名同样能采到', () {
+      expect(parsePackageFromCmdline('com.example.myapplication\u0000'),
+          'com.example.myapplication');
+      expect(parsePackageFromCmdline('com.example.myapplication:entry\u0000'),
+          'com.example.myapplication');
+    });
+
+    test('桌面端路径 / 无点号进程名一律不采', () {
+      expect(parsePackageFromCmdline('/usr/local/bin/dart\u0000app.dart'), '');
+      expect(parsePackageFromCmdline('appspawn\u0000'), '');
+      expect(parsePackageFromCmdline(''), '');
+      expect(parsePackageFromCmdline('\u0000'), '');
+    });
+
+    test('非 Android / 鸿蒙平台不自采（本机跑测试即桌面端）', () {
+      expect(agentDetectPackageName(), isEmpty);
+    });
+  });
 }

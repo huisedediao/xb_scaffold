@@ -25,16 +25,29 @@ import '../core/xb_ume_storage_adapter.dart';
 /// 当前平台名（与 VM `Platform.operatingSystem` 一致）。
 String agentPlatformName() => Platform.operatingSystem;
 
-/// 读进程名当包名：Android 的 `/proc/self/cmdline` 首段通常就是包名
-/// （`com.foo.bar` 或 `com.foo.bar:push`）。其他平台读不到，返回空串。
+/// 从 `/proc/self/cmdline` 首段解析包名 / bundle 名（纯函数，便于单测）。
+///
+/// Android 是 `com.foo.bar`（子进程带 `:push` 后缀，去掉）；鸿蒙的进程名就是
+/// bundle 名（同样可能带 `:xx`）。只接受形如 `a.b.c` 的标识符：桌面端首段是
+/// Dart 可执行路径，含 `/` 或空格，一律当「没采到」，不把路径当包名展示。
+String parsePackageFromCmdline(String raw) {
+  final first = raw.split('\u0000').first.trim();
+  if (first.isEmpty) return '';
+  final i = first.indexOf(':');
+  final name = (i > 0 ? first.substring(0, i) : first).trim();
+  if (name.isEmpty || name.contains('/') || name.contains(' ')) return '';
+  if (!name.contains('.')) return '';
+  return name;
+}
+
+/// 读进程名当包名：Android / 鸿蒙的 `/proc/self/cmdline` 首段就是包名。
+/// 其他平台（iOS / 桌面）读不到，返回空串（留给 `--dart-define=XBUME_AGENT_APP`）。
 String agentDetectPackageName() {
-  if (!Platform.isAndroid) return '';
+  final os = Platform.operatingSystem;
+  if (os != 'android' && os != 'ohos') return '';
   try {
-    final raw = File('/proc/self/cmdline').readAsStringSync();
-    final first = raw.split('\u0000').first.trim();
-    if (first.isEmpty) return '';
-    final i = first.indexOf(':');
-    return i > 0 ? first.substring(0, i) : first;
+    return parsePackageFromCmdline(
+        File('/proc/self/cmdline').readAsStringSync());
   } catch (_) {
     return '';
   }
