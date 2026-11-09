@@ -802,6 +802,10 @@ P1/P2 只做了「读数据 + 看图点击」，真正排障还要看文件、�
 
 真实 macOS example 上验过：`kind=inspect` 监听 `demo-memory.count`，把值从 `1` 改成 `2` 后 2 秒内收到 `old=1 new=2`；`kind=file` 监听日志文件，追加一行后收到 `size=1 → 2`，条件 `value contains size=2` 命中并落了一张截图。
 
+**鸿蒙真机实测（release + `XBUME_AGENT=1`）**：HarmonyOS（OHOS 7.0.0.105 / API 26）装 `xb_ume/example` 的 hap 后，`hdc fport` 自动映射（主机 47121 → 设备 47100），`/v1/hello` 回 `os=ohos`、`packageName=com.example.xb_ume_example`；沙盒三入口（`el2/base` / `el1/base` / `haps/entry/cache`）、性能 PSS 128.8MB（`cpuScope=total`，含 ArkTS Heap 明细）、截图 1260×2720、`by=text` 找控件 → `/v1/center` → `/v1/tap` 后 app 日志计数 1 → 2，全部走真实 HTTP 直连、未借助 VM service。caps 里没有 `gc` / `debug` / `hot` / `route:stack` / `srclocate:exact`，与上文置灰项一致。
+
+**iOS 真机待验**：本轮只走到「构建出 release 包」，安装未完成——debug 包在 iOS 26.5.2 上 Dart VM 初始化即断言崩溃（`StubCode::Init`，与 xb_ume 无关），验直连请用 release / profile；另有一次被中断的 `devicectl install` 在设备上留下 process-scoped 安装协调器，之后 install / launch 一直挂在 `Enabling developer disk image services`，`ideviceinstaller` 报 `IXErrorDomain Code=48`，重启手机或重插数据线可清。`iproxy` 这一环目前只有单测覆盖（UDID 解析 / 参数拼装 / 句柄清理），iOS 端的 `/v1/hello` 结论待补。
+
 ## 二十一、相关文档
 
 - IDE 跳转功能与守护进程安装：[IDE_JUMP_GUIDE.md](IDE_JUMP_GUIDE.md)
