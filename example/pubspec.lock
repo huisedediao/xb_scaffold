@@ -593,7 +593,7 @@ packages:
       path: "../xb_ume"
       relative: true
     source: path
-    version: "0.3.0"
+    version: "0.9.9"
   xdg_directories:
     dependency: transitive
     description:
