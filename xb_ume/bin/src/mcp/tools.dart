@@ -179,11 +179,19 @@ Future<McpSession> resolveSession(
     McpToolContext ctx, Map<String, Object?> args) async {
   final id = optionalString(args, 'sessionId');
   if (id != null) return ctx.sessions.use(id);
-  if (ctx.sessions.current == null) await ctx.sessions.refresh(force: true);
+  // 一个快照都没有时才等全量扫描；已经有列表（多个会话、谁也没选）就别白等
+  // 1–3 秒——反正这一步后面还是要 AI 自己挑。
+  if (ctx.sessions.all.isEmpty) await ctx.sessions.refresh(force: true);
   try {
     return ctx.sessions.requireCurrent();
   } on StateError catch (e) {
-    throw McpToolException(e.message, hint: '先调用 xbume_sessions 查看可用会话');
+    final known = ctx.sessions.all.map((s) => s.id).join(', ');
+    throw McpToolException(
+      e.message,
+      hint: known.isEmpty
+          ? '先调用 xbume_sessions 查看可用会话'
+          : '可用会话：$known；用 xbume_use_session 选定，或在参数里传 sessionId',
+    );
   }
 }
 
@@ -314,6 +322,34 @@ Future<String?> _topRoute(SessionApi? api) async {
   }
 }
 
+/// 动作执行后的稳定等待。
+///
+/// 直连通道：每 40ms 读一次栈顶路由，连续两次相同即认为页面稳定（通常 100ms
+/// 内返回），最多等 [maxWaitMs]；VM 通道轮询 eval 反而更贵，保持固定等待 +
+/// 一次查询。调用方显式传了 waitMs（[explicit]）时退回「死等」，尊重原语义。
+Future<String?> _settleAfterAction(
+  SessionApi api,
+  int maxWaitMs, {
+  bool explicit = false,
+}) async {
+  if (maxWaitMs <= 0) return _topRoute(api);
+  if (explicit || !api.isAgent) {
+    await Future<void>.delayed(Duration(milliseconds: maxWaitMs));
+    return _topRoute(api);
+  }
+  final sw = Stopwatch()..start();
+  // 至少等一帧，让动作后的首帧先渲染出来。
+  await Future<void>.delayed(const Duration(milliseconds: 32));
+  var prev = await _topRoute(api);
+  while (sw.elapsedMilliseconds < maxWaitMs) {
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    final now = await _topRoute(api);
+    if (now == prev) return now;
+    prev = now;
+  }
+  return prev;
+}
+
 Map<String, Object?>? _parseBounds(String raw) {
   if (raw.isEmpty) return null;
   final p = raw.split(',');
@@ -421,6 +457,7 @@ List<McpTool> coreTools({bool allowEval = false}) => <McpTool>[
       _poolTool(),
       _leaseTool(),
       _screenshotTool(),
+      _observeTool(),
       _findWidgetTool(),
       _tapTool(),
       _inputTool(),
@@ -451,7 +488,8 @@ McpTool _sessionsTool() => McpTool(
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'refresh':
-            prop('boolean', '强制重新扫描（默认 3 秒内复用上次结果）', defaultValue: false),
+            prop('boolean', '强制重新扫描（默认走 8 秒缓存，过期的旧列表先返回、后台补扫）',
+                defaultValue: false),
       }),
       handler: (ctx, args) async {
         final force = optionalBool(args, 'refresh');
@@ -880,17 +918,23 @@ McpTool _screenshotTool() => McpTool(
       name: 'xbume_screenshot',
       title: '截取当前界面',
       description: '返回 PNG 截图（image content，可直接看）+ 像素尺寸；'
-          '可选 savePath 落盘。iOS 走 inspector 渲染路径兜底。',
+          '默认缩到 720 物理像素宽（maxWidth:0 取原分辨率），回包与看图开销都更 小。'
+          '只想看「改完没」时优先用 xbume_observe（一步带截图+增量日志）。'
+          'iOS 走 inspector 渲染路径兜底。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
+        'maxWidth': prop('integer', '输出图片宽度上限（物理像素，默认 720；0 = 原始分辨率）',
+            defaultValue: 720),
         'savePath': prop('string', '落盘路径（限 XB_UME_HOME / 工作目录 / 临时目录）'),
       }),
       handler: (ctx, args) async {
         final s = await resolveSession(ctx, args);
+        final maxWidth = optionalInt(args, 'maxWidth') ?? 720;
         String b64;
         try {
-          b64 = await s.api.screenshotBase64();
+          final pr = await shotPixelRatioFor(s.api, maxWidth);
+          b64 = await s.api.screenshotBase64(maxPixelRatio: pr);
         } catch (e) {
           throw McpToolException('截图失败：$e', hint: '确认会话仍在运行且图形界面已渲染首帧');
         }
@@ -924,6 +968,203 @@ McpTool _screenshotTool() => McpTool(
         );
       },
     );
+
+/// observe 的增量游标：sessionId → 上次已读到的时间（毫秒）。
+final Map<String, int> _observeCursors = <String, int>{};
+
+McpTool _observeTool() => McpTool(
+      name: 'xbume_observe',
+      title: '一步看全当前界面',
+      description: '一次调用拿全「现在长什么样 + 刚发生了什么」：截图（默认缩到 720 宽）'
+          '+ 栈顶路由 + 自上次 observe 以来新增的日志/异常/网络（增量游标，不会重复），'
+          '可选页面可见文本。AI 调试的标准循环是 observe → tap(observe:true) → observe，'
+          '不要每步再单独调 screenshot / console / network。',
+      group: ToolGroup.core,
+      inputSchema: _schema(<String, Object?>{
+        'sessionId': _sessionIdProp(),
+        'shot': prop('boolean', '是否带截图（默认 true）', defaultValue: true),
+        'maxWidth': prop('integer', '截图宽度上限（物理像素，默认 720；0 = 原始）',
+            defaultValue: 720),
+        'withLogs': prop('boolean', '是否带新增日志（默认 true）', defaultValue: true),
+        'withNetwork':
+            prop('boolean', '是否带新增网络记录（默认 true）', defaultValue: true),
+        'withExceptions':
+            prop('boolean', '是否带新增异常（默认 true）', defaultValue: true),
+        'withText': prop('boolean', '是否带页面可见文本（默认 false）',
+            defaultValue: false),
+        'sinceMs': prop('integer', '增量起点（毫秒）；省略用上次 observe 的游标'),
+        'reset': prop('boolean', '重置游标：本轮取最近记录后重新开始增量',
+            defaultValue: false),
+        'limit': prop('integer', '每个集合最多几条（默认 15）', defaultValue: 15),
+      }),
+      handler: (ctx, args) async {
+        final s = await resolveSession(ctx, args);
+        return _observePayload(ctx, s, args);
+      },
+    );
+
+/// observe（以及动作工具的 `observe:true`）共用的采样与整形。
+///
+/// 顺序请求而不并发：直连是几次本地 HTTP，VM 是一条 socket 上的串行 eval，
+/// 并发在 VM 上不会更快，反而容易把 isolate 打忙。
+Future<McpToolResult> _observePayload(
+  McpToolContext ctx,
+  McpSession s,
+  Map<String, Object?> args,
+) async {
+  final limit = (optionalInt(args, 'limit') ?? 15).clamp(1, 100);
+  final reset = optionalBool(args, 'reset');
+  final explicitSince = optionalInt(args, 'sinceMs');
+  final since = explicitSince ?? (reset ? null : _observeCursors[s.id]);
+  final withLogs = optionalBool(args, 'withLogs', fallback: true);
+  final withNetwork = optionalBool(args, 'withNetwork', fallback: true);
+  final withExceptions = optionalBool(args, 'withExceptions', fallback: true);
+  final withText = optionalBool(args, 'withText');
+  final shot = optionalBool(args, 'shot', fallback: true);
+
+  var nextSince = explicitSince ?? 0;
+  void bump(String iso) {
+    final t = DateTime.tryParse(iso);
+    if (t == null) return;
+    final ms = t.millisecondsSinceEpoch + 1;
+    if (ms > nextSince) nextSince = ms;
+  }
+
+  final stack = await _routeNames(s.api);
+  final top = stack.isEmpty ? null : stack.last;
+
+  final logs = <Map<String, Object?>>[];
+  if (withLogs) {
+    final raw = await s.api.consoleRaw(
+        sinceMs: since, limit: limit, maxChars: 300, withPath: false);
+    for (final row in raw.split('\u0003')) {
+      if (row.isEmpty || row.startsWith('#path\u0001')) continue;
+      final f = row.split('\u0001');
+      if (f.length < 4) continue;
+      logs.add(<String, Object?>{
+        'level': f[0],
+        'tag': f[1],
+        'message': f[2],
+        'time': f[3],
+      });
+      bump(f[3]);
+    }
+  }
+
+  final nets = <Map<String, Object?>>[];
+  if (withNetwork) {
+    final raw = await s.api.networkRaw(sinceMs: since, limit: limit);
+    for (final row in raw.split('\u0003')) {
+      if (row.isEmpty) continue;
+      final f = row.split('\u0001');
+      if (f.length < 7) continue;
+      nets.add(<String, Object?>{
+        'method': f[0],
+        'url': f[1],
+        'statusCode': int.tryParse(f[2]),
+        'status': f[3],
+        'durationMs': int.tryParse(f[4]),
+        'time': f[5],
+        'error': f[6],
+      });
+      bump(f[5]);
+    }
+  }
+
+  final excs = <Map<String, Object?>>[];
+  if (withExceptions) {
+    final raw = await s.api.exceptionsRaw(sinceMs: since, limit: limit);
+    for (final row in raw.split('\u0003')) {
+      if (row.isEmpty) continue;
+      final f = row.split('\u0001');
+      if (f.length < 13) continue;
+      excs.add(<String, Object?>{
+        'time': f[0],
+        'kind': f[2],
+        'type': f[3],
+        'count': int.tryParse(f[4]),
+        'message': f[5],
+        'library': f[6],
+        'widgetFile': f[10],
+        'widgetLine': f[11],
+      });
+      bump(f[0]);
+    }
+  }
+
+  String? text;
+  if (withText) {
+    final raw = await s.api.pageTextRaw(limit: 120);
+    final parts = raw.split('\u0002').map((e) => e.trim()).where((e) => e.isNotEmpty);
+    text = parts.join(' | ');
+  }
+
+  // 没有任何新记录时，别让下一轮又从远古开始扫。
+  if (nextSince == 0) {
+    nextSince = DateTime.now().millisecondsSinceEpoch - 5000;
+  }
+  _observeCursors[s.id] = nextSince;
+
+  String? shotB64;
+  String? shotError;
+  int? shotW;
+  int? shotH;
+  if (shot) {
+    try {
+      final pr = await shotPixelRatioFor(s.api, optionalInt(args, 'maxWidth') ?? 720);
+      shotB64 = await s.api.screenshotBase64(maxPixelRatio: pr);
+      final bytes = base64Decode(shotB64);
+      final size = pngSize(bytes);
+      shotW = size?.$1;
+      shotH = size?.$2;
+    } catch (e) {
+      shotError = '$e';
+    }
+  }
+
+  final sb = StringBuffer();
+  sb.write('路由 ${top ?? 'N/A'}'
+      '${stack.length > 1 ? '（栈：${stack.join(' > ')}）' : ''}'
+      ' · 新增日志 ${logs.length} / 网络 ${nets.length} / 异常 ${excs.length}');
+  if (shotError != null) sb.write(' · 截图失败：$shotError');
+  for (final e in logs.take(10)) {
+    sb.write('\n[${e['level']}] ${e['tag']}: ${_short('${e['message']}', 200)}');
+  }
+  for (final e in excs.take(3)) {
+    sb.write('\n⚠ ${e['kind']} ${e['type']}: ${_short('${e['message']}', 200)}'
+        '${(e['widgetFile'] ?? '') == '' ? '' : ' @${e['widgetFile']}:${e['widgetLine']}'}');
+  }
+  for (final e in nets.take(5)) {
+    sb.write('\n${e['method']} ${e['statusCode'] ?? '-'} ${e['durationMs'] ?? '-'}ms '
+        '${_short('${e['url']}', 160)}'
+        '${'${e['error']}'.isEmpty ? '' : ' ⚠ ${e['error']}'}');
+  }
+  if (text != null) sb.write('\n文本：${_short(text, 600)}');
+
+  final structured = <String, Object?>{
+    'sessionId': s.id,
+    'route': top,
+    'routes': stack,
+    'sinceMs': since,
+    'nextSinceMs': nextSince,
+    'logs': logs,
+    'network': nets,
+    'exceptions': excs,
+    if (text != null) 'text': text,
+    if (shotW != null) 'width': shotW,
+    if (shotH != null) 'height': shotH,
+    if (shotError != null) 'shotError': shotError,
+  };
+  if (shotB64 != null && shotB64.isNotEmpty) {
+    final kb = (base64Decode(shotB64).length / 1024).toStringAsFixed(0);
+    return McpToolResult.image(
+      shotB64,
+      caption: '$sb\n截图 ${shotW ?? '?'}x${shotH ?? '?'} · ${kb}KB',
+      structured: structured,
+    );
+  }
+  return McpToolResult.text(sb.toString(), structured: structured);
+}
 
 McpTool _findWidgetTool() => McpTool(
       name: 'xbume_find_widget',
@@ -987,7 +1228,9 @@ McpTool _tapTool() => McpTool(
       name: 'xbume_tap',
       title: '点击组件或坐标',
       description: '三种定位方式：ref（xbume_find_widget 返回）、by+value、x+y 坐标。'
-          '优先用 ref；坐标是最后手段。点击后返回最新栈顶路由。',
+          '优先用 ref；坐标是最后手段。点击后返回最新栈顶路由；'
+          '直连通道会自动等页面稳定（通常 100ms 内返回），不用再靠 waitMs 死等。'
+          '传 observe:true 则直接回带截图 + 新增日志（等价于紧接着调一次 xbume_observe）。',
       group: ToolGroup.core,
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
@@ -998,7 +1241,9 @@ McpTool _tapTool() => McpTool(
         'x': prop('number', '逻辑像素 x'),
         'y': prop('number', '逻辑像素 y'),
         'phys': prop('boolean', 'x/y 是否为截图物理像素', defaultValue: false),
-        'waitMs': prop('integer', '点击后等待动画/导航的毫秒数', defaultValue: 350),
+        'waitMs': prop('integer',
+            '显式指定等待上限（毫秒）。不传则直连通道自适应等稳定、VM 通道固定 350ms',
+            defaultValue: 350),
       }),
       handler: (ctx, args) async {
         final s = await resolveDriveSession(ctx, args, 'tap');
@@ -1007,7 +1252,9 @@ McpTool _tapTool() => McpTool(
         final y = optionalDouble(args, 'y');
         final by = optionalString(args, 'by');
         final value = optionalString(args, 'value');
-        final waitMs = (optionalInt(args, 'waitMs') ?? 350).clamp(0, 5000);
+        final explicitWait = optionalInt(args, 'waitMs');
+        final waitMs = (explicitWait ?? 350).clamp(0, 5000);
+        final observe = optionalBool(args, 'observe');
         final actual = await ctx.sessions.serializeWrite<String>(() async {
           if (ref != null) {
             return s.api.tapRef(ref, pointer: nextPointerId());
@@ -1045,10 +1292,11 @@ McpTool _tapTool() => McpTool(
             hint: actual == 'NO_BOX' ? '该组件没有可点击的渲染盒，换父级 ref' : null,
           );
         }
-        if (waitMs > 0) {
-          await Future<void>.delayed(Duration(milliseconds: waitMs));
+        final route = await _settleAfterAction(s.api, waitMs,
+            explicit: explicitWait != null);
+        if (observe) {
+          return _observePayload(ctx, s, args);
         }
-        final route = await _topRoute(s.api);
         return McpToolResult.text(
           '点击成功${actual.startsWith('OK:') ? ' @${actual.substring(3)}' : ''}'
           '${route == null ? '' : '，当前路由 $route'}',
@@ -1071,6 +1319,8 @@ McpTool _inputTool() => McpTool(
       inputSchema: _schema(<String, Object?>{
         'sessionId': _sessionIdProp(),
         'text': prop('string', '要写入的文本（整体替换现有内容）'),
+        'observe': prop('boolean', '写入后直接回带截图 + 新增日志（默认 false）',
+            defaultValue: false),
       }, <String>[
         'text'
       ]),
@@ -1086,6 +1336,9 @@ McpTool _inputTool() => McpTool(
         }
         if (r != 'OK') {
           throw McpToolException('文本注入失败：$r');
+        }
+        if (optionalBool(args, 'observe')) {
+          return _observePayload(ctx, s, args);
         }
         return McpToolResult.text('已写入 ${text.length} 个字符',
             structured: <String, Object?>{
@@ -1110,6 +1363,8 @@ McpTool _swipeTool() => McpTool(
         'from': objectProp('起点 {x, y}（逻辑像素）'),
         'to': objectProp('终点 {x, y}（逻辑像素）'),
         'ref': prop('integer', '对指定组件中心滑动（配合 direction 使用）'),
+        'observe': prop('boolean', '滑动后直接回带截图 + 新增日志（默认 false）',
+            defaultValue: false),
       }),
       handler: (ctx, args) async {
         final s = await resolveDriveSession(ctx, args, 'swipe');
@@ -1164,6 +1419,10 @@ McpTool _swipeTool() => McpTool(
         });
         final (actual, err) = result;
         if (err.isNotEmpty) throw McpToolException(err);
+        if (optionalBool(args, 'observe')) {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          return _observePayload(ctx, s, args);
+        }
         return McpToolResult.text(actual, structured: <String, Object?>{
           'ok': true,
           'actual': actual,
@@ -1188,6 +1447,8 @@ McpTool _navigateTool() => McpTool(
         'sessionId': _sessionIdProp(),
         'routeName': prop('string', '目标路由名（pushNamed）'),
         'back': prop('boolean', 'true 时执行返回上一页', defaultValue: false),
+        'observe': prop('boolean', '跳转后直接回带截图 + 新增日志（默认 false）',
+            defaultValue: false),
       }),
       handler: (ctx, args) async {
         final s = await resolveDriveSession(ctx, args, 'navigate');
@@ -1215,7 +1476,10 @@ McpTool _navigateTool() => McpTool(
           };
           throw McpToolException('导航失败：$op', hint: hint);
         }
-        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await _settleAfterAction(s.api, 400);
+        if (optionalBool(args, 'observe')) {
+          return _observePayload(ctx, s, args);
+        }
         final stack = await _routeNames(s.api);
         return McpToolResult.text(
           '${back ? '返回' : '跳转 $name'}成功，路由栈：${stack.isEmpty ? 'N/A' : stack.join(' > ')}',

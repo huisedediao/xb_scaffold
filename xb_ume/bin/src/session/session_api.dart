@@ -157,7 +157,10 @@ abstract class SessionApi {
   // -- 画面 ---------------------------------------------------------------
 
   /// 整屏 PNG（base64）。
-  Future<String> screenshotBase64();
+  ///
+  /// [maxPixelRatio] 为空按设备原始 DPR 截图；传值时输出尺寸为
+  /// 「逻辑尺寸 × 该比例」（两条通道语义一致），用于给 AI 缩图省往返。
+  Future<String> screenshotBase64({double? maxPixelRatio});
 
   // -- 调试协议面（仅 VM） --------------------------------------------------
 
@@ -468,7 +471,8 @@ class VmSessionApi implements SessionApi {
   Future<(double, double, double)?> screenInfo() => screenInfoOf(_vm);
 
   @override
-  Future<String> screenshotBase64() => _vm.screenshotBase64();
+  Future<String> screenshotBase64({double? maxPixelRatio}) =>
+      _vm.screenshotBase64(maxPixelRatio: maxPixelRatio);
 
   @override
   Future<String> evalRaw(String lib, String expr) => _vm.evalStringOn(lib, expr);
@@ -493,4 +497,19 @@ Future<(double, double, double)?> screenInfoOf(VmClient vm) async {
   } catch (_) {
     return null;
   }
+}
+
+/// 按「输出图片宽度上限（物理像素）」算截图缩放比。
+///
+/// 返回 null 表示不缩放（[maxWidth] <= 0、读不到屏幕尺寸、或屏幕本来就不宽）。
+/// 返回值直接传给 [SessionApi.screenshotBase64] 的 `maxPixelRatio`：
+/// 输出物理像素 = 逻辑尺寸 × 它，两条通道语义一致。
+Future<double?> shotPixelRatioFor(SessionApi api, int maxWidth) async {
+  if (maxWidth <= 0) return null;
+  final info = await api.screenInfo();
+  if (info == null) return null;
+  final (w, _, dpr) = info;
+  if (w <= 0 || dpr <= 0) return null;
+  if (w * dpr <= maxWidth) return null;
+  return (maxWidth / w).clamp(0.05, dpr);
 }

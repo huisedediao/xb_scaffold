@@ -269,16 +269,42 @@ class SessionRegistry {
   McpSession? byId(String id) => _sessions[id] ?? _sessions['s$id'];
 
   /// 扫描本机会话；[maxAge] 内的结果直接复用（避免 AI 连续调用反复扫盘）。
+  ///
+  /// 默认 8 秒：AI 两步之间的间隔通常是几秒，扫一次（adb/hdc/lsof + 端口探测）
+  /// 要 1–3 秒，缓存太短就变成每步都付一遍。
+  ///
+  /// 过了 [maxAge] 但**手上还有旧快照**时不阻塞：先回旧列表，后台单飞补扫。
+  /// 陈旧窗口里 app 刚退出可能还留一条，紧接着的工具调用会失败并提示重扫——
+  /// 比让每一步都先等一次全量扫描划算。没有快照、或显式 force 时才等扫描完成。
   Future<List<McpSession>> refresh({
     bool force = false,
-    Duration maxAge = const Duration(seconds: 3),
+    Duration maxAge = const Duration(seconds: 8),
   }) async {
     final last = _lastRefresh;
-    if (!force &&
-        last != null &&
-        DateTime.now().difference(last) < maxAge) {
-      return _settleSelection();
+    if (!force && last != null) {
+      if (DateTime.now().difference(last) < maxAge) {
+        return _settleSelection();
+      }
+      if (_sessions.isNotEmpty) {
+        if (_scanInFlight == null) unawaited(_scan());
+        return _settleSelection();
+      }
     }
+    return _scan(force: force);
+  }
+
+  /// 正在跑的那一轮扫描（单飞：并发调用等它，不重复扫盘）。
+  Future<void>? _scanInFlight;
+
+  Future<List<McpSession>> _scan({bool force = false}) async {
+    final inflight = _scanInFlight;
+    if (inflight != null) {
+      await inflight;
+      // force 的调用方要的是「此刻」的真相：等完再自己扫一遍。
+      if (!force) return _settleSelection();
+    }
+    final done = Completer<void>();
+    _scanInFlight = done.future;
     _lastRefresh = DateTime.now();
     try {
       final ports = await loopbackListeningPorts(force: force);
@@ -354,6 +380,9 @@ class SessionRegistry {
       _lastError = null;
     } catch (e) {
       _lastError = e.toString();
+    } finally {
+      _scanInFlight = null;
+      done.complete();
     }
     // 只有一个会话时自动选中，省掉一次 use_session 往返（每个连接各选各的）。
     return _settleSelection();

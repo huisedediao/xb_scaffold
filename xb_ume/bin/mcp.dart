@@ -394,6 +394,10 @@ Future<void> main(List<String> argv) async {
     token: args.http ? ensureToken() : '',
   )..init();
 
+  // 预热：后台先扫一次会话。AI 第一次 xbume_sessions / 直接调工具时就不用
+  // 再等「adb/hdc/lsof + 回环端口探测」那一整套（实测 p50 约 2.3 秒）。
+  unawaited(registry.refresh());
+
   final names = enabled.map((t) => t.name).join(', ');
   void registerInstance() => writeInstance(<String, Object?>{
         'name': instanceName,

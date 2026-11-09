@@ -152,9 +152,14 @@ String buildAiPrompt({
         'stale 用 xbume_sessions {"refresh": true} 重扫或重启 app。')
     ..writeln('不要跳过这一步直接发 hot_reload——通道不通时那是几十秒白等。')
     ..writeln()
-    ..writeln('## 第二步：按需使用工具')
-    ..writeln('- xbume_screenshot / xbume_find_widget / xbume_tap / xbume_input：'
-        '看界面、按类型/文字/Key 找组件、点击、输入')
+    ..writeln('## 第二步：按需使用工具（一步一调，别把一次看界面拆成多次往返）')
+    ..writeln('- xbume_observe：调试循环的主力——一次拿全截图 + 栈顶路由 + 自上次以来的新增'
+        '日志/异常/网络（增量游标，不会重复）；点完东西要确认结果就用它，'
+        '不要分别调 xbume_screenshot / xbume_console / xbume_network')
+    ..writeln('- 动作工具加 observe: true（xbume_tap / xbume_input / xbume_swipe / '
+        'xbume_navigate）：把「动作 + 看一眼结果」合并成一次调用；默认关，需要回看时传上')
+    ..writeln('- xbume_find_widget / xbume_screenshot：按类型/文字/Key 精确定位、需要原始分辨率'
+        '截图时才单独用（screenshot 默认缩到 720 宽，maxWidth: 0 取原始）')
     ..writeln('- xbume_timeline / xbume_exceptions / xbume_network_detail / '
         'xbume_console：复现之后取证（路由+网络+日志+异常按时间合并）')
     ..writeln('- xbume_route_stack / xbume_navigate：看路由栈、push/pop')

@@ -103,9 +103,9 @@ dart run xb_ume:mcp --http 46140
   勾选后拉起的服务多出 `xbume_eval`，能在 app 进程内求值任意表达式（可读也能改
   运行时状态），默认不勾。它只影响**下次启动**：服务正在跑时要「停止」再「启动」
   才生效。**用「AI 调试」Tab 的一键开启则不用管这个开关**，它会按需自动带上。
-- 一次开全 **58 个**工具（core 22 + diagnose 4 + run-safe 3 + act 3 + device-write 3 +
+- 一次开全 **59 个**工具（core 23 + diagnose 4 + run-safe 3 + act 3 + device-write 3 +
   debug 6 + inspect 4 + data 4 + env 8 + ai 1）；其中 `xbume_eval` 还要 `--allow-eval`
-  （加上是 59 个），「AI 调试」入口会自动带上：
+  （加上是 60 个），「AI 调试」入口会自动带上：
   装包/卸包/停进程这类高危操作仍要求参数里的 `confirm`，但**服务本身对本机任何进程都可见**，不需要时就把服务停掉。
 - GUI 只停自己拉起的进程（pid 记在 `~/.xb_ume_ide/mcp.pid`）；客户端以
   stdio 拉起的进程要去客户端里关。
@@ -323,7 +323,7 @@ claude mcp add --transport http xb_ume http://127.0.0.1:46140/mcp \
 ### 只想给某类操作临时放权
 
 ```bash
-# 默认：core + diagnose + run-safe（25 个工具，全是只读或 app 内注入）
+# 默认：core + diagnose + run-safe（26 个工具，全是只读或 app 内注入）
 dart run xb_ume:mcp
 
 # 断点 / 单步 / 调用栈 / 变量 / 运行输出（直连 VM，不依赖 GUI）
@@ -341,7 +341,7 @@ dart run xb_ume:mcp --tool-groups act
 # 加上装包 / 卸包 / 停进程（高危，见「安全模型」）
 dart run xb_ume:mcp --tool-groups act,device-write
 
-# 全开（59 个，含 xbume_eval）
+# 全开（60 个，含 xbume_eval）
 dart run xb_ume:mcp --tool-groups all --allow-eval
 
 # 再加可选后端（会拉起 npx，首次需联网下载）
@@ -352,9 +352,13 @@ dart run xb_ume:mcp --device-backend adb,hdc,simctl,idevice,mobile-mcp
 
 ## 3. 工具清单
 
-工具名统一前缀 `xbume_`。默认暴露 **29 个**（core 22 + diagnose 4 + run-safe 3）；
-加 `--allow-eval` 再多出 `xbume_eval`（30 个）。`--tool-groups all` 全开是 **59 个**
-（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 58）。
+工具名统一前缀 `xbume_`。默认暴露 **30 个**（core 23 + diagnose 4 + run-safe 3）；
+加 `--allow-eval` 再多出 `xbume_eval`（31 个）。`--tool-groups all` 全开是 **60 个**
+（debug 6 + inspect 4 + data 4 + env 8 + act 3 + device-write 3 + ai 1；不加 `--allow-eval` 时 59）。
+
+> **一步观测**：调试循环里优先用 `xbume_observe`（截图 + 路由 + 自上次以来的
+> 增量日志/异常/网络，一次调用全给），动作工具加 `observe: true` 还能把「点完
+> 看一眼」合并成一次往返。不要再每步单独调 screenshot / console / network。
 
 debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四组通过本机 GUI 的 HTTP
 接口执行**——需要工具箱在跑（端口自动发现，令牌读 `~/.xb_ume_ide/gui.token`），所以这几组
@@ -379,7 +383,7 @@ debug 组直连 VM service（不依赖 GUI）；**data / inspect / env / ai 四�
 
 iOS 真机的直连会话由 libimobiledevice 的 `idevice_id -l` + `iproxy` 自动转发（长驻进程、按句柄 kill）；MCP 退出时会清掉自己起的 iproxy，不残留端口。
 
-### core（22 个）
+### core（23 个）
 
 | 工具 | 主要参数 | 返回 |
 | --- | --- | --- |
@@ -389,12 +393,13 @@ iOS 真机的直连会话由 libimobiledevice 的 `idevice_id -l` + `iproxy` 自
 | `xbume_pool` | `op`(status/release/steal), `slot?` | 服务池：一条连接（一个窗口）绑一个 MCP 实例，绑定标识 `b-xxxxxx`，10 分钟不调用自动回收（连同实例一起停掉，重绑会拉起全新实例）。`status` 看 5 个槽各绑给谁 / 在干什么 / 还剩多久；`release` 用完立即释放并停实例；`steal` 确认对面已停手后接管（省略 `slot` 取最久没续期的）。池满时调别的工具会直接回「需要排队」 |
 | `xbume_lease` | `op`(status/acquire/release/steal), `sessionId?`, `ttlMs?`, `waitMs?`, `note?` | 写操作的**会话租约**：`status` 看谁在驱动、`acquire` 申请（`waitMs` 可等对方释放，上限 30s）、`release` 用完立即让出来、`steal` 确认对方已停手后强制接管。默认 10 分钟 TTL，每次写操作续期；持有者进程退出即失效 |
 | `xbume_session_check` | `sessionId?`, `deviceId?`, `cwd?`, `verifyReload?`, `timeoutMs?` | **接上会话后先调它**：一次拿到 VM 通不通、是不是你要的设备/项目（不一致直接判 `wrong_device` / `wrong_project`）、 inspector / 截图 / 组件树 / 求值能不能用、热重载走哪条通道（`signal`/`stdin`/`none`），并可选真发一次重载实测（无改动时只回 `No changes detected`）。`verdict` = `ready` / `ready_no_reload` / `degraded` / `wrong_device` / `wrong_project` / `stale`，`warnings` 与 `next` 直接给下一步；默认 `verifyReload: true`，`checks` 里带 `libraries`（库数量）与 `reloadProbe.elapsedMs`。直连会话走另一套判据（探 `/v1/hello` + `/v1/state`，可用即 `ready_no_reload`，`caps` 里带 `transport=agent` / `agentUrl` / `agentCaps`） |
-| `xbume_screenshot` | `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；iOS 走 inspector 渲染兜底 |
+| `xbume_screenshot` | `maxWidth?`(默认 720 物理像素), `savePath?` | PNG（image content，模型可直接看）+ 像素尺寸；默认缩到 720 宽（`maxWidth: 0` 取原分辨率），省往返与看图开销；iOS 走 inspector 渲染兜底 |
+| `xbume_observe` | `shot?`(默认 true), `maxWidth?`(默认 720), `withLogs?` / `withNetwork?` / `withExceptions?`(默认 true), `withText?`, `sinceMs?`, `reset?`, `limit?` | **一步看全**：截图 + 栈顶路由/路由栈 + 自上次 observe 以来新增的日志/异常/网络（进程内游标，`nextSinceMs` 回写，不重复）；`withText: true` 再加页面可见文本 |
 | `xbume_find_widget` | `by`(type/key/text/semantics), `value`, `exact?`, `limit?` | `ref` / 类型 / Key / 文本 / 逻辑像素 bounds / 源码位置 |
-| `xbume_tap` | `ref?` 或 `by`+`value` 或 `x`+`y`；`phys?`, `waitMs?` | 是否命中 + 操作后路由名 |
-| `xbume_input` | `text` | 整体替换当前焦点输入框内容（需先 tap 输入框建立连接） |
-| `xbume_swipe` | `from`+`to` 或 `direction`(+`distance`,`ref`), `durationMs?` | 注入带时间戳的 8 段移动事件 |
-| `xbume_navigate` | `routeName?`, `back?` | pushNamed / pop，返回最新路由栈 |
+| `xbume_tap` | `ref?` 或 `by`+`value` 或 `x`+`y`；`phys?`, `waitMs?`, `observe?` | 是否命中 + 操作后路由名。不传 `waitMs` 时直连通道自适应等页面稳定（通常 ~100ms，旧的固定 350ms 已去掉）；`observe: true` 直接回带截图 + 新增日志 |
+| `xbume_input` | `text`, `observe?` | 整体替换当前焦点输入框内容（需先 tap 输入框建立连接） |
+| `xbume_swipe` | `from`+`to` 或 `direction`(+`distance`,`ref`), `durationMs?`, `observe?` | 注入带时间戳的 8 段移动事件 |
+| `xbume_navigate` | `routeName?`, `back?`, `observe?` | pushNamed / pop，返回最新路由栈 |
 | `xbume_route_stack` | — | 从底到顶：路由名 / Route 类型 / 参数类型 / isPresent。需 `route:stack` 能力（直连会话没有，改用 `xbume_timeline{kinds:["route"]}` 看事件流） |
 | `xbume_network` | `urlContains?`, `method?`, `minStatus?`, `withinLastMs?`, `limit?` | app 内 xb_ume 拦截记录（需 app 接入 Network 模块） |
 | `xbume_network_detail` | `id?` 或 `urlContains`(+`method?`), `maxChars?`, `limit?` | 完整请求/响应头、body、发起点调用栈（敏感头已 `***` 脱敏）；答「这个 500 返回了什么」 |
@@ -528,7 +533,7 @@ iOS 真机的直连会话由 libimobiledevice 的 `idevice_id -l` + `iproxy` 自
 
 > 列出当前 app 页面上所有可点的元素，带文字和位置；点第一个有文字的看看跳到哪个页面。
 
-走 `xbume_sessions` → `xbume_screenshot` → `xbume_find_widget` → `xbume_tap`。
+走 `xbume_sessions` → `xbume_observe` → `xbume_find_widget` → `xbume_tap`(observe: true)。
 
 **② 按业务源码定位**
 
@@ -540,7 +545,7 @@ iOS 真机的直连会话由 libimobiledevice 的 `idevice_id -l` + `iproxy` 自
 
 > 打开 Login Demo 页，账号填 demo，密码填 123456，点登录，确认页面出现「登录成功」，然后截图给我。
 
-`xbume_tap`(ref) → `xbume_input` → `xbume_tap` → `xbume_find_widget`(text) → `xbume_screenshot`。
+`xbume_observe`（先看）→ `xbume_tap`(ref) → `xbume_input` → `xbume_tap`(observe: true) → `xbume_find_widget`(text) 断言文案。
 
 **④ 复跑已保存的场景**
 

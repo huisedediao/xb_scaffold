@@ -23,7 +23,7 @@ class _FakeVm extends VmClient {
   Future<String> isolateId() async => 'iso';
 
   @override
-  Future<String> screenshotBase64() async => '';
+  Future<String> screenshotBase64({double? maxPixelRatio}) async => '';
 }
 
 void main() {

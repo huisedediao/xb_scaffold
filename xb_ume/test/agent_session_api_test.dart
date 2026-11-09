@@ -273,6 +273,19 @@ void main() {
       expect(api.screenshotBase64(), throwsA(isA<AgentHttpError>()));
     });
 
+    test('screenshot 的 maxPixelRatio 走 query 参数', () async {
+      serve = (req, body) async => (200, <String, Object?>{'ok': true, 'data': 'x'});
+      await api.screenshotBase64(maxPixelRatio: 0.9);
+      // 必须走 query 命名参数：直接拼在 path 里会被 token 那次 Uri.replace 洗掉
+      // （表现为缩放静默失效、仍回原始分辨率）。
+      final q = (sent['/v1/screenshot']!['query'] as Map).cast<String, String>();
+      expect(q['pixelRatio'], '0.9000');
+
+      await api.screenshotBase64();
+      final q2 = (sent['/v1/screenshot']!['query'] as Map).cast<String, String>();
+      expect(q2.containsKey('pixelRatio'), isFalse);
+    });
+
     test('wtree 原样返回 app 侧结构', () async {
       serve = (req, body) async => (200, <String, Object?>{
             'ok': true,

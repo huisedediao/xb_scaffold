@@ -202,7 +202,7 @@ Future<VmProbe?> probeVmService(
 /// VM 与直连两轮探测在同一轮询周期里各调一次，[maxAge] 内的结果直接复用；
 /// `lsof` 在 macOS 上单次可能上百毫秒，缓一轮比多扫一次划算。
 Future<List<int>> loopbackListeningPorts({
-  Duration maxAge = const Duration(milliseconds: 1200),
+  Duration maxAge = const Duration(milliseconds: 5000),
   bool force = false,
 }) async {
   final cached = _portsCache;
@@ -257,7 +257,7 @@ class ForwardedPort {
 ///
 /// 同 [loopbackListeningPorts]：同一轮询周期内 VM / 直连探测共缓存。
 Future<Map<int, ForwardedPort>> forwardedPortMap({
-  Duration maxAge = const Duration(milliseconds: 1200),
+  Duration maxAge = const Duration(milliseconds: 5000),
   bool force = false,
 }) async {
   final cached = _forwardsCache;
@@ -269,9 +269,13 @@ Future<Map<int, ForwardedPort>> forwardedPortMap({
     return cached;
   }
   final result = <int, ForwardedPort>{};
+  // adb 与 hdc 是两条独立链路，并行跑：每次都是 fork 子进程，串行会白等。
+  final heads = await Future.wait<String>(<Future<String>>[
+    runToolText('adb', <String>['forward', '--list']),
+    runToolText('hdc', <String>['list', 'targets']),
+  ]);
   // adb forward --list："<serial> tcp:<local> tcp:<remote>"
-  final adb = await runToolText('adb', <String>['forward', '--list']);
-  for (final line in adb.trim().split('\n')) {
+  for (final line in heads[0].trim().split('\n')) {
     final m =
         RegExp(r'^(\S+)\s+tcp:(\d+)\s+tcp:(\d+)').firstMatch(line.trim());
     if (m != null) {
@@ -282,13 +286,17 @@ Future<Map<int, ForwardedPort>> forwardedPortMap({
       );
     }
   }
-  // hdc -t <target> fport ls：每行含 "tcp:<local> tcp:<remote>"
-  final targets = await runToolText('hdc', <String>['list', 'targets']);
-  for (final target in targets.trim().split('\n')) {
-    final t = target.trim();
-    if (t.isEmpty || t.contains('[') || t.contains('error')) continue;
-    final ls = await runToolText('hdc', <String>['-t', t, 'fport', 'ls']);
-    for (final line in ls.split('\n')) {
+  // hdc：先列目标，再并行查每个目标的 fport（多设备时不再一个等一个）。
+  final targetList = heads[1]
+      .trim()
+      .split('\n')
+      .map((e) => e.trim())
+      .where((t) => t.isNotEmpty && !t.contains('[') && !t.contains('error'))
+      .toList(growable: false);
+  final lsList = await Future.wait<String>(
+      targetList.map((t) => runToolText('hdc', <String>['-t', t, 'fport', 'ls'])));
+  for (var i = 0; i < targetList.length; i++) {
+    for (final line in lsList[i].split('\n')) {
       final m = RegExp(r'tcp:(\d+)\s+tcp:(\d+)').firstMatch(line);
       if (m == null) continue;
       final local = int.parse(m.group(1)!);
@@ -297,7 +305,7 @@ Future<Map<int, ForwardedPort>> forwardedPortMap({
         () => ForwardedPort(
           local: local,
           remote: int.parse(m.group(2)!),
-          device: 'hdc:$t',
+          device: 'hdc:${targetList[i]}',
         ),
       );
     }

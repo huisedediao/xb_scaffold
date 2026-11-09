@@ -567,8 +567,15 @@ class AgentSessionApi implements SessionApi {
   // -- 画面 ---------------------------------------------------------------
 
   @override
-  Future<String> screenshotBase64() async {
-    final j = await _http.getJson('/v1/screenshot');
+  Future<String> screenshotBase64({double? maxPixelRatio}) async {
+    // 注意走 query 参数：getJson 内部用 Uri.replace 重建 query，
+    // 直接拼在 path 里会被 token 那一次 replace 洗掉。
+    final j = await _http.getJson('/v1/screenshot',
+        query: maxPixelRatio == null
+            ? null
+            : <String, String>{
+                'pixelRatio': maxPixelRatio.toStringAsFixed(4),
+              });
     if (j['ok'] != true) {
       throw AgentHttpError(0, '${j['error'] ?? '截图失败'}');
     }

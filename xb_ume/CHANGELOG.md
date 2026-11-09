@@ -1,5 +1,13 @@
 ## 0.9.9
 
+- **MCP 提速（P0：把「一步四次往返」压成一步）**：AI 通过 MCP 调试时每一步都要等几秒，审计日志（`~/.xb_ume_ide/logs/mcp.log`）显示工具本身只要 0.03–0.6s，慢在「一步被拆成 tap / screenshot / console / find_widget 四次调用」× 每次往返。这版做了四件事：①新增 `xbume_observe`——一次调用拿全「截图（默认缩到 720 宽）+ 栈顶路由/路由栈 + 自上次 observe 以来新增的日志/异常/网络」（进程内游标 `nextSinceMs` 回写，不重复扫），可选页面可见文本；`xbume_tap` / `input` / `swipe` / `navigate` 加 `observe` 开关（默认关），点完直接回带截图与新增日志，省掉「点完再调 observe」那一次往返。②`xbume_tap` 的自适应等待：直连通道注入后每 40ms 读一次栈顶路由、连续两次相同即返回（实测 100ms 级），去掉原来固定 350ms 死等 + 再查一次；VM 通道与显式 `waitMs` 保持原语义不变（VM 轮询 eval 更贵）。③截图默认缩到 **720 物理像素宽**（`maxWidth` 可调，`0` = 原始分辨率）：模型看图与回包体积同时下降。④会话发现不再阻塞：`adb forward --list` / `hdc list targets` 并行、多 target 的 `fport ls` 并行、转发表与回环端口缓存 1.2s→5s、`refresh` 缓存 3s→8s + MCP 启动预热；过期快照改成「先返回旧列表、后台单飞补扫」，`resolveSession` 只在完全没有快照时才等全量扫描（不再是每次首调都付 1–3 秒）。
+
+- **截图缩放两条通道语义一致 + 修掉参数被吞的 bug**：`SessionApi.screenshotBase64({double? maxPixelRatio})`，「输出物理像素 = 逻辑尺寸 × 该比例」，直连走 `/v1/screenshot?pixelRatio=`（`layer.toImage(rect, pixelRatio:)`），VM 走 `ext.flutter.inspector.screenshot` 的 `maxPixelRatio`（传了就不走 `ext.flutter.screenshot`）。`shotPixelRatioFor(api, maxWidth)` 先读 `/v1/screen` 的宽与 dpr 算比例（已够小则原样不缩）。**踩坑**：`AgentClient.getJson` 内部用 `Uri.replace(queryParameters:)` 重建 query，把直接拼在 path 里的 `?pixelRatio=0.9` 洗掉了，表现为「缩放静默失效、仍回原始分辨率」——改成 `query:` 命名参数传入，并补一条断言 query 的单测。
+
+- **实测（macOS example + 直连通道，同一台机器前后对比）**：`sessions` 3198ms → **19ms**（旧快照先回 + 后台补扫）、`use_session` 29ms、`observe`（截图+路由+15 条日志）**101ms**、增量 `observe` **93ms**、`tap` 自适应 **102–118ms**（旧 450–570ms）、`tap(observe:true)` **144–181ms**（旧路径 ≈ 3 次往返 + 475ms 截图）、截图 800×600/43KB → **720×540/38KB**（桌面 1x；真机 3x 屏降到 720 宽后体积降得更多）。
+
+- **测试**：`agent_session_api_test` 补「screenshot 的 maxPixelRatio 走 query 参数」1 项（覆盖上面那个被吞参数的回归）；`mcp_diagnose_tools_test` 工具数 35→36（core 22→23，默认暴露 29→30，`--tool-groups all` 58→59）；`scenario_steps_test` / `scenario_runner_test` 的 `_FakeVm.screenshotBase64` 同步新签名。
+
 - **直连通道补齐数据面（P3：release 包也能看文件 / 看库 / 看帧 / 看业务状态）**：新增 `lib/src/agent/xb_ume_agent_fs.dart`——`GET /v1/sandbox/roots` / `list` / `stat` / `read`（app 内 `dart:io`，只读；`read` 支持 `offset` / `max` / `b64`，`download` 与 `downloadDir` 复用同一条读链路）、`GET /v1/storage/list` / `read` / `adapters` 与 `POST /v1/storage/set` / `remove`（写回只能逐项经 app 用 `XBUme.registerStorageAdapter` 主动开放的 `allowWrite` 适配器，直连侧不落任意文件）、`GET /v1/db/files`（枚举沙盒里的 `*.db` / `*.sqlite*`，含 `-wal` / `-shm`）。上传 / 删除仍然不开放，沙盒不给外部写任意路径的能力；界面把这两个动作渲染成 `.cap-off` 文本（不再是「点完等后端回只读」），MCP 侧也在调用前报 `debug` 缺口（见下文「子操作闸门」条）。
 
 - **性能采样（`perf`）**：新增 `lib/src/agent/xb_ume_agent_perf.dart`——`GET /v1/perf` 直接读 app 内 `SchedulerBinding.addTimingsCallback` 已采好的帧耗时，配合进程 CPU / 内存给出与 VM 侧 `snapshot` 同形的统计（`leak` / `gc` / `reassemble` 要 `gc`，直连调用前就报缺口）。

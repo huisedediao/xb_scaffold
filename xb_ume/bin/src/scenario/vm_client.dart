@@ -252,12 +252,17 @@ class VmClient {
   ///
   /// 优先 `_flutter.screenshot`（macOS/Android 等）；不可用时（iOS 报
   /// Could not capture image screenshot）退回 inspector 根渲染对象 toImage。
-  Future<String> screenshotBase64() async {
-    try {
-      final r = await rawRpc('_flutter.screenshot');
-      final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
-      if (b64.isNotEmpty) return b64;
-    } catch (_) {}
+  ///
+  /// [maxPixelRatio] 非空时跳过 `_flutter.screenshot`（它只能出原图），
+  /// 直接走 inspector 并按比例缩放：输出物理像素 = 逻辑尺寸 × 该比例。
+  Future<String> screenshotBase64({double? maxPixelRatio}) async {
+    if (maxPixelRatio == null) {
+      try {
+        final r = await rawRpc('_flutter.screenshot');
+        final b64 = (r['data'] ?? r['screenshot'])?.toString() ?? '';
+        if (b64.isNotEmpty) return b64;
+      } catch (_) {}
+    }
     final isoId = await isolateId();
     const group = 'xb_cli_shot';
     try {
@@ -268,11 +273,12 @@ class VmClient {
           'ext.flutter.inspector.screenshot',
           <String, Object?>{
             'isolateId': isoId,
-            // 根渲染对象即 RenderView，尺寸已是物理像素；1.0 即原分辨率。
+            // 根渲染对象即 RenderView；width/height 给 10000 表示不额外限制，
+            // 由 maxPixelRatio 决定输出尺寸（1.0 即逻辑尺寸，与原 DPR 无关）。
             'id': inspectorRootId('${tree['result'] ?? ''}'),
             'width': '10000',
             'height': '10000',
-            'maxPixelRatio': '1.0',
+            'maxPixelRatio': (maxPixelRatio ?? 1.0).toString(),
             'debugPaint': 'false',
           });
       return (shot['result'] ?? '').toString();

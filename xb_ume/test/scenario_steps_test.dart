@@ -30,7 +30,7 @@ class _FakeVm extends VmClient {
   Future<String> isolateId() async => 'iso';
 
   @override
-  Future<String> screenshotBase64() async => shot;
+  Future<String> screenshotBase64({double? maxPixelRatio}) async => shot;
 
   @override
   Future<Map<String, Object?>> rawRpc(
