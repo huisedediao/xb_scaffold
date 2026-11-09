@@ -78,8 +78,10 @@ DateTime _guiStartedAt = DateTime.now();
 /// 全局快捷键服务（懒创建：端口与访问令牌要到 main 里才确定）。
 /// 真正的系统级热键由子进程 src/hotkeys/hotkey_listener.dart 注册。
 HotkeyService? _hotkeyService;
+// home 传数据目录：`xbumeIdeDir` 认得「已经是 .xb_ume_ide」的情况，
+// 隔离实例（XB_UME_HOME）不会去改真实主目录的热键配置。
 HotkeyService get hotkeyService => _hotkeyService ??=
-    HotkeyService(home: _home, port: _guiPort, token: _guiToken);
+    HotkeyService(home: _dataDir, port: _guiPort, token: _guiToken);
 
 /// 热重载 / 热重启成功后弹一条系统通知 + 响一声。
 ///
@@ -88,7 +90,7 @@ HotkeyService get hotkeyService => _hotkeyService ??=
 /// 所以另起一个进程响一声（声音不受通知权限管）。开关在「快捷键」弹窗里
 /// （hotkeys.json 的 notify，默认开）。发不出来不影响热重载结果。
 void notifyHotDone(Map<String, Object?> result) {
-  if (!readHotkeysConfig(_home).notify) return;
+  if (!readHotkeysConfig(_dataDir).notify) return;
   final msg = '${result['message'] ?? ''}'.trim();
   final elapsed = result['elapsedMs'];
   final body =
@@ -108,8 +110,11 @@ const int kMaxBufferLines = 5000;
 /// 变量，而自动化断言（assertLog）与 AI 上下文收集是顶层函数，够不到它。
 List<Map<String, Object?>> _guiLogBuffer = const [];
 
-final String _home =
-    Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
+final String _home = svcHome();
+
+/// 数据目录（`XB_UME_HOME` 优先，否则 `~/.xb_ume_ide`）：token / 配置 / 日志
+/// 都放这里，与 MCP 进程的 `xbUmeHome()` 同口径。
+final String _dataDir = svcInstallDir();
 
 // ---------------------------------------------------------------------------
 // 安全工具（纯字符串/Uri，便于单测；部署时随 ide_gui.dart 单文件走）
@@ -235,7 +240,7 @@ Map<String, String> stripReplayHeaders(
 void _writeGuiTokenFile() {
   if (_guiToken.isEmpty) return;
   try {
-    final dir = Directory('$_home/.xb_ume_ide');
+    final dir = Directory(_dataDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
     if (!Platform.isWindows) {
       try {
@@ -373,7 +378,7 @@ Future<void> _mainImpl(List<String> args) async {
   _guiStartedAt = DateTime.now();
   _guiToken = generateGuiToken();
   _writeGuiTokenFile();
-  print('[xbume-gui] 本地脚本访问令牌: $_home/.xb_ume_ide/gui.token');
+  print('[xbume-gui] 本地脚本访问令牌: $_dataDir/gui.token');
   // 全局快捷键：配置里开了就拉起监听器子进程（失败只记状态，不影响 GUI）。
   unawaited(hotkeyService.start());
   _routeDebugLog('boot', 'pid=$pid port=$port routelocate=subtree',
@@ -498,13 +503,18 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     if (path == '/api/version') {
       // 部署自检：GUI 是单文件部署（~/.xb_ume_ide/ide_gui.dart），出现
       // 「改了没生效」时先确认浏览器连到的是哪个脚本、哪个进程。
+      // 分发版是 AOT 可执行文件：读源码没意义（会把 10MB 二进制读成字符串），
+      // 只回路径/时间 + bundled 标记，让自检页能分辨两种安装方式。
       final scriptPath = Platform.script.toFilePath();
+      final bundled = isBundledBuild();
       final f = File(scriptPath);
       final stat = f.existsSync() ? f.statSync() : null;
-      final src = f.existsSync() ? f.readAsStringSync() : '';
+      final src = (!bundled && f.existsSync()) ? f.readAsStringSync() : '';
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{
         'script': scriptPath,
+        'bundled': bundled,
+        'version': _bundledVersion(),
         'mtime': stat?.modified.toIso8601String(),
         'size': stat?.size,
         'pid': pid,
@@ -512,6 +522,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
         'features': <String>[
           if (src.contains('fileUriToLocalPath')) 'windows-path',
           if (src.contains('_guiWindowsVscodeAppClis')) 'windows-ide',
+          if (bundled) 'app-bundle',
         ],
       }));
       await req.response.close();
@@ -671,7 +682,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       status['autoStart'] = readMcpAutoStart();
       status['allowEval'] = readMcpAllowEval();
       status['launchable'] =
-          File('$_home/.xb_ume_ide/mcp.dart').existsSync();
+          isBundledBuild() || File('$_dataDir/mcp.dart').existsSync();
       final rec = readMcpPidRecord();
       if (rec['pid'] != null) status['managedPid'] = rec['pid'];
       // 凭据只在用户点「复制 MCP 配置」时下发（?token=1），常态轮询不把 token
@@ -1026,7 +1037,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       // file=run 打开项目运行配置（预启动命令 / 额外参数 / 停止清理）；
       // 文件不存在时先建一个空壳，避免系统编辑器打开失败。
       final which = req.uri.queryParameters['file'] ?? '';
-      var target = '$_home/.xb_ume_ide/config.json';
+      var target = '$_dataDir/config.json';
       if (which == 'run') {
         target = runProfileFilePath();
         final f = File(target);
@@ -3826,7 +3837,7 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
       return;
     }
     if (path == '/api/ai/goals/clear' && req.method == 'POST') {
-      final f = File('$_home/.xb_ume_ide/ai_goals.json');
+      final f = File('$_dataDir/ai_goals.json');
       if (f.existsSync()) f.deleteSync();
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
@@ -7310,8 +7321,8 @@ class _CompareRunState {
 
 final _compare = _CompareRunState();
 
-String get _autoScenariosDir => '$_home/.xb_ume_ide/scenarios';
-String get _autoArtifactsDir => '$_home/.xb_ume_ide/scenarios/artifacts';
+String get _autoScenariosDir => '$_dataDir/scenarios';
+String get _autoArtifactsDir => '$_dataDir/scenarios/artifacts';
 
 /// 场景名非法时的统一提示（400 响应与前端预校验共用）。
 const String _autoNameError = '场景名非法：只允许中文/字母/数字/下划线/横线，长度 1-64（不能含空格、点号等）';
@@ -7955,13 +7966,13 @@ Future<void> _compareRunSteps({
 
 // ── P11 AI 驱动：自然语言目标 → 截图→AI→步骤→执行 循环 ─────────────────
 
-String get _aiConfigPath => '$_home/.xb_ume_ide/ai_config.json';
+String get _aiConfigPath => '$_dataDir/ai_config.json';
 
 /// AI 目标历史（下拉选择复用）：去重、最新在前、上限 20 条。
 List<String> _aiGoalsLoad() {
   try {
     final j =
-        jsonDecode(File('$_home/.xb_ume_ide/ai_goals.json').readAsStringSync());
+        jsonDecode(File('$_dataDir/ai_goals.json').readAsStringSync());
     return j is List ? j.map((e) => e.toString()).toList() : <String>[];
   } catch (_) {
     return <String>[];
@@ -7975,7 +7986,7 @@ void _aiGoalsAdd(String goal) {
   items.insert(0, g);
   if (items.length > 20) items.removeRange(20, items.length);
   try {
-    final f = File('$_home/.xb_ume_ide/ai_goals.json');
+    final f = File('$_dataDir/ai_goals.json');
     f.parent.createSync(recursive: true);
     f.writeAsStringSync(jsonEncode(items));
   } catch (_) {}
@@ -10441,11 +10452,11 @@ List<int> _tarEnd() => List<int>.filled(1024, 0);
 
 /// 会话选择链路日志：~/.xb_ume_ide/logs/vm_sel.log（超 2MB 轮转为 .1）。
 /// 记录 daemon 会话增减与前端上报的选择事件（用户选择/指纹找回/回退/前后台切换）。
-String get _vmSelLogFile => '$_home/.xb_ume_ide/logs/vm_sel.log';
+String get _vmSelLogFile => '$_dataDir/logs/vm_sel.log';
 
 void _vmSelLog(String tag, String msg) {
   try {
-    final dir = Directory('$_home/.xb_ume_ide/logs');
+    final dir = Directory('$_dataDir/logs');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     final f = File(_vmSelLogFile);
     if (f.existsSync() && f.lengthSync() > 2 * 1024 * 1024) {
@@ -10469,7 +10480,7 @@ var _lastDaemonSessionsSig = '';
 /// 记录路由栈读取/路由定位/路由操作的耗时与结果；框架异常到达时追加最近
 /// 操作快照，用于复现「切到路由栈 Tab 后操作手机出现 framework 断言」时
 /// 对齐电脑端操作与手机端异常的时间线。
-String get _routeDebugLogFile => '$_home/.xb_ume_ide/logs/route_debug.log';
+String get _routeDebugLogFile => '$_dataDir/logs/route_debug.log';
 
 /// 最近路由操作（异常快照用，最多 80 条）。
 final List<String> _routeTrace = <String>[];
@@ -10490,7 +10501,7 @@ void _routeDebugLog(String tag, String msg, {bool trace = true}) {
     if (_routeTrace.length > 80) _routeTrace.removeAt(0);
   }
   try {
-    final dir = Directory('$_home/.xb_ume_ide/logs');
+    final dir = Directory('$_dataDir/logs');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     final f = File(_routeDebugLogFile);
     if (f.existsSync() && f.lengthSync() > 2 * 1024 * 1024) {
@@ -10594,7 +10605,7 @@ const int kMcpDefaultPort = 46140;
 /// 读 mcp.token（HTTP 模式首次运行由服务端生成）。
 String readMcpToken() {
   try {
-    final f = File('$_home/.xb_ume_ide/mcp.token');
+    final f = File('$_dataDir/mcp.token');
     return f.existsSync() ? f.readAsStringSync().trim() : '';
   } catch (_) {
     return '';
@@ -10652,7 +10663,7 @@ Set<int> _poolWorkerPorts() {
 // ── MCP 服务启停（守护进程页的「启动/停止」）───────────────────────────
 
 /// GUI 拉起的 MCP 服务记录（pid + port），停服务时按它定位。
-File get _mcpPidFile => File('$_home/.xb_ume_ide/mcp.pid');
+File get _mcpPidFile => File('$_dataDir/mcp.pid');
 
 Map<String, Object?> readMcpPidRecord() {
   try {
@@ -10671,8 +10682,8 @@ Map<String, Object?> readMcpPidRecord() {
 // 实例登记与租约分别由 bin/src/mcp/instances.dart、lease.dart 落盘；GUI 是单文件
 // 部署、不 import 那边，所以这里按同一份目录与字段名各读一遍（字段名改动要两边同步）。
 
-Directory get _mcpInstancesDir => Directory('$_home/.xb_ume_ide/mcp/instances');
-Directory get _mcpLeasesDir => Directory('$_home/.xb_ume_ide/leases');
+Directory get _mcpInstancesDir => Directory('$_dataDir/mcp/instances');
+Directory get _mcpLeasesDir => Directory('$_dataDir/leases');
 
 /// 实例名允许的字符（与 instances.dart 的 sanitizeInstanceName 一致）。
 String sanitizeMcpInstanceName(String raw) {
@@ -10773,7 +10784,7 @@ List<Map<String, Object?>> listMcpLeases() {
 
 /// 写回 config.json（读-改-写，保留其他配置键）。
 void _guiWriteConfigRaw(Map<String, Object?> cfg) {
-  final file = File('$_home/.xb_ume_ide/config.json');
+  final file = File('$_dataDir/config.json');
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
 }
@@ -10806,7 +10817,7 @@ String ensureMcpToken() {
   final rnd = List<int>.generate(16, (_) => Random.secure().nextInt(256));
   final token = rnd.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   try {
-    final f = File('$_home/.xb_ume_ide/mcp.token');
+    final f = File('$_dataDir/mcp.token');
     f.parent.createSync(recursive: true);
     f.writeAsStringSync(token);
     // token 是本地共享密钥，收紧到仅当前用户可读（Windows 无 POSIX 权限，跳过）。
@@ -10879,11 +10890,13 @@ Future<Map<String, Object?>> startMcp({
       };
     }
   }
-  final script = File('$_home/.xb_ume_ide/mcp.dart');
-  if (!script.existsSync()) {
+  final script = File('$_dataDir/mcp.dart');
+  // 分发版：MCP 是旁边的 xbume-mcp 可执行文件，没有 mcp.dart 源码。
+  final mcpExe = bundledExe(kBundledMcpExe);
+  if (mcpExe == null && !script.existsSync()) {
     return <String, Object?>{
       'ok': false,
-      'message': '未找到 ~/.xb_ume_ide/mcp.dart，请先执行 dart run xb_ume:ide --install',
+      'message': '未找到 ~/.xb_ume_ide/mcp.dart，${installHint()}',
     };
   }
   int? port;
@@ -10899,15 +10912,16 @@ Future<Map<String, Object?>> startMcp({
       'message': '端口 $kMcpDefaultPort-${kMcpDefaultPort + 9} 都被占用',
     };
   }
-  final log = File('$_home/.xb_ume_ide/logs/mcp.log');
+  final log = File('$_dataDir/logs/mcp.log');
   log.parent.createSync(recursive: true);
   final instanceName = want.isEmpty ? 'mcp-$port' : want;
   final Process proc;
   try {
     proc = await Process.start(
-      Platform.resolvedExecutable,
+      mcpExe ?? Platform.resolvedExecutable,
       <String>[
-        script.path,
+        // 源码部署：`dart <mcp.dart>`；分发版：`xbume-mcp` 本身就是入口。
+        if (mcpExe == null) script.path,
         '--http',
         '$port',
         '--name',
@@ -10928,7 +10942,8 @@ Future<Map<String, Object?>> startMcp({
         // forceEval 只用于「AI 调试」一键开启（用户点按钮即视为授权）。
         if (forceEval || readMcpAllowEval()) '--allow-eval',
       ],
-      workingDirectory: '$_home/.xb_ume_ide',
+      workingDirectory:
+          mcpExe != null ? bundledExeDir() : _dataDir,
       mode: ProcessStartMode.detached,
     );
   } catch (e) {
@@ -11037,10 +11052,7 @@ Future<Map<String, Object?>> stopMcp({String? name}) async {
 // 池的真正分配由 MCP 池入口做，GUI 只负责「看」和「手动释放 / 停掉实例」。
 const int _kGuiPoolMax = 5;
 
-String get _xbUmeDir {
-  final env = Platform.environment['XB_UME_HOME']?.trim() ?? '';
-  return env.isEmpty ? '$_home/.xb_ume_ide' : env;
-}
+String get _xbUmeDir => _dataDir;
 
 Directory get _poolDir => Directory('$_xbUmeDir/pool');
 
@@ -11542,7 +11554,7 @@ Future<void> handleSvcAction(
 /// 读取 daemon 配置中的 IDE 顺序（供页面展示）。
 Map<String, Object?> readGuiIdeOrder() {
   try {
-    final file = File('$_home/.xb_ume_ide/config.json');
+    final file = File('$_dataDir/config.json');
     if (!file.existsSync()) {
       return const <String, Object?>{};
     }
@@ -11559,7 +11571,7 @@ Map<String, Object?> readGuiIdeOrder() {
 /// 读取 config.json 原始内容（供读-改-写保留其他配置键）。
 Map<String, Object?> _guiReadConfigRaw() {
   try {
-    final file = File('$_home/.xb_ume_ide/config.json');
+    final file = File('$_dataDir/config.json');
     if (!file.existsSync()) return <String, Object?>{};
     final decoded = jsonDecode(file.readAsStringSync());
     if (decoded is Map) {
@@ -11575,7 +11587,7 @@ Map<String, Object?> _guiReadConfigRaw() {
 Future<void> writeGuiIdeOrder(List<String> order) async {
   final cfg = _guiReadConfigRaw();
   cfg['ideOrder'] = order;
-  final file = File('$_home/.xb_ume_ide/config.json');
+  final file = File('$_dataDir/config.json');
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(cfg));
 }
@@ -11862,7 +11874,7 @@ Future<void> _guiCopyClipboard(String text) async {
 /// 读取 IDE 优先级配置（与 daemon 同一份 ~/.xb_ume_ide/config.json）。
 List<String> _guiIdeOrder() {
   try {
-    final file = File('$_home/$kInstallDirName/$kConfigName');
+    final file = File('$_dataDir/$kConfigName');
     if (!file.existsSync()) return _guiDefaultIdeOrder;
     final parsed = jsonDecode(file.readAsStringSync());
     final order = parsed is Map<String, Object?> ? parsed['ideOrder'] : null;
@@ -12700,7 +12712,32 @@ void trimLogBuffer(
 // 系统辅助
 // ---------------------------------------------------------------------------
 
+/// 分发版的版本号（`Contents/Resources/version.txt`）；源码部署返回空串。
+String _bundledVersion() {
+  if (!isBundledBuild()) return '';
+  final sep = Platform.pathSeparator;
+  final dir = bundledExeDir();
+  // macOS: Contents/MacOS → ../Resources/version.txt
+  // Windows: 安装根目录 → version.txt（与 exe 同目录）
+  final candidates = <String>[
+    <String>[dir, 'version.txt'].join(sep),
+    <String>[dir, '..', 'Resources', 'version.txt'].join(sep),
+  ];
+  for (final p in candidates) {
+    try {
+      final f = File(p);
+      if (f.existsSync()) {
+        final v = f.readAsStringSync().trim();
+        if (v.isNotEmpty) return v;
+      }
+    } catch (_) {}
+  }
+  return '';
+}
+
 Future<void> openBrowser(int port) async {
+  // 分发版双击已经由启动器控制；自动化验证时避免弹窗。
+  if ((Platform.environment['XBUME_NO_OPEN'] ?? '') == '1') return;
   final url = 'http://127.0.0.1:$port';
   try {
     if (Platform.isWindows) {
@@ -16381,7 +16418,7 @@ function mcpApplyStatus(d, force){
     } else if (d.launchable === false) {
       btn.textContent = '启动';
       btn.disabled = true;
-      btn.title = '未找到 ~/.xb_ume_ide/mcp.dart，请先执行 dart run xb_ume:ide --install';
+      btn.title = '未找到 MCP 入口（~/.xb_ume_ide/mcp.dart 或分发版 xbume-mcp），请重新安装';
     } else {
       btn.textContent = '启动';
       btn.disabled = false;

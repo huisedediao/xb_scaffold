@@ -13,6 +13,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../control/svc_control.dart'
+    show bundledExe, kBundledMcpExe;
 import '../device/live_store.dart' show pidAlive;
 import '../paths.dart';
 import 'client_scope.dart' show shortMcpClient;
@@ -407,9 +409,12 @@ class PoolEntry {
   /// 拉起槽 [slot] 的后端实例并等它握手成功。
   Future<PoolSlot?> _spawn(int slot) async {
     final name = poolSlotName(slot);
-    final script = _scriptPath();
-    if (script == null) {
-      await pool.markError(slot, '找不到 mcp.dart（先 dart run xb_ume:ide --install）');
+    // 分发版：worker 就是旁边的 xbume-mcp 可执行文件，没有（也不需要）
+    // mcp.dart 源码；源码部署仍按脚本路径拉 `dart <mcp.dart>`。
+    final exe = bundledExe(kBundledMcpExe);
+    final script = exe == null ? _scriptPath() : null;
+    if (exe == null && script == null) {
+      await pool.markError(slot, '找不到 MCP 入口（mcp.dart 或分发版 xbume-mcp）');
       return null;
     }
     final p = await _pickPort(slot);
@@ -420,9 +425,9 @@ class PoolEntry {
     Process proc;
     try {
       proc = await Process.start(
-        Platform.resolvedExecutable,
+        exe ?? Platform.resolvedExecutable,
         <String>[
-          script,
+          if (script != null) script,
           '--http',
           '$p',
           '--name',

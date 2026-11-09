@@ -23,7 +23,15 @@ const String kHotkeysPidFileName = 'hotkeys.pid';
 const String kHotkeysLogFileName = 'hotkeys.log';
 
 /// 安装目录（与 ide.dart 的 kInstallDirName 保持一致）。
-String xbumeIdeDir(String home) => '$home${Platform.pathSeparator}.xb_ume_ide';
+///
+/// [home] 既可以是用户主目录（拼出 `~/.xb_ume_ide`），也可以直接是数据目录
+/// 本身（`XB_UME_HOME` / GUI 的 `_dataDir`）：已经是 `.../.xb_ume_ide` 时原样
+/// 返回，避免隔离实例把热键配置写回真实主目录、互相抢注册。
+String xbumeIdeDir(String home) {
+  final sep = Platform.pathSeparator;
+  if (home.endsWith('$sep.xb_ume_ide')) return home;
+  return '$home$sep.xb_ume_ide';
+}
 
 String hotkeysFilePath(String home) =>
     '${xbumeIdeDir(home)}${Platform.pathSeparator}$kHotkeysFileName';

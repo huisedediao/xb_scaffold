@@ -46,15 +46,77 @@ const int kGuiPortBase = 46129;
 const String kSvcInstallDirName = '.xb_ume_ide';
 
 // ---------------------------------------------------------------------------
+// 打包分发版（.app / 安装器）
+// ---------------------------------------------------------------------------
+//
+// 分发版把各个入口分别 AOT 编译成同目录的兄弟可执行文件（xbume-ide /
+// xbume-gui / xbume-mcp / xbume-hotkey），源目录部署（~/.xb_ume_ide）里没有
+// 这些二进制。判定不看环境变量：Finder 双击拿不到启动器设的 env，而
+// 「兄弟可执行文件就在旁边」是分发目录结构的自证事实，源码部署自然落回
+// 原有分支。
+
+const String kBundledIdeExe = 'xbume-ide';
+const String kBundledGuiExe = 'xbume-gui';
+const String kBundledMcpExe = 'xbume-mcp';
+const String kBundledHotkeyExe = 'xbume-hotkey';
+
+String _exeName(String name) => Platform.isWindows ? '$name.exe' : name;
+
+/// 本进程可执行文件所在目录（打包版即 `XbUme.app/Contents/MacOS`）。
+String bundledExeDir() => File(Platform.resolvedExecutable).parent.path;
+
+/// 与自身同目录的兄弟可执行文件；不存在返回 null。
+String? bundledExe(String name) {
+  final f = File('${bundledExeDir()}$_sep${_exeName(name)}');
+  return f.existsSync() ? f.path : null;
+}
+
+/// 是否打包分发版。
+bool isBundledBuild() => bundledExe(kBundledGuiExe) != null;
+
+/// 分发版自带的工具目录（adb / hdc / iproxy 及其 dylib）。
+///
+/// macOS: `Contents/Resources/bin`；Windows: 安装目录下的 `tools`。
+/// 不为分发版或目录不存在时返回 null（回落到 PATH 与常见安装位置）。
+String? bundledBinDir() {
+  if (!isBundledBuild()) return null;
+  final dir = bundledExeDir();
+  final candidates = Platform.isWindows
+      ? <String>['$dir${_sep}tools', '$dir$_sep..${_sep}tools']
+      : <String>['$dir$_sep..${_sep}Resources${_sep}bin'];
+  for (final c in candidates) {
+    if (Directory(c).existsSync()) return c;
+  }
+  return null;
+}
+
+/// 部署不完整时的修复提示：源码部署要重跑 --install，分发版重装应用。
+String installHint() => isBundledBuild()
+    ? '请重新安装 XbUme 应用'
+    : '请重新执行 dart run xb_ume:ide --install';
+
+// ---------------------------------------------------------------------------
 // 路径
 // ---------------------------------------------------------------------------
 
 /// 用户主目录：Windows 用 USERPROFILE（HOME 通常不存在），其余用 HOME。
 String svcHome() =>
-    Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
+    Platform.environment['USERPROFILE'] ??
+    Platform.environment['HOME'] ??
+    '.';
+
+/// 数据目录：`XB_UME_HOME` 可覆盖（多实例 / 隔离验证），否则 `~/.xb_ume_ide`。
+///
+/// 必须与 `bin/src/paths.dart` 的 `xbUmeHome()` 口径一致：GUI 与 MCP 进程
+/// 各写一份 token 到同一目录，两边才能互相握手。
+String svcDataDir() {
+  final override = Platform.environment['XB_UME_HOME']?.trim();
+  if (override != null && override.isNotEmpty) return override;
+  return '${svcHome()}$_sep$kSvcInstallDirName';
+}
 
 /// 部署目录（`~/.xb_ume_ide`）。
-String svcInstallDir() => '${svcHome()}$_sep$kSvcInstallDirName';
+String svcInstallDir() => svcDataDir();
 
 /// 部署副本里的守护脚本。
 String daemonScriptPath() => '${svcInstallDir()}${_sep}ide.dart';
@@ -186,6 +248,8 @@ String installLogTail(String content, {int maxLines = 30}) {
 /// 升级后源码新增模块但没重新部署时，dart 会直接编译失败、进程秒退，
 /// 页面只看到「守护进程未运行」；这里提前把缺失文件点出来。
 List<String> missingDaemonDeps({String? scriptPath}) {
+  // 分发版是单文件可执行，没有 `import 'src/...'` 需要核对。
+  if (isBundledBuild()) return const <String>[];
   final script = File(scriptPath ?? daemonScriptPath());
   if (!script.existsSync()) {
     return <String>['ide.dart'];
@@ -372,6 +436,16 @@ Future<ProcessResult?> _run(String cmd, List<String> args) async {
 
 /// detached 启动部署副本的 daemon（launchd 不可用时的兜底）。
 Future<void> _spawnDaemonDetached() async {
+  final exe = bundledExe(kBundledIdeExe);
+  if (exe != null) {
+    await Process.start(
+      exe,
+      <String>['--daemon'],
+      mode: ProcessStartMode.detached,
+      workingDirectory: bundledExeDir(),
+    );
+    return;
+  }
   await Process.start(
     Platform.resolvedExecutable,
     <String>[daemonScriptPath(), '--daemon'],
@@ -394,10 +468,11 @@ Future<Map<String, Object?>> startDaemon() async {
     return <String, Object?>{
       'ok': false,
       'message': '守护脚本缺少依赖 ${missing.join('、')}（部署不完整）：'
-          '请重新执行 dart run xb_ume:ide --install',
+          '${installHint()}',
     };
   }
-  if (Platform.isMacOS) {
+  // 分发版不注册 LaunchAgent（不在测试人员机器上留开机自启），直接 detach。
+  if (Platform.isMacOS && !isBundledBuild()) {
     final uid = await currentUid();
     final plist = daemonPlistPath();
     if (uid.isNotEmpty && File(plist).existsSync()) {
@@ -494,11 +569,29 @@ Future<Map<String, Object?>> spawnGuiSuccessor({
   required int port,
   String? script,
 }) async {
+  // 分发版：GUI 是旁边的 xbume-gui，接班人只需重启自己（不带脚本参数）。
+  final bundled = bundledExe(kBundledGuiExe);
+  if (bundled != null) {
+    try {
+      await Process.start(
+        bundled,
+        <String>['--restart-owner', '$ownerPid', '--port', '$port'],
+        mode: ProcessStartMode.detached,
+        workingDirectory: bundledExeDir(),
+      );
+    } catch (e) {
+      return <String, Object?>{'ok': false, 'message': '接班人启动失败: $e'};
+    }
+    return <String, Object?>{
+      'ok': true,
+      'message': 'GUI 正在重启（新实例等旧进程退出后接管端口 $port）',
+    };
+  }
   final gui = script ?? guiScriptPath();
   if (!File(gui).existsSync()) {
     return <String, Object?>{
       'ok': false,
-      'message': '未找到 $gui，请重新执行 dart run xb_ume:ide --install',
+      'message': '未找到 $gui，${installHint()}',
     };
   }
   try {
@@ -517,17 +610,52 @@ Future<Map<String, Object?>> spawnGuiSuccessor({
   };
 }
 
+/// 用系统默认浏览器打开 GUI 页面（分发版双击后的「看到界面」）。
+///
+/// `XBUME_NO_OPEN=1` 可关闭（自动化验证 / 无头环境）。
+Future<void> openGuiUrl(int port) async {
+  if ((Platform.environment['XBUME_NO_OPEN'] ?? '') == '1') return;
+  final url = 'http://127.0.0.1:$port';
+  try {
+    if (Platform.isMacOS) {
+      await Process.start('open', <String>[url]);
+    } else if (Platform.isWindows) {
+      await Process.start('cmd', <String>['/c', 'start', '', url]);
+    } else {
+      await Process.start('xdg-open', <String>[url]);
+    }
+  } catch (_) {
+    // 打不开浏览器不影响服务（用户可手动访问）。
+  }
+}
+
 /// 直接起一个 GUI（CLI `--svc start gui` 用；已在运行则只打开浏览器）。
 Future<Map<String, Object?>> spawnGuiDetached() async {
   final port = await discoverGuiPort();
   if (port != null) {
+    // 已在跑：直接打开页面（双击 app 的期望就是「看到界面」）。
+    await openGuiUrl(port);
     return <String, Object?>{'ok': true, 'message': 'GUI 已在 $port 运行'};
+  }
+  final bundled = bundledExe(kBundledGuiExe);
+  if (bundled != null) {
+    try {
+      await Process.start(
+        bundled,
+        const <String>[],
+        mode: ProcessStartMode.detached,
+        workingDirectory: bundledExeDir(),
+      );
+    } catch (e) {
+      return <String, Object?>{'ok': false, 'message': '启动失败: $e'};
+    }
+    return <String, Object?>{'ok': true, 'message': 'GUI 正在启动'};
   }
   final gui = guiScriptPath();
   if (!File(gui).existsSync()) {
     return <String, Object?>{
       'ok': false,
-      'message': '未找到 $gui，请重新执行 dart run xb_ume:ide --install',
+      'message': '未找到 $gui，${installHint()}',
     };
   }
   try {
@@ -618,6 +746,13 @@ String? readSourceRoot() {
 /// 不能直接 detach `--install`：它的 _killGuiProcesses 是 kill -9，会在
 /// GUI 持有 VM 会话时留下 DDS 死锁；必须让 GUI 先优雅退出（关会话）。
 Future<Map<String, Object?>> redeployAndRestart({required int waitPid}) async {
+  // 分发版没有源码可部署：更新靠重装应用。
+  if (isBundledBuild()) {
+    return <String, Object?>{
+      'ok': false,
+      'message': '分发版不支持从源码重新部署；请安装新版本的 XbUme 应用',
+    };
+  }
   final root = readSourceRoot();
   if (root == null || root.isEmpty) {
     return <String, Object?>{

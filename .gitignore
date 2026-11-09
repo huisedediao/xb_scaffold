@@ -35,3 +35,7 @@ build/
 
 # 覆盖率报告
 coverage/
+
+# 分发版产物（dmg / 安装器）与打包验证临时目录
+/xb_ume/dist/
+/xb_ume/tmp_test/

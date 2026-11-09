@@ -132,7 +132,7 @@ void main() {
       expect(src.contains("import 'src/notify/system_notifier.dart';"), isTrue);
       expect(src.contains('void notifyHotDone('), isTrue);
       expect(src.contains('showSystemNotice('), isTrue);
-      expect(src.contains('readHotkeysConfig(_home).notify'), isTrue,
+      expect(src.contains('readHotkeysConfig(_dataDir).notify'), isTrue,
           reason: '通知开关要读 hotkeys.json');
       // 页面按钮 / 其他 op 走 /api/debug/op，热键走 /api/hotkey/action：两处都要接
       expect(src.contains("if (op == 'hot') notifyHotDone(result);"), isTrue);

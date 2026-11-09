@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../control/svc_control.dart' show bundledBinDir;
 import 'bridge.dart';
 import 'proxy_env.dart';
 
@@ -217,10 +218,11 @@ List<String> fallbackBinDirs() {
   return dirs;
 }
 
-/// 子进程用的 PATH：原 PATH + [fallbackBinDirs]，去重保序。
+/// 子进程用的 PATH：内嵌工具目录 + 原 PATH + [fallbackBinDirs]，去重保序。
 String execSearchPath() {
   final sep = Platform.isWindows ? ';' : ':';
   final out = <String>{};
+  out.addAll(preferredBinDirs());
   for (final dir in (Platform.environment['PATH'] ?? '').split(sep)) {
     if (dir.trim().isNotEmpty) out.add(dir.trim());
   }
@@ -255,6 +257,15 @@ String? resolveFlutter() {
   return findExecutable('flutter');
 }
 
+/// 分发版自带的工具目录（adb / hdc / iproxy），排在 PATH 之前。
+///
+/// 测试人员机器上的 adb / hdc 版本不可控（有的根本没装），内嵌那一份才是
+/// 我们验证过的；源码部署没有这个目录，行为不变。
+List<String> preferredBinDirs() {
+  final dir = bundledBinDir();
+  return dir == null ? const <String>[] : <String>[dir];
+}
+
 /// 在 PATH 中定位可执行文件，找不到再走 [fallbackBinDirs]；都没有返回 null
 /// （不调用 which，跨平台一致）。
 String? findExecutable(String name) {
@@ -267,6 +278,7 @@ String? findExecutable(String name) {
       ? <String>['.exe', '.bat', '.cmd', '']
       : <String>[''];
   final dirs = <String>[
+    ...preferredBinDirs(),
     ...path.split(sep).where((d) => d.trim().isNotEmpty),
     ...fallbackBinDirs(),
   ];

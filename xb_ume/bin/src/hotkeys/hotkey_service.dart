@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'hotkey_config.dart';
+import '../control/svc_control.dart' show bundledExe, kBundledHotkeyExe;
 
 /// 监听器脚本路径：部署副本与源码目录都是 <ide_gui.dart 所在目录>/src/hotkeys。
 String defaultHotkeyScriptPath() {
@@ -43,6 +44,11 @@ class HotkeyService {
   final List<String> _tail = <String>[];
 
   bool get supported => Platform.isMacOS || Platform.isWindows;
+
+  /// 实际使用的入口：分发版是 GUI 同目录的 `xbume-hotkey`，源码部署是
+  /// `hotkey_listener.dart` 脚本。状态页用这个字段，别把 AOT 下推断出的
+  /// 脚本路径（并不存在）显示给用户。
+  String get scriptPath => bundledExe(kBundledHotkeyExe) ?? _scriptPath;
 
   String get _pidFile =>
       '${xbumeIdeDir(home)}${Platform.pathSeparator}$kHotkeysPidFileName';
@@ -116,7 +122,7 @@ class HotkeyService {
       'running': _alive,
       'pid': _pid,
       'message': _message,
-      'script': _scriptPath,
+      'script': scriptPath,
       'logPath': hotkeysLogPath(home),
       'statusFile': hotkeysStatusPath(home),
       'registered': listOf(helper?['registered']),
@@ -163,21 +169,23 @@ class HotkeyService {
   // ---------------------------------------------------------------- 进程
 
   Future<void> _spawn() async {
-    final script = File(_scriptPath);
-    if (!script.existsSync()) {
+    // 分发版：监听器是和 GUI 同目录的 xbume-hotkey；源码部署：跑 .dart 脚本。
+    final exe = bundledExe(kBundledHotkeyExe);
+    final script = exe == null ? File(_scriptPath) : null;
+    if (exe == null && !script!.existsSync()) {
       _message = '缺少 $_scriptPath：重新部署 GUI（dart run xb_ume:ide --install）后可用';
       return;
     }
     try {
       final args = <String>[
-        script.path,
+        if (script != null) script.path,
         '--home',
         home,
         '--port',
         '$port',
         if (token.isNotEmpty) ...<String>['--token', token],
       ];
-      final proc = await Process.start(Platform.resolvedExecutable, args);
+      final proc = await Process.start(exe ?? Platform.resolvedExecutable, args);
       _proc = proc;
       _pid = proc.pid;
       _alive = true;

@@ -88,8 +88,7 @@ ServerSocket? _lockServer;
 DateTime _daemonStartedAt = DateTime.now();
 
 /// 用户主目录：Windows 用 USERPROFILE（HOME 通常不存在），其余用 HOME。
-final String _home =
-    Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
+final String _home = svcHome();
 
 void _printUsage() {
   print('''
@@ -103,7 +102,8 @@ void _printUsage() {
   dart run xb_ume:ide --ensure-daemon                            确保守护进程在跑（已在则跳过）
   dart run xb_ume:ide --svc status                               查看 GUI / 守护进程状态
   dart run xb_ume:ide --svc start|stop|restart [gui|daemon|all]  启停 / 重启（GUI 需在运行才能优雅停止）
-  dart run xb_ume:ide --svc redeploy                             从源码重新部署并重启（需 GUI 在跑）''');
+  dart run xb_ume:ide --svc redeploy                             从源码重新部署并重启（需 GUI 在跑）
+  XbUme.app（分发版双击）                                     确保守护进程在跑并打开 GUI''');
 }
 
 String? _argValue(List<String> args, String name) {
@@ -137,6 +137,12 @@ void main(List<String> args) {
 }
 
 Future<void> _mainImpl(List<String> args) async {
+  // 分发版（.app）：Finder 双击不带参数 —— 确保 daemon 在跑，起 GUI
+  // （GUI 自己打开浏览器），本进程随即退出。
+  if (args.isEmpty && isBundledBuild()) {
+    await runBundledApp();
+    return;
+  }
   if (args.contains('--install')) {
     await install(args);
     return;
@@ -169,7 +175,7 @@ Future<void> _mainImpl(List<String> args) async {
     return;
   }
   if (args.contains('--gui')) {
-    final guiScript = File('$_home/$kInstallDirName/ide_gui.dart');
+    final guiScript = File('${svcInstallDir()}/ide_gui.dart');
     if (!guiScript.existsSync()) {
       print('[xbume-ide] 未找到 GUI 脚本，请先执行 dart run xb_ume:ide --install');
       exitCode = 1;
@@ -194,6 +200,21 @@ Future<void> _mainImpl(List<String> args) async {
 }
 
 // ---------------------------------------------------------------------------
+// 分发版启动器
+// ---------------------------------------------------------------------------
+
+/// 双击入口：确保 daemon 在跑 → 起 GUI（GUI 自己打开浏览器）→ 退出。
+///
+/// 不注册 LaunchAgent：测试人员机器上不该留开机自启（也不该出现卸不干净）；
+/// daemon 以 detached 子进程存活，GUI「服务」菜单仍可以停掉它。
+Future<void> runBundledApp() async {
+  final d = await startDaemon();
+  print('[xbume-app] ${d['message'] ?? d}');
+  final g = await spawnGuiDetached();
+  print('[xbume-app] ${g['message'] ?? g}');
+}
+
+// ---------------------------------------------------------------------------
 // 安装 / 卸载（macOS LaunchAgent）
 // ---------------------------------------------------------------------------
 
@@ -209,7 +230,7 @@ Future<void> install(List<String> args) async {
     exitCode = 1;
     return;
   }
-  final installDir = Directory('$_home/$kInstallDirName');
+  final installDir = Directory(svcInstallDir());
   await installDir.create(recursive: true);
   final deployedScript =
       '${installDir.path}${Platform.pathSeparator}ide.dart';
@@ -858,7 +879,7 @@ Future<void> uninstall() async {
       runInShell: true,
     );
   }
-  final dir = Directory('$_home/$kInstallDirName');
+  final dir = Directory(svcInstallDir());
   if (dir.existsSync()) {
     await dir.delete(recursive: true);
   }
@@ -952,7 +973,7 @@ String? _selfScriptPath() {
 // 配置缺失/损坏时回退内置默认顺序；--ide 显式参数优先级最高。
 // ---------------------------------------------------------------------------
 
-File _configFile() => File('$_home/$kInstallDirName/$kConfigName');
+File _configFile() => File('${svcInstallDir()}/$kConfigName');
 
 /// 全部合法的 IDE 名称（供 --ide-order 校验）。
 Set<String> get _knownIdeNames => <String>{..._vscodeLikeClis, 'androidStudio'};
@@ -1223,7 +1244,7 @@ Duration _dedupWindowOf(String key) =>
 
 /// 去重表持久化：daemon 若再被杀重启，内存表清空会导致重启后第一轮
 /// 重放全部放行（实测如此），落盘后跨重启仍可拦截窗口内重放。
-String get _seenPath => '$_home/$kInstallDirName/seen_events.json';
+String get _seenPath => '${svcInstallDir()}/seen_events.json';
 
 void _seenLoad() {
   try {
@@ -1296,7 +1317,7 @@ Future<void> _killOtherDaemons() async {
           <String>['-p', '$other', '-o', 'command='],
         );
         final cmdline = ps.stdout.toString().trim();
-        if (!cmdline.contains('$_home/$kInstallDirName/ide.dart') ||
+        if (!cmdline.contains('${svcInstallDir()}/ide.dart') ||
             !cmdline.contains('--daemon')) {
           continue;
         }

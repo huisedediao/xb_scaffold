@@ -14,6 +14,8 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 
+import '../control/svc_control.dart'
+    show bundledExe, kBundledMcpExe;
 import '../paths.dart';
 import 'instances.dart';
 import 'lease.dart';
@@ -199,10 +201,12 @@ class McpHost {
     required bool allowEval,
     String name = '',
   }) async {
-    final script = await _findScript();
-    if (script == null) {
-      throw StateError('找不到 mcp.dart：请先执行 dart run xb_ume:ide --install，'
-          '或在 xb_ume 包目录里运行');
+    // 分发版：实例就是旁边的 xbume-mcp 可执行文件（没有 mcp.dart 源码）。
+    final exe = bundledExe(kBundledMcpExe);
+    final script = exe == null ? await _findScript() : null;
+    if (exe == null && script == null) {
+      throw StateError('找不到 MCP 入口（mcp.dart 或分发版 xbume-mcp）；'
+          '源码部署请先执行 dart run xb_ume:ide --install');
     }
     int? port;
     for (var p = kDefaultMcpPort; p < kDefaultMcpPort + kMcpPortSpan; p++) {
@@ -218,9 +222,9 @@ class McpHost {
     // 实例名不传时由 mcp.dart 按端口生成（mcp-<port>），与本记录里端口一致。
     final instanceName = name.isEmpty ? 'mcp-$port' : sanitizeInstanceName(name);
     final proc = await Process.start(
-      Platform.resolvedExecutable,
+      exe ?? Platform.resolvedExecutable,
       <String>[
-        script,
+        if (script != null) script,
         '--http',
         '$port',
         '--name',

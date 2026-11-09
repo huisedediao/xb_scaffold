@@ -180,14 +180,15 @@ String _readVersion() {
     }
   } catch (_) {}
   // 部署副本（~/.xb_ume_ide/mcp.dart）旁边没有 pubspec.yaml，读安装时写好的
-  // version.txt（--install 生成）。
-  try {
-    final f = File.fromUri(Platform.script.resolve('version.txt'));
-    if (f.existsSync()) {
+  // version.txt（--install 生成）。分发版（AOT）放在 Resources 下。
+  for (final rel in <String>['version.txt', '../Resources/version.txt']) {
+    try {
+      final f = File.fromUri(Platform.script.resolve(rel));
+      if (!f.existsSync()) continue;
       final v = f.readAsStringSync().trim();
       if (v.isNotEmpty) return v;
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
   return '0.0.0';
 }
 
