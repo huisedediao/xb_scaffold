@@ -51,6 +51,23 @@ done < <(find "$ROOT_DIR" -type d \
   \( -name build -o -name .dart_tool -o -name Pods -o -name .symlinks \) \
   -prune -print0)
 
+echo "==> remove packaging artifacts (dmg / installer / .app)"
+# 分发版产物：dmg / Windows 安装器在 <pkg>/dist；.app、iconset、dmg stage 目录
+# 都在 <pkg>/build/package 下（上面的 build 清理已经整目录带走），这里显式列出
+# 是为了 dist 这类不在 build 里的输出，避免旧包被当成最新版本发出去。
+for rel in \
+  "xb_ume/dist" \
+  "xb_ume/build/package"; do
+  d="$ROOT_DIR/$rel"
+  [[ -d "$d" ]] || continue
+  if has_tracked_files "$rel"; then
+    echo "[skip] $rel contains git-tracked files"
+  else
+    echo "[rm] $rel"
+    rm -rf "$d"
+  fi
+done
+
 echo "==> remove editor/system cache files (skip git-tracked)"
 while IFS= read -r -d '' d; do
   rel="${d#"$ROOT_DIR"/}"
