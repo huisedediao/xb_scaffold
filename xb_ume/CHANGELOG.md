@@ -1,8 +1,10 @@
-## 0.9.9
+## 0.9.10
 
 - **修 release 启动卡死（「已有一条本服务拉起的 flutter run … 正在启动或等待调试端口」）**：用「运行配置」选 `--release` 起包后，`flutter run` 不会打印 `A Dart VM Service … is available at:`，所以记录里的 `wsUri` 永远是 null；而 app 被杀后 `flutter run` 自己也不会退出（只剩一个 `adb … logcat` 子进程挂着）。下次点「启动 / 复用」时 `_findLiveSameRun` 命中这条存活记录，却因 `wsUri == null` 被当成「还在启动」而报错——其实它永远不会再产生 VM 地址。修三处：①新增 `isReleaseRunArgs()`，`launchOnce` 识别到 `--release` 就自动按 `waitVm: false` 处理（不再死等 timeout 后留一条僵尸记录）；②`LaunchRecord` / `LaunchHandle` / `LaunchResult` 新增 `vmless` 标记（老的 json 没这个字段按 false），release 会话不再和「等调试端口」混为一谈；③再次启动命中的是 `vmless` 会话时，按「release 判断不了 app 是否还在运行」**自动停掉旧的再重装重跑**（等同 force，并在 note 里写明停了哪个 pid）。GUI 侧 release 启动不再报「没拿到 VM service」的假失败，改成「已启动 release 会话 pid …：无 VM 调试通道，日志见右侧；要调试请接入直连 Agent 会话」并把日志接到运行输出；MCP `xbume_app_launch` 的返回文本与 `structured.vmless` 同步。`missingRunConfigMessage` 之外的旧文案（「正在启动或等待调试端口」）只留给真正的 debug 启动中。
 
 - **调试页「追加参数」加历史下拉**：以前每换一次参数就得自己重敲，切回上个组合只能凭记忆。现在输入框跟「项目目录」一样挂 `<datalist>`，点开即可挑本项目用过的参数（最新在前，最多 8 条）。存储落在 `run_profiles.json` 的项目节点新增 `recentArgs`：`rememberLastRun` 加可选 `argsText`（GUI 传输入框整行原文、保留引号；MCP 仍旧传数组，两种都接），写入时**按原文去重置顶**并截到 `kRecentArgsLimit = 8`；新增 `loadRecentArgs()` 容错读（没有 / 坏 JSON 一律当无历史，不影响启动）。`/api/debug/op?op=runProfile` 与 `rememberLast` 的回包都带 `recentArgs`，前端在 `dbgCfgRender` 里用 `document.createElement('option')` 逐个赋值（参数里可能带双引号，拼 HTML 会截断），记住成功后就地重画、历史即时可见。历史只做候选，不参与「拼参数」顺序，清 `last` 不会清历史。
+
+## 0.9.9
 
 - **MCP 提速（P0：把「一步四次往返」压成一步）**：AI 通过 MCP 调试时每一步都要等几秒，审计日志（`~/.xb_ume_ide/logs/mcp.log`）显示工具本身只要 0.03–0.6s，慢在「一步被拆成 tap / screenshot / console / find_widget 四次调用」× 每次往返。这版做了四件事：①新增 `xbume_observe`——一次调用拿全「截图（默认缩到 720 宽）+ 栈顶路由/路由栈 + 自上次 observe 以来新增的日志/异常/网络」（进程内游标 `nextSinceMs` 回写，不重复扫），可选页面可见文本；`xbume_tap` / `input` / `swipe` / `navigate` 加 `observe` 开关（默认关），点完直接回带截图与新增日志，省掉「点完再调 observe」那一次往返。②`xbume_tap` 的自适应等待：直连通道注入后每 40ms 读一次栈顶路由、连续两次相同即返回（实测 100ms 级），去掉原来固定 350ms 死等 + 再查一次；VM 通道与显式 `waitMs` 保持原语义不变（VM 轮询 eval 更贵）。③截图默认缩到 **720 物理像素宽**（`maxWidth` 可调，`0` = 原始分辨率）：模型看图与回包体积同时下降。④会话发现不再阻塞：`adb forward --list` / `hdc list targets` 并行、多 target 的 `fport ls` 并行、转发表与回环端口缓存 1.2s→5s、`refresh` 缓存 3s→8s + MCP 启动预热；过期快照改成「先返回旧列表、后台单飞补扫」，`resolveSession` 只在完全没有快照时才等全量扫描（不再是每次首调都付 1–3 秒）。
 
