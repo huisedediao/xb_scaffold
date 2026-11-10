@@ -13146,6 +13146,11 @@ const String guiHtml = r'''
   .hk-key.unset { color:var(--dim); }
   .hk-key.rec { border-color:#f0b429; color:#f0b429; }
   #hk-stat { margin-top:8px; font-size:12px; line-height:1.6; white-space:pre-wrap; }
+  /* 「追加参数」历史下拉：点输入框就列本项目用过的参数（不依赖原生 datalist） */
+  #dbg-args-hist-box { position:fixed; z-index:135; display:none; min-width:320px; max-width:72vw; max-height:236px; overflow:auto; padding:4px 0; background:#0d141c; border:1px solid var(--line); border-radius:8px; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+  #dbg-args-hist-box .hist-row { padding:5px 12px; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:#c9d6e2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  #dbg-args-hist-box .hist-row:hover { background:#1b2531; color:#fff; }
+  #dbg-args-hist-box .hist-tip { padding:6px 12px; font-size:12px; color:#7d8b9a; }
   #dbg-toast { position:fixed; left:50%; bottom:72px; transform:translateX(-50%); z-index:97; padding:6px 14px; border-radius:14px; background:#5c1a1a; color:#ffb4b4; border:1px solid #c0392b; font-size:12px; display:none; box-shadow:0 2px 10px rgba(0,0,0,.5); max-width:70vw; }
 </style>
 </head>
@@ -13305,8 +13310,7 @@ const String guiHtml = r'''
           <button onclick="dbgConfigDelete()" style="flex:0 0 auto" title="删除当前选中的配置">删除</button>
           <button onclick="dbgConfigImport(this)" style="flex:0 0 auto" title="把项目 .vscode/launch.json（含 tasks.json 里的预启动任务）导成普通配置；导入后运行时不读它">导入 launch.json</button>
           <label class="chk" style="display:flex;align-items:center;flex:0 1 300px;min-width:200px" title="只对本次启动生效的额外参数（不写进配置）；回车/失焦即记住，下次自动带上；下拉可挑本项目用过的历史">追加参数
-            <input id="dbg-args" list="dbg-args-list" placeholder="--dart-define=K=V" style="flex:1;min-width:0;width:0;margin-left:6px;font-size:12px" oninput="dbgArgsDirty()" onchange="dbgArgsChanged()">
-            <datalist id="dbg-args-list"></datalist>
+            <input id="dbg-args" placeholder="--dart-define=K=V" style="flex:1;min-width:0;width:0;margin-left:6px;font-size:12px" oninput="dbgArgsDirty()" onchange="dbgArgsChanged()" onclick="dbgArgsHistShow()" onfocus="dbgArgsHistShow()">
           </label>
           <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
           <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
@@ -13841,6 +13845,7 @@ const String guiHtml = r'''
   <button onclick="document.getElementById('dbg-bar').classList.remove('on')" title="收起（从调试页刷新或重新操作可再现）">✕</button>
 </div>
 <div id="dbg-toast"></div>
+<div id="dbg-args-hist-box"></div>
 <!-- 全局快捷键设置：两条组合（热重载 / 热重启）录进 hotkeys.json，由监听器子进程注册 -->
 <div id="hk-mask" onclick="if(event.target===this)hkClose()">
   <div id="hk-card">
@@ -19444,6 +19449,71 @@ function dbgArgsDirty(){
   if (a) a.dataset.dirty = '1';
 }
 
+// -- 「追加参数」历史下拉 ----------------------------------------------------
+// 不用原生 datalist：Chrome 只在输入框为空时点开才列全部，有值就按当前值过滤，
+// 值恰好等于唯一候选时点开「什么也不出来」，看着像功能没生效。
+var dbgArgsHistList = [];
+
+function dbgArgsHistFill(list){
+  dbgArgsHistList = (list || []).filter(function(t){ return !!t; });
+  dbgArgsHistHide(); // 列表变了，旧浮层收起
+}
+
+function dbgArgsHistHide(){
+  var box = dbgEl('dbg-args-hist-box');
+  if (box) box.style.display = 'none';
+}
+
+// 点输入框 / 聚焦就列候选；没历史时说一句，而不是静默无反应。
+function dbgArgsHistShow(){
+  var box = dbgEl('dbg-args-hist-box');
+  var input = dbgEl('dbg-args');
+  if (!box || !input) return;
+  box.textContent = '';
+  if (!dbgArgsHistList.length) {
+    var tip = document.createElement('div');
+    tip.className = 'hist-tip';
+    tip.textContent = '还没有历史：启动一次（或改完参数失焦）就会记下来';
+    box.appendChild(tip);
+  } else {
+    dbgArgsHistList.forEach(function(t){
+      var row = document.createElement('div');
+      row.className = 'hist-row';
+      row.textContent = t; // 用文本节点：参数里可能有引号 / 尖括号
+      row.title = '点这条回填';
+      row.onclick = function(){ dbgArgsHistPick(t); };
+      box.appendChild(row);
+    });
+  }
+  var r = input.getBoundingClientRect();
+  box.style.display = 'block';
+  var w = box.offsetWidth || 320;
+  var h = box.offsetHeight || 0;
+  box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  var top = r.bottom + 2;
+  if (h && top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 2);
+  box.style.top = top + 'px';
+}
+
+function dbgArgsHistPick(t){
+  var a = dbgEl('dbg-args');
+  if (a) { a.value = t; a.dataset.dirty = '1'; }
+  dbgArgsHistHide();
+  dbgRememberLast(false, true); // 选中的这条置顶（下次点开还是第一条）
+}
+
+// 点别处 / Esc 收起；点输入框本身不收起（mousedown 先于 click 到达）。
+document.addEventListener('mousedown', function(ev){
+  var box = dbgEl('dbg-args-hist-box');
+  if (!box || box.style.display !== 'block') return;
+  if (box.contains(ev.target)) return;
+  if (ev.target === dbgEl('dbg-args')) return;
+  dbgArgsHistHide();
+});
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape') dbgArgsHistHide();
+});
+
 function dbgCfgLabel(c){
   var parts = [c.name];
   if ((c.platforms || []).length) parts.push('限 ' + c.platforms.join('/'));
@@ -19472,18 +19542,8 @@ function dbgCfgRender(d){
   if (args && !args.dataset.dirty) {
     args.value = (dbgCfgLast && (dbgCfgLast.args || []).join(' ')) || '';
   }
-  // 「追加参数」历史（本项目最近用过的，最新在前）：点开输入框即可挑一条回填。
-  // 用 DOM 赋值而不是拼 HTML：参数里可能带引号，属性拼接会坏。
-  var dl = dbgEl('dbg-args-list');
-  if (dl) {
-    dl.textContent = '';
-    ((d && d.recentArgs) || []).forEach(function(t){
-      if (!t) return;
-      var o = document.createElement('option');
-      o.value = t;
-      dl.appendChild(o);
-    });
-  }
+  // 「追加参数」历史（本项目最近用过的，最新在前）：存起来，点输入框即列候选。
+  dbgArgsHistFill(d && d.recentArgs);
 }
 
 // 切下拉：回填该配置的入口/设备（不覆盖用户已填的），并记住选择。
@@ -19507,16 +19567,21 @@ function dbgConfigPicked(sel){
 
 function dbgArgsChanged(){
   if (!dbgDirValue()) return;
-  dbgRememberLast(true);
+  dbgRememberLast(true, true);
 }
 
 // 记住「当前选中 + 追加参数」：不启动也记（换项目回来还是上次那套）。
-function dbgRememberLast(toast){
+//
+// [keepConfig]：只改参数（失焦 / 点历史）时要保留上次选的配置，否则后端收到
+// config=null 会把 last.config 抹掉，重新打开就回填不了配置了。
+function dbgRememberLast(toast, keepConfig){
   var dir = dbgDirValue();
   if (!dir) return Promise.resolve(null);
+  var cfg = dbgCfgName;
+  if (!cfg && keepConfig) cfg = (dbgCfgLast && dbgCfgLast.config) || '';
   return dbgOp('rememberLast', {
     dir: dir,
-    config: dbgCfgName || null,
+    config: cfg || null,
     args: dbgArgsText() || null
   }).then(function(d){
     if (d && d.ok) {
@@ -21124,6 +21189,8 @@ function dbgStart(btn){
       // 服务端已把这次的选择写成 last，同步一下下拉与额外参数。
       var a = dbgEl('dbg-args');
       if (a) a.dataset.dirty = '';
+      // 启动链路只拿得到分词后的参数（引号会丢），再按输入框原文记一条历史。
+      dbgRememberLast(false, true);
     }
   }, done);
 }

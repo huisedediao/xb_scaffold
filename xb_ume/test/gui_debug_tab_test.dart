@@ -462,6 +462,13 @@ void main() {
         'id="dbg-args"',
         'config: cfg || null, args: args || null',
         'id="dbg-cfg-mask"',
+        // 「追加参数」历史：点输入框自己弹候选（原生 datalist 有值时点开不列）。
+        'id="dbg-args-hist-box"',
+        'onclick="dbgArgsHistShow()"',
+        'function dbgArgsHistShow(',
+        'function dbgArgsHistPick(',
+        'dbgArgsHistFill(d && d.recentArgs)',
+        '还没有历史：启动一次（或改完参数失焦）就会记下来',
         // 弹窗保存时 args / preRun / postStop / env 都交后端分词，前端不自己拆。
         'function dbgCfgSave(',
         'function dbgCfgRender(',

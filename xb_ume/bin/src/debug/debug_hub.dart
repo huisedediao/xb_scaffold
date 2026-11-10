@@ -591,8 +591,8 @@ class DebugHub {
       'configs': <Object?>[
         for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
       ],
-      // 「追加参数」历史（最近用过的，最新在前）：GUI 输入框下拉候选项。
-      'recentArgs': loadRecentArgs(dir, filePath: _profilePath),
+      // 「追加参数」历史（最近用过的，最新在前）：GUI 输入框的下拉候选。
+      'recentArgs': _recentArgsOf(dir, p),
       if (p?.last != null) 'last': p!.last!.toJson(),
     };
   }
@@ -644,9 +644,20 @@ class DebugHub {
       'configs': <Object?>[
         for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
       ],
-      'recentArgs': loadRecentArgs(dir, filePath: _profilePath),
+      'recentArgs': _recentArgsOf(dir, p),
       if (p?.last != null) 'last': p!.last!.toJson(),
     };
+  }
+
+  /// 「追加参数」下拉候选：优先 recentArgs。
+  ///
+  /// 从老版本升上来时项目里只有 `last`、还没有历史，第一次点开只会看到空列表，
+  /// 容易当成「功能没生效」；这里用 `last.args` 兜一条（不落盘，下次记住时补成历史）。
+  List<String> _recentArgsOf(String dir, RunProfile? p) {
+    final list = loadRecentArgs(dir, filePath: _profilePath);
+    if (list.isNotEmpty) return list;
+    final joined = (p?.last?.args ?? const <String>[]).join(' ').trim();
+    return joined.isEmpty ? const <String>[] : <String>[joined];
   }
 
   /// 从 `.vscode/launch.json`（+ tasks.json）导入：默认只预览，`apply=true` 才落盘。

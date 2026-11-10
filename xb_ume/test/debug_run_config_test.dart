@@ -168,6 +168,30 @@ void main() {
     expect(p.containsKey('last'), isTrue);
   });
 
+  test('recentArgs：老数据只有 last 时兜一条候选，记过历史后只用历史', () async {
+    // 从老版本升上来：项目节点里只有 last、没有 recentArgs。
+    File(profilePath).writeAsStringSync(jsonEncode(<String, Object?>{
+      'version': 2,
+      'projects': <String, Object?>{
+        project.path: <String, Object?>{
+          'last': <String, Object?>{
+            'args': <String>['--release', '--dart-define=XBUME_AGENT=1'],
+          },
+        },
+      },
+    }));
+    final p = await hub.handle(
+        'runProfile', <String, Object?>{'dir': project.path});
+    expect(p['recentArgs'], <String>['--release --dart-define=XBUME_AGENT=1']);
+
+    // 真记过一次后，历史就是唯一来源（原文保引号，兜底那条不再出现）。
+    final d = await hub.handle('rememberLast', <String, Object?>{
+      'dir': project.path,
+      'argsText': '--flavor cn --dart-define="a b"',
+    });
+    expect(d['recentArgs'], <String>['--flavor cn --dart-define="a b"']);
+  });
+
   test('importLaunch：默认只预览，apply=true 才落盘，重复导入报会覆盖谁', () async {
     Directory('${project.path}/.vscode').createSync();
     File('${project.path}/.vscode/launch.json').writeAsStringSync(

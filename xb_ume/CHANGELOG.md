@@ -1,3 +1,7 @@
+## 0.9.11
+
+- **修「追加参数」历史下拉点开没反应**：0.9.10 用原生 `<datalist>` 做候选，实际用起来两处撞墙——①项目节点里没有 `recentArgs`（升级上来的老数据只有 `last`）时列表是空的，点开什么也没有；②Chrome 的 datalist 只在输入框为空时点开才列全部，有值就按当前值过滤，值恰好等于唯一候选时同样看着「没反应」。改用自绘浮层：点输入框（或聚焦）就在下方列出本项目最近用过的 8 条，行宽不够时省略号、悬停高亮、点一条回填并置顶，点别处 / Esc 收起；没有历史时浮层里直接给一行提示。后端 `runProfile` / `rememberLast` 的 `recentArgs` 在为空时用 `last.args` 兜一条（不落盘，下次记住时补成历史），升级完第一次点开就有东西。顺手补一个回退：点历史只改参数时保留 `last.config`（原来会传 `config: null` 把上次选的配置抹掉）。
+
 ## 0.9.10
 
 - **修 release 启动卡死（「已有一条本服务拉起的 flutter run … 正在启动或等待调试端口」）**：用「运行配置」选 `--release` 起包后，`flutter run` 不会打印 `A Dart VM Service … is available at:`，所以记录里的 `wsUri` 永远是 null；而 app 被杀后 `flutter run` 自己也不会退出（只剩一个 `adb … logcat` 子进程挂着）。下次点「启动 / 复用」时 `_findLiveSameRun` 命中这条存活记录，却因 `wsUri == null` 被当成「还在启动」而报错——其实它永远不会再产生 VM 地址。修三处：①新增 `isReleaseRunArgs()`，`launchOnce` 识别到 `--release` 就自动按 `waitVm: false` 处理（不再死等 timeout 后留一条僵尸记录）；②`LaunchRecord` / `LaunchHandle` / `LaunchResult` 新增 `vmless` 标记（老的 json 没这个字段按 false），release 会话不再和「等调试端口」混为一谈；③再次启动命中的是 `vmless` 会话时，按「release 判断不了 app 是否还在运行」**自动停掉旧的再重装重跑**（等同 force，并在 note 里写明停了哪个 pid）。GUI 侧 release 启动不再报「没拿到 VM service」的假失败，改成「已启动 release 会话 pid …：无 VM 调试通道，日志见右侧；要调试请接入直连 Agent 会话」并把日志接到运行输出；MCP `xbume_app_launch` 的返回文本与 `structured.vmless` 同步。`missingRunConfigMessage` 之外的旧文案（「正在启动或等待调试端口」）只留给真正的 debug 启动中。
