@@ -1,3 +1,9 @@
+## 0.9.13
+
+- **修：会话接入后第二轮就从列表里消失**。`_poll` 把 `_knownFingerprints` 交给扫描层去重，自己却把「本轮扫描结果」直接当成了「当前会话列表」——会话接入成功后下一轮（~5s）扫描会跳过它，列表随之清空，看起来就是「会话闪一下 就没了」「会话都发现不了了」（实测 `vm_sel.log` 里 `+[port:55715]` 五秒后紧跟 `-[]`）。现在新增 `mergeDiscoveredSessions` 把「本轮新发现」与「已接入且仍存活」合并输出；daemon 另外用 `_sessionInfo`（wsUrl → 发现信息）记住已接入实例，启动记录认领的会话也一并补进列表（以前这类会话同样不在扫描结果里，列表看不到）。
+- **增：IDE 拉起的 `flutter run` 也能被发现**。以前只靠端口扫描无 token 探测 `GET /getVM`，而 IDE 拉起的实例默认开 auth code，裸探测恒返 403，于是直接当作「不存在」。现在新增第二条通道（`discovery.dart`）：扫本机进程命令行里的 `dart development-service --vm-service-uri=http://127.0.0.1:<port>/<token>=/`（也认命令行里直给的 `ws://.../ws`），把 token 拼回 `ws://127.0.0.1:<port>/<token>=/ws` 再探测接入；只认回环地址，非回环（设备侧地址）忽略。两条通道的结果按实例指纹去重，端口扫描结果优先。
+- **测试**：新增 `session_process_endpoint_test` 10 项（dds 参数解析、无 token / 带 token、直给 ws、非回环丢弃、`getVM` 不误当 token、乱码不崩、裸探测 403 而带 token 命中、合并去重与「已接入不消失」）。
+
 ## 0.9.12
 
 - **装完新客户端双击就是「全新运行」**：分发版以前按单实例语义处理——探测到 46129 已有 GUI，就只把浏览器打到一个旧页面、自己退出。用户从源码部署过一份 GUI 时，装完新 dmg 双击看到的仍是旧界面（「追加参数」看不到历史下拉就是这么来的）。现在分发版用默认端口启动时，先把上一轮的本工具常驻进程整体回收再从头起：GUI（部署版 `ide_gui.dart` 与旧分发版 `xbume-gui` 都算）、热键监听 `hotkey_listener.dart` / `xbume-hotkey`、常驻 MCP HTTP `mcp.dart --http` / `xbume-mcp --http`，然后等端口真正释放再 bind 固定 46129。`--install` 同样语义：GUI、热键、常驻 MCP 与 daemon 一起回收后再拉起新副本（macOS 用 LaunchAgent 接管，Windows 补一次 `startDaemon`）。

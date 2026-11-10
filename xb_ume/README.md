@@ -174,7 +174,7 @@ dart run xb_ume:ide --gui
 | GUI 入口 | 「应用程序」中的 `xb_ume 工具箱` | 桌面快捷方式 | 无一键部署，源码目录运行 `dart bin/ide_gui.dart` |
 | 卸载 | `dart run xb_ume:ide --uninstall` | 同左 | 手动结束 `--daemon` |
 
-日常零操作：`flutter run` 或 IDE 运行按钮启动的调试会话会被守护进程自动发现并接入（轮询本机回环端口探测 VM service），支持多设备、多会话，App 重启自动重连。
+日常零操作：`flutter run` 或 IDE 运行按钮启动的调试会话会被守护进程自动发现并接入，支持多设备、多会话，App 重启自动重连。发现走两条通道：① 轮询本机回环端口探测 VM service（适用于关掉 auth code 的实例）；② 扫本机进程命令行里的 `dart development-service --vm-service-uri=http://127.0.0.1:<port>/<token>=/`，把 token 拼回 ws 地址再接入。第二条是 IDE 拉起 `flutter run` 时的主要路径：这类实例默认开 auth code，裸探测只会拿到 403。
 
 手动/调试命令：
 

@@ -6,6 +6,11 @@
 //      VM service（DevTools 返回 HTML，adb/hdc 服务无此响应）；
 //   3. 用 isolates id 组合作为实例指纹，同一实例经多端口可达时按指纹去重，
 //      优先选有设备转发映射的端口（adb forward / hdc fport），使来源可读。
+//
+// 补充通道（第 4 条）：IDE 拉起的 flutter run 默认开 auth code，裸端口探测只会
+// 拿到 403，扫不到。flutter_tools 会起 `dart development-service
+// --vm-service-uri=http://127.0.0.1:<port>/<token>=/`，这条命令行是唯一能白拿到
+// token 的入口，解析后即可用带 token 的 ws 地址接入（见 [discoverProcessVmEndpoints]）。
 library;
 
 import 'dart:async';
@@ -160,12 +165,22 @@ class DiscoveredSession {
 Future<VmProbe?> probeVmService(
   int port, {
   Duration connectionTimeout = const Duration(milliseconds: 800),
+}) =>
+    probeVmServiceAt(
+      Uri.parse('http://127.0.0.1:$port/getVM'),
+      connectionTimeout: connectionTimeout,
+    );
+
+/// 带鉴权的探测：IDE 拉起的实例在路径里带 auth code，裸端口探测只会拿到 403。
+Future<VmProbe?> probeVmServiceAt(
+  Uri getVmUri, {
+  Duration connectionTimeout = const Duration(milliseconds: 800),
 }) async {
   HttpClient? client;
   try {
     client = HttpClient()..connectionTimeout = connectionTimeout;
     final request = await client
-        .getUrl(Uri.parse('http://127.0.0.1:$port/getVM'))
+        .getUrl(getVmUri)
         .timeout(const Duration(seconds: 2));
     final response =
         await request.close().timeout(const Duration(seconds: 2));
@@ -195,6 +210,133 @@ Future<VmProbe?> probeVmService(
   } finally {
     client?.close(force: true);
   }
+}
+
+/// 从进程命令行里解析出的 VM service 端点（IDE 拉起的实例才有 token）。
+class ProcessVmEndpoint {
+  const ProcessVmEndpoint({
+    required this.port,
+    required this.getVmUri,
+    required this.wsUrl,
+  });
+
+  /// 本机（转发后）端口。
+  final int port;
+
+  /// 带 token 的探测地址（`GET <getVmUri>`）。
+  final Uri getVmUri;
+
+  /// 可直接接入的 WebSocket 地址（带 token）。
+  final String wsUrl;
+}
+
+/// 从一行命令行里解析 VM service 端点。
+///
+/// 认两种写法：
+///   - `--vm-service-uri=http://127.0.0.1:<port>/<token>=/`（flutter_tools 拉起 dds 时的参数）；
+///   - 命令行里直接出现的 `ws://127.0.0.1:<port>/<token>=/ws`。
+/// 只认回环地址：设备侧地址本机连不上。
+List<ProcessVmEndpoint> parseVmServiceEndpoints(String commandLine) {
+  final out = <int, ProcessVmEndpoint>{};
+  final httpRe = RegExp(r'--vm-service-uri=(\S+)', caseSensitive: false);
+  for (final m in httpRe.allMatches(commandLine)) {
+    final endpoint = vmEndpointFromHttpUrl(_trimTrailingPunctuation(m.group(1)!));
+    if (endpoint != null) out.putIfAbsent(endpoint.port, () => endpoint);
+  }
+  final wsRe = RegExp(r'ws://(?:127\.0\.0\.1|localhost):(\d+)(/\S*)?');
+  for (final m in wsRe.allMatches(commandLine)) {
+    final port = int.tryParse(m.group(1)!);
+    if (port == null || port <= 0) continue;
+    // 路径以 /ws 结尾的，去掉尾部的 ws 就是 token 段。
+    var path = _trimTrailingPunctuation(m.group(2) ?? '');
+    if (path.endsWith('/ws')) path = path.substring(0, path.length - 3);
+    final token = path.replaceAll('/', '');
+    out.putIfAbsent(
+      port,
+      () => ProcessVmEndpoint(
+        port: port,
+        getVmUri: Uri.parse('${_httpBase(port, token)}getVM'),
+        wsUrl: 'ws://127.0.0.1:$port/${_wsPath(token)}',
+      ),
+    );
+  }
+  return out.values.toList()..sort((a, b) => a.port.compareTo(b.port));
+}
+
+/// 去掉命令行参数尾部粘着的引号 / 括号 / 逗号（`...="http://.../"` 这类写法）。
+String _trimTrailingPunctuation(String raw) {
+  const trims = <int>[0x22, 0x27, 0x29, 0x2C]; // " ' ) ,
+  var out = raw.trim();
+  while (out.isNotEmpty && trims.contains(out.codeUnitAt(out.length - 1))) {
+    out = out.substring(0, out.length - 1);
+  }
+  return out;
+}
+
+/// 把 `http://127.0.0.1:<port>/<token>=/` 转成端点；非回环地址返回 null。
+ProcessVmEndpoint? vmEndpointFromHttpUrl(String raw) {
+  final uri = Uri.tryParse(raw.trim());
+  if (uri == null || !uri.hasPort) return null;
+  final host = uri.host;
+  if (host != '127.0.0.1' && host != 'localhost' && host != '::1') return null;
+  final port = uri.port;
+  if (port <= 0) return null;
+  final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  // `http://127.0.0.1:8080/getVM` 这类是探测地址，不是 token。
+  final token = (segments.isNotEmpty && segments.first != 'getVM')
+      ? segments.first
+      : '';
+  return ProcessVmEndpoint(
+    port: port,
+    getVmUri: Uri.parse('${_httpBase(port, token)}getVM'),
+    wsUrl: 'ws://127.0.0.1:$port/${_wsPath(token)}',
+  );
+}
+
+String _httpBase(int port, String token) =>
+    token.isEmpty ? 'http://127.0.0.1:$port/' : 'http://127.0.0.1:$port/$token/';
+
+String _wsPath(String token) => token.isEmpty ? 'ws' : '$token/ws';
+
+/// 扫本机进程命令行，找 IDE 拉起的 flutter run 的 VM service 地址。
+///
+/// 不扫就发现不了：这类实例带 auth code，裸 `GET /getVM` 恒返 403。
+Future<List<ProcessVmEndpoint>> discoverProcessVmEndpoints({
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final table = await _processCommandLines(timeout: timeout);
+  if (table.isEmpty) return const <ProcessVmEndpoint>[];
+  final out = <int, ProcessVmEndpoint>{};
+  for (final line in table.split('\n')) {
+    final cmd = line.trim();
+    if (cmd.isEmpty) continue;
+    // 先做一次廉价过滤，避免对每行都跑正则。
+    if (!cmd.contains('vm-service-uri') &&
+        !cmd.contains('ws://127.0.0.1') &&
+        !cmd.contains('ws://localhost')) {
+      continue;
+    }
+    for (final e in parseVmServiceEndpoints(cmd)) {
+      out.putIfAbsent(e.port, () => e);
+    }
+  }
+  final list = out.values.toList()..sort((a, b) => a.port.compareTo(b.port));
+  return list;
+}
+
+Future<String> _processCommandLines({required Duration timeout}) async {
+  if (Platform.isWindows) {
+    return runToolText(
+      'powershell',
+      <String>[
+        '-NoProfile',
+        '-Command',
+        r'Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }',
+      ],
+      timeout: timeout,
+    );
+  }
+  return runToolText('ps', const <String>['-Ao', 'command='], timeout: timeout);
 }
 
 /// 列出本机回环地址上的 TCP 监听端口。
@@ -348,7 +490,8 @@ Future<List<DiscoveredSession>> discoverLocalVmServices({
   probes.forEach((port, probe) {
     byFingerprint.putIfAbsent(probe.fingerprint, () => <int>[]).add(port);
   });
-  final found = <DiscoveredSession>[];
+  final found = <String, DiscoveredSession>{};
+  // 通道 1：端口扫描（无 token）。只对关掉 auth code 的实例有效。
   for (final entry in byFingerprint.entries) {
     if (knownFingerprints.contains(entry.key)) continue;
     final candidates = entry.value.toList()
@@ -360,7 +503,7 @@ Future<List<DiscoveredSession>> discoverLocalVmServices({
       });
     final port = candidates.first;
     final forward = forwards[port];
-    found.add(DiscoveredSession(
+    found[entry.key] = DiscoveredSession(
       wsUrl: 'ws://127.0.0.1:$port/ws',
       port: port,
       source: forward == null
@@ -369,10 +512,55 @@ Future<List<DiscoveredSession>> discoverLocalVmServices({
       fingerprint: entry.key,
       name: probes[port]?.name ?? '',
       remotePort: forward?.remote,
-    ));
+    );
   }
-  found.sort((a, b) => a.port.compareTo(b.port));
-  return found;
+  // 通道 2：进程命令行（带 token）。IDE 拉起的 flutter run 只能走这条。
+  //
+  // 同一实例若通道 1 已命中，保留通道 1 的地址：那种情况通常扫到的是 dds 自己
+  // 的监听端口，dds 会替多个客户端复用 streamListen（直接连 VM service 时，
+  // DDS 已订阅的 Logging/Stdout 会回 103/105）。通道 2 是 dds 缺席时的兜底。
+  for (final endpoint in await discoverProcessVmEndpoints()) {
+    if (skipPorts.contains(endpoint.port)) continue;
+    final probe = await probeVmServiceAt(endpoint.getVmUri);
+    if (probe == null) continue;
+    if (knownFingerprints.contains(probe.fingerprint)) continue;
+    if (found.containsKey(probe.fingerprint)) continue;
+    final forward = forwards[endpoint.port];
+    found[probe.fingerprint] = DiscoveredSession(
+      wsUrl: endpoint.wsUrl,
+      port: endpoint.port,
+      source: forward == null
+          ? 'port:${endpoint.port}'
+          : '${forward.device}#port:${endpoint.port}',
+      fingerprint: probe.fingerprint,
+      name: probe.name,
+      remotePort: forward?.remote,
+    );
+  }
+  final result = found.values.toList()
+    ..sort((a, b) => a.port.compareTo(b.port));
+  return result;
+}
+
+/// 合并「本轮新发现」与「已接入且仍存活」的实例。
+///
+/// 下一轮扫描会按 `knownFingerprints` 跳过已接入的实例，若调用方只用本轮
+/// 扫描结果作为「当前会话列表」，接入成功的会话会在下一轮（~5s）从列表里
+/// 消失——实测就是「闪一下就没了」。所以这两部分必须合并。
+List<DiscoveredSession> mergeDiscoveredSessions({
+  required Iterable<DiscoveredSession> discovered,
+  required Iterable<DiscoveredSession> alive,
+}) {
+  final byFingerprint = <String, DiscoveredSession>{};
+  // 本轮新发现的优先（端口/来源可能是最新的）。
+  for (final d in discovered) {
+    byFingerprint[d.fingerprint] = d;
+  }
+  for (final d in alive) {
+    byFingerprint.putIfAbsent(d.fingerprint, () => d);
+  }
+  return byFingerprint.values.toList()
+    ..sort((a, b) => a.port.compareTo(b.port));
 }
 
 // ---------------------------------------------------------------------------

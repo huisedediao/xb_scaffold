@@ -1184,6 +1184,12 @@ List<DiscoveredAgent> _agents = <DiscoveredAgent>[];
 /// 本轮 VM 探测结果：与 [_agents] 合并后输出 transport / caps。
 List<DiscoveredSession> _lastDiscovered = <DiscoveredSession>[];
 
+/// 已接入实例的发现信息（wsUrl → 会话元数据）。
+///
+/// 下一轮端口扫描会跳过已接入实例，靠它把「仍在线的会话」补回列表。
+final Map<String, DiscoveredSession> _sessionInfo =
+    <String, DiscoveredSession>{};
+
 /// 日志时间前缀（daemon 日志无时间戳曾严重阻碍排障：无法对齐「重启→重
 /// 放」时间线）。
 String get _logTs => DateTime.now().toIso8601String().substring(11, 19);
@@ -1455,10 +1461,22 @@ Future<void> _adoptLaunchRecords(String ide) async {
       return port > 0 && (Uri.tryParse(s.wsUrl)?.port ?? 0) == port;
     });
     if (exists) continue;
-    final session = _Session(wsUrl, '${record.owner}:${record.pid}', ide);
+    final source = '${record.owner}:${record.pid}';
+    final session = _Session(wsUrl, source, ide);
     _sessions[wsUrl] = session;
     await session.connect();
-    if (!session.alive) _sessions.remove(wsUrl);
+    if (!session.alive) {
+      _sessions.remove(wsUrl);
+      continue;
+    }
+    // 启动记录不在扫描结果里，自己补一条，否则会话列表里看不到（详见 _poll）。
+    _sessionInfo[wsUrl] = DiscoveredSession(
+      wsUrl: wsUrl,
+      port: port,
+      source: source,
+      fingerprint: 'ws:$wsUrl',
+      name: '',
+    );
   }
 }
 
@@ -1473,7 +1491,6 @@ Future<void> _poll(String ide) async {
     final discovered = await discoverLocalVmServices(
       knownFingerprints: _knownFingerprints,
     );
-    _lastDiscovered = discovered;
 
     // 直连通道（P0 先只做发现与展示，不改跳转链路）。
     await _pollAgents();
@@ -1494,6 +1511,7 @@ Future<void> _poll(String ide) async {
       if (session.alive) {
         // 只有接成功才记指纹；失败从会话表移除，下一轮重试。
         _knownFingerprints.add(s.fingerprint);
+        _sessionInfo[s.wsUrl] = s;
       } else {
         _sessions.remove(s.wsUrl);
       }
@@ -1502,7 +1520,17 @@ Future<void> _poll(String ide) async {
     final dead = _sessions.values.where((s) => !s.alive).toList();
     for (final session in dead) {
       _sessions.remove(session.wsUrl);
+      _sessionInfo.remove(session.wsUrl);
     }
+    // 会话列表 = 本轮新发现 + 已接入且仍存活。后一半不能省：下一轮扫描
+    // 会按 _knownFingerprints 跳进已接入的实例，只用扫描结果的话，接入
+    // 成功的会话在下一轮（~5s）就从列表里消失了。
+    _lastDiscovered = mergeDiscoveredSessions(
+      discovered: discovered,
+      alive: _sessionInfo.values.where(
+        (info) => _sessions[info.wsUrl]?.alive ?? false,
+      ),
+    );
   } catch (e) {
     print('[xbume-ide] 轮询异常: $e');
   } finally {

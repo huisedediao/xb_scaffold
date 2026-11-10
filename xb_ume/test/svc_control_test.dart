@@ -376,5 +376,20 @@ void main() {
       expect(win.contains('--fresh'), isTrue);
       expect(win.startsWith('exec '), isFalse);
     });
+
+    test('回收先 SIGTERM 走优雅退出，再 SIGKILL 兑底', () {
+      // SIGKILL 不触发 GUI 的优雅退出，它拉起的 hdc hilog / adb logcat /
+      // simctl log stream 会留成孤儿，攒几天就能把 hdc 连接占满。
+      final source =
+          File('bin/src/control/svc_control.dart').readAsStringSync();
+      final start = source.indexOf('Future<List<int>> killOwnToolProcesses(');
+      expect(start, greaterThanOrEqualTo(0), reason: '未找到 killOwnToolProcesses');
+      final end = source.indexOf('\n}\n', start);
+      final body = source.substring(start, end);
+      final term = body.indexOf('force: false');
+      final hard = body.indexOf('force: true');
+      expect(term, greaterThanOrEqualTo(0), reason: '先发 SIGTERM');
+      expect(hard, greaterThan(term), reason: 'SIGKILL 只能做超时兑底');
+    });
   });
 }
