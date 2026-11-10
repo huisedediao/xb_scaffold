@@ -215,7 +215,9 @@ McpTool _appLaunchTool() => McpTool(
                 : '；参数 ${r.effectiveArgs.join(' ')}';
             return McpToolResult.text(
               sessionId == null
-                  ? '$action（pid ${r.pid}），未拿到 VM service；日志 ${r.logPath}$cfgNote$argNote$pre$extra'
+                  ? '$action（pid ${r.pid}），'
+                      '${r.vmless ? 'release 运行没有 VM 调试通道（若包内开了直连 Agent，用 xbume_sessions 找 adb:/hdc: 会话）' : '未拿到 VM service'}'
+                      '；日志 ${r.logPath}$cfgNote$argNote$pre$extra'
                   : '$action（pid ${r.pid}）并通过临时会话 $sessionId 接入'
                       '${r.reused ? '（未重装包）' : ''}$cfgNote$argNote$pre$extra',
               structured: <String, Object?>{
@@ -224,6 +226,7 @@ McpTool _appLaunchTool() => McpTool(
                 'pid': r.pid,
                 'deviceId': deviceId,
                 'wsUri': r.wsUri,
+                'vmless': r.vmless,
                 'sessionId': sessionId,
                 'logPath': r.logPath,
                 'reused': r.reused,

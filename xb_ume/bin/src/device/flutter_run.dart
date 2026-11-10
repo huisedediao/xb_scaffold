@@ -48,6 +48,14 @@ String? parseFlutterRunDevice(String commandLine) {
   return null;
 }
 
+/// 参数里是否带 `--release`。
+///
+/// release 构建不暴露 VM service（启动日志里不会有 `A Dart VM Service …`），
+/// 因此「等 VM 地址」是白等：等满 timeout 后进程还会留着，记录里 wsUri 永远
+/// 是空，下次启动就被当成「正在启动」而卡死。纯函数便于单测。
+bool isReleaseRunArgs(List<String> args) =>
+    args.any((a) => a.trim() == '--release');
+
 /// 路径比较用规范形式：能解析符号链接就解析（macOS 的 `/var` → `/private/var`）。
 String resolvePathForCompare(String path) {
   String resolved;
@@ -307,6 +315,7 @@ class LaunchResult {
     this.preRunLines = const <String>[],
     this.config,
     this.effectiveArgs = const <String>[],
+    this.vmless = false,
     this.note,
   });
 
@@ -339,6 +348,9 @@ class LaunchResult {
 
   /// 给人看的额外说明（如「hdc 拒连，已自动重试一次」）。
   final String? note;
+
+  /// true 表示这是 release 运行：没有 VM 通道，`wsUri` 一定是 null。
+  final bool vmless;
 }
 
 /// 正在运行的 flutter run 句柄。
@@ -356,6 +368,7 @@ class LaunchHandle {
     this.fifo,
     this.adopted = false,
     this.owner = 'mcp',
+    this.vmless = false,
   });
 
   final int pid;
@@ -386,6 +399,9 @@ class LaunchHandle {
 
   /// 拉起方：mcp / gui。仅用于展示。
   final String owner;
+
+  /// true 表示这是 release 运行：没有 VM 通道（见 [isReleaseRunArgs]）。
+  bool vmless;
 
   /// 该会话可用的热重载通道（与 `xbume_sessions` 的标记同源）。
   ReloadChannel get reloadChannel => reloadChannelOf(this);
@@ -609,9 +625,13 @@ class FlutterRunLauncher {
   ///
   /// 复用优先级（`force: false` 时）：
   ///   1. 本服务 / GUI 已拉起且有 VM 地址的同设备同目录同 target 进程 → 直接复用；
-  ///   2. 正在启动中的同类进程 → 报错让调用方稍后重试（避免并发重装包）；
-  ///   3. 外部（IDE 拉起）的同设备同目录进程 → 报错，除非 `force: true`。
+  ///   2. 正在启动中的同类进程（暂时没 VM 地址）→ 报错让调用方稍后重试；
+  ///   3. 本服务拉起的 **release** 会话（`vmless`，永远没有 VM 地址）→ 先停掉再重拉；
+  ///   4. 外部（IDE 拉起）的同设备同目录进程 → 报错，除非 `force: true`。
   /// `force: true` 会先停掉自己拉起的同类会话，再重新拉起。
+  ///
+  /// 参数里带 `--release` 时自动按 `waitVm: false` 处理：release 不暴露 VM service，
+  /// 等下去只会自等一场并留下一条「正在启动」的僵尸记录。
   ///
   /// 遇到 hdc 的一次性拒连（[isTransientHdcFailure]）会自动重试一次：
   /// 编译与装包已经完成，第二次是增量构建，比让用户再点一次（还可能再
@@ -722,6 +742,9 @@ class FlutterRunLauncher {
     String? platformKey;
     String? effectiveTarget;
     var effectiveArgs = const <String>[];
+    // release 运行没有 VM 通道：与「还在等调试端口」必须区分开。
+    var vmless = false;
+    var wantVm = waitVm;
     late final Process proc;
     late final LaunchHandle handle;
     try {
@@ -776,6 +799,10 @@ class FlutterRunLauncher {
         platform: platformKey,
         extraArgs: extraArgs,
       );
+      // release 构建不打 VM 地址：再等 timeout 也等不到，还会把进程留成一条
+      // wsUri 永远为空的记录（下次启动被当成「正在启动」）。直接当成「不等」。
+      vmless = isReleaseRunArgs(effectiveArgs);
+      wantVm = waitVm && !vmless;
       // 记住上次选择：GUI 重开、AI 下一次调用都按它回填。
       if (configName.isNotEmpty || extraArgs.isNotEmpty) {
         rememberLastRun(workdir, config: configName, args: extraArgs);
@@ -805,6 +832,13 @@ class FlutterRunLauncher {
                 ? existing.recent.sublist(existing.recent.length - 20).join('\n')
                 : existing.recent.join('\n'),
           );
+        } else if (existing.vmless) {
+          // release 会话本来就没有 VM 地址，而且 app 被杀后 flutter run 不会退出：
+          // 无法判断 app 是否还在运行，所以「再次启动」就等于「停掉旧的 + 重装重跑」
+          // （与 force 同义），而不是把它误报成「正在启动或等待调试端口」。
+          await stop(existing.pid);
+          notes.add('已停掉旧的 release 会话 pid ${existing.pid}'
+              '（release 模式判断不了 app 是否还在运行）');
         } else {
           throw DeviceCommandError(
             'flutter-run',
@@ -923,6 +957,7 @@ class FlutterRunLauncher {
         process: proc,
         fifo: fifo,
         owner: owner,
+        vmless: vmless,
       );
       _live[proc.pid] = handle;
       _writeRecord(handle);
@@ -982,7 +1017,7 @@ class FlutterRunLauncher {
     // 进程退出后清清单与 FIFO，避免下次认领到死进程。
     unawaited(proc.exitCode.then((_) => _cleanupExited(proc.pid)));
 
-    if (!waitVm) {
+    if (!wantVm) {
       // 只确认进程没有立刻退出。
       final early = await Future.any<int?>(<Future<int?>>[
         exited,
@@ -1004,6 +1039,7 @@ class FlutterRunLauncher {
         effectiveArgs: effectiveArgs,
         preRunCommands: preRunCommands,
         preRunLines: preRunLines,
+        vmless: vmless,
         note: notes.isEmpty ? null : notes.join('；'),
       );
     }
@@ -1070,6 +1106,7 @@ class FlutterRunLauncher {
         fifo: r.fifo,
         adopted: true,
         owner: r.owner,
+        vmless: r.vmless,
       )..wsUri = r.wsUri;
       _live[r.pid] = h;
       adopted.add(h);
@@ -1090,6 +1127,7 @@ class FlutterRunLauncher {
       logPath: h.logPath,
       fifo: h.fifo,
       owner: h.owner,
+      vmless: h.vmless,
     ), dir: recordsDir);
   }
   

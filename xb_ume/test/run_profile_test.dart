@@ -580,5 +580,46 @@ void main() {
       expect(p.configNamed(null), isNull);
       expect(p.configNamed(''), isNull);
     });
+
+    test('追加参数历史：原文去重置顶，最多 kRecentArgsLimit 条', () {
+      final project = '${tmp.path}/app';
+      Directory(project).createSync();
+      rememberLastRun(project,
+          args: <String>['--dart-define=A=1'],
+          argsText: '--dart-define=A=1',
+          filePath: home);
+      // 原文整行保存（引号不会被分词吃掉）
+      rememberLastRun(project,
+          args: <String>['--flavor', 'cn'],
+          argsText: '--flavor cn --dart-define="a b"',
+          filePath: home);
+      // 重复的原文置顶，不新增一条
+      rememberLastRun(project,
+          args: <String>['--dart-define=A=1'],
+          argsText: '--dart-define=A=1',
+          filePath: home);
+      expect(loadRecentArgs(project, filePath: home), <String>[
+        '--dart-define=A=1',
+        '--flavor cn --dart-define="a b"',
+      ]);
+      for (var i = 0; i < 12; i++) {
+        rememberLastRun(project, argsText: '--x=i$i', filePath: home);
+      }
+      final list = loadRecentArgs(project, filePath: home);
+      expect(list, hasLength(kRecentArgsLimit));
+      expect(list.first, '--x=i11');
+    });
+
+    test('追加参数历史：按项目隔离；清 last 不清历史', () {
+      final a = '${tmp.path}/a';
+      final b = '${tmp.path}/b';
+      Directory(a).createSync();
+      Directory(b).createSync();
+      rememberLastRun(a, argsText: '--dart-define=K=1', filePath: home);
+      expect(loadRecentArgs(b, filePath: home), isEmpty);
+      // 只清 last（不传参数）：历史仍然保留
+      rememberLastRun(a, filePath: home);
+      expect(loadRecentArgs(a, filePath: home), <String>['--dart-define=K=1']);
+    });
   });
 }

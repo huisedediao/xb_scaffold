@@ -37,6 +37,28 @@ class _ThrowingLauncher extends FlutterRunLauncher {
       throw error;
 }
 
+/// release 启动的 launcher：回一个 `vmless` 结果（没 VM 通道但启动成功）。
+class _VmlessLauncher extends FlutterRunLauncher {
+  _VmlessLauncher(this.result);
+
+  final LaunchResult result;
+
+  @override
+  Future<LaunchResult> launch({
+    required String device,
+    String? target,
+    String? cwd,
+    String? platform,
+    String? config,
+    List<String> extraArgs = const <String>[],
+    bool waitVm = true,
+    bool force = false,
+    String owner = 'mcp',
+    Duration timeout = const Duration(seconds: 180),
+  }) async =>
+      result;
+}
+
 void main() {
   group('readPubspecName', () {
     test('取 name 行，忽略注释与引号', () {
@@ -630,6 +652,47 @@ class DoorLockHomePage extends StatefulWidget {
       expect(lines.join('\n'), contains('Connect server failed'));
       expect(lines.join('\n'), contains('Error launching application'));
       expect(hub.status()['message'], contains('启动失败'));
+    });
+  });
+
+  group('DebugHub（release 启动）', () {
+    test('vmless 结果算启动成功（不报没拿到 VM），日志接到运行输出', () async {
+      final dir = Directory.systemTemp.createTempSync('xbd_hub_vmless_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final log = File('${dir.path}/run.log')
+        ..writeAsStringSync('Installing build/app/outputs/flutter-apk/app-cn-release.apk...\n'
+            'I/flutter: app started\n');
+
+      final pushed = <Map<String, Object?>>[];
+      final hub = DebugHub(
+        push: pushed.add,
+        launcher: _VmlessLauncher(LaunchResult(
+          pid: 4242,
+          device: 'macos',
+          logPath: log.path,
+          vmless: true,
+          effectiveArgs: const <String>['--release'],
+        )),
+      );
+      addTearDown(hub.dispose);
+
+      final r = await hub.handle(
+          'start', <String, Object?>{'cwd': dir.path, 'device': 'macos'});
+      expect(r['ok'], isTrue);
+      expect(r['vmless'], isTrue);
+      expect(r['pid'], 4242);
+      final msg = '${hub.status()['message']}';
+      expect(msg, contains('release'));
+      expect(msg, contains('无 VM 调试通道'));
+      expect(msg, isNot(contains('没拿到 VM service')));
+
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      final lines = <String>[
+        for (final m in pushed)
+          if (m['type'] == 'debugOutput')
+            ...(m['lines'] as List).cast<String>(),
+      ];
+      expect(lines.join('\n'), contains('app started'));
     });
   });
 }

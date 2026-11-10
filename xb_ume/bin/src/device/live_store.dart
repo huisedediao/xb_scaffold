@@ -33,6 +33,7 @@ class LaunchRecord {
     this.logPath,
     this.fifo,
     this.owner = 'mcp',
+    this.vmless = false,
   });
 
   final int pid;
@@ -57,6 +58,11 @@ class LaunchRecord {
   /// 拉起方：mcp / gui。只用于展示与排查，不影响认领。
   final String owner;
 
+  /// true 表示这条会话是 release 运行：**永远不会有 VM service 地址**。
+  /// 与「还在等调试端口」区分开，否则下次启动会把一条可复用的会话误报成
+  /// 「正在启动」而卡死（release 也不会因为 app 被杀就退出）。
+  final bool vmless;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'pid': pid,
         'device': device,
@@ -69,6 +75,7 @@ class LaunchRecord {
         'fifo': fifo,
         'startedAt': startedAt.toIso8601String(),
         'owner': owner,
+        'vmless': vmless,
       };
 
   static LaunchRecord? fromJson(Map<String, Object?> json) {
@@ -90,6 +97,8 @@ class LaunchRecord {
       logPath: json['logPath']?.toString(),
       fifo: json['fifo']?.toString(),
       owner: json['owner']?.toString() ?? 'mcp',
+      // 老记录没有这个字段：按「等调试端口」处理（与实际语义一致）。
+      vmless: json['vmless'] == true,
     );
   }
 }

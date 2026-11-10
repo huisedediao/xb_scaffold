@@ -469,6 +469,9 @@ List<String> _stringList(Object? raw) {
 /// 运行配置文件路径（与断点落盘同目录）。
 String runProfileFilePath() => '${xbUmeHome()}/debug/run_profiles.json';
 
+/// 「追加参数」历史保留条数（按项目根，最新在前）。
+const int kRecentArgsLimit = 8;
+
 /// 读某个项目的运行配置；未配置 / 文件损坏 / 项目不匹配都返回 null。
 ///
 /// 「只记住了上次选择（last）、没有任何实质配置」也算未配置，保持启动链路原行为。
@@ -569,15 +572,28 @@ bool deleteRunConfig(
 }
 
 /// 记住「上次选的配置 + 额外参数」；两者都空则清掉 last。
+///
+/// 「追加参数」同时记一条历史（[kRecentArgsLimit] 条上限，去重置顶），供 GUI
+/// 输入框下拉回填。历史存的是 [argsText] 原文（整行，保留引号），没传就退回
+/// 分词结果拼回去。
 void rememberLastRun(
   String projectRoot, {
   String? config,
   List<String> args = const <String>[],
+  String? argsText,
   String? filePath,
 }) {
   if (projectRoot.trim().isEmpty) return;
   final name = (config ?? '').trim();
   _mutateProject(projectRoot, filePath, (m) {
+    final shown = (argsText ?? args.join(' ')).trim();
+    if (shown.isNotEmpty) {
+      final kept = <String>[shown];
+      for (final e in _stringList(m['recentArgs'])) {
+        if (e != shown && kept.length < kRecentArgsLimit) kept.add(e);
+      }
+      m['recentArgs'] = kept;
+    }
     if (name.isEmpty && args.isEmpty) {
       m.remove('last');
       return;
@@ -587,6 +603,27 @@ void rememberLastRun(
       args: args,
     ).toJson();
   });
+}
+
+/// 某项目最近用过的「追加参数」原文（最新在前）；没有/读不到都返回空表。
+List<String> loadRecentArgs(String projectRoot, {String? filePath}) {
+  if (projectRoot.trim().isEmpty) return const <String>[];
+  final f = File(filePath ?? runProfileFilePath());
+  if (!f.existsSync()) return const <String>[];
+  Object? raw;
+  try {
+    raw = jsonDecode(f.readAsStringSync());
+  } catch (_) {
+    return const <String>[]; // 坏 JSON 当没有历史，不影响启动。
+  }
+  if (raw is! Map) return const <String>[];
+  final projects = raw['projects'];
+  if (projects is! Map) return const <String>[];
+  final key = _findProjectKey(projects, projectRoot);
+  if (key == null) return const <String>[];
+  final node = projects[key];
+  if (node is! Map) return const <String>[];
+  return _stringList(node['recentArgs']);
 }
 
 List<Object?> _rawConfigs(Map<String, Object?> project) {

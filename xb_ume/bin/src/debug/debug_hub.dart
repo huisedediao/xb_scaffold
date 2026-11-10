@@ -579,6 +579,7 @@ class DebugHub {
         'path': path,
         'exists': File(path).existsSync(),
         'configs': const <Object?>[],
+        'recentArgs': const <String>[],
       };
     }
     final p = loadProjectProfile(dir, filePath: _profilePath);
@@ -590,6 +591,8 @@ class DebugHub {
       'configs': <Object?>[
         for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
       ],
+      // 「追加参数」历史（最近用过的，最新在前）：GUI 输入框下拉候选项。
+      'recentArgs': loadRecentArgs(dir, filePath: _profilePath),
       if (p?.last != null) 'last': p!.last!.toJson(),
     };
   }
@@ -623,10 +626,13 @@ class DebugHub {
   Map<String, Object?> _rememberLast(Map<String, Object?> a) {
     final dir = _str(a['dir']) ?? _projectRoot;
     if (dir == null) throw DebugException('缺少项目目录 dir：先在调试页选项目目录');
+    // GUI 传的是输入框整行原文（保留引号）；MCP 传数组，两种都接。
+    final raw = a['args'];
     rememberLastRun(
       dir,
       config: _str(a['config']),
       args: _argsOf(a),
+      argsText: raw is String ? raw : _str(a['argsText']),
       filePath: _profilePath,
     );
     return _configsOf(dir);
@@ -638,6 +644,7 @@ class DebugHub {
       'configs': <Object?>[
         for (final c in p?.configs ?? const <RunConfig>[]) c.toJson(),
       ],
+      'recentArgs': loadRecentArgs(dir, filePath: _profilePath),
       if (p?.last != null) 'last': p!.last!.toJson(),
     };
   }
@@ -747,6 +754,25 @@ class DebugHub {
       );
       _reused = r.reused;
       final ws = _str(r.wsUri);
+      if (ws == null && r.vmless) {
+        // release：本来就没有 VM 通道（没东西可「接入」），启动本身是成功的。
+        // 把日志接到「运行输出」，调试改走会话列表里的直连 Agent。
+        _startFollow(r.logPath, fromStart: true);
+        _message =
+            '${r.reused ? '复用' : '已启动'} release 会话 pid ${r.pid}（$device）：'
+            '无 VM 调试通道，日志见右侧；要调试请接入直连 Agent 会话'
+            '${r.note == null ? '' : '；${r.note}'}';
+        return <String, Object?>{
+          'pid': r.pid,
+          'reused': r.reused,
+          'vmless': true,
+          'platform': platform,
+          'target': r.target,
+          'config': r.config,
+          'args': r.effectiveArgs,
+          'preRun': r.preRunCommands,
+        };
+      }
       if (ws == null) {
         throw DebugException('会话已启动（pid ${r.pid}）但没拿到 VM service 地址，'
             '编译可能仍在进行：稍后点「接入」或重新点启动（会自动复用）。');

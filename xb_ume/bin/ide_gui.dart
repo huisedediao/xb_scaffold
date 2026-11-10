@@ -13304,8 +13304,9 @@ const String guiHtml = r'''
           <button onclick="dbgConfigEdit()" style="flex:0 0 auto" title="新建一条配置，或编辑当前选中的配置（存在服务端，重启不丢）">新建/编辑</button>
           <button onclick="dbgConfigDelete()" style="flex:0 0 auto" title="删除当前选中的配置">删除</button>
           <button onclick="dbgConfigImport(this)" style="flex:0 0 auto" title="把项目 .vscode/launch.json（含 tasks.json 里的预启动任务）导成普通配置；导入后运行时不读它">导入 launch.json</button>
-          <label class="chk" style="display:flex;align-items:center;flex:0 1 300px;min-width:200px" title="只对本次启动生效的额外参数（不写进配置）；回车/失焦即记住，下次自动带上">追加参数
-            <input id="dbg-args" placeholder="--dart-define=K=V" style="flex:1;min-width:0;width:0;margin-left:6px;font-size:12px" oninput="dbgArgsDirty()" onchange="dbgArgsChanged()">
+          <label class="chk" style="display:flex;align-items:center;flex:0 1 300px;min-width:200px" title="只对本次启动生效的额外参数（不写进配置）；回车/失焦即记住，下次自动带上；下拉可挑本项目用过的历史">追加参数
+            <input id="dbg-args" list="dbg-args-list" placeholder="--dart-define=K=V" style="flex:1;min-width:0;width:0;margin-left:6px;font-size:12px" oninput="dbgArgsDirty()" onchange="dbgArgsChanged()">
+            <datalist id="dbg-args-list"></datalist>
           </label>
           <span id="dbg-profile" class="muted" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未配置</span>
           <button onclick="dbgProfileRefresh(this)" style="flex:0 0 auto">刷新</button>
@@ -19471,6 +19472,18 @@ function dbgCfgRender(d){
   if (args && !args.dataset.dirty) {
     args.value = (dbgCfgLast && (dbgCfgLast.args || []).join(' ')) || '';
   }
+  // 「追加参数」历史（本项目最近用过的，最新在前）：点开输入框即可挑一条回填。
+  // 用 DOM 赋值而不是拼 HTML：参数里可能带引号，属性拼接会坏。
+  var dl = dbgEl('dbg-args-list');
+  if (dl) {
+    dl.textContent = '';
+    ((d && d.recentArgs) || []).forEach(function(t){
+      if (!t) return;
+      var o = document.createElement('option');
+      o.value = t;
+      dl.appendChild(o);
+    });
+  }
 }
 
 // 切下拉：回填该配置的入口/设备（不覆盖用户已填的），并记住选择。
@@ -19508,6 +19521,8 @@ function dbgRememberLast(toast){
   }).then(function(d){
     if (d && d.ok) {
       dbgCfgLast = d.last || null;
+      // 先重画（历史候选项即时出现）；此刻 dirty 还在，输入框里的原文不会被回填覆盖。
+      dbgCfgRender(d);
       var a = dbgEl('dbg-args');
       if (a) a.dataset.dirty = '';
       if (toast) dbgToast('已记住：下次启动自动带上');

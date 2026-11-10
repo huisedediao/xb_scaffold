@@ -53,6 +53,21 @@ void main() {
     });
   });
 
+  group('isReleaseRunArgs', () {
+    test('认 --release（含两侧空白），不误伤 --profile / --flavor', () {
+      expect(isReleaseRunArgs(<String>['--release']), isTrue);
+      expect(
+        isReleaseRunArgs(<String>['--flavor', 'cn', ' --release ']),
+        isTrue,
+      );
+      expect(isReleaseRunArgs(<String>['--profile']), isFalse);
+      expect(isReleaseRunArgs(<String>['--flavor', 'cn']), isFalse);
+      expect(isReleaseRunArgs(const <String>[]), isFalse);
+      // 只认整参数：--release-notes 之类不能被当 release。
+      expect(isReleaseRunArgs(<String>['--release-notes']), isFalse);
+    });
+  });
+
   group('LaunchRecord 序列化', () {
     test('toJson → fromJson 字段完整保留', () {
       final started = DateTime.parse('2026-10-28T10:00:00.000');
@@ -77,6 +92,20 @@ void main() {
       expect(back.logPath, r.logPath);
       expect(back.fifo, r.fifo);
       expect(back.owner, 'gui');
+    });
+
+    test('vmless 能原样转回；老记录（没这个字段）按 false', () {
+      LaunchRecord make({bool vmless = false}) => LaunchRecord(
+            pid: 7,
+            device: '26KUT23C26001579',
+            cwd: '/tmp/proj',
+            startedAt: DateTime.parse('2026-11-10T09:52:57.000'),
+            vmless: vmless,
+          );
+      expect(LaunchRecord.fromJson(make(vmless: true).toJson())!.vmless, isTrue);
+      expect(make().toJson()['vmless'], isFalse);
+      final legacy = make().toJson()..remove('vmless');
+      expect(LaunchRecord.fromJson(legacy)!.vmless, isFalse);
     });
 
     test('缺 pid / device / cwd 的记录视为坏数据', () {

@@ -805,6 +805,7 @@ MCP 服务能做的事不少，默认值按「最小可用」设计：
 | `xbume_hot_reload` 报「没有可用的热重载通道」 | 会话来自外部 IDE/终端（拿不到句柄），或 Windows 上认领来的进程（没有 SIGUSR）。先 `xbume_session_check` 看 `caps.reloadChannel`：`none` 就不要再试；用 `xbume_app_launch(via: "flutter-run")` 重新拉起（同设备同目录已有本服务会话时会直接复用），或让拉起方自己按 `r`。 |
 | `xbume_hot_reload` 超时但在日志里看得到 `Reloaded …` | 极少数引擎沿用旧行为：`SIGUSR1` 已生效但没输出完成标记。调大 `timeoutMs`，或改用 `xbume_sessions` 看 pid 后用 `kill -USR1 <pid>` 手动验证（工具发信号前会校验该 pid 仍是 `flutter run`）。 |
 | `xbume_app_launch` 报「已有 flutter run 正在同一目录跑」 | 外部（IDE/终端）已经在这个设备的这个项目上跑着 `flutter run`；继续会重装包并顶掉它（IDE 会报 Lost connection）。只是要接入就 `xbume_sessions` → `xbume_use_session`（只读，无热重载），或在 GUI「调试」页「接入」；确认顶掉才传 `force: true`。 |
+| `xbume_app_launch` 跑 `--release` 后回「release 运行没有 VM 调试通道」 | 正常：release / AOT 不暴露 VM service，`wsUri` 恒为 null（`structured.vmless: true`）。日志看 `logPath`，操作与截图用包内直连 Agent 的会话（`xbume_sessions` 里 `adb:` / `hdc:` 开头那条，需 `XBUME_AGENT=1` 或宿主调 `XBUme.startAgentServer()`）；不会再因为「等不到调试端口」而卡住下次启动（命中的 release 会话会先停掉再重跑）。 |
 | `xbume_eval` 不在工具列表里 | 没开 `--allow-eval`（GUI 卡片上的「允许 eval」）；开启后要重启服务。 |
 | debug 组报「连不上 VM service」 | 会话必须是 debug 模式且端口可达；release / AOT 没有 VM service，做不了断点与单步。 |
 | `xbume_debug_attach` 接上了，但 `vars` 空空 | 进程没暂停；先 `xbume_debug_control`(`pause`) 或命中一个断点，再看 `xbume_debug_state` 确认 `paused: true`。 |
