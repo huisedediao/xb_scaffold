@@ -147,6 +147,14 @@ Future<void> _mainImpl(List<String> args) async {
     await install(args);
     return;
   }
+  // 桌面图标 / 脚本的「一键开启」：杀掉全部相关进程与服务，再用当前版本
+  // 把 daemon 与 GUI 全部重启（源码部署与分发版同一套语义）。
+  if (args.contains('--fresh')) {
+    final r = await freshStart();
+    print('[xbume-svc] ${r['message'] ?? r}');
+    if (r['ok'] != true) exitCode = 1;
+    return;
+  }
   if (args.contains('--uninstall')) {
     await uninstall();
     return;
@@ -203,15 +211,14 @@ Future<void> _mainImpl(List<String> args) async {
 // 分发版启动器
 // ---------------------------------------------------------------------------
 
-/// 双击入口：确保 daemon 在跑 → 起 GUI（GUI 自己打开浏览器）→ 退出。
+/// 双击入口：先把上一轮 GUI / 热键 / 常驻 MCP / daemon 全部回收（并摘掉旧
+/// launchd 注册），再用当前版本拉起 daemon 与 GUI（GUI 自己打开浏览器）。
 ///
-/// 不注册 LaunchAgent：测试人员机器上不该留开机自启（也不该出现卸不干净）；
-/// daemon 以 detached 子进程存活，GUI「服务」菜单仍可以停掉它。
+/// 不复用单实例语义：装完新客户端后双击必须看到新界面，而不是旧进程的页面。
 Future<void> runBundledApp() async {
-  final d = await startDaemon();
-  print('[xbume-app] ${d['message'] ?? d}');
-  final g = await spawnGuiDetached();
-  print('[xbume-app] ${g['message'] ?? g}');
+  final r = await freshStart();
+  print('[xbume-app] ${r['message'] ?? r}');
+  if (r['ok'] != true) exitCode = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,8 +509,9 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
         'if not defined _xb_np set "_xb_np=%no_proxy%"\r\n'
         'set "NO_PROXY=127.0.0.1,localhost,::1,%_xb_np%"\r\n'
         'set "no_proxy=%NO_PROXY%"\r\n'
-        'start "xbume-daemon" /min "$dartBin" "$installDir${sep}ide.dart" --ensure-daemon\r\n'
-        'start "xbume-gui" /min "$dartBin" "$installDir${sep}ide_gui.dart"\r\n',
+        // 双击 = 一键全新开启：先杀掉旧 GUI / 热键 / 常驻 MCP / daemon，
+        // 再用当前版本重启（--fresh 内部自己 detach，脚本随即退出）。
+        '${freshLauncherCommand(dartBin: dartBin, installDir: installDir, shell: false)}\r\n',
       );
     } else {
       final launcher = File('$installDir${sep}xb_ume_gui.command');
@@ -514,9 +522,9 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
         '_xb_np="\${no_proxy:-\${NO_PROXY:-}}"\n'
         'export NO_PROXY="127.0.0.1,localhost,::1\${_xb_np:+,\$_xb_np}"\n'
         'export no_proxy="\$NO_PROXY"\n'
-        // 双击启动 = 一键开启：守护进程不在就拉起来（幂等，失败不拦 GUI）。
-        '"$dartBin" "$installDir/ide.dart" --ensure-daemon >/dev/null 2>&1\n'
-        'exec "$dartBin" "$installDir/ide_gui.dart"\n',
+        // 双击 = 一键全新开启：先杀掉旧 GUI / 热键 / 常驻 MCP / daemon，
+        // 再用当前版本重启（--fresh 内部自己 detach，脚本随即退出）。
+        '${freshLauncherCommand(dartBin: dartBin, installDir: installDir)}\n',
       );
       try {
         await Process.run('chmod', <String>['+x', launcher.path]);
@@ -533,9 +541,11 @@ Future<void> _deployGui(String ideScriptPath, String installDir, String dartBin)
 
 /// 安装 GUI 桌面入口：macOS 在应用程序文件夹创建 .app（Launchpad/Spotlight 可搜），
 /// Windows 在桌面创建快捷方式（最小化运行）。
+///
+/// 图标点击 = 「全新启动」：先把旧 GUI / 热键 / 常驻 MCP / daemon 全部回收，
+/// 再用当前部署版本重新拉起，与分发版双击完全一致。
 Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
   if (Platform.isMacOS) {
-    final guiScript = '$installDir/ide_gui.dart';
     for (final root in <String>['/Applications', '$_home/Applications']) {
       final appDir = Directory('$root/$kGuiAppName.app');
       try {
@@ -550,10 +560,9 @@ Future<void> _installGuiDesktopEntry(String installDir, String dartBin) async {
       final exec = File('$contents/MacOS/xbumegui');
       await exec.writeAsString(
         '#!/bin/bash\n'
-        // 双击工具箱 = 一键开启：先把守护进程确保起来（KeepAlive 的 plist
-        // 可能被「停止守护进程」bootout 过），再启动 GUI。
-        '"$dartBin" "$installDir/ide.dart" --ensure-daemon >/dev/null 2>&1\n'
-        'exec "$dartBin" "$guiScript"\n',
+        // 双击图标 = 一键全新开启：杀掉旧 GUI / 热键 / 常驻 MCP / daemon，
+        // 再用当前版本重启、重开页面（与分发版双击同一套语义）。
+        '${freshLauncherCommand(dartBin: dartBin, installDir: installDir)}\n',
       );
       try {
         await Process.run('chmod', <String>['+x', exec.path]);
@@ -611,67 +620,22 @@ bool isGuiProcessCommandLine(String cmdline) =>
     cmdline.contains('ide_gui.dart') &&
     _dartExecutablePattern.hasMatch(cmdline);
 
-/// 结束本机正在运行的 GUI（按命令行精确匹配，不碰 daemon 与其他 dart 进程）。
-/// 先 SIGTERM：GUI 收到后走优雅退出，顺手收掉自己拉起的设备日志流（hdc
-/// hilog / adb logcat / simctl log stream）——这些子进程不随父进程退出，
-/// 硬杀会一直留在后台，攒几天把 hdc 的连接占满，表现为 flutter run 在
-/// fport 阶段报 `Connect server failed`。等不到退出再 SIGKILL 兜底。
+/// 结束本机所有本工具常驻进程（GUI / 热键监听 / 常驻 MCP / daemon）。
+///
+/// 安装语义是「全部换新」：只换 GUI 会留下旧 hotkey、旧 MCP 与旧 daemon，
+/// 用户下次打开仍然是旧代码。先 SIGTERM：GUI 收到后走优雅退出，顺手收掉
+/// 自己拉起的设备日志流（hdc hilog / adb logcat / simctl log stream）——这些
+/// 子进程不随父进程退出，硬杀会一直留在后台，攒几天把 hdc 连接占满，表现为
+/// flutter run 在 fport 阶段报 `Connect server failed`。等不到退出再 SIGKILL。
 Future<void> _killGuiProcesses() async {
   try {
-    if (Platform.isWindows) {
-      // 只查 dart.exe：PowerShell 自身命令行也带匹配串，不能扫全表。
-      const ps = "Get-CimInstance Win32_Process -Filter \"Name='dart.exe'\" | "
-          "Where-Object { \$_.CommandLine -like '*ide_gui.dart*' } | "
-          "ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }";
-      await Process.run('powershell', <String>['-NoProfile', '-Command', ps]);
-      return;
-    }
-    final targets = <int>[];
-    final pgrep = await Process.run('pgrep', <String>['-f', r'ide_gui\.dart']);
-    for (final line in pgrep.stdout.toString().split('\n')) {
-      final other = int.tryParse(line.trim());
-      if (other == null || other == pid) continue;
-      // 严格复核命令行，避免误伤编辑器、grep 等同样带脚本名的进程。
-      final ps = await Process.run(
-        'ps',
-        <String>['-p', '$other', '-o', 'command='],
-      );
-      if (!isGuiProcessCommandLine(ps.stdout.toString())) continue;
-      targets.add(other);
-    }
-    if (targets.isEmpty) return;
-    for (final other in targets) {
-      await Process.run('kill', <String>['-TERM', '$other']);
-    }
-    for (var attempt = 0; attempt < 12; attempt++) {
-      if (!await _anyPidAlive(targets)) return;
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
-    for (final other in targets) {
-      if (await _pidRunning(other)) {
-        await Process.run('kill', <String>['-9', '$other']);
-      }
+    final killed = await killOwnToolProcesses(includeDaemon: true);
+    if (killed.isNotEmpty) {
+      print('[xbume-ide] 已结束旧进程 ${killed.join(', ')}');
     }
   } catch (_) {
-    // 结束旧 GUI 失败不阻塞安装；新进程启动时会走单实例语义。
+    // 结束旧进程失败不阻塞安装；新进程启动时会走单实例语义。
   }
-}
-
-/// 进程是否还活着（kill -0 不发信号，只探测）。
-Future<bool> _pidRunning(int target) async {
-  try {
-    final r = await Process.run('kill', <String>['-0', '$target']);
-    return r.exitCode == 0;
-  } catch (_) {
-    return false;
-  }
-}
-
-Future<bool> _anyPidAlive(List<int> targets) async {
-  for (final p in targets) {
-    if (await _pidRunning(p)) return true;
-  }
-  return false;
 }
 
 /// 探测某端口是否已有 GUI 在应答（/ping 返回 xbume-gui 指纹）。
@@ -716,6 +680,11 @@ Future<void> _restartGui(String installDir, String dartBin) async {
     }
   }
   await _killGuiProcesses();
+  // 守护进程也一起换新：macOS kickstart -k 原地重启（plist 刚被重写），
+  // 其余平台杀后拉起；失败不拦 GUI。
+  try {
+    await restartDaemon();
+  } catch (_) {}
   // 必须确认旧实例真的不响应了再拉起：否则新进程探测到旧实例后
   // 只会打开浏览器就退出，页面仍是旧代码。
   for (var attempt = 0; attempt < 15; attempt++) {

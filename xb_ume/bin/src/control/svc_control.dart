@@ -363,6 +363,156 @@ Future<String> currentUid() async {
 }
 
 // ---------------------------------------------------------------------------
+// 本工具常驻进程：识别与整体回收（GUI / 热键监听 / MCP HTTP / daemon）
+// ---------------------------------------------------------------------------
+
+/// 部署版常驻进程的脚本名（命令行形如 `dart <安装目录>/<脚本>`）。
+const List<String> kOwnToolScripts = <String>[
+  'ide_gui.dart',
+  'hotkey_listener.dart',
+  'mcp.dart',
+];
+
+/// `dart` / `dart.exe` 可执行文件（排除 `xxx.dart` 里的后缀误判）。
+final RegExp _dartExePattern =
+    RegExp(r'(^|[/\\\s"])dart(\.exe)?(["\s]|$)', caseSensitive: false);
+
+/// 分发版入口可执行（`Contents/MacOS/xbume-*`、Windows 的 `xbume-*.exe`）。
+final RegExp _bundledExePattern =
+    RegExp(r'[\\/]xbume-(gui|hotkey|ide|mcp)(\.exe)?(\s|$)',
+        caseSensitive: false);
+
+/// 这一行命令行是不是本工具自己起的常驻进程。
+///
+/// 只认两种形态：`dart + 明确的脚本名`、`分发版 xbume-* 入口`；每一条都
+/// 复核完整命令行，绝不做宽泛 pkill（编辑器、grep、flutter run 都不会命中）：
+///   - `--install` 的部署器：安装流程本身会调回收，不能把自己杀掉；
+///   - MCP 的 stdio 实例（无 `--http`）：那是 AI 客户端当前会话的工具连接，
+///     只回收随工具箱常驻的 HTTP 实例；
+///   - 分发版 `xbume-ide` 仅在 `--daemon` 时算常驻（其余是一次性命令行）。
+bool isOwnToolCommandLine(String cmdline) {
+  final cmd = cmdline.trim();
+  if (cmd.isEmpty) return false;
+  if (cmd.contains('--install')) return false;
+  final bundled = _bundledExePattern.firstMatch(cmd);
+  if (bundled != null) {
+    switch ((bundled.group(1) ?? '').toLowerCase()) {
+      case 'gui':
+      case 'hotkey':
+        return true;
+      case 'mcp':
+        return cmd.contains('--http');
+      case 'ide':
+        return cmd.contains('--daemon');
+    }
+  }
+  if (!_dartExePattern.hasMatch(cmd)) return false;
+  for (final script in kOwnToolScripts) {
+    if (!cmd.contains(script)) continue;
+    // MCP 的 stdio 实例（AI 客户端拉起的工具连接）没有 --http，不能杀。
+    return script != 'mcp.dart' || cmd.contains('--http');
+  }
+  return cmd.contains('ide.dart') && cmd.contains('--daemon');
+}
+
+/// 常驻的 daemon 命令行（`ide.dart --daemon` / `xbume-ide --daemon`）。
+bool isDaemonCommandLine(String cmdline) =>
+    cmdline.contains('--daemon') || cmdline.contains('xbume-ide');
+
+/// 列出本机本工具的常驻进程（默认不含 daemon）。
+///
+/// 先 `ps -Ao pid=,command=` 全表，再逐行过 [isOwnToolCommandLine]；
+/// [skipPids] 用于排除调用方自己（以及它的父进程链）。
+Future<List<int>> ownToolProcessPids({
+  Set<int> skipPids = const <int>{},
+  bool includeDaemon = false,
+}) async {
+  final table = await _processTable();
+  final out = <int>[];
+  for (final line in const LineSplitter().convert(table)) {
+    final m = RegExp(r'^\s*(\d+)[\s\t]+(.+)$').firstMatch(line);
+    if (m == null) continue;
+    final target = int.parse(m.group(1)!);
+    if (target == pid || skipPids.contains(target)) continue;
+    final cmdline = m.group(2)!;
+    if (!isOwnToolCommandLine(cmdline)) continue;
+    if (!includeDaemon && isDaemonCommandLine(cmdline)) continue;
+    out.add(target);
+  }
+  return out;
+}
+
+Future<String> _processTable() async {
+  if (Platform.isWindows) {
+    final r = await _run('powershell', <String>[
+      '-NoProfile',
+      '-Command',
+      'Get-CimInstance Win32_Process | '
+          r'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }',
+    ]);
+    return r?.stdout.toString() ?? '';
+  }
+  final r = await _run('ps', <String>['-Ao', 'pid=,command=']);
+  return r?.stdout.toString() ?? '';
+}
+
+/// 结束本机所有本工具常驻进程（GUI / 热键监听 / MCP HTTP，可选 daemon）。
+///
+/// 先 SIGTERM：GUI 收到后走优雅退出（先关掉全部 VM 会话，避免 DDS 死锁，
+/// 由它自己收掉 hotkey / 设备日志流），等不到退出再 SIGKILL 兜底。
+/// [includeDaemon] 默认关：daemon 由 LaunchAgent 托管，硬杀会被旧 plist
+/// 立刻复活，交给「服务 → 重启守护进程」更干净。
+Future<List<int>> killOwnToolProcesses({
+  Set<int> skipPids = const <int>{},
+  bool includeDaemon = false,
+}) async {
+  final targets = await ownToolProcessPids(
+    skipPids: skipPids,
+    includeDaemon: includeDaemon,
+  );
+  if (targets.isEmpty) return const <int>[];
+  for (final target in targets) {
+    await _signalPid(target, force: false);
+  }
+  for (var attempt = 0; attempt < 20; attempt++) {
+    var alive = false;
+    for (final target in targets) {
+      if (await _pidAlive(target)) {
+        alive = true;
+        break;
+      }
+    }
+    if (!alive) break;
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  for (final target in targets) {
+    if (!await _pidAlive(target)) continue;
+    await _signalPid(target, force: true);
+  }
+  return targets;
+}
+
+Future<bool> _pidAlive(int target) async {
+  if (target == pid) return false;
+  if (Platform.isWindows) {
+    final r = await _run('tasklist', <String>['/FI', 'PID eq $target', '/NH']);
+    return (r?.stdout.toString() ?? '').contains('$target');
+  }
+  // kill -0 只探测不发信号。
+  final r = await _run('kill', <String>['-0', '$target']);
+  return r?.exitCode == 0;
+}
+
+Future<void> _signalPid(int target, {required bool force}) async {
+  if (target == pid) return;
+  if (Platform.isWindows) {
+    await _run('taskkill', <String>['/PID', '$target', '/F']);
+    return;
+  }
+  await _run('kill', <String>[force ? '-9' : '-TERM', '$target']);
+}
+
+// ---------------------------------------------------------------------------
 // daemon：启动 / 停止 / 重启
 // ---------------------------------------------------------------------------
 
@@ -627,6 +777,78 @@ Future<void> openGuiUrl(int port) async {
   } catch (_) {
     // 打不开浏览器不影响服务（用户可手动访问）。
   }
+}
+
+// ---------------------------------------------------------------------------
+// 全新启动：桌面图标 / 分发版双击 / 安装收尾共用
+// ---------------------------------------------------------------------------
+
+/// 摘掉旧 daemon 的 launchd 注册（macOS）。
+///
+/// KeepAlive 会把被 kill 的实例立刻按旧 plist 拉回来，「完全重启」必须先把
+/// 注册卸掉；[remove] 时把 plist 改名备份（`.disabled-by-app`）——分发版不留
+/// 开机自启，而旧 plist 指向的是源码部署副本，留着下次登录又会把旧代码拉起来。
+Future<bool> bootoutDaemonRegistration({bool remove = false}) async {
+  if (!Platform.isMacOS) return false;
+  final plist = daemonPlistPath();
+  if (!File(plist).existsSync()) return false;
+  final uid = await currentUid();
+  var bootedOut = false;
+  if (uid.isNotEmpty) {
+    final r = await _run('launchctl', launchdBootoutArgs(uid, plist));
+    bootedOut = r != null && r.exitCode == 0;
+  }
+  if (remove) {
+    try {
+      final backup = File('$plist.disabled-by-app');
+      if (!backup.existsSync()) {
+        File(plist).renameSync(backup.path);
+      }
+    } catch (_) {
+      // 改名失败不影响本次重启（下次启动会再试）。
+    }
+  }
+  return bootedOut || remove;
+}
+
+/// 「全新启动」：桌面图标、分发版双击、安装收尾共用的一条龙。
+///
+/// 1. 先摘掉旧 daemon 的 launchd 注册（分发版连 plist 一起删），否则
+///    KeepAlive 会立刻把旧脚本复活，「完全重启」名不副实；
+/// 2. 回收本工具全部常驻进程：GUI、热键监听、常驻 MCP HTTP、daemon；
+/// 3. 用当前版本重新拉起 daemon 与 GUI（GUI 自己打开浏览器）。
+Future<Map<String, Object?>> freshStart() async {
+  final legacy = await bootoutDaemonRegistration(remove: isBundledBuild());
+  final killed = await killOwnToolProcesses(includeDaemon: true);
+  await _waitDaemonDown(const Duration(seconds: 4));
+  final daemon = await startDaemon();
+  final gui = await spawnGuiDetached();
+  final daemonOk = daemon['ok'] == true;
+  final guiOk = gui['ok'] == true;
+  return <String, Object?>{
+    'ok': daemonOk && guiOk,
+    'message': <String>[
+      if (legacy) '已摘掉旧 launchd 注册',
+      if (killed.isNotEmpty) '已结束旧进程 ${killed.join(', ')}',
+      '守护进程：${daemonOk ? '已启动' : (daemon['message'] ?? '启动失败')}',
+      'GUI：${guiOk ? (gui['message'] ?? '已启动') : (gui['message'] ?? '启动失败')}',
+    ].join('；'),
+    'killed': killed,
+  };
+}
+
+/// 桌面图标 / 启动脚本的「一键全新开启」命令行。
+///
+/// 两条安装路径（源码 `--install` 与分发版双击）语义完全一致：先杀掉旧
+/// GUI / 热键 / 常驻 MCP / daemon，再用当前部署版本重启。
+/// [shell] 为 true 时带 `exec`（POSIX shell 用，避免留一层壳进程）。
+String freshLauncherCommand({
+  required String dartBin,
+  required String installDir,
+  bool shell = true,
+}) {
+  final cmd = '"$dartBin" "$installDir${_sep}ide.dart" --fresh';
+  return shell ? 'exec $cmd' : cmd;
 }
 
 /// 直接起一个 GUI（CLI `--svc start gui` 用；已在运行则只打开浏览器）。

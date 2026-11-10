@@ -333,6 +333,22 @@ Future<HttpServer?> _bindFixedPort(int port) async {
   return null;
 }
 
+/// 等上一轮本工具进程真正让出端口（优雅退出要先关 VM 会话，最长几秒）。
+Future<void> _waitOwnPortsFree(Duration limit) async {
+  final deadline = DateTime.now().add(limit);
+  while (DateTime.now().isBefore(deadline)) {
+    var busy = false;
+    for (var p = kGuiPortBase; p < kGuiPortBase + 10; p++) {
+      if (await pingGui(p)) {
+        busy = true;
+        break;
+      }
+    }
+    if (!busy) return;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+}
+
 Future<void> _mainImpl(List<String> args) async {
   // 接班人模式（由 /api/svc/restart 拉起）：等旧实例退出后按固定端口接管。
   // 旧实例要先关掉全部 VM 会话再 exit（防 DDS 死锁），最长 2s；这里绝不
@@ -340,6 +356,17 @@ Future<void> _mainImpl(List<String> args) async {
   final restartOwner =
       int.tryParse(_cliValue(args, '--restart-owner') ?? '') ?? 0;
   final fixedPort = int.tryParse(_cliValue(args, '--port') ?? '') ?? 0;
+  // 分发版默认端口启动 = 用户双击工具箱，语义是「全新运行」：先把上一轮的
+  // GUI / 热键监听 / 常驻 MCP 全部回收，再从头起。否则单实例语义只会用浏览器
+  // 打开旧实例的页面就退出——装完新客户端也仍然看到旧界面。
+  // 显式 --port（多实例 / 隔离验证）与 `--restart-owner` 接班都不做回收。
+  if (isBundledBuild() && restartOwner == 0 && fixedPort == 0) {
+    final killed = await killOwnToolProcesses();
+    if (killed.isNotEmpty) {
+      print('[xbume-gui] 已结束旧进程 ${killed.join(', ')}，按全新实例启动');
+      await _waitOwnPortsFree(const Duration(seconds: 10));
+    }
+  }
   HttpServer? server;
   var port = fixedPort > 0 ? fixedPort : kGuiPortBase;
   if (restartOwner > 0) {

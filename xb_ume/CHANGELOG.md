@@ -1,3 +1,13 @@
+## 0.9.12
+
+- **装完新客户端双击就是「全新运行」**：分发版以前按单实例语义处理——探测到 46129 已有 GUI，就只把浏览器打到一个旧页面、自己退出。用户从源码部署过一份 GUI 时，装完新 dmg 双击看到的仍是旧界面（「追加参数」看不到历史下拉就是这么来的）。现在分发版用默认端口启动时，先把上一轮的本工具常驻进程整体回收再从头起：GUI（部署版 `ide_gui.dart` 与旧分发版 `xbume-gui` 都算）、热键监听 `hotkey_listener.dart` / `xbume-hotkey`、常驻 MCP HTTP `mcp.dart --http` / `xbume-mcp --http`，然后等端口真正释放再 bind 固定 46129。`--install` 同样语义：GUI、热键、常驻 MCP 与 daemon 一起回收后再拉起新副本（macOS 用 LaunchAgent 接管，Windows 补一次 `startDaemon`）。
+
+- **回收范围只认命令行白名单**：新增 `svc_control.dart::isOwnToolCommandLine` —— 只认「`dart` + 明确脚本名」与「分发版 `Contents/MacOS/xbume-*`」两种形态，逐条复核 `ps` 输出，绝不宽泛 pkill：`--install` 部署器不杀自己、MCP 的 stdio 实例（无 `--http`，AI 客户端当前会话的工具连接）不杀、`flutter run` / 编辑器 / `grep` 都不会命中。先 SIGTERM（GUI 优雅退出，先关 VM 会话防 DDS 死锁，并顺带收掉自己拉起的设备日志流），等不到退出再 SIGKILL。显式 `--port`（多实例 / 隔离验证）与 `--restart-owner`（接班）都不触发回收。
+
+- **测试**：`svc_control_test` 新增「本工具常驻进程识别」3 项（部署版四类进程命中、分发版 `xbume-*` 命中且 stdio MCP 不碰、部署器 / flutter run / 编辑器 / grep 不误杀），以及「桌面图标 = 一键全新开启」2 项。
+
+- **图标点击 = 完全重启（源码安装与分发版一致）**：两条安装路径产出的图标再也不是「确保守护进程 + 起 GUI」——旧 GUI 还在就直接开旧页面。现在统一走 `ide.dart --fresh`（新增 CLI）或 `runBundledApp()`：①先 `bootout` 旧 daemon 的 launchd 注册（分发版把 plist 改名备份为 `.disabled-by-app`，否则 KeepAlive 会把旧脚本复活）；②`killOwnToolProcesses(includeDaemon: true)` 回收 GUI / 热键 / 常驻 MCP / daemon；③用当前版本重新拉起 daemon 与 GUI 并重开页面。源码安装生成的 `xb_ume_gui.command`、`应用程序/xb_ume 工具箱.app` 与 Windows `XBumeGui.bat` 全部改为这条命令（`svc_control.dart::freshLauncherCommand`，可单测）。`--install` 收尾也补上 daemon 重启（macOS `kickstart -k`、其余杀后拉起），不再只换 GUI。
+
 ## 0.9.11
 
 - **修「追加参数」历史下拉点开没反应**：0.9.10 用原生 `<datalist>` 做候选，实际用起来两处撞墙——①项目节点里没有 `recentArgs`（升级上来的老数据只有 `last`）时列表是空的，点开什么也没有；②Chrome 的 datalist 只在输入框为空时点开才列全部，有值就按当前值过滤，值恰好等于唯一候选时同样看着「没反应」。改用自绘浮层：点输入框（或聚焦）就在下方列出本项目最近用过的 8 条，行宽不够时省略号、悬停高亮、点一条回填并置顶，点别处 / Esc 收起；没有历史时浮层里直接给一行提示。后端 `runProfile` / `rememberLast` 的 `recentArgs` 在为空时用 `last.args` 兜一条（不落盘，下次记住时补成历史），升级完第一次点开就有东西。顺手补一个回退：点历史只改参数时保留 `last.config`（原来会传 `config: null` 把上次选的配置抹掉）。

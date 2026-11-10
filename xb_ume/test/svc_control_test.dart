@@ -292,4 +292,89 @@ void main() {
       expect(html.contains('location.reload(); }, 80)'), isTrue);
     });
   });
+
+  group('本工具常驻进程识别（全新运行前要回收的清单）', () {
+    const dart = '/Users/x/xb_flutter/bin/cache/dart-sdk/bin/dart';
+
+    test('部署版：GUI / 热键监听 / 常驻 MCP / daemon 都命中', () {
+      expect(
+        svc.isOwnToolCommandLine(
+            '$dart /Users/x/.xb_ume_ide/ide_gui.dart --restart-owner 1 --port 46129'),
+        isTrue,
+      );
+      expect(
+        svc.isOwnToolCommandLine(
+            '$dart /Users/x/.xb_ume_ide/src/hotkeys/hotkey_listener.dart '
+            '--home /Users/x --port 46129'),
+        isTrue,
+      );
+      expect(
+        svc.isOwnToolCommandLine(
+            '$dart /Users/x/.xb_ume_ide/mcp.dart --http 46140 --name mcp-46140'),
+        isTrue,
+      );
+      expect(
+        svc.isOwnToolCommandLine('$dart /Users/x/.xb_ume_ide/ide.dart --daemon'),
+        isTrue,
+      );
+    });
+
+    test('分发版：Contents/MacOS 下的 xbume-* 入口命中，stdio MCP 不碰', () {
+      const exe = '/Applications/XbUme.app/Contents/MacOS';
+      expect(svc.isOwnToolCommandLine('$exe/xbume-gui --port 46129'), isTrue);
+      expect(svc.isOwnToolCommandLine('$exe/xbume-hotkey --home /Users/x'),
+          isTrue);
+      expect(svc.isOwnToolCommandLine('$exe/xbume-ide --daemon'), isTrue);
+      expect(svc.isOwnToolCommandLine('$exe/xbume-mcp --http 46140'), isTrue);
+      // stdio 实例是 AI 客户端当前会话的工具连接，杀了客户端会直接报错。
+      expect(svc.isOwnToolCommandLine('$exe/xbume-mcp'), isFalse);
+    });
+
+    test('部署器、flutter run、编辑器与 grep 都不能误杀', () {
+      expect(svc.isOwnToolCommandLine('dart run xb_ume:ide --install'), isFalse);
+      expect(
+        svc.isOwnToolCommandLine('/Users/x/xb_ume/bin/ide.dart --install'),
+        isFalse,
+      );
+      expect(
+        svc.isOwnToolCommandLine('flutter_tools.snapshot run -d DEVICE'),
+        isFalse,
+      );
+      expect(svc.isOwnToolCommandLine('grep ide_gui.dart'), isFalse);
+      expect(
+        svc.isOwnToolCommandLine('/usr/bin/vim /Users/x/.xb_ume_ide/ide_gui.dart'),
+        isFalse,
+      );
+      // 部署版 MCP 的 stdio 实例同样不能碰（AI 客户端当场会用不了工具）。
+      expect(
+        svc.isOwnToolCommandLine('$dart /Users/x/.xb_ume_ide/mcp.dart'),
+        isFalse,
+      );
+      expect(svc.isOwnToolCommandLine(''), isFalse);
+    });
+  });
+
+  group('桌面图标 = 一键全新开启（源码安装与分发版同一语义）', () {
+    test('POSIX 启动器带 exec + --fresh，不再只拉起 GUI', () {
+      final posix = svc.freshLauncherCommand(
+        dartBin: '/d/bin/dart',
+        installDir: '/Users/x/.xb_ume_ide',
+      );
+      expect(
+        posix,
+        'exec "/d/bin/dart" "/Users/x/.xb_ume_ide/ide.dart" --fresh',
+      );
+      expect(posix.contains('--ensure-daemon'), isFalse);
+    });
+
+    test('Windows 启动器同样走 --fresh（无 exec）', () {
+      final win = svc.freshLauncherCommand(
+        dartBin: r'C:\dart-sdk\bin\dart.exe',
+        installDir: r'C:\Users\x\.xb_ume_ide',
+        shell: false,
+      );
+      expect(win.contains('--fresh'), isTrue);
+      expect(win.startsWith('exec '), isFalse);
+    });
+  });
 }

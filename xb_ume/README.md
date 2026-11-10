@@ -188,6 +188,21 @@ dart run xb_ume:ide --configure --ide-order "cursor,qodercn,code"
 
 GUI 只监听 `127.0.0.1` 并校验 Host / Origin；启动时生成一次性访问令牌，浏览器页面自动通过 Cookie 下发。本地脚本调用时读取 `~/.xb_ume_ide/gui.token`，请求头带 `X-XBUME-Token: <token>`。
 
+### 升级到新版本
+
+两条安装路径部署的东西与行为完全一致（GUI / 守护进程 / MCP 入口 / 热键监听 / 版本号），并各有一个「开启服务」的图标：
+
+- **分发版（dmg / 安装包）**：装好后双击应用（`XbUme.app`）即全新运行。
+- **源码部署**：「应用程序」里的 `xb_ume 工具箱.app`（Windows 为 `XBumeGui.bat`）。
+
+每次点击图标都会**先杀掉所有相关进程与服务，再全部重启**：
+
+1. 摘掉旧守护进程的 launchd 注册（分发版把 plist 改名备份为 `com.xbume.ide.plist.disabled-by-app`，否则 KeepAlive 会把旧脚本立刻复活）；
+2. 回收 GUI（旧源码部署的 `ide_gui.dart` 也算）/ 热键监听 / 常驻 MCP HTTP / 守护进程；
+3. 用当前版本重新拉起守护进程与 GUI，并重新打开浏览器页面。
+
+`dart run xb_ume:ide --install` 同语义：覆盖 `ide.dart` / `ide_gui.dart` / `mcp.dart` / `src/**` / `version.txt` 后，回收旧进程并重启 GUI 与守护进程。回收只认命令行白名单，`flutter run`、编辑器、`grep` 与 MCP 的 stdio 实例都不会被误杀；显式 `--port` 起的多实例也不会互相清理。
+
 ### 4. 设备前置
 
 | 目标 | 要求 |
