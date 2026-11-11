@@ -1,3 +1,11 @@
+## 0.9.14
+
+- **release（直连）会话的日志接入「日志」Tab**：直连会话没有 VM service，GUI 以前只接了 `/v1/exceptions`，app 内日志只在 `/v1/logs` 里能看到，日志 Tab 一直是空的（实测 GUI 日志缓冲 total 0，而 `curl /v1/logs` 有数据）。现在选中直连会话时（`/api/agent/sub`）同时每 2 秒轮询 `/v1/logs`：首次立即回填，按日志 id + 时间水位去重，切走再切回同一会话不会重复回填；条目以 `source=flutter-direct` 进日志缓冲（仍归入「Flutter 输出」筛选），`tag` 记会话来源（日志页按当前会话过滤），原日志 tag（debugPrint / network…）放展示列。`/api/agent/sub` 新增可选 `source` 参数，前端把当前会话来源一并传入。
+
+- **示例 macOS release 包补齐网络权限**：`example/macos/Runner/Release.entitlements` 增加 `com.apple.security.network.server` / `network.client`。没有这两项时 release 包在沙盒里绑不了直连 Agent 端口（实测 `SocketException: Operation not permitted, errno = 1, port = 47100`）；加上后可用 `flutter run -d macos --release --dart-define=XBUME_AGENT=1` 验证 release 直连。
+
+- **测试**：`dart analyze` 通过；GUI 相关测试（`session_caps_gui` / `gui_debug_tab` / `gui_auth_http` / `gui_security` / `ai_prompt`）通过。隔离 GUI 实测：直连日志首次回填 4 条、切走切回仍 4 条（不重复）、点击 app 的 Add Log 后约 2 秒内把 `hello from app log` 收进日志 Tab。
+
 ## 0.9.13
 
 - **修：会话接入后第二轮就从列表里消失**。`_poll` 把 `_knownFingerprints` 交给扫描层去重，自己却把「本轮扫描结果」直接当成了「当前会话列表」——会话接入成功后下一轮（~5s）扫描会跳过它，列表随之清空，看起来就是「会话闪一下 就没了」「会话都发现不了了」（实测 `vm_sel.log` 里 `+[port:55715]` 五秒后紧跟 `-[]`）。现在新增 `mergeDiscoveredSessions` 把「本轮新发现」与「已接入且仍存活」合并输出；daemon 另外用 `_sessionInfo`（wsUrl → 发现信息）记住已接入实例，启动记录认领的会话也一并补进列表（以前这类会话同样不在扫描结果里，列表看不到）。
