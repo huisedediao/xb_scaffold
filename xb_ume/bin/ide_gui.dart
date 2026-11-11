@@ -565,11 +565,13 @@ Future<void> handleRequest(GuiState state, HttpRequest req) async {
     // 直连会话的异常轮询开关（前端选中会话时 POST 一下）。
     if (path == '/api/agent/sub' && req.method == 'POST') {
       final uri = req.uri.queryParameters['uri'] ?? '';
+      // 会话来源（页头下拉的 value）：日志页按它过滤，缺省按端口推。
+      final source = req.uri.queryParameters['source'] ?? '';
       if (!isAgentBaseUrl(uri)) {
         await _rejectRequest(req, HttpStatus.badRequest, '只接受直连会话 uri');
         return;
       }
-      await state.startAgentWatch(uri);
+      await state.startAgentWatch(uri, source: source);
       req.response.headers.contentType = ContentType.json;
       req.response.write(jsonEncode(<String, Object?>{'ok': true}));
       await req.response.close();
@@ -5063,6 +5065,21 @@ class GuiState {
   bool _agentExcBusy = false;
   int _agentExcFail = 0;
 
+  /// 直连会话日志轮询（`/v1/logs`）：与异常同一时刻只跟一个会话。
+  Timer? _agentLogTimer;
+  bool _agentLogBusy = false;
+  int _agentLogFail = 0;
+  int _agentLogSinceMs = 0;
+  final Set<String> _agentLogSeen = <String>{};
+
+  /// 直连日志归到哪个会话来源（与页头会话下拉的 value 一致，如 port:47100），
+  /// 日志页按 `tag === vmFilter` 过滤 Flutter 输出，必须对上。
+  String _agentLogSource = '';
+
+  /// 上一次跟过的直连会话（stop 不清）：切走再切回同一会话时保留日志去重
+  /// 集合与时间水位，避免把已入库的日志重复回填一遍。
+  String _agentLogUri = '';
+
   /// agent 端异常 id → [_exceptions] 下标（app 端会合并重复异常，id 不重复）。
   final Map<String, int> _agentExcIndex = <String, int>{};
 
@@ -5071,17 +5088,39 @@ class GuiState {
 
   String? get agentWatchUri => _agentExcUri;
 
-  /// 开始跟一个直连会话的异常（首次立即同步，之后 2s 一轮）。
-  Future<void> startAgentWatch(String uri) async {
+  /// 开始跟一个直连会话的异常与日志（首次立即同步，之后 2s 一轮）。
+  ///
+  /// [source] 是页头会话下拉里的 value（如 `port:47100`）；日志页按
+  /// `tag === vmFilter` 过滤 Flutter 输出，必须用同一个值。缺省时按 URI
+  /// 端口推一个，与 daemon 对无转发端口的命名保持一致。
+  Future<void> startAgentWatch(String uri, {String source = ''}) async {
     if (uri == _agentExcUri && _agentExcTimer != null) return;
     stopAgentWatch();
     _agentExcUri = uri;
     _agentExcFail = 0;
-    await _pollAgentExceptions();
+    _agentLogFail = 0;
+    // 同一会话切走再切回不复位：否则首次轮询会把已入库的日志重复回填一遍。
+    // 换到别的会话才清空。_agentLogUri 在 stopAgentWatch 里保留。
+    if (_agentLogUri != uri) {
+      _agentLogSinceMs = 0;
+      _agentLogSeen.clear();
+      _agentLogUri = uri;
+    }
+    _agentLogSource = source.isNotEmpty
+        ? source
+        : 'port:${Uri.tryParse(uri)?.port ?? 0}';
+    await Future.wait(<Future<void>>[
+      _pollAgentExceptions(),
+      _pollAgentLogs(),
+    ]);
     if (_agentExcUri != uri) return;
     _agentExcTimer = Timer.periodic(
       const Duration(seconds: 2),
       (_) => unawaited(_pollAgentExceptions()),
+    );
+    _agentLogTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_pollAgentLogs()),
     );
   }
 
@@ -5090,6 +5129,12 @@ class GuiState {
     _agentExcTimer = null;
     _agentExcUri = null;
     _agentExcBusy = false;
+    _agentLogTimer?.cancel();
+    _agentLogTimer = null;
+    _agentLogBusy = false;
+    _agentLogFail = 0;
+    // 去重集合与时间水位保留：同一会话切回时不要重复回填（见 startAgentWatch）。
+    _agentLogSource = '';
   }
 
   Future<void> _pollAgentExceptions() async {
@@ -5146,6 +5191,65 @@ class GuiState {
       }
       broadcast(<String, Object?>{'type': 'exception', 'item': rec});
     }
+  }
+
+  Future<void> _pollAgentLogs() async {
+    final uri = _agentExcUri;
+    if (uri == null || _agentLogBusy) return;
+    _agentLogBusy = true;
+    try {
+      final items = await AgentClient(uri).logs(
+        limit: 200,
+        sinceMs: _agentLogSinceMs,
+      );
+      if (_agentExcUri != uri) return;
+      _agentLogFail = 0;
+      _mergeAgentLogs(items);
+    } catch (e) {
+      _agentLogFail++;
+      if (_agentLogFail == 1 || _agentLogFail % 10 == 0) {
+        print('[xbume-gui] 直连日志同步失败($uri): $e');
+      }
+    } finally {
+      _agentLogBusy = false;
+    }
+  }
+
+  /// app 侧日志 → GUI 日志缓冲。`source` 以 `flutter` 开头，归入「Flutter
+  /// 输出」筛选；`tag` 存会话来源（日志页按 `vmFilter` 精确匹配），原始
+  /// 日志 tag（debugPrint / network…）放 `app` 列展示。
+  void _mergeAgentLogs(List<Map<String, Object?>> items) {
+    for (final it in items) {
+      final id = '${it['id'] ?? ''}';
+      if (id.isEmpty || !_agentLogSeen.add(id)) continue;
+      // 有界去重：Set 保插入顺序，超过上限先丢最旧的一半。
+      if (_agentLogSeen.length > 4000) {
+        for (final old
+            in _agentLogSeen.take(_agentLogSeen.length - 2000).toList()) {
+          _agentLogSeen.remove(old);
+        }
+      }
+      final time = DateTime.tryParse('${it['time'] ?? ''}');
+      final ms = time?.millisecondsSinceEpoch ?? 0;
+      if (ms > _agentLogSinceMs) _agentLogSinceMs = ms;
+      addEntry(<String, Object?>{
+        'ts': time == null ? _clock() : _clockAt(ms),
+        'level': _agentLogLevel('${it['level'] ?? ''}'),
+        'tag': _agentLogSource,
+        'app': '${it['tag'] ?? ''}',
+        'msg': '${it['message'] ?? ''}',
+        'source': 'flutter-direct',
+      });
+    }
+  }
+
+  static String _agentLogLevel(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s.startsWith('v')) return 'V';
+    if (s.startsWith('d')) return 'D';
+    if (s.startsWith('w')) return 'W';
+    if (s.startsWith('e')) return 'E';
+    return 'I';
   }
 
   /// app 侧结构化异常 → GUI 异常卡片记录（字段与 VM 流解析结果同形）。
@@ -16201,7 +16305,8 @@ function dbgSetCurrentSession(s){
   var want = (tr === 'agent' && s && s.uri) ? s.uri : '';
   if (want !== lastAgentSub) {
     lastAgentSub = want;
-    fetch(want ? ('/api/agent/sub?uri=' + encodeURIComponent(want)) : '/api/agent/off',
+    fetch(want ? ('/api/agent/sub?uri=' + encodeURIComponent(want)
+        + '&source=' + encodeURIComponent((s && (s.source || s.uri)) || '')) : '/api/agent/off',
       { method: 'POST' }).catch(function(){});
   }
   dbgApplyCaps();
